@@ -43,3 +43,11 @@ After verifying the backup, `pixi run waveshare-flash <checked-port> <backup>` u
 Capture: ignored `artifacts/waveshare-v2-pms5003t-sdprobe-20260928.log`, **705 bytes**, SHA-256 `02ef690bf8c65c37df83ded11ec0801624249e57c3b55b7e58f1b3f699a1241e`.
 
 No TF file was created, deleted or formatted. This diagnostic does not measure Parquet logging, storage durability, enabled PSRAM, BLE/LAN sync or modem operation.
+
+## TF card inserted: mount and capacity, 2026-09-28
+
+After the owner inserted a TF card, the same diagnostic image was restarted with `pixi run capture --port /dev/cu.wchusbserial5B901533371 --reset --seconds 45 --out <trial-artifacts-log>`. It returned `AQ TF pins_ok=1 mounted=1 card_type=3 size_bytes=31457280000`: the V2 one-bit SDMMC mapping mounts this card and reads its reported capacity (**31,457,280,000 bytes**). No file was created, deleted or formatted; file read/write performance and durability remain untested.
+
+The four PMS reports still showed zero frames and null values, including after warm-up. Inserting the card did not resolve the sensor power/wiring issue. No slider position or sensor supply voltage was measured during this capture.
+
+Capture: ignored `artifacts/waveshare-v2-sd-inserted-20260928.log`, **588 bytes**, SHA-256 `d27a2a949fbf4ac734b45419211f574eb220345c04fd5cabe53fb77960676bbe`.

@@ -1,6 +1,6 @@
 # aq-parquet
 
-ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; valid sensor frames, card operation and its Parquet logger remain unverified or unimplemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
+ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; TF mounting is now verified. Valid sensor frames and storage write/read behavior remain unverified; its Parquet logger is not yet implemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
 
 The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in `firmware/common/`.
 

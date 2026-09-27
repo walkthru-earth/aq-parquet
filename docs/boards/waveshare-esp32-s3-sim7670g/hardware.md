@@ -16,3 +16,9 @@ Waveshare identifies the module as ESP32-S3R8 with **16 MB flash and 8 MB PSRAM*
 The board's UART download and BOOT+RESET recovery are described in the [Waveshare FAQ](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ). Verify the actual port and recovery behavior on this V2 unit before treating CoreS3 serial-control observations as portable. Strapping pin GPIO46 is already used for card detect in the vendor example; do not add a pull or driver to it.
 
 The pictured PMS power connection uses the exposed 5 V and GND. Confirm the selected 5 V rail is present under the board's chosen USB/battery supply mode before attributing absent UART frames to the sensor. No board power measurement has been made here.
+
+## Power slider and DIP switches
+
+The [product hardware description](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G#hardware-description) identifies the single ON/OFF slider beside the battery holder as the **18650 battery power switch**. Use ON for battery-powered operation. USB already powered the diagnostic during this board's tests; those tests do not establish battery operation or the sensor's 5 V supply under either slider position. The slider is separate from BOOT/RESET.
+
+The [FAQ](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ#hardware-functions) lists the separate DIP switches: **CAM** enables the camera, **HUB** powers the USB hub, **4G** powers the cellular module, and **USB** selects its USB path. None is documented as a PMS5003T enable. Keep the working USB/UART configuration for host diagnostics; switching HUB off may remove host USB access. Identify the switch by its position/label before applying these instructions.

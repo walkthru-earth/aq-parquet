@@ -9,7 +9,7 @@ Host dependencies are pinned in root `pixi.toml` and `pixi.lock`. Start with `pi
 | Board/trial | Setup | Build | Current hardware scope |
 | --- | --- | --- | --- |
 | [CoreS3 / Arduino-M5Unified](../../firmware/arduino-m5unified/README.md) | `pixi run arduino-setup` | `pixi run arduino-build` | Measured Parquet logger, display, SD and local sync |
-| [Waveshare V2 / Arduino](../../firmware/arduino-waveshare-sim7670g/README.md) | `pixi run waveshare-setup` | `pixi run waveshare-build` | Booted PMS5003T/TF diagnostic; valid sensor frames and card operation still pending |
+| [Waveshare V2 / Arduino](../../firmware/arduino-waveshare-sim7670g/README.md) | `pixi run waveshare-setup` | `pixi run waveshare-build` | Booted diagnostic with TF mount/capacity verified; sensor frames and storage write/read validation pending |
 
 SDK downloads use `$AQ_TOOLCHAIN_ROOT`; the existing default is `~/.cache/m5stack-aq-parquet/toolchains` and the legacy `$M5_TOOLCHAIN_ROOT` is accepted. The old cache name is retained to reuse installed SDKs after the GitHub rename. Each trial owns its exact dependency lock and build options; a shared download cache does not make a sibling trial a dependency. Firmware wrappers isolate the SDK environment from Pixi's host tools.
 
