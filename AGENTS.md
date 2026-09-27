@@ -32,6 +32,7 @@ Trial directory names state the framework first, for example `firmware/idf-cpp/`
 
 | Task touches | Open |
 | --- | --- |
+| Host tooling, reusable code, adding another board | `docs/shared/development.md`, `firmware/common/AGENTS.md` |
 | CoreS3 wiring, peripherals, power, sleep, boot | `docs/boards/m5stack-cores3/cores3-hardware.md` |
 | CoreS3 toolchain, memory, driver ownership | `docs/boards/m5stack-cores3/cores3-development.md` |
 | CoreS3 Wi-Fi/BLE coexistence | `docs/boards/m5stack-cores3/cores3-wireless.md` |
@@ -49,7 +50,7 @@ Host tooling is managed by **pixi** (`pixi.toml`, `pixi.lock`). Run project comm
 
 Firmware SDKs are not conda packages, so the project bootstraps them itself rather than asking you to install anything by hand. Each trial ships a pinned `setup.sh` and is driven by a root pixi task, so a clean machine needs only `pixi install` followed by that trial's setup task.
 
-SDKs are downloaded into `$AQ_TOOLCHAIN_ROOT`, which defaults to the existing `~/.cache/m5stack-aq-parquet/toolchains` cache (legacy `M5_TOOLCHAIN_ROOT` remains accepted). That path sits outside the repo on purpose, so several git worktrees share one copy and nothing large is ever written inside the tree. Build inside the SDK's exported environment so pixi does not shadow SDK-selected tools. See `docs/boards/m5stack-cores3/cores3-development.md`.
+SDKs are downloaded into `$AQ_TOOLCHAIN_ROOT`, which defaults to the existing `~/.cache/m5stack-aq-parquet/toolchains` cache (legacy `M5_TOOLCHAIN_ROOT` remains accepted). That path sits outside the repo on purpose, so several git worktrees share one copy and nothing large is ever written inside the tree. Build inside the SDK's exported environment so pixi does not shadow SDK-selected tools. See `docs/shared/development.md`.
 
 ## Do not brick the board
 
@@ -98,11 +99,11 @@ During an active Parquet run, prefer `pixi run parquet-device capture --port <po
 
 `pixi run fmt`, `pixi run fmt-check`, `pixi run lint` (cppcheck over `firmware/`), `pixi run hooks` to install pre-commit.
 
-For writer/schema or readback changes, also run `pixi run parquet-test --sanitize` and proportionate SD readback tests. The format tasks select Git-tracked C/C++ files; run clang-format explicitly on newly created, untracked sources too. Preserve vendored source bytes/licenses and their `.clang-format-ignore` exclusion. Project lint excludes vendor diagnostics and checks one configuration; the linked codec is tested with sanitizers.
+For writer/schema or readback changes, also run `pixi run parquet-test --sanitize` and proportionate SD readback tests. The format tasks discover project C/C++ files, excluding build/vendor trees. Preserve vendored source bytes/licenses and their `.clang-format-ignore` exclusion. Project lint excludes vendor diagnostics and checks one configuration; the linked codec is tested with sanitizers.
 
 For the measurement contract, also run `pixi run telemetry-contract-test --sanitize`. `telemetry_fields.inc` is the single source for names/types/procedure/unit/validity; update its compiled SHA-256 intentionally when editing it. Do not invent deployment, calibration, sensor serials or UTC. Version schema changes explicitly; backward compatibility is not required, but existing saved files must not be deleted or rewritten without authorization. Mermaid diagrams should distinguish implemented work from planned services; metadata compatibility is not OGC API compliance.
 
-Keep **captures, exports, benchmark reports and retained firmware binaries in the trial's git-ignored `artifacts/` directory, outside `build/`**. A full-card keep-safe copy of the owner's data may live in the root `exports/` directory (git-ignored); it is the owner's data, not repository evidence, so `docs/` cites file hashes rather than that directory. Arduino cleaned `build/` during a changed-configuration rebuild and removed the first local exports/logs; SD files were retained and all finalized Parquet files were restored into `artifacts/`. Never treat a build cache as evidence storage. Record artifact identities/hashes in `docs/boards/m5stack-cores3/bench-verified.md`.
+Keep **captures, exports, benchmark reports and retained firmware binaries in the trial's git-ignored `artifacts/` directory, outside `build/`**. A full-card keep-safe copy of the owner's data may live in the root `exports/` directory (git-ignored); it is the owner's data, not repository evidence, so `docs/` cites file hashes rather than that directory. Arduino cleaned `build/` during a changed-configuration rebuild and removed the first local exports/logs; SD files were retained and all finalized Parquet files were restored into `artifacts/`. Never treat a build cache as evidence storage. Record artifact identities/hashes in the relevant board's `bench-verified.md`.
 
 ## Hard rules
 
