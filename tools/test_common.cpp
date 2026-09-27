@@ -1,0 +1,135 @@
+#include <numeric_sample.h>
+#include <sync_codec.h>
+#include <utc_clock.h>
+
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <string>
+
+namespace {
+void sample_contract() {
+  struct PreviousLayout {
+    std::array<std::int64_t, 77> data{};
+    std::array<std::uint8_t, 77> valid{};
+  };
+  static_assert(sizeof(aq::NumericSample<77>) == sizeof(PreviousLayout),
+                "Extraction must preserve row stride");
+  aq::NumericSample<5> row;
+  for (const auto validity : row.valid)
+    assert(validity == 0);
+  row.integer(0, -42);
+  row.counter(1, std::numeric_limits<std::int64_t>::max());
+  row.number(2, 1.25F);
+  row.number(3, std::numeric_limits<float>::quiet_NaN());
+  row.number(4, std::numeric_limits<float>::infinity());
+  std::int32_t integer = 0;
+  float number = 0;
+  std::memcpy(&integer, &row.data[0], sizeof(integer));
+  std::memcpy(&number, &row.data[2], sizeof(number));
+  assert(integer == -42 && number == 1.25F);
+  assert(row.data[1] == std::numeric_limits<std::int64_t>::max());
+  assert((row.valid == std::array<std::uint8_t, 5>{1, 1, 1, 0, 0}));
+  row.number(4, -0.0F);
+  std::memcpy(&number, &row.data[4], sizeof(number));
+  assert(row.valid[4] == 1 && std::signbit(number));
+}
+
+void clock_contract() {
+  using namespace aq::utc;
+  static_assert(days_from_civil(1970, 1, 1) == 0);
+  static_assert(days_from_civil(1969, 12, 31) == -1);
+  static_assert(days_from_civil(2000, 1, 1) == 10957);
+  static_assert(days_from_civil(2000, 3, 1) - days_from_civil(2000, 2, 28) ==
+                2);
+  static_assert(days_from_civil(2100, 3, 1) - days_from_civil(2100, 2, 28) ==
+                1);
+  static_assert(days_from_civil(2020, 1, 1) * 86400 == kMinEpochSeconds);
+  static_assert(days_from_civil(2100, 1, 1) * 86400 == kMaxEpochSeconds);
+  assert(supported_epoch(kMinEpochSeconds));
+  assert(supported_epoch(kMaxEpochSeconds));
+  assert(!supported_epoch(kMinEpochSeconds - 1));
+  assert(!supported_epoch(kMaxEpochSeconds + 1));
+  const auto anchor = kMinEpochSeconds * 1000000000LL;
+  assert(estimate_ns(1000020, 1000000, anchor) == anchor + 20000);
+  assert(estimate_ns(999980, 1000000, anchor) == anchor - 20000);
+  assert(std::strcmp(source_name(None), "none") == 0);
+  assert(std::strcmp(source_name(Host), "host") == 0);
+  assert(std::strcmp(source_name(Rtc), "rtc") == 0);
+  assert(std::strcmp(source_name(99), "none") == 0);
+}
+
+void wire_contract() {
+  using namespace aq::sync;
+  std::uint8_t bytes[8]{};
+  put_u16(bytes, 0xa15b);
+  assert(bytes[0] == 0x5b && bytes[1] == 0xa1);
+  assert(get_u16(bytes) == 0xa15b);
+  put_u32(bytes, 0x80ff015b);
+  assert(bytes[0] == 0x5b && bytes[1] == 1 && bytes[2] == 0xff &&
+         bytes[3] == 0x80);
+  assert(get_u32(bytes) == 0x80ff015b);
+  put_i64(bytes, -1);
+  for (const auto byte : bytes)
+    assert(byte == 0xff);
+  assert(get_i64(bytes) == -1);
+  put_i64(bytes, std::numeric_limits<std::int64_t>::min());
+  assert(bytes[7] == 0x80);
+  assert(get_i64(bytes) == std::numeric_limits<std::int64_t>::min());
+  put_i64(bytes, std::numeric_limits<std::int64_t>::max());
+  assert(get_i64(bytes) == std::numeric_limits<std::int64_t>::max());
+  const auto *reference = reinterpret_cast<const std::uint8_t *>("123456789");
+  const auto whole = crc_update(0xffffffffU, reference, 9) ^ 0xffffffffU;
+  const auto split =
+      crc_update(crc_update(0xffffffffU, reference, 4), reference + 4, 5) ^
+      0xffffffffU;
+  assert(whole == 0xcbf43926U && split == whole);
+  assert((crc_update(0xffffffffU, nullptr, 0) ^ 0xffffffffU) == 0);
+}
+
+void archive_contract() {
+  using namespace aq::sync;
+  assert(safe_parquet_name("station=a/year=2026/part-01.parquet"));
+  assert(safe_parquet_name("legacy-parquet/a.parquet"));
+  assert(!safe_parquet_name(nullptr));
+  for (const auto *invalid :
+       {".parquet", "/a.parquet", "../a.parquet", "a/../b.parquet",
+        "a//b.parquet", "A.parquet", "a\\b.parquet", "a.parquet.partial",
+        "a\nb.parquet"})
+    assert(!safe_parquet_name(invalid));
+  const std::string limit = std::string(376, 'a') + ".parquet";
+  assert(safe_parquet_name(limit.c_str()));
+  assert(!safe_parquet_name(("a" + limit).c_str()));
+  assert(!safe_parquet_name("a.parquet", 8));
+  std::uint8_t head[] = {'P', 'A', 'R', '1'};
+  std::uint8_t tail[] = {1, 0, 0, 0, 'P', 'A', 'R', '1'};
+  assert(parquet_complete(13, head, tail));
+  assert(!parquet_complete(12, head, tail));
+  assert(!parquet_complete(13, nullptr, tail));
+  assert(!parquet_complete(13, head, nullptr));
+  assert(!parquet_complete(13, head, tail, 12));
+  assert(!parquet_complete(1048577, head, tail));
+  head[0] = 'X';
+  assert(!parquet_complete(13, head, tail));
+  head[0] = 'P';
+  tail[7] = 'X';
+  assert(!parquet_complete(13, head, tail));
+  tail[7] = '1';
+  put_u32(tail, 0);
+  assert(!parquet_complete(100, head, tail));
+  put_u32(tail, 89);
+  assert(!parquet_complete(100, head, tail));
+  put_u32(tail, 88);
+  assert(parquet_complete(100, head, tail));
+}
+} // namespace
+
+int main() {
+  sample_contract();
+  clock_contract();
+  wire_contract();
+  archive_contract();
+}

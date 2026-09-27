@@ -1,0 +1,38 @@
+#pragma once
+
+#include <cstdint>
+
+namespace aq {
+namespace utc {
+// Codes shared by sync/status consumers. The board supplies any RTC adapter;
+// these helpers neither invent an anchor nor change a captured row's epoch.
+enum Source : std::int32_t { None = 0, Host = 1, Rtc = 2 };
+constexpr std::int64_t kMinEpochSeconds = 1577836800LL; // 2020-01-01 UTC
+constexpr std::int64_t kMaxEpochSeconds = 4102444800LL; // 2100-01-01 UTC
+
+constexpr bool supported_epoch(std::int64_t seconds) {
+  return seconds >= kMinEpochSeconds && seconds <= kMaxEpochSeconds;
+}
+
+constexpr std::int64_t estimate_ns(std::int64_t now_mono_us,
+                                   std::int64_t anchor_mono_us,
+                                   std::int64_t anchor_utc_ns) {
+  return anchor_utc_ns + (now_mono_us - anchor_mono_us) * 1000;
+}
+
+constexpr const char *source_name(std::int32_t source) {
+  return source == Host ? "host" : source == Rtc ? "rtc" : "none";
+}
+
+// Days since 1970-01-01 for a valid proleptic Gregorian calendar date.
+// Howard Hinnant's days_from_civil algorithm; independent of process TZ.
+constexpr std::int64_t days_from_civil(int year, unsigned month, unsigned day) {
+  year -= month <= 2;
+  const std::int64_t era = (year >= 0 ? year : year - 399) / 400;
+  const unsigned yoe = static_cast<unsigned>(year - era * 400);
+  const unsigned doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + static_cast<std::int64_t>(doe) - 719468;
+}
+} // namespace utc
+} // namespace aq

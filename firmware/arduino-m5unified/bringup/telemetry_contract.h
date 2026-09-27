@@ -2,10 +2,10 @@
 
 #include "parquet_writer.h"
 #include "telemetry_dictionary_digest.h"
-#include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <numeric_sample.h>
+#include <utc_clock.h>
 
 namespace telemetry {
 namespace contract {
@@ -16,7 +16,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 3;
 constexpr const char *kSchemaName = "cores3-telemetry-v3";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v2";
-constexpr const char *kFirmware = "arduino-cores3-parquet-v6.3";
+constexpr const char *kFirmware = "arduino-cores3-parquet-v6.4";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/arduino-m5unified/bringup/telemetry_fields.inc";
@@ -58,21 +58,7 @@ constexpr Definition kFields[] = {
 static_assert(field_count == 77, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 
-struct Sample {
-  std::array<std::int64_t, field_count> data{};
-  std::array<std::uint8_t, field_count> valid{};
-  template <typename T> void set(Field field, T value) {
-    static_assert(sizeof(T) <= sizeof(std::int64_t), "numeric field too large");
-    std::memcpy(&data[field], &value, sizeof(value));
-    valid[field] = 1;
-  }
-  void integer(Field field, std::int32_t value) { set(field, value); }
-  void counter(Field field, std::int64_t value) { set(field, value); }
-  void number(Field field, float value) {
-    if (std::isfinite(value))
-      set(field, value);
-  }
-};
+using Sample = aq::NumericSample<field_count>;
 
 // Fields whose unit is nanoseconds since the Unix epoch are the UTC instants;
 // the annotation changes what readers present, never the stored INT64.
@@ -101,9 +87,9 @@ inline void prepare_columns(Column *columns, Sample *rows) {
 //      host supplied earlier (whole seconds, so up to 1 s coarser, plus RTC
 //      drift since that sync); a later host sync starts a new epoch
 enum ClockSource : std::int32_t {
-  kClockNone = 0,
-  kClockHost = 1,
-  kClockRtc = 2,
+  kClockNone = aq::utc::None,
+  kClockHost = aq::utc::Host,
+  kClockRtc = aq::utc::Rtc,
 };
 
 // Inputs are a single coherent anchor snapshot taken under the clock mutex.
@@ -114,7 +100,8 @@ inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
   row.integer(clock_status, generation ? source : kClockNone);
   row.integer(clock_epoch, generation);
   if (generation) {
-    row.counter(event_time_utc_ns, utc_anchor + (now - mono_anchor) * 1000);
+    row.counter(event_time_utc_ns,
+                aq::utc::estimate_ns(now, mono_anchor, utc_anchor));
     row.counter(clock_anchor_mono_us, mono_anchor);
     row.counter(clock_anchor_utc_ns, utc_anchor);
   }
