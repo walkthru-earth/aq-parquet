@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <SD_MMC.h>
 #include <pms_frame.h>
 
 #ifdef BOARD_HAS_PSRAM
@@ -6,10 +7,13 @@
 #endif
 
 // Waveshare ESP32-S3-SIM7670G-4G V2.0 with the owner's four-wire PMS5003T.
-// This diagnostic does not mount TF, touch the modem, or write flash/SD.
+// This diagnostic probes TF capacity without formatting or writing files.
 namespace {
 constexpr int kSensorRx = 1; // sensor TX -> host RX
 constexpr int kSensorTx = 2; // sensor RX <- host TX; V1 gauge conflict
+constexpr int kSdClk = 5;
+constexpr int kSdCmd = 4;
+constexpr int kSdData0 = 6;
 constexpr std::uint32_t kBaud = 9600;
 constexpr std::uint32_t kReportMs = 10000;
 HardwareSerial sensor(1);
@@ -24,12 +28,20 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println(
-      "AQ DIAG board=waveshare-sim7670g-v2 sensor=PMS5003T mode=uart-only");
+      "AQ DIAG board=waveshare-sim7670g-v2 sensor=PMS5003T mode=uart-sd-probe");
   Serial.printf(
       "AQ DIAG chip=%s flash_bytes=%lu psram_bytes=%lu rx=%d tx=%d\n",
       ESP.getChipModel(), static_cast<unsigned long>(ESP.getFlashChipSize()),
       static_cast<unsigned long>(ESP.getPsramSize()), kSensorRx, kSensorTx);
   sensor.begin(kBaud, SERIAL_8N1, kSensorRx, kSensorTx);
+  // V2 onboard slot is SDMMC, not the CoreS3 SPI wiring. No format, file
+  // creation or deletion: this first probe reads only card capacity/status.
+  const bool pins_ok = SD_MMC.setPins(kSdClk, kSdCmd, kSdData0);
+  const bool mounted = pins_ok && SD_MMC.begin("/sd", true, false);
+  Serial.printf(
+      "AQ TF pins_ok=%u mounted=%u card_type=%u size_bytes=%llu\n", pins_ok,
+      mounted, mounted ? static_cast<unsigned>(SD_MMC.cardType()) : 0U,
+      mounted ? static_cast<unsigned long long>(SD_MMC.cardSize()) : 0ULL);
   last_report_ms = millis();
 }
 

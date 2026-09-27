@@ -1,6 +1,6 @@
-# Air-quality Parquet firmware
+# aq-parquet
 
-ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T diagnostic target is being brought up; its Parquet logger is not yet implemented or measured. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
+ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; valid sensor frames, card operation and its Parquet logger remain unverified or unimplemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
 
 The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in `firmware/common/`.
 
@@ -33,7 +33,7 @@ Offline logging needs no internet. The measured 60-row LZ4 rate projects to abou
 
 ## Getting started
 
-Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare target currently builds a [UART-only PMS5003T diagnostic](firmware/arduino-waveshare-sim7670g/README.md); commands below after the safety sequence describe the measured CoreS3 logger.
+Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare target currently builds a [PMS5003T/TF diagnostic](firmware/arduino-waveshare-sim7670g/README.md); commands below after the safety sequence describe the measured CoreS3 logger.
 
 ```sh
 pixi install
@@ -66,7 +66,7 @@ The [trial README](firmware/arduino-m5unified/README.md#inspect-the-live-logger)
 
 Keep exports and captures in the trial's git-ignored **`artifacts/`**, never `build/`: Arduino rebuilds can clean their build directory. `pixi run python tools/export_parquet.py --port <port> --out firmware/arduino-m5unified/artifacts/exports/<new-name>` retrieves every listed finalized file, including legacy files on the current firmware, without deleting or flushing device data.
 
-Firmware SDKs are not conda packages, so the project fetches them itself at pinned versions. A clean machine needs `pixi install` and then the setup task for whichever trial you are building, with no manual SDK installation. SDKs land in `$AQ_TOOLCHAIN_ROOT`, default `~/.cache/m5stack-aq-parquet/toolchains` (the existing shared cache path; `M5_TOOLCHAIN_ROOT` remains accepted), deliberately outside the repo so git worktrees share one copy. See `docs/boards/m5stack-cores3/cores3-development.md`.
+Firmware SDKs are not conda packages, so the project fetches them itself at pinned versions. A clean machine needs `pixi install` and then the setup task for whichever trial you are building, with no manual SDK installation. SDKs land in `$AQ_TOOLCHAIN_ROOT`, default `~/.cache/m5stack-aq-parquet/toolchains` (the existing shared cache path; `M5_TOOLCHAIN_ROOT` remains accepted), deliberately outside the repo so git worktrees share one copy. See the [shared development and board-extension guide](docs/shared/development.md).
 
 ## Hardware
 

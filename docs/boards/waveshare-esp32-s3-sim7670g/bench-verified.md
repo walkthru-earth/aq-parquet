@@ -8,4 +8,38 @@ The owner identified the PCB as V2.0. With the board connected by its USB serial
 - Flash ID manufacturer `85`, device `2018`, capacity **16 MB**, quad flash wiring at 3.3 V.
 - `SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0`, `DIS_DOWNLOAD_MODE=False`; the normal download path remains available.
 
-The chip command's esptool exit toggled RTS to reset the board. These commands did not establish which PSRAM mode an Arduino firmware should select, whether the PMS5003T is producing valid frames, whether the TF card mounts, or whether a new image boots. Those require a separate diagnostic run. The full flash backup read, exact size and SHA-256 are recorded below when complete.
+The chip command's esptool exit toggled RTS to reset the board. These commands did not establish which PSRAM mode an Arduino firmware should select, whether the PMS5003T is producing valid frames, whether the TF card mounts, or whether a new image boots. Those require a separate diagnostic run. No physical BOOT/RESET action or switch change was needed for these reads.
+
+## Full flash backup, 2026-09-28
+
+`pixi run backup --board waveshare-sim7670g-v2 --port /dev/cu.wchusbserial5B901533371` read the complete image at the default serial speed in **1496.4 seconds**. The hash command from the already-running script encountered an old Pixi interpreter path; the completed file was independently checked with `ls -l` and `/usr/bin/shasum -a 256` before any firmware write.
+
+- Local ignored file: `backup/waveshare-sim7670g-v2-flash-20260927T222602Z.bin` (the name uses UTC).
+- Exact size: **16,777,216 bytes**.
+- SHA-256: `d88ddcd6bbbc69972396df9a1d67d75b006f5058d000e07cd850717fffd07a45`.
+- `pixi run backup-partitions <file>` decoded the original partition table: NVS, OTA data, two 1280 KiB applications, SPIFFS and coredump. Its highest partition end was 4 MiB, despite the physical 16 MiB flash. This is a readback of the saved image, not evidence of its application's capabilities.
+
+## Diagnostic build
+
+The Arduino-ESP32 3.3.11 / Arduino CLI 1.5.1 diagnostic builds with PSRAM disabled, UART0 console and a one-bit SDMMC probe. Compiler output: **353,853 bytes** program storage, **22,288 bytes** static RAM. Disabling PSRAM here avoids guessing a mode before a separate boot/readback measurement.
+
+Retained files under the trial's ignored `artifacts/firmware/`:
+
+| File | SHA-256 |
+| --- | --- |
+| `waveshare-v2-pms5003t-sdprobe.bin` | `d64b70c46971efe2689e5e9af99de2e753eeb64d8dadcfc128a9f25900834300` |
+| `waveshare-v2-pms5003t-sdprobe.elf` | `eb6528c06c2f9c0a64f4172d8107f9d7d4bffceed1c3208f1163d471051b3fe1` |
+
+## Diagnostic flash and boot, 2026-09-28
+
+After verifying the backup, `pixi run waveshare-flash <checked-port> <backup>` uploaded the bootloader, partition table, OTA initialization and application. Esptool verified the written hashes and reset via RTS; no physical button or switch action was required.
+
+`pixi run capture --port /dev/cu.wchusbserial5B901533371 --reset --seconds 45 --out <trial-artifacts-log>` recorded the diagnostic boot and four ten-second reports:
+
+- `flash_bytes=16777216`, `psram_bytes=0` (PSRAM is intentionally disabled in this image), `rx=1`, `tx=2`.
+- `AQ TF pins_ok=1 mounted=0`, with SDMMC error `0x107` during card initialization. The owner confirmed **no TF card was inserted**; this does not measure a card or prove the slot's operation.
+- `AQ PMS frames=0`, checksum/length error counters both zero, and `values=null`, including after the 30-second warm-up gate. The owner subsequently reported that the sensor fan was not running; this is an owner observation, not a supply measurement. Sensor wiring/power and valid PMS5003T measurements remain unverified; zero parser errors does not establish that bytes reached the UART. The [wiring guide](pms5003t.md#silent-fan--no-frames) records the next checks.
+
+Capture: ignored `artifacts/waveshare-v2-pms5003t-sdprobe-20260928.log`, **705 bytes**, SHA-256 `02ef690bf8c65c37df83ded11ec0801624249e57c3b55b7e58f1b3f699a1241e`.
+
+No TF file was created, deleted or formatted. This diagnostic does not measure Parquet logging, storage durability, enabled PSRAM, BLE/LAN sync or modem operation.
