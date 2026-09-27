@@ -2,4 +2,4 @@
 set -euo pipefail
 
 # espefuse requires global options such as --port before the subcommand.
-exec espefuse "$@" summary
+exec python -m espefuse "$@" summary

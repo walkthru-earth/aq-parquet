@@ -1,12 +1,12 @@
 # Parquet compression experiment
 
-[Router](README.md) · Implementation, host screening and device comparison verified **2026-09-08**. Exact device evidence lives in [bench-verified](bench-verified.md). This stays in the existing Arduino trial; no second framework or radio/upload implementation is introduced.
+[Router](../../README.md) · Implementation, host screening and device comparison verified **2026-09-08**. Exact device evidence lives in [bench-verified](bench-verified.md). This stays in the existing Arduino trial; no second framework or radio/upload implementation is introduced.
 
 ## Design and scope
 
-This experiment's hardware numbers refer to the 73-column codec image. The later [77-column provenance/time update](table-and-observation-model.md) passes host reader/sanitizer tests and short real SD readbacks with both codecs. Those differently sized smoke batches are not a paired compression benchmark; measure full batches before carrying forward the ratios or capacity projections below. [New image evidence](bench-verified.md#board-1-schema-v2-provenance-and-timing)
+This experiment's hardware numbers refer to the 73-column codec image. The later [77-column provenance/time update](../../shared/table-and-observation-model.md) passes host reader/sanitizer tests and short real SD readbacks with both codecs. Those differently sized smoke batches are not a paired compression benchmark; measure full batches before carrying forward the ratios or capacity projections below. [New image evidence](bench-verified.md#board-1-schema-v2-provenance-and-timing)
 
-The writer now accepts **UNCOMPRESSED** or **LZ4_RAW**. LZ4 1.10.0 is vendored with source hashes and BSD-2-Clause notices in the [trial pin](../firmware/arduino-m5unified/vendor/lz4/README.md). The adapter uses raw blocks and Parquet codec enum **7**, not deprecated enum 5 or LZ4 Frame. PyArrow's Python metadata API displays enum 7 as `LZ4`. [Parquet codec contract](https://github.com/apache/parquet-format/blob/master/Compression.md), [LZ4 API](https://github.com/lz4/lz4/blob/v1.10.0/lib/lz4.h)
+The writer now accepts **UNCOMPRESSED** or **LZ4_RAW**. LZ4 1.10.0 is vendored with source hashes and BSD-2-Clause notices in the [trial pin](../../../firmware/common/vendor/lz4/README.md). The adapter uses raw blocks and Parquet codec enum **7**, not deprecated enum 5 or LZ4 Frame. PyArrow's Python metadata API displays enum 7 as `LZ4`. [Parquet codec contract](https://github.com/apache/parquet-format/blob/master/Compression.md), [LZ4 API](https://github.com/lz4/lz4/blob/v1.10.0/lib/lz4.h)
 
 Every DataPageV1 payload, including its definition-level stream, is compressed as one block. Page headers retain both compressed and original byte counts; footer column chunks and row-group totals distinguish compressed from uncompressed sizes. Headers/footer are not page-compressed. One codec applies throughout a file, even where a very small page grows. A codec error aborts the partial file rather than writing raw bytes labeled as compressed.
 
@@ -50,7 +50,7 @@ Evidence is retained in `firmware/arduino-m5unified/artifacts/compression-202609
 
 The follow-up normal 64-row file retained the original 60 rows unchanged, plus contiguous post-comparison sequences 60–63, with no recorded drops/deadline misses/storage errors. A subsequent three-row **normal LZ4 Hive file** passed both readers and UTC partition checks after host time was restored. Both codec configuration commands acknowledged successfully; the device was left at 900 seconds with LZ4 selected.
 
-**Meaning of “better”:** smaller complete files and lower median finalization time on these three paired writes, with interoperable values/nulls preserved. It does not mean every write is faster: a later 12-row normal LZ4 file took 140,291 µs to finalize, demonstrating SD/I/O variability beyond the paired range. It also does not establish energy savings, greater card lifetime or proportional allocated-space savings. FAT cluster rounding can erase the space benefit for small files; see [offline capacity](telemetry-pipeline.md#offline-capacity-and-reconnection). Snappy/Zstd, full compressed-window endurance and reconnect/upload tests remain open.
+**Meaning of “better”:** smaller complete files and lower median finalization time on these three paired writes, with interoperable values/nulls preserved. It does not mean every write is faster: a later 12-row normal LZ4 file took 140,291 µs to finalize, demonstrating SD/I/O variability beyond the paired range. It also does not establish energy savings, greater card lifetime or proportional allocated-space savings. FAT cluster rounding can erase the space benefit for small files; see [offline capacity](../../shared/telemetry-pipeline.md#offline-capacity-and-reconnection). Snappy/Zstd, full compressed-window endurance and reconnect/upload tests remain open.
 
 ## Reproduce and retain evidence
 

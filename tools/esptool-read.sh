@@ -9,4 +9,4 @@ fi
 shift
 
 # esptool 5 requires global options such as --port before the subcommand.
-exec esptool --chip esp32s3 "$@" "${command_name}"
+exec python -m esptool --chip esp32s3 "$@" "${command_name}"

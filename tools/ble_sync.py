@@ -1,4 +1,4 @@
-"""Host client for the device sync service (docs/ble-sync-protocol.md, v2).
+"""Host client for the device sync service (docs/shared/ble-sync-protocol.md, v2).
 
 Bench tool: exercises the same contract the phone app implements, from a
 laptop, so the firmware can be verified without a handset. Read-only towards
@@ -411,7 +411,7 @@ ADVERT_FLAGS = ["no_utc", "new_files", "sd", "lan", "fail", "clk_restored"]
 
 
 def decode_advert(payload):
-    """Advertising service data, protocol v2.1 (docs/ble-sync-protocol.md, 'Advertising payload').
+    """Advertising service data, protocol v2.1 (docs/shared/ble-sync-protocol.md, 'Advertising payload').
 
     Ten little-endian bytes under the service UUID: version, flags, fin u32, boot16 u16, two spare.
     Returns a dict, or None for an unknown version / short payload (a pre-v2.1 device has none)."""

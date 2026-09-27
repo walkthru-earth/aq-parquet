@@ -1,30 +1,22 @@
-# CoreS3 reference router
+# Documentation router
 
-Target: **M5Stack CoreS3 / ESP32-S3**, C and/or C++. Accessories are optional, separately described hardware; no attached module is assumed. Research snapshot: **2026-09-08**; source-checked claims and dated real-board measurements are kept distinct.
+The device protocol, telemetry format, and offline-first data flow are shared across board trials. Wiring, power, peripheral ownership, build settings, and measured performance belong to the individual board. Source-checked claims and real-device results remain separate.
 
-Entry point: root [`AGENTS.md`](../AGENTS.md). It routes here and holds the host-environment and hard rules.
+## Shared contracts
 
-Current result: the [active Arduino trial](../firmware/arduino-m5unified/README.md) writes real 10-second scalar snapshots directly to SD, with configurable 10/15/30/60-minute files (one 90-row row group per completed batch, per-column statistics, TIMESTAMP-annotated UTC since firmware v6), UTC Hive partitions and optional LZ4_RAW compression. The [bench record](bench-verified.md#board-1-on-device-parquet-and-hive-partitions) separates the 60/90-row uncompressed runs and Hive/restart checks from codec testing. RAM-batch recovery, radio/upload and Iceberg remain open; this is not a production durability claim. Evidence belongs in git-ignored `artifacts/`, outside the disposable `build/` directory.
-
-| When working on… | Read |
+| Topic | Reference |
 | --- | --- |
-| Wiring, GPIO allocation, onboard peripherals, power, USB | [Core hardware](cores3-hardware.md) |
-| C/C++, framework choice, library versions, memory, driver ownership | [Development](cores3-development.md) |
-| Wi-Fi, Bluetooth LE, ESP-NOW, channels and coexistence | [Wireless](cores3-wireless.md) |
-| Built-in microSD slot, shared SPI, logging, removal/recovery | [Storage](cores3-storage.md) |
-| Phone sync over Bluetooth LE or LAN: GATT service, frames, pairing modes, device configuration, Wi-Fi/TCP/mDNS transport, file transfer contract | [Sync protocol](ble-sync-protocol.md) |
-| When a background sync should start: Android companion-device presence, offloaded BLE scans, Wi-Fi arrival, and the advertising payload the device could use to wake the phone (proposal, not implemented) | [Background sync triggers](background-sync-triggers.md) |
-| Sensor validity, station identity, clock epochs, Parquet, Hive and future ingestion | [Telemetry pipeline](telemetry-pipeline.md) |
-| Static Iceberg, SensorThings V2 draft, observation mapping and versioned provenance | [Table and observation model](table-and-observation-model.md) |
-| Build/flash, runtime interval/time commands, USB fetch and query examples | [Active trial usage](../firmware/arduino-m5unified/README.md) |
-| Codec comparison, memory budget, identical-row SD tests and benchmark artifacts | [Compression experiment](compression-benchmark.md) |
-| Offline duration, 32 GB capacity assumptions and future object-storage synchronization | [Offline capacity and reconnect plan](telemetry-pipeline.md#offline-capacity-and-reconnection) |
-| Any optional Unit, Module, Base, or third-party peripheral | [Add-on integration](addons.md), then its individual reference |
-| Optional M134/PMSA003 air-quality accessory | [Air-quality add-on](addon-air-quality.md) |
-| What was actually measured on our board, versus what is only source-checked | [Bench-verified record](bench-verified.md) |
+| Sampling, nulls, Parquet, Hive partitions, and offline archives | [Telemetry pipeline](shared/telemetry-pipeline.md) |
+| Dictionary, observation semantics, and proposed Iceberg workflow | [Table and observation model](shared/table-and-observation-model.md) |
+| BLE/LAN sync frames, pairing, and transport | [Sync protocol](shared/ble-sync-protocol.md) |
+| Phone background sync triggers | [Background sync triggers](shared/background-sync-triggers.md) |
+| Security and production-hardening boundary | [Security hardening](shared/security-hardening.md) |
 
-Maintenance: keep board facts in hardware, core dependency recommendations in development, accessory facts/driver pins in `addon-<name>.md`. Preserve verified wiring, conflicts, protocol edge cases, and source links; use a keyword/link for routine APIs. Record SKU/revision and uncertainty when sources disagree. A release labeled “latest” is a dated observation, not a floating dependency pin. If an M5 CDN link fails, resolve the resource again through its linked product page.
+## Boards
 
-Source and device now use 77-column schema v2. Host tests/build and [short real SD readbacks](bench-verified.md#board-1-schema-v2-provenance-and-timing) pass; full-window/paired-codec numbers still belong to the earlier 73-column image. Do not transfer its size/latency/capacity measurements to the expanded schema.
+| Board | Status | Reference |
+| --- | --- | --- |
+| M5Stack CoreS3 with optional M134/PMSA003 | Existing Arduino trial; real board and SD evidence through 2026-09-18 | [CoreS3 board docs](boards/m5stack-cores3/README.md), [trial](../firmware/arduino-m5unified/README.md) |
+| Waveshare ESP32-S3-SIM7670G-4G V2 with PMS5003T | Read-only board identification; PMS and storage untested | [Waveshare board docs](boards/waveshare-esp32-s3-sim7670g/README.md), [trial](../firmware/arduino-waveshare-sim7670g/README.md) |
 
-Do not turn a source audit into a hardware result, a short-file readback into an endurance test, or a software restart into a power-cut test. New claims need a date, firmware/schema identity, method and measured scope; retain prior results under their original image identity.
+For any physical write, follow the board-specific safety sequence in [AGENTS.md](../AGENTS.md). Keep captures and firmware binaries in the relevant trial's ignored `artifacts/`, and record real-board measurements only in that board's bench record.

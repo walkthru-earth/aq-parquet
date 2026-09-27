@@ -1,20 +1,20 @@
-# m5stack-aq-parquet
+# Air-quality Parquet firmware
 
-Air-quality logging firmware for **M5Stack CoreS3 (ESP32-S3)**. The device generates Parquet directly from real measurements and stores finalized files on microSD. Host tools validate and retrieve those files without converting them; object-storage upload is later work.
+ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T diagnostic target is being brought up; its Parquet logger is not yet implemented or measured. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
 
-The repo can hold **more than one framework trial** against the same board, sharing one set of hardware reference docs. It runs one trial at a time, and a second is opened only when a measured result justifies it.
+The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in `firmware/common/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
-- `docs/` holds framework-neutral CoreS3 references, including the [telemetry and Parquet pipeline](docs/telemetry-pipeline.md).
+- `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
 - `product/` holds the [mobile app workflows](product/mobile-app.md), [architecture and privacy](product/mobile-architecture.md), and [Bluetooth SQL idea](product/bluetooth-parquet.md); these are proposals, not implemented features.
 - The [community extension shortlist](product/community-extension-shortlist.md) maps DuckDB candidates to these product ideas, with adoption limits and source references.
 - `firmware/<framework>-<variant>/` holds each self-contained trial.
 
 ## Current status
 
-As of **2026-09-08**, the only active trial is [Arduino-ESP32 with M5Unified](firmware/arduino-m5unified/README.md), pinned to Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The flashed firmware records one scalar snapshot every **10 seconds**, using a **77-column** schema with explicit nulls/status for unavailable measurements. The PMS display retains its three touch-navigable pages.
+The existing [CoreS3 Arduino-ESP32/M5Unified trial](firmware/arduino-m5unified/README.md) is pinned to Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The flashed firmware records one scalar snapshot every **10 seconds**, using a **77-column** schema with explicit nulls/status for unavailable measurements. The PMS display retains its three touch-navigable pages.
 
-The current revision is **77-column schema v2**, with a SHA-256-identified measurement dictionary, configuration/provenance metadata and four additional timing fields. It is flashed and passed short UNCOMPRESSED/unsynced and LZ4/UTC SD readbacks in both readers; [schema-v2 bench evidence](docs/bench-verified.md#board-1-schema-v2-provenance-and-timing) records hashes and limits. Earlier full-window/compression numbers below remain tied to the 73-column image. [Iceberg/OGC decisions, Mermaid diagrams and contract usage](docs/table-and-observation-model.md) explain the staged design. Iceberg remains host/cloud work; the dictionary does not claim SensorThings API compliance.
+The current CoreS3 source uses **77-column schema v3**, with the SHA-256-identified v2 measurement dictionary, TIMESTAMP annotations, row-group statistics and multi-row-group files. The flashed v6.3 image and earlier schema-specific readbacks are recorded in the [CoreS3 bench record](docs/boards/m5stack-cores3/bench-verified.md); those results do not describe the Waveshare target. Earlier full-window/compression numbers below remain tied to the 73-column image. [Iceberg/OGC decisions, Mermaid diagrams and contract usage](docs/shared/table-and-observation-model.md) explain the staged design. Iceberg remains host/cloud work; the dictionary does not claim SensorThings API compliance.
 
 An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **UNCOMPRESSED** and opt-in **LZ4_RAW** codecs, per-column min/max statistics and `TIMESTAMP(NANOS, UTC)` on the UTC fields. Reboot restores uncompressed output. Persistent station identity and UTC-aligned Hive partitions use:
 
@@ -23,23 +23,25 @@ output/station=<UUID>/year=YYYY/month=MM/day=DD/
   data_HHMM_<boot>_<first>-<last>-<attempt>.parquet
 ```
 
-Measured on one board/card: a full automatic 60-row batch was **28,059 bytes** and finalized in **122 ms**, with no recorded drops or missed deadlines. A later full **90-row uncompressed Hive file was 39,869 bytes** and also passed both readers with zero recorded health errors. See the dated [bench record](docs/bench-verified.md) for image identities and scope, and the [compression experiment](docs/compression-benchmark.md) for codec comparisons.
+Measured on one board/card: a full automatic 60-row batch was **28,059 bytes** and finalized in **122 ms**, with no recorded drops or missed deadlines. A later full **90-row uncompressed Hive file was 39,869 bytes** and also passed both readers with zero recorded health errors. See the dated [bench record](docs/boards/m5stack-cores3/bench-verified.md) for image identities and scope, and the [compression experiment](docs/boards/m5stack-cores3/compression-benchmark.md) for codec comparisons.
 
 **What the evidence establishes:** direct on-device Parquet is feasible for this workload and its files interoperate with PyArrow/DuckDB without host conversion. On the same 60 rows, three LZ4 comparisons produced **14,080-byte files versus 28,537 bytes uncompressed (50.7% smaller)** and **93.0 ms versus 118.4 ms median finalization (21.4% faster)**. That supports choosing LZ4 for this tested logger; it is not a claim of superiority over every format, card, codec or cloud architecture. Filesystem allocated space, energy use and production durability have not been compared.
 
-Offline logging needs no internet. The measured 60-row LZ4 rate projects to about **2.03 MB/day / 0.74 GB/year before filesystem overhead** at ten-minute rotation. A 32 GB card therefore offers multi-year storage capacity in principle, not a guaranteed card or battery lifetime. [Capacity assumptions and future synchronization](docs/telemetry-pipeline.md#offline-capacity-and-reconnection) explain allocation-unit overhead, power, clock drift and the uploader that still needs to be built.
+Offline logging needs no internet. The measured 60-row LZ4 rate projects to about **2.03 MB/day / 0.74 GB/year before filesystem overhead** at ten-minute rotation. A 32 GB card therefore offers multi-year storage capacity in principle, not a guaranteed card or battery lifetime. [Capacity assumptions and future synchronization](docs/shared/telemetry-pipeline.md#offline-capacity-and-reconnection) explain allocation-unit overhead, power, clock drift and the uploader that still needs to be built.
 
-**Feasibility, not production durability:** unfinished RAM rows are lost on reset; partial files are retained but not repaired. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC is a host-supplied estimate and must be supplied after each reboot; until then, files go under the station's `unsynced/boot=<boot>/` tree with null UTC values. Unsupported battery current and ambient temperature/humidity are null; camera/audio streams are outside this scalar trial.
+**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC is a host-supplied estimate and must be supplied after each reboot; until then, files go under the station's `unsynced/boot=<boot>/` tree with null UTC values. Unsupported battery current and ambient temperature/humidity are null; camera/audio streams are outside this scalar trial.
 
 ## Getting started
+
+Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare target currently builds a [UART-only PMS5003T diagnostic](firmware/arduino-waveshare-sim7670g/README.md); commands below after the safety sequence describe the measured CoreS3 logger.
 
 ```sh
 pixi install
 pixi run ports     # find the board
-pixi run chip      # confirm it is an ESP32-S3, read-only
-pixi run flash-id  # confirm 16 MB flash
-pixi run efuse     # read-only security and flash-type check
-pixi run backup    # full flash image before the first write
+pixi run chip --port <checked-port>      # confirm ESP32-S3; may reset the running app
+pixi run flash-id --port <checked-port>  # confirm flash size
+pixi run efuse --port <checked-port>     # read-only security and flash-type check
+pixi run backup --board <board> --port <checked-port>  # full flash image before the first write
 ls -l backup/     # confirm the image is exactly 16777216 bytes
 ```
 
@@ -64,17 +66,17 @@ The [trial README](firmware/arduino-m5unified/README.md#inspect-the-live-logger)
 
 Keep exports and captures in the trial's git-ignored **`artifacts/`**, never `build/`: Arduino rebuilds can clean their build directory. `pixi run python tools/export_parquet.py --port <port> --out firmware/arduino-m5unified/artifacts/exports/<new-name>` retrieves every listed finalized file, including legacy files on the current firmware, without deleting or flushing device data.
 
-Firmware SDKs are not conda packages, so the project fetches them itself at pinned versions. A clean machine needs `pixi install` and then the setup task for whichever trial you are building, with no manual SDK installation. SDKs land in `$M5_TOOLCHAIN_ROOT`, default `~/.cache/m5stack-aq-parquet/toolchains`, deliberately outside the repo so git worktrees share one copy. See `docs/cores3-development.md`.
+Firmware SDKs are not conda packages, so the project fetches them itself at pinned versions. A clean machine needs `pixi install` and then the setup task for whichever trial you are building, with no manual SDK installation. SDKs land in `$AQ_TOOLCHAIN_ROOT`, default `~/.cache/m5stack-aq-parquet/toolchains` (the existing shared cache path; `M5_TOOLCHAIN_ROOT` remains accepted), deliberately outside the repo so git worktrees share one copy. See `docs/boards/m5stack-cores3/cores3-development.md`.
 
 ## Hardware
 
-M5Stack CoreS3 (K128), 16 MB flash, 8 MB Quad PSRAM. The PM2.5 air-quality module (M134 / PMSA003) is an optional add-on and is not assumed to be attached.
+Current boards: [M5Stack CoreS3](docs/boards/m5stack-cores3/README.md) (K128, 16 MB flash, 8 MB Quad PSRAM) and [Waveshare ESP32-S3-SIM7670G-4G V2](docs/boards/waveshare-esp32-s3-sim7670g/README.md) (16 MB flash, 8 MB embedded PSRAM, PMS5003T on GPIO1/2). Sensor modules are optional; the standalone PMS5003T and M134/PMSA003 have different frame data and are documented separately.
 
 ## License and attribution
 
 Licensed under [CC BY 4.0](LICENSE), matching other Walkthru.Earth repositories.
 
-Exception: vendored [LZ4 1.10.0](firmware/arduino-m5unified/vendor/lz4/README.md) retains its BSD-2-Clause license and upstream notices.
+Exception: vendored [LZ4 1.10.0](firmware/common/vendor/lz4/README.md) retains its BSD-2-Clause license and upstream notices.
 
 **If you use any of this work, you must credit us visibly.** Attribution belongs
 somewhere a reader actually sees it, such as your README, your documentation, your
@@ -82,17 +84,17 @@ about screen, or your paper. A buried comment in source does not count.
 
 Minimum credit.
 
-> Based on [walkthru-earth/m5stack-aq-parquet](https://github.com/walkthru-earth/m5stack-aq-parquet)
+> Based on [walkthru-earth/aq-parquet](https://github.com/walkthru-earth/aq-parquet)
 > by Walkthru.Earth, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 BibTeX.
 
 ```bibtex
-@software{walkthru_m5stack_aq_parquet,
+@software{walkthru_aq_parquet,
   author  = {Youssef Harby, Myagmarjargal Mendbayar},
-  title   = {m5stack-aq-parquet: Air-quality logging firmware for M5Stack CoreS3},
+  title   = {aq-parquet: ESP32-S3 air-quality Parquet firmware},
   year    = {2026},
-  url     = {https://github.com/walkthru-earth/m5stack-aq-parquet},
+  url     = {https://github.com/walkthru-earth/aq-parquet},
   license = {CC-BY-4.0},
   note    = {Walkthru.Earth}
 }

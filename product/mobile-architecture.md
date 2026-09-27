@@ -21,7 +21,7 @@ flowchart LR
     W -. supported integration .-> V[External platforms]
 ```
 
-**Solid arrow:** implemented sensor-to-SD path. **Dashed arrows:** proposed work. Existing evidence lives in the [bench record](../docs/bench-verified.md); measurement/file rules remain in the [telemetry pipeline](../docs/telemetry-pipeline.md).
+**Solid arrow:** implemented sensor-to-SD path. **Dashed arrows:** proposed work. Existing evidence lives in the [bench record](../docs/boards/m5stack-cores3/bench-verified.md); measurement/file rules remain in the [telemetry pipeline](../docs/shared/telemetry-pipeline.md).
 
 ## Compute placement
 

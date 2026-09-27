@@ -1,0 +1,5 @@
+# Diagnostic target only. Arduino-ESP32 generates sdkconfig from the pinned
+# board FQBN; build.sh checks flash size and the sketch rejects PSRAM setup. The
+# Waveshare FAQ contradicts itself on QSPI/OPI mode, so do not guess here.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y

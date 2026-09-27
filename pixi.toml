@@ -1,7 +1,7 @@
 [workspace]
 authors = ["Youssef Harby <yharby@walkthru.earth>"]
 channels = ["conda-forge"]
-name = "m5stack-aq-parquet"
+name = "aq-parquet"
 platforms = ["osx-arm64"]
 version = "0.1.0"
 
@@ -32,22 +32,29 @@ capture = "python tools/capture_serial.py"
 # pixi run monitor /dev/cu.usbmodem101 115200
 monitor = "python -m serial.tools.miniterm --raw"
 parquet-device = "python tools/parquet_device.py"
-# Bluetooth LE client for docs/ble-sync-protocol.md; bench tool for the phone contract.
+# Bluetooth LE client for docs/shared/ble-sync-protocol.md; bench tool for the phone contract.
 ble-sync = "python tools/ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
+pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
-# --- active firmware trial: Arduino ESP32 + M5Unified ---
+# --- existing CoreS3 firmware trial: Arduino ESP32 + M5Unified ---
 arduino-setup = "firmware/arduino-m5unified/setup.sh"
 arduino-boards = "firmware/arduino-m5unified/arduino-cli.sh board listall m5stack_cores3"
 arduino-build = "firmware/arduino-m5unified/build.sh"
 # Destructive: pass the explicit checked port, e.g. pixi run arduino-flash /dev/cu.usbmodem101
 arduino-flash = "firmware/arduino-m5unified/flash.sh"
 
+# --- Waveshare V2 UART-only PMS5003T diagnostic trial ---
+waveshare-setup = "firmware/arduino-waveshare-sim7670g/setup.sh"
+waveshare-build = "firmware/arduino-waveshare-sim7670g/build.sh"
+# Destructive: requires the checked port and exact full-backup file.
+waveshare-flash = "firmware/arduino-waveshare-sim7670g/flash.sh"
+
 # --- host code quality ---
-fmt = "clang-format -i $(git ls-files '*.c' '*.h' '*.cpp' '*.hpp' '*.ino' 2>/dev/null)"
-fmt-check = "clang-format --dry-run --Werror $(git ls-files '*.c' '*.h' '*.cpp' '*.hpp' '*.ino' 2>/dev/null)"
-lint = "cppcheck --language=c++ --enable=warning,style,performance,portability --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1 --suppress=*:*/vendor/lz4/* firmware/arduino-m5unified/bringup/bringup.ino firmware/arduino-m5unified/bringup/telemetry_logger.cpp firmware/arduino-m5unified/bringup/ble_sync.cpp firmware/arduino-m5unified/bringup/wifi_link.cpp firmware/arduino-m5unified/bringup/device_config.cpp firmware/arduino-m5unified/bringup/debug_log.cpp firmware/arduino-m5unified/bringup/parquet_writer.cpp firmware/arduino-m5unified/bringup/lz4_codec.cpp"
+fmt = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format -i"
+fmt-check = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format --dry-run --Werror"
+lint = "cppcheck --language=c++ --enable=warning,style,performance,portability --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1 --suppress=*:*/vendor/lz4/* firmware/arduino-m5unified/bringup/bringup.ino firmware/arduino-m5unified/bringup/telemetry_logger.cpp firmware/arduino-m5unified/bringup/ble_sync.cpp firmware/arduino-m5unified/bringup/wifi_link.cpp firmware/arduino-m5unified/bringup/device_config.cpp firmware/arduino-m5unified/bringup/debug_log.cpp firmware/common/src/parquet_writer.cpp firmware/common/src/lz4_codec.cpp firmware/common/src/pms_frame.cpp firmware/arduino-waveshare-sim7670g/diagnostic/diagnostic.ino"
 compression-bench = "python tools/benchmark_compression.py"
 hooks = "pre-commit install"
 
@@ -71,7 +78,12 @@ duckdb = ">=1.5.5,<2"
 # Firmware SDKs are large and are not conda packages, so the project bootstraps
 # them itself into one pinned cache that every git worktree shares. Override
 # this to relocate them. Nothing here is ever written inside the repo.
+AQ_TOOLCHAIN_ROOT = "$HOME/.cache/m5stack-aq-parquet/toolchains"
+# Legacy override remains accepted by both trial scripts.
 M5_TOOLCHAIN_ROOT = "$HOME/.cache/m5stack-aq-parquet/toolchains"
+# macOS system zoneinfo remains valid if a Pixi environment is moved with a
+# worktree; Python's compiled default path can still point at its old location.
+PYTHONTZPATH = "/usr/share/zoneinfo"
 
 [pypi-dependencies]
 bleak = ">=3.0.2, <4"

@@ -1,6 +1,6 @@
 # Optional add-on integration
 
-[Router](README.md) · Read only when attaching a Unit (cable), Module (stack), Base, or third-party peripheral. CoreS3 remains the host; an accessory is never assumed to be built in. Source snapshot **2026-09-06**, integration lessons updated **2026-09-08**.
+[Router](../../README.md) · Read only when attaching a Unit (cable), Module (stack), Base, or third-party peripheral. CoreS3 remains the host; an accessory is never assumed to be built in. Source snapshot **2026-09-06**, integration lessons updated **2026-09-08**.
 
 ## Resolve the actual connection
 
@@ -23,7 +23,7 @@ Driver discovery, on demand: [M5UnitUnified](https://github.com/m5stack/M5UnitUn
 
 ## Individual reference format
 
-Create `docs/addon-<name>.md` only for an accessory actually being investigated. Keep: identity/variants; supply + logic + current; host pin map/address; protocol/timing/units; CoreS3 conflicts and workable wiring; driver/version evidence; failure/recovery notes; schematic/datasheet/example links; verification date and unresolved revision differences. Generic setup APIs need only a keyword/link.
+Create `docs/boards/m5stack-cores3/addon-<name>.md` only for an accessory actually being investigated. Keep: identity/variants; supply + logic + current; host pin map/address; protocol/timing/units; CoreS3 conflicts and workable wiring; driver/version evidence; failure/recovery notes; schematic/datasheet/example links; verification date and unresolved revision differences. Generic setup APIs need only a keyword/link.
 
 Available: [M134 air-quality module / PMSA003, SHT20 when fitted](addon-air-quality.md). This is an optional accessory reference, not the definition of the project hardware.
 
