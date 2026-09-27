@@ -2,15 +2,16 @@
 set -euo pipefail
 
 trial_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+common_dir="${trial_dir}/../common"
 build_dir="${trial_dir}/build"
 # shellcheck source=dependencies.lock
 source "${trial_dir}/dependencies.lock"
 
 # Verify the committed codec implementation, not a floating downloaded library.
 printf '%s  %s\n' \
-  "${LZ4_C_SHA256}" "${trial_dir}/vendor/lz4/lz4.c" \
-  "${LZ4_H_SHA256}" "${trial_dir}/vendor/lz4/lz4.h" \
-  "${LZ4_LICENSE_SHA256}" "${trial_dir}/vendor/lz4/LICENSE" | shasum -a 256 -c -
+  "${LZ4_C_SHA256}" "${common_dir}/vendor/lz4/lz4.c" \
+  "${LZ4_H_SHA256}" "${common_dir}/vendor/lz4/lz4.h" \
+  "${LZ4_LICENSE_SHA256}" "${common_dir}/vendor/lz4/LICENSE" | /usr/bin/shasum -a 256 -c -
 
 mkdir -p "${build_dir}"
 # Dictionary digest is compiled into every file. Refuse stale provenance.
@@ -18,9 +19,10 @@ dictionary_digest=$(sed -n 's/^    "\([0-9a-f]\{64\}\)";/\1/p' \
   "${trial_dir}/bringup/telemetry_dictionary_digest.h")
 test "${#dictionary_digest}" -eq 64
 printf '%s  %s\n' "${dictionary_digest}" \
-  "${trial_dir}/bringup/telemetry_fields.inc" | shasum -a 256 -c -
+  "${trial_dir}/bringup/telemetry_fields.inc" | /usr/bin/shasum -a 256 -c -
 "${trial_dir}/arduino-cli.sh" compile \
   --fqbn "${CORES3_FQBN}" \
+  --libraries "${common_dir}" \
   --warnings all \
   --build-path "${build_dir}" \
   --export-binaries \

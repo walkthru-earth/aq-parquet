@@ -11,7 +11,7 @@ These third-party files are not relicensed under the repository's CC BY license.
 | lz4.h | 26b82efc53d1570f3b54eef02e9c4764c1ad374ff03cac04e2ced5ea4d4c552f |
 | LICENSE | 8b58c446121a109ccf32edc094bba3010a3d85e4ee3702950db55e4d3e87736c |
 
-`bringup/lz4_codec.cpp` compiles this implementation with `LZ4_MEMORY_USAGE=12`.
+`firmware/common/src/lz4_codec.cpp` compiles this implementation with `LZ4_MEMORY_USAGE=12`.
 The adapter uses `LZ4_compress_fast_extState` with caller-owned, aligned state;
 no codec heap allocation is used. Raw blocks map to Parquet enum 7 (`LZ4_RAW`),
 not LZ4 Frame or deprecated enum 5. Default acceleration is 1.

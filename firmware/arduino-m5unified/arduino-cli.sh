@@ -2,7 +2,7 @@
 set -euo pipefail
 
 trial_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-toolchain_root="${M5_TOOLCHAIN_ROOT:-${HOME}/.cache/m5stack-aq-parquet/toolchains}"
+toolchain_root="${AQ_TOOLCHAIN_ROOT:-${M5_TOOLCHAIN_ROOT:-${HOME}/.cache/m5stack-aq-parquet/toolchains}}"
 
 export ARDUINO_DIRECTORIES_DATA="${toolchain_root}/arduino/data"
 export ARDUINO_DIRECTORIES_DOWNLOADS="${toolchain_root}/arduino/downloads"

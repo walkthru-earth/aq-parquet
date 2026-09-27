@@ -1,5 +1,5 @@
-#include "../firmware/arduino-m5unified/bringup/lz4_codec.h"
 #include "../firmware/arduino-m5unified/bringup/telemetry_contract.h"
+#include "../firmware/common/src/lz4_codec.h"
 
 #include <cassert>
 #include <cstdio>

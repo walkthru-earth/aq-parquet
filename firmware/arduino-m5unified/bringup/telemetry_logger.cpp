@@ -91,13 +91,15 @@ std::atomic<std::uint32_t> write_us{0}, sync_us{0}, queue_peak{0};
 std::atomic<std::uint32_t> total_kib{0}, used_kib{0}, rotation_seconds{900};
 // Worker state mirrored for the BLE `status` document, which any task may
 // build.
-std::atomic<std::uint32_t> partials_seen{0};
+std::atomic<std::uint32_t> partials_seen{0}, partials_quarantined{0};
+std::atomic<std::uint64_t> quarantine_bytes{0};
 // Rows/row groups already on the card in the open .partial (footer pending).
 std::atomic<std::uint32_t> open_rows{0}, open_groups{0};
 std::atomic<bool> worker_failed{false}, storage_ok{false};
 // Advertising bit `new_files`: set when a file finalizes, cleared when a LIST
 // has been answered on any link (that phone now knows; a phone that then fails
-// its download is covered by its periodic run). docs/ble-sync-protocol.md.
+// its download is covered by its periodic run).
+// docs/shared/ble-sync-protocol.md.
 std::atomic<bool> unlisted_files{false};
 std::int64_t boot_hi = 0, boot_lo = 0, device = 0, next_sample_us = 0;
 std::int64_t sample_sequence = 0;
@@ -143,7 +145,20 @@ std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t *data,
 
 bool sink(void *context, const std::uint8_t *data, std::size_t size) {
   BusLock lock;
-  return std::fwrite(data, 1, size, static_cast<FILE *>(context)) == size;
+  FILE *file = static_cast<FILE *>(context);
+  std::size_t written = 0;
+  while (written < size) {
+    const std::size_t count =
+        std::fwrite(data + written, 1, size - written, file);
+    if (!count) {
+      // Preserve the first useful errno when stdio reports only its error bit.
+      if (!errno && std::ferror(file))
+        errno = EIO;
+      return false;
+    }
+    written += count;
+  }
+  return true;
 }
 
 bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
@@ -652,6 +667,139 @@ void list_directory(const char *relative, unsigned depth, unsigned &partials,
   }
 }
 
+bool partial_name(const char *name) {
+  const std::size_t length = std::strlen(name);
+  return length > 8 && std::strcmp(name + length - 8, ".partial") == 0;
+}
+
+// Move interrupted files out of active station/benchmark trees without
+// deleting or pretending to repair them. The relative path is flattened into
+// a unique boot-scoped name under output/quarantine/.
+void quarantine_directory(const char *relative, unsigned depth,
+                          unsigned &quarantined) {
+  if (depth > 6)
+    return;
+  char directory_path[416];
+  std::snprintf(directory_path, sizeof(directory_path), "%s/%s", kDirectory,
+                relative);
+  DIR *directory;
+  {
+    BusLock lock;
+    directory = ::opendir(directory_path);
+  }
+  if (!directory)
+    return;
+  for (;;) {
+    const struct dirent *entry;
+    {
+      BusLock lock;
+      entry = ::readdir(directory);
+    }
+    if (!entry)
+      break;
+    if (entry->d_name[0] == '.')
+      continue;
+    char name[384], path[416];
+    const int length = std::snprintf(name, sizeof(name), "%s%s%s", relative,
+                                     *relative ? "/" : "", entry->d_name);
+    if (length < 0 || std::size_t(length) >= sizeof(name) ||
+        std::strncmp(name, "quarantine/", 11) == 0)
+      continue;
+    std::snprintf(path, sizeof(path), "%s/%s", kDirectory, name);
+    struct stat info{};
+    {
+      BusLock lock;
+      if (::stat(path, &info) != 0)
+        continue;
+    }
+    if (S_ISDIR(info.st_mode)) {
+      quarantine_directory(name, depth + 1, quarantined);
+      continue;
+    }
+    if (!partial_name(name))
+      continue;
+    char quarantine[416];
+    std::snprintf(quarantine, sizeof(quarantine),
+                  "%s/quarantine/%s-%08lx.partial", kDirectory, boot_text,
+                  static_cast<unsigned long>(quarantined));
+    bool ok;
+    {
+      BusLock lock;
+      ok = ::rename(path, quarantine) == 0;
+    }
+    if (ok) {
+      ++quarantined;
+      aqlog.printf("PARQUET QUARANTINE source=%s bytes=%llu\n", name,
+                   static_cast<unsigned long long>(info.st_size));
+    } else {
+      ++errors;
+      aqlog.printf("PARQUET ERROR operation=quarantine file=%s errno=%d\n",
+                   name, errno);
+    }
+  }
+  {
+    BusLock lock;
+    ::closedir(directory);
+  }
+}
+
+void count_quarantine(unsigned &count, std::uint64_t &bytes) {
+  DIR *directory;
+  {
+    BusLock lock;
+    directory = ::opendir("/sd/output/quarantine");
+  }
+  if (!directory)
+    return;
+  for (;;) {
+    const struct dirent *entry;
+    {
+      BusLock lock;
+      entry = ::readdir(directory);
+    }
+    if (!entry)
+      break;
+    if (entry->d_name[0] == '.' || !partial_name(entry->d_name))
+      continue;
+    char path[416];
+    std::snprintf(path, sizeof(path), "/sd/output/quarantine/%s",
+                  entry->d_name);
+    struct stat info{};
+    {
+      BusLock lock;
+      if (::stat(path, &info) != 0)
+        continue;
+    }
+    if (!S_ISREG(info.st_mode))
+      continue;
+    if (count != UINT32_MAX)
+      ++count;
+    const std::uint64_t file_bytes = static_cast<std::uint64_t>(info.st_size);
+    bytes = UINT64_MAX - bytes < file_bytes ? UINT64_MAX : bytes + file_bytes;
+  }
+  {
+    BusLock lock;
+    ::closedir(directory);
+  }
+}
+
+unsigned quarantine_partials() {
+  const char *directory = "/sd/output/quarantine";
+  if (!make_directories(directory)) {
+    ++errors;
+    aqlog.println("PARQUET ERROR operation=quarantine-mkdir");
+    return 0;
+  }
+  unsigned quarantined = 0;
+  quarantine_directory("", 0, quarantined);
+  unsigned total = 0;
+  std::uint64_t bytes = 0;
+  count_quarantine(total, bytes);
+  partials_quarantined = total;
+  quarantine_bytes = bytes;
+  return quarantined;
+}
+
 // Walks the output tree and the legacy directory; returns retained partials.
 unsigned list_all(FileEmitter emit, void *context) {
   unsigned partials = 0;
@@ -671,8 +819,11 @@ unsigned list_all(FileEmitter emit, void *context) {
 
 void list_files() {
   const unsigned partials = list_all(emit_file_serial, nullptr);
-  aqlog.printf("PARQUET PARTIAL retained=%u recovery=not-implemented\n",
-               partials);
+  aqlog.printf("PARQUET PARTIAL retained=%u quarantine_files=%lu "
+               "quarantine_bytes=%llu recovery=host-only\n",
+               partials,
+               static_cast<unsigned long>(partials_quarantined.load()),
+               static_cast<unsigned long long>(quarantine_bytes.load()));
   aqlog.println("PARQUET LIST END");
 }
 
@@ -893,7 +1044,8 @@ void service_rtc_write(std::int64_t now) {
                overdue ? " overdue=true" : "");
 }
 
-// ---- BLE `status` document and control handlers (docs/ble-sync-protocol.md)
+// ---- BLE `status` document and control handlers
+// (docs/shared/ble-sync-protocol.md)
 
 std::size_t build_status_json(char *out, std::size_t size) {
   std::int32_t generation, source;
@@ -906,8 +1058,8 @@ std::size_t build_status_json(char *out, std::size_t size) {
       "{\"up_s\":%lu,\"int_s\":%lu,\"buf\":%lu,\"fin\":%lu,\"drop\":%lu,"
       "\"err\":%lu,\"miss\":%lld,\"fail\":%u,\"codec\":\"%s\",\"utc\":%u,"
       "\"gen\":%ld,\"clk\":%ld,\"rtc\":%ld,\"sd\":%u,\"sd_kib\":%lu,"
-      "\"sd_used_kib\":%lu,\"heap\":%lu,\"part\":%lu,\"open\":%lu,"
-      "\"open_rg\":%lu}",
+      "\"sd_used_kib\":%lu,\"heap\":%lu,\"part\":%lu,\"qf\":%lu,"
+      "\"qb\":%llu,\"open\":%lu,\"open_rg\":%lu}",
       static_cast<unsigned long>(esp_timer_get_time() / 1000000),
       static_cast<unsigned long>(rotation_seconds.load()),
       static_cast<unsigned long>(buffered.load()),
@@ -923,6 +1075,8 @@ std::size_t build_status_json(char *out, std::size_t size) {
       static_cast<unsigned long>(used_kib.load()),
       static_cast<unsigned long>(ESP.getFreeHeap()),
       static_cast<unsigned long>(partials_seen.load()),
+      static_cast<unsigned long>(partials_quarantined.load()),
+      static_cast<unsigned long long>(quarantine_bytes.load()),
       static_cast<unsigned long>(open_rows.load()),
       static_cast<unsigned long>(open_groups.load()));
   return written > 0 && std::size_t(written) < size ? std::size_t(written) : 0;
@@ -1518,6 +1672,9 @@ void storage_worker(void *) {
       total_kib = SD.totalBytes() / 1024;
       used_kib = SD.usedBytes() / 1024;
     }
+    const unsigned quarantined = quarantine_partials();
+    aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0\n",
+                 quarantined);
     list_files();
   } else {
     ++errors;

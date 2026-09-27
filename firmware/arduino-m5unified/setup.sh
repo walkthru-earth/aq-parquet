@@ -5,7 +5,7 @@ trial_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=dependencies.lock
 source "${trial_dir}/dependencies.lock"
 
-toolchain_root="${M5_TOOLCHAIN_ROOT:-${HOME}/.cache/m5stack-aq-parquet/toolchains}"
+toolchain_root="${AQ_TOOLCHAIN_ROOT:-${M5_TOOLCHAIN_ROOT:-${HOME}/.cache/m5stack-aq-parquet/toolchains}}"
 bin_dir="${toolchain_root}/bin"
 arduino_cli="${bin_dir}/arduino-cli"
 
@@ -24,7 +24,7 @@ if [[ "${installed_version}" != "${ARDUINO_CLI_VERSION}" ]]; then
   trap 'rm -rf "${temp_dir}"' EXIT
 
   curl --fail --location --silent --show-error "${url}" --output "${temp_dir}/${archive}"
-  printf '%s  %s\n' "${ARDUINO_CLI_MACOS_ARM64_SHA256}" "${temp_dir}/${archive}" | shasum -a 256 --check
+  printf '%s  %s\n' "${ARDUINO_CLI_MACOS_ARM64_SHA256}" "${temp_dir}/${archive}" | /usr/bin/shasum -a 256 --check
   tar -xzf "${temp_dir}/${archive}" -C "${temp_dir}" arduino-cli
   install -m 0755 "${temp_dir}/arduino-cli" "${arduino_cli}"
 fi

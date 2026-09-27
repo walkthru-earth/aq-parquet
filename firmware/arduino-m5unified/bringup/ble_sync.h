@@ -1,6 +1,6 @@
 #pragma once
 
-// Bluetooth LE sync service, protocol v2: docs/ble-sync-protocol.md.
+// Bluetooth LE sync service, protocol v2: docs/shared/ble-sync-protocol.md.
 //
 // Threading contract. NimBLE callbacks run on the host task and never touch the
 // SD card or the display. `control` writes become ControlRequest values that
@@ -76,7 +76,7 @@ enum Error : std::uint8_t {
   kErrWifiUnavailable = 15,
 };
 
-// Advertising service data (protocol v2.1, docs/ble-sync-protocol.md
+// Advertising service data (protocol v2.1, docs/shared/ble-sync-protocol.md
 // "Advertising payload"). Ten bytes under the service UUID in the ADV PDU so a
 // phone's offloaded scan filter can wake its app on a flag bit; the name and
 // the 128-bit UUID list ride in the scan response. Little-endian.

@@ -26,10 +26,11 @@ void poll_logger(const PmsSnapshot &pms);
 // Serialize display transactions with the storage worker on the shared SPI bus.
 void lock_display();
 void unlock_display();
-// Load device settings and start the sync links (docs/ble-sync-protocol.md):
-// BLE with the stored pairing mode, and the Wi-Fi/LAN task (radio stays off
-// until configured). `display_detected` seeds the first-boot pairing default.
-// Call after begin_logger(); false when BLE could not start.
+// Load device settings and start the sync links
+// (docs/shared/ble-sync-protocol.md): BLE with the stored pairing mode, and the
+// Wi-Fi/LAN task (radio stays off until configured). `display_detected` seeds
+// the first-boot pairing default. Call after begin_logger(); false when BLE
+// could not start.
 bool start_links(bool display_detected);
 // Called from the NimBLE host task or the LAN task: queue a control request
 // for the storage worker (Wi-Fi scans are diverted to the LAN task). False

@@ -3,8 +3,8 @@
 //        [row_groups=1]
 // rows is per row group; row group g holds global rows g*rows .. g*rows+rows-1
 // and the row buffer is refilled between groups, as the logger does.
-#include "../firmware/arduino-m5unified/bringup/lz4_codec.h"
-#include "../firmware/arduino-m5unified/bringup/parquet_writer.h"
+#include "../firmware/common/src/lz4_codec.h"
+#include "../firmware/common/src/parquet_writer.h"
 
 #include <array>
 #include <cstdio>

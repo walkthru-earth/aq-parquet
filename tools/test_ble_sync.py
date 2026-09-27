@@ -1,4 +1,4 @@
-"""Frame-level tests for tools/ble_sync.py against docs/ble-sync-protocol.md v2.
+"""Frame-level tests for tools/ble_sync.py against docs/shared/ble-sync-protocol.md v2.
 
 Run: pixi run python tools/test_ble_sync.py
 A fake client answers control writes with scripted response frames; nothing
@@ -13,12 +13,13 @@ import ble_sync as ble
 
 NAME = "station=abc/unsynced/boot=def/data_unsynced_def_0-1-0.parquet"
 FILE = b"PAR1" + bytes(range(256)) * 3 + struct.pack("<I", 40) + b"PAR1"
-CONFIG = (b'{"ble":{"pair":"random","pin":123456,"pin_default":1,"bonds":1,"display":1},'
+CONFIG = (b'{"ble":{"pair":"random","pin_set":1,"pin_default":0,"bonds":1,"display":1},'
           b'"wifi":{"on":0,"ssid":"","psk_set":0,"state":"off","ip":"","rssi":0,"mac":"aa"},'
           b'"lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0}}')
 TOKEN = bytes(range(32))
 LOG = b"PARQUET BEGIN x\n" + b"BLE CONNECT peer=y\n" * 20
 INFO = b'{"proto":2,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
+STATUS = b'{"part":3,"qf":7,"qb":123456,"open":0,"open_rg":0}'
 
 
 class FakeClient:
@@ -40,7 +41,7 @@ class FakeClient:
     async def read_gatt_char(self, uuid):
         if uuid == ble.INFO:
             return bytearray(INFO)
-        return bytearray(b'{"buf":1}')
+        return bytearray(STATUS if uuid == ble.STATUS else b'{"buf":1}')
 
     async def write_gatt_char(self, _uuid, data, response=True):
         op = data[0]
@@ -102,6 +103,8 @@ async def run():
     client = FakeClient()
     session = ble.Session(client)
     await session.start()
+    status = await session.status()
+    assert status["qf"] == 7 and status["qb"] == 123456 and status["part"] == 3, status
     listed, end = await session.list_files()
     assert listed == {NAME: len(FILE), "legacy-parquet/x.parquet": 7}, listed
     assert end["count"] == 2 and end["sd_kib"] == 1000

@@ -1,18 +1,21 @@
 #pragma once
 
-// Owner-editable device settings, protocol v2 (docs/ble-sync-protocol.md,
-// "Device configuration"). Stored in the NVS namespace `aqcfg`, separate from
-// the `parquet` namespace that holds the station identity. Loaded once at boot
-// on the main task; later reads and writes come from the storage worker (the
-// only task that executes control requests), so the copy handed out by get()
-// is guarded by a spinlock and everything else is single-writer.
+// Owner-editable device settings, protocol v2
+// (docs/shared/ble-sync-protocol.md, "Device configuration"). Stored in the NVS
+// namespace `aqcfg`, separate from the `parquet` namespace that holds the
+// station identity. Loaded once at boot on the main task; later reads and
+// writes come from the storage worker (the only task that executes control
+// requests), so the copy handed out by get() is guarded by a spinlock and
+// everything else is single-writer.
 
 #include <cstddef>
 #include <cstdint>
 
 namespace config {
 enum class PairMode : std::uint8_t { Random = 0, Fixed = 1, None = 2 };
-constexpr std::uint32_t kDefaultPin = 123456;
+// Marker used only to migrate legacy installations that stored the old
+// universal PIN. New devices receive a random per-device fixed PIN.
+constexpr std::uint32_t kLegacyDefaultPin = 123456;
 constexpr std::uint16_t kLanPort = 47390;
 constexpr std::size_t kTokenBytes = 32;
 constexpr std::size_t kSsidMax = 32;
@@ -20,7 +23,7 @@ constexpr std::size_t kPskMax = 63;
 
 struct Settings {
   PairMode pair = PairMode::Random;
-  std::uint32_t pin = kDefaultPin;
+  std::uint32_t pin = 0;
   bool display = true; // detected at first boot, then frozen
   bool wifi_on = false;
   char ssid[kSsidMax + 1]{};
@@ -38,8 +41,9 @@ struct Actions {
 };
 
 // Loads settings, seeding defaults on first boot from `display_detected`
-// (Meshtastic rule: screen -> random passkey, no screen -> fixed 123456)
-// and generating the LAN token. Returns false when NVS was unusable, in which
+// (screen -> random passkey, no screen -> random per-device fixed PIN) and
+// generating the LAN token. Legacy universal PINs are rotated on load. Returns
+// false when NVS was unusable, in which
 // case defaults are used and nothing persists.
 bool load(bool display_detected);
 

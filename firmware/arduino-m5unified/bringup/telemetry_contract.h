@@ -18,7 +18,7 @@ constexpr const char *kSchemaName = "cores3-telemetry-v3";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v2";
 constexpr const char *kFirmware = "arduino-cores3-parquet-v6.3";
 constexpr const char *kDictionaryUri =
-    "https://github.com/walkthru-earth/m5stack-aq-parquet/blob/main/"
+    "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/arduino-m5unified/bringup/telemetry_fields.inc";
 // Version the acquisition procedure separately from the physical file codec.
 constexpr const char *kConfigurationId = "cores3-acquisition-v1";
@@ -41,12 +41,12 @@ enum Field : std::size_t {
   field_count
 };
 struct Definition {
-  const char *name;
-  PhysicalType type;
-  const char *procedure;
-  const char *unit;
-  const char *validity;
-  const char *property_uri;
+  const char *name = nullptr;
+  PhysicalType type = PhysicalType::Int32;
+  const char *procedure = nullptr;
+  const char *unit = nullptr;
+  const char *validity = nullptr;
+  const char *property_uri = nullptr;
 };
 constexpr Definition kFields[] = {
 #define FIELD(name, type, procedure, unit, validity)                           \

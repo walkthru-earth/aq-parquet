@@ -115,14 +115,16 @@ def main() -> None:
         require(next(response) == "AFTER", "schema command consumes through END only")
     root = Path(__file__).resolve().parents[1]
     firmware = root / "firmware/arduino-m5unified/bringup"
+    common = root / "firmware/common/src"
     with tempfile.TemporaryDirectory(prefix="m5-contract-") as temporary:
         directory = Path(temporary)
         executable = directory / "fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
+        command += ["-I", str(common)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         command += [str(root / "tools/telemetry_contract_fixture.cpp"),
-                    str(firmware / "parquet_writer.cpp"), str(firmware / "lz4_codec.cpp"),
+                    str(common / "parquet_writer.cpp"), str(common / "lz4_codec.cpp"),
                     "-o", str(executable)]
         subprocess.run(command, check=True)
         dictionary = json.loads(subprocess.check_output([str(executable), "dictionary"], text=True))

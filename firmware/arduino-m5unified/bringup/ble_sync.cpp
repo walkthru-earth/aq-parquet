@@ -42,7 +42,7 @@ std::atomic<std::uint16_t> conn_handle{BLE_HS_CONN_HANDLE_NONE}, mtu{0};
 std::atomic<std::uint32_t> passkey{0}, bonds{0}, generation{0}, ui{0};
 std::atomic<std::int64_t> pairing_deadline{0};
 config::PairMode mode = config::PairMode::Random;
-std::uint32_t fixed_passkey = config::kDefaultPin;
+std::uint32_t fixed_passkey = 0;
 // Advertising service data: flags in bits 0-7, finalized counter in bits 8-39.
 // One word so two tasks racing on publish_advert() cannot tear the pair.
 std::atomic<std::uint64_t> advert_word{~0ULL};
@@ -134,7 +134,7 @@ public:
   std::uint32_t onPassKeyDisplay() override {
     // `random`: fresh six digits for each pairing attempt, shown by the display
     // loop and printed so a bench log can reproduce the pairing. `fixed`: the
-    // owner's PIN (default 123456) for boards without a screen; still shown
+    // owner's random per-device PIN for boards without a screen; still shown
     // when a screen exists. The pairing overlay is drawn in both modes.
     const std::uint32_t key = mode == config::PairMode::Fixed
                                   ? fixed_passkey

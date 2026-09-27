@@ -112,9 +112,10 @@ public:
                const Column *columns, size_t column_count,
                const Compression *compression = nullptr);
   Result row_group(size_t row_count, int sorted_by = -1);
-  // build is appended to created_by as "(build <build>)" when given.
+  // build is appended to created_by as "(build <build>)" when given. Omitting
+  // created_by preserves the existing CoreS3 file identity.
   Result finish(const KeyValue *metadata = nullptr, size_t metadata_count = 0,
-                const char *build = nullptr);
+                const char *build = nullptr, const char *created_by = nullptr);
   bool active() const { return active_; }
   size_t row_groups() const { return groups_; }
   uint64_t rows() const { return rows_; }
@@ -143,6 +144,7 @@ Result write_parquet(Sink sink, void *context, const Column *columns,
                      Workspace &workspace, const KeyValue *metadata = nullptr,
                      size_t metadata_count = 0,
                      const Compression *compression = nullptr,
-                     int sorted_by = -1, const char *build = nullptr);
+                     int sorted_by = -1, const char *build = nullptr,
+                     const char *created_by = nullptr);
 
 } // namespace telemetry

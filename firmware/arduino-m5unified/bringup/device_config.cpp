@@ -17,6 +17,8 @@ Settings current;
 Settings booted; // pair/pin the running BLE stack was started with
 bool persistent = false;
 
+std::uint32_t random_pin() { return esp_random() % 1000000U; }
+
 bool save_locked(const Settings &settings) {
   Preferences store;
   if (!store.begin(kNamespace, false))
@@ -109,21 +111,28 @@ bool load(bool display_detected) {
     aqlog.println("CONFIG ERROR operation=nvs-open persistent=false");
     settings.display = display_detected;
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
+    settings.pin = random_pin();
     esp_fill_random(settings.token, kTokenBytes);
     publish(settings);
     booted = settings;
     return false;
   }
   const bool first_boot = !store.isKey("pair");
+  bool migrated_pin = false;
   if (first_boot) {
     settings.display = display_detected;
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
-    settings.pin = kDefaultPin;
+    settings.pin = random_pin();
     esp_fill_random(settings.token, kTokenBytes);
   } else {
     const auto pair = store.getUChar("pair", 0);
     settings.pair = pair > 2 ? PairMode::Random : static_cast<PairMode>(pair);
-    settings.pin = store.getUInt("pin", kDefaultPin);
+    settings.pin = store.getUInt("pin", kLegacyDefaultPin) % 1000000U;
+    if (settings.pin == kLegacyDefaultPin) {
+      settings.pin = random_pin();
+      migrated_pin = true;
+      aqlog.println("CONFIG SECURITY legacy_pin_rotated=true");
+    }
     settings.display = store.getUChar("disp", display_detected ? 1 : 0) != 0;
     settings.wifi_on = store.getUChar("wifion", 0) != 0;
     store.getString("ssid", settings.ssid, sizeof(settings.ssid));
@@ -134,17 +143,18 @@ bool load(bool display_detected) {
   }
   store.end();
   persistent = true;
-  if (first_boot && !save_locked(settings))
-    aqlog.println("CONFIG ERROR operation=nvs-seed");
+  if ((first_boot || migrated_pin) && !save_locked(settings))
+    aqlog.println("CONFIG ERROR operation=nvs-seed-or-migrate");
   publish(settings);
   booted = settings;
-  aqlog.printf(
-      "CONFIG LOADED first_boot=%s display=%s pair=%s pin_default=%s "
-      "wifi_on=%s ssid_set=%s lan_on=%s\n",
-      first_boot ? "true" : "false", settings.display ? "true" : "false",
-      pair_name(settings.pair), settings.pin == kDefaultPin ? "true" : "false",
-      settings.wifi_on ? "true" : "false", settings.ssid[0] ? "true" : "false",
-      settings.lan_on ? "true" : "false");
+  aqlog.printf("CONFIG LOADED first_boot=%s display=%s pair=%s pin_default=%s "
+               "wifi_on=%s ssid_set=%s lan_on=%s\n",
+               first_boot ? "true" : "false",
+               settings.display ? "true" : "false", pair_name(settings.pair),
+               settings.pin == kLegacyDefaultPin ? "true" : "false",
+               settings.wifi_on ? "true" : "false",
+               settings.ssid[0] ? "true" : "false",
+               settings.lan_on ? "true" : "false");
   return true;
 }
 
@@ -275,14 +285,14 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
   }
   publish(next);
   actions = pending;
-  aqlog.printf("CONFIG SET pair=%s pin_default=%s wifi_on=%s ssid_set=%s "
-               "lan_on=%s clear_bonds=%s rotate_token=%s reboot_required=%s\n",
-               pair_name(next.pair), next.pin == kDefaultPin ? "true" : "false",
-               next.wifi_on ? "true" : "false", next.ssid[0] ? "true" : "false",
-               next.lan_on ? "true" : "false",
-               pending.clear_bonds ? "true" : "false",
-               pending.rotate_token ? "true" : "false",
-               reboot_required() ? "true" : "false");
+  aqlog.printf(
+      "CONFIG SET pair=%s pin_default=%s wifi_on=%s ssid_set=%s "
+      "lan_on=%s clear_bonds=%s rotate_token=%s reboot_required=%s\n",
+      pair_name(next.pair), next.pin == kLegacyDefaultPin ? "true" : "false",
+      next.wifi_on ? "true" : "false", next.ssid[0] ? "true" : "false",
+      next.lan_on ? "true" : "false", pending.clear_bonds ? "true" : "false",
+      pending.rotate_token ? "true" : "false",
+      reboot_required() ? "true" : "false");
   return true;
 }
 
@@ -301,12 +311,13 @@ std::size_t build_json(char *out, std::size_t size, const WifiView &wifi) {
   json_escape(ssid, sizeof(ssid), settings.ssid);
   const int written = std::snprintf(
       out, size,
-      "{\"ble\":{\"pair\":\"%s\",\"pin\":%lu,\"pin_default\":%u,\"bonds\":%u,"
+      "{\"ble\":{\"pair\":\"%s\",\"pin_set\":%u,\"pin_default\":%u,\"bonds\":%"
+      "u,"
       "\"display\":%u},\"wifi\":{\"on\":%u,\"ssid\":\"%s\",\"psk_set\":%u,"
       "\"state\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\"},"
       "\"lan\":{\"on\":%u,\"port\":%u,\"host\":\"%s\",\"clients\":%u}}",
-      pair_name(settings.pair), static_cast<unsigned long>(settings.pin),
-      settings.pin == kDefaultPin ? 1U : 0U, wifi.bonds,
+      pair_name(settings.pair), settings.pin <= 999999U ? 1U : 0U,
+      settings.pin == kLegacyDefaultPin ? 1U : 0U, wifi.bonds,
       settings.display ? 1U : 0U, settings.wifi_on ? 1U : 0U, ssid,
       settings.psk[0] ? 1U : 0U, wifi.state, wifi.ip, wifi.rssi, wifi.mac,
       settings.lan_on ? 1U : 0U, unsigned(kLanPort), wifi.host, wifi.clients);

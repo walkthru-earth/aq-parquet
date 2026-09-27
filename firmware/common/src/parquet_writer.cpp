@@ -22,7 +22,7 @@ static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
 
 constexpr uint8_t kTrue = 1, kFalse = 2, kI16 = 4, kI32 = 5, kI64 = 6,
                   kBinary = 8, kList = 9, kStruct = 12;
-constexpr const char *kCreatedBy = "m5stack-aq-parquet version 0.2";
+constexpr const char *kLegacyCreatedBy = "m5stack-aq-parquet version 0.2";
 
 class Output {
 public:
@@ -434,7 +434,7 @@ void row_group_metadata(Output &out, const Column *columns, size_t count,
 void footer(Output &out, const Column *columns, size_t count,
             const Workspace &workspace, size_t groups, uint64_t rows,
             const KeyValue *metadata, size_t metadata_count, Codec codec,
-            const char *build) {
+            const char *build, const char *created_by) {
   Struct file(out);
   file.number(1, kI32, 1);
   file.list(2, kStruct, count + 1);
@@ -459,10 +459,12 @@ void footer(Output &out, const Column *columns, size_t count,
     }
   }
   file.field(6, kBinary);
+  if (!created_by)
+    created_by = kLegacyCreatedBy;
   if (build && build[0])
-    out.string(kCreatedBy, " (build ", build, ")");
+    out.string(created_by, " (build ", build, ")");
   else
-    out.string(kCreatedBy);
+    out.string(created_by);
   // Column orders are required for min_value/max_value to be meaningful.
   file.list(7, kStruct, count);
   for (size_t i = 0; i < count; ++i) {
@@ -580,11 +582,12 @@ Result Writer::row_group(size_t row_count, int sorted_by) {
 }
 
 Result Writer::finish(const KeyValue *metadata, size_t metadata_count,
-                      const char *build) {
+                      const char *build, const char *created_by) {
   if (!active_)
     return {false, accepted_, "writer is not active"};
   if (metadata_count > 64 || (metadata_count && !metadata) ||
-      (build && !bounded_string(build, 64, true)))
+      (build && !bounded_string(build, 64, true)) ||
+      (created_by && !bounded_string(created_by, 128)))
     return fail("invalid metadata or build identity");
   for (size_t i = 0; i < metadata_count; ++i) {
     if (!bounded_string(metadata[i].key, 255) ||
@@ -595,7 +598,7 @@ Result Writer::finish(const KeyValue *metadata, size_t metadata_count,
   const uint64_t footer_start = out.position();
   footer(out, columns_, column_count_, *workspace_, groups_, rows_, metadata,
          metadata_count, compressed_ ? compression_.codec : Codec::Uncompressed,
-         build);
+         build, created_by);
   out.little_endian(out.position() - footer_start, 4);
   out.bytes("PAR1", 4);
   out.flush();
@@ -607,7 +610,7 @@ Result write_parquet(Sink sink, void *context, const Column *columns,
                      size_t column_count, size_t row_count,
                      Workspace &workspace, const KeyValue *metadata,
                      size_t metadata_count, const Compression *compression,
-                     int sorted_by, const char *build) {
+                     int sorted_by, const char *build, const char *created_by) {
   if (row_count > kMaxRows)
     return {false, 0, "invalid argument or capacity exceeded"};
   Writer writer;
@@ -616,7 +619,7 @@ Result write_parquet(Sink sink, void *context, const Column *columns,
   if (result.ok && row_count)
     result = writer.row_group(row_count, sorted_by);
   if (result.ok)
-    result = writer.finish(metadata, metadata_count, build);
+    result = writer.finish(metadata, metadata_count, build, created_by);
   return result;
 }
 

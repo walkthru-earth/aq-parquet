@@ -257,13 +257,13 @@ def main() -> None:
         directory = Path(temporary)
         executable = directory / "parquet_fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
-        command += ["-I", str(root / "firmware/arduino-m5unified/vendor/lz4")]
+        command += ["-I", str(root / "firmware/common/vendor/lz4")]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         command += [
             str(root / "tools/parquet_fixture.cpp"),
-            str(root / "firmware/arduino-m5unified/bringup/parquet_writer.cpp"),
-            str(root / "firmware/arduino-m5unified/bringup/lz4_codec.cpp"),
+            str(root / "firmware/common/src/parquet_writer.cpp"),
+            str(root / "firmware/common/src/lz4_codec.cpp"),
             "-o", str(executable),
         ]
         subprocess.run(command, check=True)

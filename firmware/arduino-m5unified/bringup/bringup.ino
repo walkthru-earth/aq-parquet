@@ -7,6 +7,7 @@
 #include "telemetry_logger.h"
 #include "wifi_link.h"
 #include <M5Unified.h>
+#include <pms_frame.h>
 
 #include <Arduino.h>
 #include <Esp.h>
@@ -41,104 +42,8 @@ constexpr int kPmsTx = 17;
 
 HardwareSerial pms_serial(1);
 
-struct PmsFrame {
-  std::uint16_t cf1_pm1 = 0;
-  std::uint16_t cf1_pm25 = 0;
-  std::uint16_t cf1_pm10 = 0;
-  std::uint16_t atmospheric_pm1 = 0;
-  std::uint16_t atmospheric_pm25 = 0;
-  std::uint16_t atmospheric_pm10 = 0;
-  std::array<std::uint16_t, 6> particle_counts{};
-  std::uint8_t firmware_version = 0;
-  std::uint8_t sensor_error = 0;
-};
-
-class PmsParser {
-public:
-  bool push(std::uint8_t byte, PmsFrame &frame) {
-    if (used_ == 0 && byte != 0x42) {
-      return false;
-    }
-
-    buffer_[used_++] = byte;
-    if (used_ == 2 && buffer_[1] != 0x4d) {
-      resynchronize();
-      return false;
-    }
-    if (used_ == 4 && word_at(2) != 28) {
-      ++length_failures_;
-      resynchronize();
-      return false;
-    }
-    if (used_ < buffer_.size()) {
-      return false;
-    }
-
-    const auto sum = std::accumulate(
-        buffer_.begin(), buffer_.end() - 2, std::uint16_t{0},
-        [](std::uint16_t accumulated, std::uint8_t value) {
-          return static_cast<std::uint16_t>(accumulated + value);
-        });
-    if (sum != word_at(30)) {
-      ++checksum_failures_;
-      resynchronize();
-      return false;
-    }
-
-    frame.cf1_pm1 = word_at(4);
-    frame.cf1_pm25 = word_at(6);
-    frame.cf1_pm10 = word_at(8);
-    frame.atmospheric_pm1 = word_at(10);
-    frame.atmospheric_pm25 = word_at(12);
-    frame.atmospheric_pm10 = word_at(14);
-    for (std::size_t index = 0; index < frame.particle_counts.size(); ++index) {
-      frame.particle_counts[index] = word_at(16 + index * 2);
-    }
-    frame.firmware_version = buffer_[28];
-    frame.sensor_error = buffer_[29];
-    used_ = 0;
-    return true;
-  }
-
-  std::uint32_t checksum_failures() const { return checksum_failures_; }
-  std::uint32_t length_failures() const { return length_failures_; }
-
-private:
-  std::uint16_t word_at(std::size_t offset) const {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(buffer_[offset]) << 8) |
-        buffer_[offset + 1]);
-  }
-
-  void resynchronize() {
-    std::size_t next = used_;
-    for (std::size_t index = 1; index + 1 < used_; ++index) {
-      if (buffer_[index] == 0x42 && buffer_[index + 1] == 0x4d) {
-        next = index;
-        break;
-      }
-    }
-    if (next == used_ && used_ != 0 && buffer_[used_ - 1] == 0x42) {
-      buffer_[0] = 0x42;
-      used_ = 1;
-      return;
-    }
-    if (next < used_) {
-      const std::size_t remaining = used_ - next;
-      std::memmove(buffer_.data(), buffer_.data() + next, remaining);
-      used_ = remaining;
-      return;
-    }
-    used_ = 0;
-  }
-
-  std::array<std::uint8_t, 32> buffer_{};
-  std::size_t used_ = 0;
-  std::uint32_t checksum_failures_ = 0;
-  std::uint32_t length_failures_ = 0;
-};
-
-PmsParser pms_parser;
+using PmsFrame = plantower::Frame;
+plantower::Parser pms_parser{plantower::Model::Pmsa003};
 PmsFrame latest_pms_frame{};
 bool has_pms_frame = false;
 bool sd_mounted = false;
@@ -692,12 +597,8 @@ void draw_bluetooth_page() {
   else
     M5.Display.print("BT advertising: open the AQ Sync app to pair");
   M5.Display.setCursor(8, 96);
-  M5.Display.printf("Pairing: %s%s   bonded phones: %lu",
+  M5.Display.printf("Pairing: %s   bonded phones: %lu",
                     config::pair_name(settings.pair),
-                    settings.pair == config::PairMode::Fixed &&
-                            settings.pin == config::kDefaultPin
-                        ? " (default PIN!)"
-                        : "",
                     static_cast<unsigned long>(link.bonds));
   if (config::reboot_required()) {
     M5.Display.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -746,7 +647,7 @@ void draw_pairing_overlay(const ble::PairingState &pairing) {
   M5.Display.printf("Device %s", ble::local_name());
   M5.Display.setCursor(8, 190);
   if (ble::pair_mode() == config::PairMode::Fixed)
-    M5.Display.print("Fixed PIN: change it from the app if it is 123456.");
+    M5.Display.print("Per-device fixed PIN; configurable from the app.");
   else
     M5.Display.print("Only someone reading this screen can pair.");
 }

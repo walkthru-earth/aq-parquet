@@ -1,11 +1,12 @@
 #pragma once
 
-// Wi-Fi station + LAN sync server, protocol v2 (docs/ble-sync-protocol.md,
-// "LAN transport"). One FreeRTOS task owns the radio state machine, the mDNS
-// responder, the listening socket and the single TCP client. It never touches
-// the SD card or the display: request bodies go onto the same command queue
-// the BLE and serial paths use, and the storage worker answers through
-// send_response(). Wi-Fi scans run here, not on the worker.
+// Wi-Fi station + LAN sync server, protocol v2
+// (docs/shared/ble-sync-protocol.md, "LAN transport"). One FreeRTOS task owns
+// the radio state machine, the mDNS responder, the listening socket and the
+// single TCP client. It never touches the SD card or the display: request
+// bodies go onto the same command queue the BLE and serial paths use, and the
+// storage worker answers through send_response(). Wi-Fi scans run here, not on
+// the worker.
 
 #include "ble_sync.h"
 
