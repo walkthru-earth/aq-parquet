@@ -16,6 +16,11 @@ class DebugLog : public Print {
 public:
   static constexpr std::size_t kRingBytes = 8192;
 
+  DebugLog();
+  // Optional board-selected console. Set once before worker/radio tasks start;
+  // the sink must outlive this log. The default preserves Arduino Serial.
+  void set_output(Print &output) { output_ = &output; }
+
   size_t write(uint8_t byte) override;
   size_t write(const uint8_t *buffer, size_t size) override;
 
@@ -24,6 +29,7 @@ public:
   std::size_t tail(char *out, std::size_t max, std::uint32_t &total) const;
 
 private:
+  Print *output_ = nullptr;
   char ring_[kRingBytes]{};
   std::size_t head_ = 0; // next write position
   std::uint32_t total_ = 0;

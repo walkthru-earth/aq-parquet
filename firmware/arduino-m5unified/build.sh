@@ -22,7 +22,9 @@ printf '%s  %s\n' "${dictionary_digest}" \
   "${trial_dir}/bringup/telemetry_fields.inc" | /usr/bin/shasum -a 256 -c -
 "${trial_dir}/arduino-cli.sh" compile \
   --fqbn "${CORES3_FQBN}" \
-  --libraries "${common_dir}" \
+  --library "${common_dir}" \
+  --library "${common_dir}/runtime" \
+  --library "${common_dir}/connectivity" \
   --warnings all \
   --build-path "${build_dir}" \
   --export-binaries \

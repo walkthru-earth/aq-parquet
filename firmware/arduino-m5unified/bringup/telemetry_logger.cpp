@@ -6,6 +6,11 @@
 #include "parquet_writer.h"
 #include "telemetry_contract.h"
 #include "wifi_link.h"
+#include <archive_sync.h>
+#include <control_sync.h>
+#include <sync_codec.h>
+#include <sync_service.h>
+#include <utc_clock.h>
 
 #include <Arduino.h>
 #include <M5Unified.h>
@@ -38,6 +43,14 @@
 namespace telemetry {
 namespace {
 using namespace contract;
+using aq::sync::crc_update;
+using aq::sync::get_i64;
+using aq::sync::get_u16;
+using aq::sync::get_u32;
+using aq::sync::put_i64;
+using aq::sync::put_u16;
+using aq::sync::put_u32;
+using aq::utc::days_from_civil;
 constexpr std::size_t kMaxRows = 90;
 constexpr std::int64_t kSampleUs = 10000000;
 constexpr const char *kDirectory = "/sd/output";
@@ -133,16 +146,6 @@ public:
   ~BusLock() { unlock_display(); }
 };
 
-std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t *data,
-                         std::size_t size) {
-  for (std::size_t i = 0; i < size; ++i) {
-    crc ^= data[i];
-    for (unsigned bit = 0; bit < 8; ++bit)
-      crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
-  }
-  return crc;
-}
-
 bool sink(void *context, const std::uint8_t *data, std::size_t size) {
   BusLock lock;
   FILE *file = static_cast<FILE *>(context);
@@ -184,12 +187,8 @@ bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
              std::fread(magic, 1, 4, file) == 4 &&
              std::fseek(file, -8, SEEK_END) == 0 &&
              std::fread(tail, 1, 8, file) == 8;
-        const std::uint32_t footer = tail[0] | (std::uint32_t(tail[1]) << 8) |
-                                     (std::uint32_t(tail[2]) << 16) |
-                                     (std::uint32_t(tail[3]) << 24);
-        ok = ok && std::memcmp(magic, "PAR1", 4) == 0 &&
-             std::memcmp(tail + 4, "PAR1", 4) == 0 && footer > 0 &&
-             footer <= size - 12 && std::fseek(file, 0, SEEK_SET) == 0;
+        ok = ok && aq::sync::parquet_complete(size, magic, tail) &&
+             std::fseek(file, 0, SEEK_SET) == 0;
       }
     }
   }
@@ -585,19 +584,7 @@ bool write_benchmark(std::size_t count, Codec codec) {
          finalize_file(target);
 }
 
-bool safe_name(const char *name) {
-  const std::size_t length = std::strlen(name);
-  if (length < 9 || length > 384 || name[0] == '/' ||
-      std::strcmp(name + length - 8, ".parquet") != 0)
-    return false;
-  for (std::size_t i = 0; i < length; ++i)
-    if (!((name[i] >= '0' && name[i] <= '9') ||
-          (name[i] >= 'a' && name[i] <= 'z') || name[i] == '-' ||
-          name[i] == '.' || name[i] == '_' || name[i] == '=' || name[i] == '/'))
-      return false;
-  return std::strstr(name, "..") == nullptr &&
-         std::strstr(name, "//") == nullptr;
-}
+bool safe_name(const char *name) { return aq::sync::safe_parquet_name(name); }
 
 // One finalized-file entry from a listing. `name` already carries the export
 // prefix ("legacy-parquet/" for the pre-Hive directory).
@@ -830,11 +817,11 @@ void list_files() {
 bool resolve_path(const char *name, char *path, std::size_t size) {
   if (!safe_name(name))
     return false;
-  if (std::strncmp(name, "legacy-parquet/", 15) == 0)
-    std::snprintf(path, size, "/sd/parquet/%.369s", name + 15);
-  else
-    std::snprintf(path, size, "%s/%.384s", kDirectory, name);
-  return true;
+  const int written =
+      std::strncmp(name, "legacy-parquet/", 15) == 0
+          ? std::snprintf(path, size, "/sd/parquet/%.369s", name + 15)
+          : std::snprintf(path, size, "%s/%.384s", kDirectory, name);
+  return written >= 0 && static_cast<std::size_t>(written) < size;
 }
 
 void send_file(const char *name) {
@@ -891,14 +878,7 @@ void send_file(const char *name) {
 }
 
 const char *clock_source_name(std::int32_t source) {
-  switch (source) {
-  case kClockHost:
-    return "host";
-  case kClockRtc:
-    return "rtc";
-  default:
-    return "none";
-  }
+  return aq::utc::source_name(source);
 }
 
 // Shared by `parquet time`, the BLE/LAN SET_TIME op and the boot-time RTC
@@ -910,7 +890,7 @@ const char *clock_source_name(std::int32_t source) {
 bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
                std::int64_t *skew_ns = nullptr,
                std::int32_t *previous = nullptr) {
-  if (seconds < 1577836800LL || seconds > 4102444800LL)
+  if (!aq::utc::supported_epoch(seconds))
     return false;
   const std::int64_t utc_ns = seconds * 1000000000;
   portENTER_CRITICAL(&clock_mutex);
@@ -918,7 +898,8 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
     *previous = clock_generation ? clock_source : kClockNone;
   if (skew_ns)
     *skew_ns = clock_generation
-                   ? utc_ns - (anchor_utc_ns + (mono - anchor_mono_us) * 1000)
+                   ? utc_ns - (aq::utc::estimate_ns(mono, anchor_mono_us,
+                                                    anchor_utc_ns))
                    : 0;
   anchor_mono_us = mono;
   anchor_utc_ns = utc_ns;
@@ -944,17 +925,6 @@ void report_host_clock(const char *transport, std::int64_t seconds,
     aqlog.printf("PARQUET CLOCK transport=%s previous=%s skew_ms=%lld\n",
                  transport, clock_source_name(previous),
                  static_cast<long long>(skew_ns / 1000000));
-}
-
-// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
-// days_from_civil); avoids mktime/timegm and the process TZ entirely.
-std::int64_t days_from_civil(int year, unsigned month, unsigned day) {
-  year -= month <= 2;
-  const std::int64_t era = (year >= 0 ? year : year - 399) / 400;
-  const unsigned yoe = static_cast<unsigned>(year - era * 400);
-  const unsigned doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
-  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-  return era * 146097 + static_cast<std::int64_t>(doe) - 719468;
 }
 
 // Boot-time seed from the BM8563: used only when the chip reports no
@@ -1008,7 +978,8 @@ void service_rtc_write(std::int64_t now) {
   utc_anchor = anchor_utc_ns;
   mono_anchor = anchor_mono_us;
   portEXIT_CRITICAL(&clock_mutex);
-  const std::int64_t utc_ns = utc_anchor + (now - mono_anchor) * 1000;
+  const std::int64_t utc_ns =
+      aq::utc::estimate_ns(now, mono_anchor, utc_anchor);
   const std::int64_t fraction_ns = utc_ns % 1000000000;
   const bool overdue = now - rtc_write_requested_us.load() > 5000000LL;
   if (fraction_ns >= 60000000LL && !overdue)
@@ -1176,17 +1147,6 @@ void publish_live(const Sample &row) {
   }
 }
 
-struct OpenFile {
-  FILE *file = nullptr;
-  std::uint16_t handle = 0;
-  std::uint32_t size = 0;
-  std::uint32_t crc = 0;
-  std::uint32_t generation = 0;
-  ble::Link link = ble::Link::Ble;
-};
-OpenFile open_file;
-std::uint16_t next_handle = 1;
-
 // The request being executed; handlers answer on its link.
 const ble::ControlRequest *current_request = nullptr;
 
@@ -1217,279 +1177,50 @@ bool respond_error(ble::Op op, ble::Error code, const char *detail) {
              ? lan::send_error(op, code, detail)
              : ble::send_error(op, code, detail);
 }
-// A handle is only honoured on the link that opened it.
-bool handle_matches(std::uint16_t handle) {
-  return open_file.file && handle == open_file.handle && current_request &&
-         current_request->link == open_file.link;
-}
+// Archive policy stays with the board worker; file-transfer sessions and wire
+// frames are shared across Arduino boards and BLE/LAN transports.
+aqsync::ArchiveSession archive_session(
+    {nullptr,
+     [](void *, aqsync::FileEmitter emit, void *context) {
+       return list_all(emit, context);
+     },
+     [](void *, const char *name, char *path, std::size_t size) {
+       return resolve_path(name, path, size);
+     },
+     [](void *, const char *path, std::uint32_t &size, std::uint32_t &crc) {
+       return finalized_file(path, size, crc);
+     },
+     [](void *) { return total_kib.load(); },
+     [](void *) { return used_kib.load(); },
+     [](void *) {
+       unlisted_files = false;
+       publish_advert();
+     },
+     [](void *) { lock_display(); }, [](void *) { unlock_display(); },
+     [](void *, const char *line) { aqlog.print(line); }},
+    {nullptr, [](void *, ble::Link link) { return link_generation(link); },
+     [](void *, ble::Link link) {
+       return link == ble::Link::Lan ? lan::payload_max() : ble::payload_max();
+     },
+     [](void *, ble::Link link, const std::uint8_t *frame, std::size_t length) {
+       return link == ble::Link::Lan ? lan::send_response(frame, length)
+                                     : ble::send_response(frame, length);
+     },
+     [](void *, ble::Link link, ble::Op op, ble::Error code,
+        const char *detail) {
+       return link == ble::Link::Lan ? lan::send_error(op, code, detail)
+                                     : ble::send_error(op, code, detail);
+     },
+     [](void *) { worker_heartbeat_us = esp_timer_get_time(); }});
 
-void close_open_file() {
-  if (open_file.file) {
-    BusLock lock;
-    std::fclose(open_file.file);
-  }
-  open_file = OpenFile{};
-}
-
-// Drop the handle when the connection that opened it is gone.
-void reconcile_open_file() {
-  if (open_file.file && open_file.generation != link_generation(open_file.link))
-    close_open_file();
-}
-
-void put_u16(std::uint8_t *out, std::uint16_t value) {
-  out[0] = value & 0xff;
-  out[1] = value >> 8;
-}
-void put_u32(std::uint8_t *out, std::uint32_t value) {
-  for (unsigned i = 0; i < 4; ++i)
-    out[i] = (value >> (8 * i)) & 0xff;
-}
-void put_i64(std::uint8_t *out, std::int64_t value) {
-  const auto bits = static_cast<std::uint64_t>(value);
-  for (unsigned i = 0; i < 8; ++i)
-    out[i] = (bits >> (8 * i)) & 0xff;
-}
-std::uint16_t get_u16(const std::uint8_t *in) {
-  return static_cast<std::uint16_t>(in[0] | (in[1] << 8));
-}
-std::uint32_t get_u32(const std::uint8_t *in) {
-  return std::uint32_t(in[0]) | (std::uint32_t(in[1]) << 8) |
-         (std::uint32_t(in[2]) << 16) | (std::uint32_t(in[3]) << 24);
-}
-std::int64_t get_i64(const std::uint8_t *in) {
-  std::uint64_t bits = 0;
-  for (unsigned i = 0; i < 8; ++i)
-    bits |= std::uint64_t(in[i]) << (8 * i);
-  return static_cast<std::int64_t>(bits);
-}
-
-struct ListContext {
-  std::uint16_t count = 0;
-  bool ok = true;
-};
-
-void emit_file_ble(void *context, const char *name, std::uint32_t bytes) {
-  auto *list = static_cast<ListContext *>(context);
-  if (!list->ok)
-    return;
-  const std::size_t name_length = std::strlen(name);
-  const std::size_t payload_max = link_payload_max();
-  if (payload_max < 6 || name_length + 5 > payload_max) {
-    // Cannot fit this entry; the phone will not see it. Counted honestly.
-    aqlog.printf("BLE LIST SKIP name_bytes=%u payload_max=%u\n",
-                 unsigned(name_length), unsigned(payload_max));
-    return;
-  }
-  std::uint8_t frame[5 + 400];
-  frame[0] = ble::kFrameFile;
-  put_u32(frame + 1, bytes);
-  std::memcpy(frame + 5, name, name_length);
-  if (!respond(frame, 5 + name_length)) {
-    // The peer will see no LIST_END and time out; say so on serial.
-    aqlog.printf("BLE LIST ABORT after=%u reason=notify-refused\n",
-                 unsigned(list->count));
-    list->ok = false;
-    return;
-  }
-  ++list->count;
-}
-
-void ble_list() {
-  ListContext list;
-  const unsigned partials = list_all(emit_file_ble, &list);
-  if (!list.ok)
-    return;
-  std::uint8_t frame[13];
-  frame[0] = ble::kFrameListEnd;
-  put_u16(frame + 1, list.count);
-  put_u16(frame + 3,
-          static_cast<std::uint16_t>(partials > 65535 ? 65535 : partials));
-  put_u32(frame + 5, total_kib.load());
-  put_u32(frame + 9, used_kib.load());
-  respond(frame, sizeof(frame));
-  unlisted_files = false;
-  publish_advert();
-}
-
-void ble_open(const std::uint8_t *name_bytes, std::size_t name_length) {
-  char name[400];
-  if (name_length == 0 || name_length >= sizeof(name)) {
-    respond_error(ble::kOpOpen, ble::kErrInvalidName, "length");
-    return;
-  }
-  std::memcpy(name, name_bytes, name_length);
-  name[name_length] = '\0';
-  char path[416];
-  if (!resolve_path(name, path, sizeof(path))) {
-    respond_error(ble::kOpOpen, ble::kErrInvalidName, "charset");
-    return;
-  }
-  close_open_file();
-  std::uint32_t size = 0, crc = 0;
-  if (!finalized_file(path, size, crc)) {
-    respond_error(ble::kOpOpen, ble::kErrNotFinalized, name);
-    return;
-  }
-  FILE *file;
-  {
-    BusLock lock;
-    file = std::fopen(path, "rb");
-  }
-  if (!file) {
-    respond_error(ble::kOpOpen, ble::kErrOpenFailed, name);
-    return;
-  }
-  open_file.file = file;
-  open_file.handle = next_handle++;
-  if (next_handle == 0)
-    next_handle = 1;
-  open_file.size = size;
-  open_file.crc = crc;
-  open_file.link = current_request ? current_request->link : ble::Link::Ble;
-  open_file.generation = link_generation(open_file.link);
-  std::uint8_t frame[11 + 400];
-  frame[0] = ble::kFrameOpened;
-  put_u16(frame + 1, open_file.handle);
-  put_u32(frame + 3, size);
-  put_u32(frame + 7, crc);
-  std::memcpy(frame + 11, name, name_length);
-  aqlog.printf("BLE OPEN handle=%u bytes=%lu crc32=%08lx name=%s\n",
-               unsigned(open_file.handle), static_cast<unsigned long>(size),
-               static_cast<unsigned long>(crc), name);
-  respond(frame, 11 + name_length);
-}
-
-void ble_read(std::uint16_t handle, std::uint32_t offset,
-              std::uint32_t length) {
-  auto end = [&](std::uint32_t next, ble::Error status) {
-    std::uint8_t frame[8];
-    frame[0] = ble::kFrameReadEnd;
-    put_u16(frame + 1, handle);
-    put_u32(frame + 3, next);
-    frame[7] = static_cast<std::uint8_t>(status);
-    respond(frame, sizeof(frame));
-  };
-  if (!handle_matches(handle)) {
-    respond_error(ble::kOpRead, ble::kErrBadHandle, nullptr);
-    return;
-  }
-  if (offset > open_file.size) {
-    respond_error(ble::kOpRead, ble::kErrRange, nullptr);
-    return;
-  }
-  if (length > ble::kMaxRead)
-    length = ble::kMaxRead;
-  if (offset + length > open_file.size)
-    length = open_file.size - offset;
-  const std::size_t payload_max = link_payload_max();
-  if (payload_max <= 7) {
-    end(offset, ble::kErrBusy);
-    return;
-  }
-  constexpr std::size_t kChunkCap = lan::kPayloadMax - 7;
-  const std::size_t chunk_max =
-      payload_max - 7 > kChunkCap ? kChunkCap : payload_max - 7;
-  bool seek_ok;
-  {
-    BusLock lock;
-    seek_ok =
-        std::fseek(open_file.file, static_cast<long>(offset), SEEK_SET) == 0;
-  }
-  if (!seek_ok) {
-    end(offset, ble::kErrOpenFailed);
-    return;
-  }
-  std::uint8_t frame[7 + kChunkCap];
-  std::uint32_t sent = 0;
-  while (sent < length) {
-    const std::size_t want =
-        length - sent < chunk_max ? std::size_t(length - sent) : chunk_max;
-    std::size_t count;
-    {
-      BusLock lock;
-      count = std::fread(frame + 7, 1, want, open_file.file);
-    }
-    if (count == 0) {
-      end(offset + sent, ble::kErrOpenFailed);
-      return;
-    }
-    frame[0] = ble::kFrameChunk;
-    put_u16(frame + 1, handle);
-    put_u32(frame + 3, offset + sent);
-    if (!respond(frame, 7 + count)) {
-      end(offset + sent, ble::kErrBusy);
-      return;
-    }
-    sent += count;
-  }
-  aqlog.printf("BLE READ handle=%u offset=%lu bytes=%lu\n", unsigned(handle),
-               static_cast<unsigned long>(offset),
-               static_cast<unsigned long>(sent));
-  end(offset + sent, static_cast<ble::Error>(0));
-}
-
-void ble_close(std::uint16_t handle) {
-  if (!handle_matches(handle)) {
-    respond_error(ble::kOpClose, ble::kErrBadHandle, nullptr);
-    return;
-  }
-  close_open_file();
-  std::uint8_t frame[3];
-  frame[0] = ble::kFrameClosed;
-  put_u16(frame + 1, handle);
-  respond(frame, sizeof(frame));
-}
-
-void send_config() {
-  const lan::Status wifi = lan::status();
-  config::WifiView view{wifi.state,
-                        wifi.ip,
-                        wifi.rssi,
-                        wifi.mac,
-                        wifi.authenticated ? 1U : 0U,
-                        wifi.host,
-                        ble::link().bonds};
-  std::uint8_t frame[2 + 400];
-  const std::size_t length =
-      config::build_json(reinterpret_cast<char *>(frame + 2), 400, view);
-  if (!length) {
-    respond_error(ble::kOpGetConfig, ble::kErrMalformed, "json");
-    return;
-  }
-  frame[0] = ble::kFrameConfig;
-  frame[1] = config::reboot_required() ? 1 : 0;
-  respond(frame, 2 + length);
-}
-
-void send_log_tail(std::uint16_t max_bytes) {
-  static char text[DebugLog::kRingBytes];
-  std::uint32_t total = 0;
-  const std::size_t wanted =
-      max_bytes > DebugLog::kRingBytes ? DebugLog::kRingBytes : max_bytes;
-  const std::size_t count = aqlog.tail(text, wanted, total);
-  const std::size_t payload_max = link_payload_max();
-  std::uint8_t frame[1 + lan::kPayloadMax];
-  std::size_t sent = 0;
-  if (payload_max > 1) {
-    const std::size_t slice_max =
-        payload_max - 1 > lan::kPayloadMax ? lan::kPayloadMax : payload_max - 1;
-    while (sent < count) {
-      const std::size_t slice =
-          count - sent < slice_max ? count - sent : slice_max;
-      frame[0] = ble::kFrameLog;
-      std::memcpy(frame + 1, text + sent, slice);
-      if (!respond(frame, 1 + slice))
-        break;
-      sent += slice;
-    }
-  }
-  std::uint8_t end[7];
-  end[0] = ble::kFrameLogEnd;
-  put_u32(end + 1, total);
-  put_u16(end + 5, static_cast<std::uint16_t>(sent));
-  respond(end, sizeof(end));
-}
+const aqsync::ControlReplies control_replies{
+    nullptr, [](void *, ble::Link) { return link_payload_max(); },
+    [](void *, ble::Link, const std::uint8_t *frame, std::size_t length) {
+      return respond(frame, length);
+    },
+    [](void *, ble::Link, ble::Op op, ble::Error code, const char *detail) {
+      return respond_error(op, code, detail);
+    }};
 
 struct WorkerState {
   std::size_t &count;
@@ -1499,44 +1230,18 @@ struct WorkerState {
 
 void handle_control_request(const ble::ControlRequest &request,
                             WorkerState &state) {
-  reconcile_open_file();
-  const std::uint8_t *body = request.bytes + 1;
+  archive_session.reconcile();
+  if (archive_session.handle(request, state.storage_ready) ||
+      aqsync::handle_common_control(request, control_replies))
+    return;
   const std::size_t body_length = request.length - 1;
   switch (request.bytes[0]) {
-  case ble::kOpList:
-    if (!state.storage_ready) {
-      respond_error(ble::kOpList, ble::kErrStorage, nullptr);
-      return;
-    }
-    ble_list();
-    return;
-  case ble::kOpOpen:
-    if (!state.storage_ready) {
-      respond_error(ble::kOpOpen, ble::kErrStorage, nullptr);
-      return;
-    }
-    ble_open(body, body_length);
-    return;
-  case ble::kOpRead:
-    if (body_length != 10) {
-      respond_error(ble::kOpRead, ble::kErrMalformed, nullptr);
-      return;
-    }
-    ble_read(get_u16(body), get_u32(body + 2), get_u32(body + 6));
-    return;
-  case ble::kOpClose:
-    if (body_length != 2) {
-      respond_error(ble::kOpClose, ble::kErrMalformed, nullptr);
-      return;
-    }
-    ble_close(get_u16(body));
-    return;
   case ble::kOpSetTime: {
     if (body_length != 8) {
       respond_error(ble::kOpSetTime, ble::kErrMalformed, nullptr);
       return;
     }
-    const std::int64_t seconds = get_i64(body);
+    const std::int64_t seconds = get_i64(request.bytes + 1);
     std::int64_t skew_ns = 0;
     std::int32_t previous = kClockNone;
     if (!set_clock(seconds, request.received_mono_us, kClockHost, &skew_ns,
@@ -1583,26 +1288,6 @@ void handle_control_request(const ble::ControlRequest &request,
   case ble::kOpStatus:
     publish_status();
     return;
-  case ble::kOpGetConfig:
-    send_config();
-    return;
-  case ble::kOpSetConfig: {
-    char bad_key[48];
-    config::Actions actions;
-    if (!config::apply_lines(reinterpret_cast<const char *>(body), body_length,
-                             bad_key, sizeof(bad_key), actions)) {
-      respond_error(ble::kOpSetConfig, ble::kErrInvalidConfig, bad_key);
-      return;
-    }
-    if (actions.clear_bonds)
-      ble::clear_bonds();
-    if (actions.rotate_token)
-      lan::drop_session();
-    if (actions.wifi_changed)
-      lan::apply_settings();
-    send_config();
-    return;
-  }
   case ble::kOpReboot: {
     // Never lose the RAM batch to a reboot the owner asked for.
     if ((state.count || writer_state->telemetry.open()) &&
@@ -1625,33 +1310,6 @@ void handle_control_request(const ble::ControlRequest &request,
     esp_restart();
     return;
   }
-  case ble::kOpLogTail: {
-    if (body_length != 2) {
-      respond_error(ble::kOpLogTail, ble::kErrMalformed, nullptr);
-      return;
-    }
-    send_log_tail(get_u16(body));
-    return;
-  }
-  case ble::kOpGetToken: {
-    if (request.link != ble::Link::Ble) {
-      respond_error(ble::kOpGetToken, ble::kErrNotOnThisLink, "ble-only");
-      return;
-    }
-    const config::Settings settings = config::get();
-    std::uint8_t frame[3 + config::kTokenBytes];
-    frame[0] = ble::kFrameToken;
-    put_u16(frame + 1, config::kLanPort);
-    std::memcpy(frame + 3, settings.token, config::kTokenBytes);
-    respond(frame, sizeof(frame));
-    aqlog.println("LAN TOKEN issued=ble");
-    return;
-  }
-  case ble::kOpWifiScan:
-    // Normally intercepted in enqueue_request(); reaching here means the
-    // scan task already had one pending.
-    respond_error(ble::kOpWifiScan, ble::kErrBusy, "scan-pending");
-    return;
   default:
     respond_error(static_cast<ble::Op>(request.bytes[0]), ble::kErrUnknownOp,
                   nullptr);
@@ -2099,33 +1757,17 @@ void poll_logger(const PmsSnapshot &pms) {
 bool start_links(bool display_detected) {
   if (!accepting)
     return false;
-  config::load(display_detected);
-  const config::Settings settings = config::get();
   static const ble::Identity identity{
       station_text,          device_text,       boot_text, kSchemaName,
       unsigned(field_count), kDictionarySha256, kFirmware};
-  const bool ble_ok = ble::begin(identity, settings.pair, settings.pin);
-  // mDNS host label mirrors the BLE name: AQ-6b40 -> aq-6b40.
-  char host[24];
-  std::snprintf(host, sizeof(host), "%s", ble::local_name());
-  for (char *p = host; *p; ++p)
-    if (*p >= 'A' && *p <= 'Z')
-      *p = static_cast<char>(*p - 'A' + 'a');
-  lan::begin(host);
-  return ble_ok;
+  return aqsync::begin(identity, enqueue_request, display_detected).ble_started;
 }
 
 bool enqueue_request(const ble::ControlRequest &request) {
   if (!commands)
     return false;
-  if (request.length && request.bytes[0] == ble::kOpWifiScan) {
-    // Scans block for seconds; they run on the LAN task, not the worker.
-    if (lan::request_scan(request.link, request.link_generation))
-      return true;
-    // Fall through to the worker, which answers "busy" on the right link.
-  }
-  static Command command;
-  command = Command{};
+  // BLE and LAN invoke this concurrently; xQueueSend copies this local value.
+  Command command{};
   command.source = Command::Source::Control;
   command.received_mono_us = request.received_mono_us;
   command.control = request;

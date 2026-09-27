@@ -109,6 +109,8 @@ struct ControlRequest {
   std::uint32_t link_generation = 0;
 };
 
+using RequestHandler = bool (*)(const ControlRequest &request);
+
 struct Identity {
   const char *station;
   const char *device;
@@ -134,12 +136,12 @@ struct LinkState {
   std::uint8_t advert_flags = 0; // last advertised AdvertFlag bits
 };
 
-// Call once after telemetry::begin_logger() and config::load(); identities
+// Call once after the firmware command queue and config::load(); identities
 // must outlive the program. `mode`/`fixed_pin` are the pairing settings the
 // stack starts with (they cannot change until the next boot). Returns false
 // when the stack could not start (logging continues).
 bool begin(const Identity &identity, config::PairMode mode,
-           std::uint32_t fixed_pin);
+           std::uint32_t fixed_pin, RequestHandler handler);
 const char *local_name();
 const char *info_json();
 config::PairMode pair_mode();

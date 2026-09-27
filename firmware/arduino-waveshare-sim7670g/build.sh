@@ -7,7 +7,7 @@ build_dir="${trial_dir}/build"
 mkdir -p "${build_dir}"
 "${trial_dir}/arduino-cli.sh" compile \
   --fqbn "${WAVESHARE_FQBN}" \
-  --libraries "${trial_dir}/../common" \
+  --library "${trial_dir}/../common" \
   --warnings all \
   --build-path "${build_dir}" \
   --export-binaries \

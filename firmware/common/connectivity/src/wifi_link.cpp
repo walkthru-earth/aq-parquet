@@ -1,7 +1,6 @@
 #include "wifi_link.h"
 #include "debug_log.h"
 #include "device_config.h"
-#include "telemetry_logger.h"
 
 #include <Arduino.h>
 #include <ESPmDNS.h>
@@ -29,6 +28,8 @@ constexpr std::size_t kHandshakeBytes = 4 + config::kTokenBytes;
 constexpr std::size_t kMaxScanEntries = 48;
 
 char host_label[24]{};
+ble::Identity device_identity{};
+ble::RequestHandler request_handler = nullptr;
 Status current;
 portMUX_TYPE status_mutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t socket_mutex = nullptr;
@@ -47,6 +48,7 @@ char live_json[ble::kMaxJson + 16]{};
 std::size_t status_length = 0, live_length = 0;
 std::atomic<bool> status_dirty{false}, live_dirty{false};
 portMUX_TYPE push_mutex = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE scan_mutex = portMUX_INITIALIZER_UNLOCKED;
 
 void touch_ui() { ++ui; }
 
@@ -195,10 +197,9 @@ void start_server() {
   if (MDNS.begin(host_label)) {
     MDNS.addService("aqsync", "tcp", config::kLanPort);
     MDNS.addServiceTxt("aqsync", "tcp", "proto", String(kProtocolVersion));
-    MDNS.addServiceTxt("aqsync", "tcp", "station",
-                       telemetry::station_text_id());
-    MDNS.addServiceTxt("aqsync", "tcp", "dev", telemetry::device_text_id());
-    MDNS.addServiceTxt("aqsync", "tcp", "fw", telemetry::firmware_text_id());
+    MDNS.addServiceTxt("aqsync", "tcp", "station", device_identity.station);
+    MDNS.addServiceTxt("aqsync", "tcp", "dev", device_identity.device);
+    MDNS.addServiceTxt("aqsync", "tcp", "fw", device_identity.firmware);
     mdns_on = true;
   } else {
     aqlog.println("LAN ERROR operation=mdns");
@@ -567,7 +568,7 @@ void handle_client_bytes() {
     rx_length -= 2 + body;
     aqlog.printf("LAN CMD op=0x%02x bytes=%u\n", unsigned(request.bytes[0]),
                  unsigned(request.length));
-    if (!telemetry::enqueue_request(request))
+    if (!request_handler(request))
       send_error_to(fd, static_cast<ble::Op>(request.bytes[0]), ble::kErrBusy,
                     "queue-full");
   }
@@ -656,7 +657,12 @@ void lan_task(void *) {
 }
 } // namespace
 
-bool begin(const char *host) {
+bool begin(const char *host, const ble::Identity &identity,
+           ble::RequestHandler handler) {
+  if (!handler)
+    return false;
+  device_identity = identity;
+  request_handler = handler;
   std::snprintf(host_label, sizeof(host_label), "%s", host);
   socket_mutex = xSemaphoreCreateMutex();
   if (!socket_mutex)
@@ -677,11 +683,17 @@ bool begin(const char *host) {
 void apply_settings() { reapply = true; }
 
 bool request_scan(ble::Link link, std::uint32_t link_generation) {
-  if (scan_pending.load())
+  // Both transport tasks may request a scan. Publish its owner before making
+  // it visible to the LAN task, while excluding a second concurrent caller.
+  portENTER_CRITICAL(&scan_mutex);
+  if (scan_pending.load()) {
+    portEXIT_CRITICAL(&scan_mutex);
     return false;
+  }
   scan_link = static_cast<std::uint8_t>(link);
   scan_generation = link_generation;
   scan_pending = true;
+  portEXIT_CRITICAL(&scan_mutex);
   return true;
 }
 

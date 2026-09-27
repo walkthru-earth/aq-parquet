@@ -10,6 +10,7 @@ portMUX_TYPE ring_mutex = portMUX_INITIALIZER_UNLOCKED;
 } // namespace
 
 DebugLog aqlog;
+DebugLog::DebugLog() : output_(&Serial) {}
 
 size_t DebugLog::write(uint8_t byte) { return write(&byte, 1); }
 
@@ -32,7 +33,7 @@ size_t DebugLog::write(const uint8_t *buffer, size_t size) {
   head_ = (head_ + count) % kRingBytes;
   total_ += static_cast<std::uint32_t>(size);
   portEXIT_CRITICAL(&ring_mutex);
-  return Serial.write(buffer, size);
+  return output_->write(buffer, size);
 }
 
 std::size_t DebugLog::tail(char *out, std::size_t max,

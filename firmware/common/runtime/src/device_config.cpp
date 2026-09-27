@@ -19,6 +19,17 @@ bool persistent = false;
 
 std::uint32_t random_pin() { return esp_random() % 1000000U; }
 
+bool save_string(Preferences &store, const char *key, const char *value) {
+  const std::size_t length = std::strlen(value);
+  if (store.putString(key, value) != length)
+    return false;
+  // putString returns zero for both an empty success and a failure. Read the
+  // persisted value back so empty credentials do not mask failed writes.
+  char readback[kPskMax + 1]{};
+  return store.getString(key, readback, sizeof(readback)) == length + 1 &&
+         std::strcmp(readback, value) == 0;
+}
+
 bool save_locked(const Settings &settings) {
   Preferences store;
   if (!store.begin(kNamespace, false))
@@ -27,8 +38,8 @@ bool save_locked(const Settings &settings) {
   ok = store.putUInt("pin", settings.pin) && ok;
   ok = store.putUChar("disp", settings.display ? 1 : 0) && ok;
   ok = store.putUChar("wifion", settings.wifi_on ? 1 : 0) && ok;
-  ok = store.putString("ssid", settings.ssid) >= 0 && ok;
-  ok = store.putString("psk", settings.psk) >= 0 && ok;
+  ok = save_string(store, "ssid", settings.ssid) && ok;
+  ok = save_string(store, "psk", settings.psk) && ok;
   ok = store.putUChar("lanon", settings.lan_on ? 1 : 0) && ok;
   ok =
       store.putBytes("token", settings.token, kTokenBytes) == kTokenBytes && ok;
@@ -189,6 +200,10 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
     if (line_length == 0) {
       position = end + 1;
       continue;
+    }
+    if (std::memchr(text + position, '\0', line_length)) {
+      std::snprintf(bad_key, bad_key_size, "malformed");
+      return false;
     }
     char line[128];
     if (line_length >= sizeof(line)) {

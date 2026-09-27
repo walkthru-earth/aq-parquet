@@ -1,6 +1,5 @@
 #include "ble_sync.h"
 #include "debug_log.h"
-#include "telemetry_logger.h"
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
@@ -48,6 +47,7 @@ std::uint32_t fixed_passkey = 0;
 std::atomic<std::uint64_t> advert_word{~0ULL};
 std::uint16_t boot16 = 0;
 NimBLEAdvertising *advertiser = nullptr;
+RequestHandler request_handler = nullptr;
 
 std::uint64_t pack_advert(const AdvertState &state) {
   return static_cast<std::uint64_t>(state.flags) |
@@ -191,7 +191,7 @@ public:
     std::memcpy(request.bytes, value.data(), request.length);
     aqlog.printf("BLE CMD op=0x%02x bytes=%u\n", unsigned(request.bytes[0]),
                  unsigned(request.length));
-    if (!telemetry::enqueue_request(request))
+    if (!request_handler(request))
       send_error(static_cast<Op>(request.bytes[0]), kErrBusy, "queue-full");
   }
 };
@@ -201,7 +201,10 @@ ControlCallbacks control_callbacks;
 } // namespace
 
 bool begin(const Identity &identity, config::PairMode pairing_mode,
-           std::uint32_t fixed_pin) {
+           std::uint32_t fixed_pin, RequestHandler handler) {
+  if (!handler)
+    return false;
+  request_handler = handler;
   mode = pairing_mode;
   fixed_passkey = fixed_pin % 1000000U;
   const std::size_t device_length = std::strlen(identity.device);
@@ -236,12 +239,12 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   server->setCallbacks(&server_callbacks);
   server->advertiseOnDisconnect(true);
   NimBLEService *service = server->createService(kServiceUuid);
-  const std::uint32_t kReadSecure = NIMBLE_PROPERTY::READ |
-                                    NIMBLE_PROPERTY::READ_ENC |
-                                    (mitm ? NIMBLE_PROPERTY::READ_AUTHEN : 0U);
+  const std::uint32_t kReadSecure =
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC |
+      (mitm ? static_cast<std::uint32_t>(NIMBLE_PROPERTY::READ_AUTHEN) : 0U);
   const std::uint32_t kWriteSecure =
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC |
-      (mitm ? NIMBLE_PROPERTY::WRITE_AUTHEN : 0U);
+      (mitm ? static_cast<std::uint32_t>(NIMBLE_PROPERTY::WRITE_AUTHEN) : 0U);
   NimBLECharacteristic *info_char =
       service->createCharacteristic(kInfoUuid, kReadSecure, sizeof(info_text));
   info_char->setValue(info_text);
@@ -256,10 +259,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   control_char->setCallbacks(&control_callbacks);
   response_char = service->createCharacteristic(
       kResponseUuid, NIMBLE_PROPERTY::NOTIFY | kReadSecure, kMaxMtu);
-  if (!service->start()) {
-    aqlog.println("BLE ERROR operation=service-start");
-    return false;
-  }
+  // NimBLE 2.5.1 starts services with the server; Service::start is a no-op.
 
   // The last four hex digits of the boot id travel in the advertisement so a
   // phone sees a reboot (the finalized counter restarts) without connecting.

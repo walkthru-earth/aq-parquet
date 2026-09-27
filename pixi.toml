@@ -45,7 +45,7 @@ arduino-build = "firmware/arduino-m5unified/build.sh"
 # Destructive: pass the explicit checked port, e.g. pixi run arduino-flash /dev/cu.usbmodem101
 arduino-flash = "firmware/arduino-m5unified/flash.sh"
 
-# --- Waveshare V2 UART-only PMS5003T diagnostic trial ---
+# --- Waveshare V2 PMS5003T and TF diagnostic trial ---
 waveshare-setup = "firmware/arduino-waveshare-sim7670g/setup.sh"
 waveshare-build = "firmware/arduino-waveshare-sim7670g/build.sh"
 # Destructive: requires the checked port and exact full-backup file.
@@ -54,7 +54,13 @@ waveshare-flash = "firmware/arduino-waveshare-sim7670g/flash.sh"
 # --- host code quality ---
 fmt = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format -i"
 fmt-check = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format --dry-run --Werror"
-lint = "cppcheck --language=c++ --enable=warning,style,performance,portability --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1 --suppress=*:*/vendor/lz4/* firmware/arduino-m5unified/bringup/bringup.ino firmware/arduino-m5unified/bringup/telemetry_logger.cpp firmware/arduino-m5unified/bringup/ble_sync.cpp firmware/arduino-m5unified/bringup/wifi_link.cpp firmware/arduino-m5unified/bringup/device_config.cpp firmware/arduino-m5unified/bringup/debug_log.cpp firmware/common/src/parquet_writer.cpp firmware/common/src/lz4_codec.cpp firmware/common/src/pms_frame.cpp firmware/arduino-waveshare-sim7670g/diagnostic/diagnostic.ino"
+lint = "cppcheck --language=c++ --enable=warning,style,performance,portability --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1 --suppress=*:*/vendor/lz4/* firmware/arduino-m5unified/bringup/bringup.ino firmware/arduino-m5unified/bringup/telemetry_logger.cpp firmware/common/connectivity/src/ble_sync.cpp firmware/common/connectivity/src/wifi_link.cpp firmware/common/connectivity/src/sync_service.cpp firmware/common/connectivity/src/archive_sync.cpp firmware/common/connectivity/src/control_sync.cpp firmware/common/runtime/src/device_config.cpp firmware/common/runtime/src/debug_log.cpp firmware/common/src/parquet_writer.cpp firmware/common/src/lz4_codec.cpp firmware/common/src/pms_frame.cpp firmware/arduino-waveshare-sim7670g/diagnostic/diagnostic.ino"
+archive-sync-test = "python tools/test_archive_sync.py --sanitize"
+control-sync-test = "python tools/test_control_sync.py --sanitize"
+config-test = "python tools/test_device_config.py --sanitize"
+common-test = "python tools/test_common.py --sanitize"
+ltr553-test = "python tools/test_ltr553.py --sanitize"
+connectivity-build-test = "tools/build_connectivity_fixture.sh"
 compression-bench = "python tools/benchmark_compression.py"
 hooks = "pre-commit install"
 
