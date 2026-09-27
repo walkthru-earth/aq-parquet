@@ -1,8 +1,8 @@
 # aq-parquet
 
-ESP32-S3 air-quality firmware with board-specific trials and shared Plantower/Parquet code. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; TF mounting is now verified. Valid sensor frames and storage write/read behavior remain unverified; its Parquet logger is not yet implemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
+ESP32-S3 air-quality firmware with board-specific trials and shared sensor, Parquet, configuration, BLE and Wi-Fi/LAN sync modules. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; TF mounting and valid PMS5003T UART frames are now verified. Storage write/read behavior and the Waveshare logger/sync backend remain unverified or unimplemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
 
-The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in `firmware/common/`.
+The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in [`firmware/common/`](firmware/common/README.md): base encoding/drivers, opt-in settings/logging, and opt-in BLE/Wi-Fi/file-sync services. The current CoreS3 logger consumes all three; the Waveshare diagnostic consumes only base modules.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
@@ -11,6 +11,8 @@ The repo holds one active trial per board. Each board owns its pinout, power, st
 - `firmware/<framework>-<variant>/` holds each self-contained trial.
 
 ## Current status
+
+The CoreS3 source is now **v6.4**, consuming the shared runtime/connectivity modules. This source has passed build and host checks; it has not been flashed in this session. The measured v6.3 image below remains separate evidence. See the [module map](firmware/common/README.md).
 
 The existing [CoreS3 Arduino-ESP32/M5Unified trial](firmware/arduino-m5unified/README.md) is pinned to Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The flashed firmware records one scalar snapshot every **10 seconds**, using a **77-column** schema with explicit nulls/status for unavailable measurements. The PMS display retains its three touch-navigable pages.
 

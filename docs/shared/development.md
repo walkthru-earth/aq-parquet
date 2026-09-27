@@ -1,6 +1,6 @@
 # Shared development workflow
 
-This repository currently targets ESP32-S3 boards with separate Arduino trials. Board pins, PSRAM mode, power sequencing, storage mounting and hardware evidence belong to the board/trial; shared framing and file-format code belongs to [`firmware/common`](../../firmware/common/AGENTS.md).
+This repository currently targets ESP32-S3 boards with separate Arduino trials. Board pins, PSRAM mode, power sequencing, storage mounting and hardware evidence belong to the board/trial; shared drivers, encoding, settings and sync services belong to [`firmware/common`](../../firmware/common/README.md).
 
 ## Host and toolchain
 
@@ -9,7 +9,7 @@ Host dependencies are pinned in root `pixi.toml` and `pixi.lock`. Start with `pi
 | Board/trial | Setup | Build | Current hardware scope |
 | --- | --- | --- | --- |
 | [CoreS3 / Arduino-M5Unified](../../firmware/arduino-m5unified/README.md) | `pixi run arduino-setup` | `pixi run arduino-build` | Measured Parquet logger, display, SD and local sync |
-| [Waveshare V2 / Arduino](../../firmware/arduino-waveshare-sim7670g/README.md) | `pixi run waveshare-setup` | `pixi run waveshare-build` | Booted diagnostic with TF mount/capacity verified; sensor frames and storage write/read validation pending |
+| [Waveshare V2 / Arduino](../../firmware/arduino-waveshare-sim7670g/README.md) | `pixi run waveshare-setup` | `pixi run waveshare-build` | Booted diagnostic with TF mount/capacity verified; PMS5003T frames verified; storage write/read and logger/sync integration pending |
 
 SDK downloads use `$AQ_TOOLCHAIN_ROOT`; the existing default is `~/.cache/m5stack-aq-parquet/toolchains` and the legacy `$M5_TOOLCHAIN_ROOT` is accepted. The old cache name is retained to reuse installed SDKs after the GitHub rename. Each trial owns its exact dependency lock and build options; a shared download cache does not make a sibling trial a dependency. Firmware wrappers isolate the SDK environment from Pixi's host tools.
 
@@ -19,10 +19,10 @@ If the checkout or managed environment has moved and a tool reports a missing in
 
 1. Create `docs/boards/<board>/README.md`, hardware/pin ownership notes, sensor notes and a `bench-verified.md`. Record the exact PCB revision and upstream sources; keep measured and source-checked claims separate.
 2. Create one justified, self-contained `firmware/<framework>-<variant>/` trial with README, pinned dependencies, setup/build/flash scripts, partition table and build settings. Do not include a sibling's sources. Add explicit root Pixi tasks and lint inputs.
-3. Consume `firmware/common` as a library. Select the Plantower model explicitly. Keep board services and measurement definitions in the trial; pass a board-specific `created_by` when using the shared writer.
+3. Consume the base `firmware/common` library; opt into `firmware/common/runtime` for settings/logging and `firmware/common/connectivity` for BLE/Wi-Fi/control/file-sync services. Select the Plantower model explicitly. Keep board services and measurement definitions in the trial; pass a board-specific `created_by` when using the shared writer.
 4. Audit GPIO/controller ownership, strapping pins, flash size, PSRAM mode, console transport and recovery before enabling peripherals. The common ESP32-S3 chip does not imply common board wiring.
 5. Follow the [identification and full-backup sequence](../../AGENTS.md#do-not-brick-the-board) on the checked port. Extend the backup/restore scripts deliberately for another flash capacity; the current helpers accept only the two 16 MiB targets.
-6. Verify a small diagnostic, then the sensor byte contract and storage on a checked card. Add a versioned measurement schema before logging; unavailable measurements stay null. Adopt BLE/LAN only when that trial implements the [shared protocol](ble-sync-protocol.md).
+6. Verify a small diagnostic, then the sensor byte contract and storage on a checked card. Add a versioned measurement schema before logging; unavailable measurements stay null. Use the shared BLE/LAN transports and ArchiveSession with a nonblocking request queue and worker-owned archive callbacks. Runtime clock/flush/reboot/status and board measurement snapshots remain explicit adapters; sharing the implementation does not prove it has run on another board.
 7. Retain captures and image/ELF files in the trial's ignored `artifacts/`, and record hashes, date, commands and limitations in that board's bench file. Add the board to the [docs router](../README.md) and root README.
 
 ## Verification
@@ -30,3 +30,5 @@ If the checkout or managed environment has moved and a tool reports a missing in
 Run `pixi run fmt-check` and `pixi run lint` for project C/C++ changes. The formatter discovers project sources while excluding build/vendor trees. Preserve vendored source bytes and notices.
 
 Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer changes require `pixi run parquet-test --sanitize`; measurement-contract changes require `pixi run telemetry-contract-test --sanitize`. Build every affected trial. Host tests establish parser/format behavior; board-specific storage, timing and power-loss claims require real hardware evidence.
+
+The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test` and `connectivity-build-test`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.

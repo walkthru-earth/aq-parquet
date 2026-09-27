@@ -51,3 +51,15 @@ After the owner inserted a TF card, the same diagnostic image was restarted with
 The four PMS reports still showed zero frames and null values, including after warm-up. Inserting the card did not resolve the sensor power/wiring issue. No slider position or sensor supply voltage was measured during this capture.
 
 Capture: ignored `artifacts/waveshare-v2-sd-inserted-20260928.log`, **588 bytes**, SHA-256 `d27a2a949fbf4ac734b45419211f574eb220345c04fd5cabe53fb77960676bbe`.
+
+## PMS5003T reception after cable replacement, 2026-09-28
+
+The owner replaced the cable and reported the fan running. Without changing the deployed diagnostic image, another bounded 45-second capture with `--reset` returned:
+
+- TF mounted again, with the same reported **31,457,280,000-byte** capacity.
+- PMS frame counters **11, 22, 33, 45**, all fresh, with **zero checksum and length errors** and sensor error code zero.
+- The first two reports correctly withheld values during the warm-up gate. At 30/40 seconds, PM1/PM2.5/PM10 were **42/70/78** and **43/66/76 µg/m³**, temperature **23.6 °C**, and RH **47.2/47.3%**. Frame ages were 901/139 ms for those two snapshots.
+
+This verifies valid PMS5003T UART reception on GPIO1 and the model-specific PM/temperature/RH decoding. It does not establish environmental accuracy, calibration, sensor identity/serial number, hardware UTC, sensor RX command operation, storage write/read durability, or Waveshare Parquet/BLE/LAN integration. The supplied physical wiring and cable replacement were owner observations; no rail voltage was measured.
+
+Capture: ignored `artifacts/waveshare-v2-pms-working-20260928.log`, **668 bytes**, SHA-256 `4d40b18462b57afe84a0e9a164d4af96d7befd393ee48c2452bdbafb87883135`. The diagnostic binary/ELF identities remain the ones recorded above; later shared-module builds were not flashed during this run.

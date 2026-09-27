@@ -8,7 +8,7 @@ This repo can hold **more than one framework trial** against the same board and 
 ```
 firmware/
   <framework>-<variant>/   one self-contained trial, own build system and lockfile
-  common/                  reusable ESP32-S3 Arduino code and its own AGENTS.md
+  common/                  base code plus opt-in runtime/connectivity libraries, each with AGENTS.md
 docs/shared/               board-neutral data, protocol and security contracts
 docs/boards/<board>/       board wiring, power, drivers and measured evidence
 tools/                     host scripts: device readback, Parquet validation, logs
@@ -39,6 +39,8 @@ Trial directory names state the framework first, for example `firmware/idf-cpp/`
 | CoreS3 microSD and SPI | `docs/boards/m5stack-cores3/cores3-storage.md` |
 | CoreS3 M134/PMSA003 | `docs/boards/m5stack-cores3/addons.md`, `addon-air-quality.md` |
 | CoreS3 real-board evidence | `docs/boards/m5stack-cores3/bench-verified.md` |
+| Shared BLE/Wi-Fi, settings/logging and archive sessions | `firmware/common/README.md`, then the relevant nested AGENTS.md |
+| Waveshare official examples, modem/GNSS/camera/gauge adoption | `docs/boards/waveshare-esp32-s3-sim7670g/software-resources.md` |
 | Waveshare V2 pins, rails, TF, boot | `docs/boards/waveshare-esp32-s3-sim7670g/hardware.md` |
 | Waveshare PMS5003T wiring and byte contract | `docs/boards/waveshare-esp32-s3-sim7670g/pms5003t.md` |
 | Phone BLE/LAN sync and background triggers | `docs/shared/ble-sync-protocol.md`, `background-sync-triggers.md` |
