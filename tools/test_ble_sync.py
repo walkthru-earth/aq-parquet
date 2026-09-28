@@ -77,6 +77,8 @@ class FakeClient:
             self.emit(bytes([ble.F_TIME_SET]) + struct.pack("<qq", epoch, 123456))
         elif op == ble.OP_FLUSH:
             self.emit(bytes([ble.F_ERROR, op, 10]) + b"empty")
+        elif op == ble.OP_STATUS:
+            self.emit(bytes([ble.F_STATUS]) + STATUS)
         elif op == ble.OP_GET_CONFIG:
             self.emit(bytes([ble.F_CONFIG, 0]) + CONFIG)
         elif op == ble.OP_SET_CONFIG:
@@ -158,6 +160,7 @@ async def run():
     assert await session.reboot() == {"delay_ms": 500}
     print("PASS ble_sync frame codec: list, fetch, time, error, lost-chunk detection, config, scan, token, log, reboot")
     await run_lan()
+    await run_lan_snapshot_deadlines()
 
 
 async def run_discovery():
@@ -318,6 +321,7 @@ async def run_lan():
     session = ble.Session(link)
     await session.start()
     assert (await session.info())["proto"] == 2
+    assert (await session.status())["qf"] == 7
     listed, _ = await session.list_files()
     payload, transfer = await session.fetch(NAME, 1000)
     assert payload == FILE and transfer["windows"] == 1, transfer
@@ -334,6 +338,75 @@ async def run_lan():
     server.close()
     await server.wait_closed()
     print("PASS ble_sync LAN link: handshake, HELLO, framed fetch with LIVE push interleaved, auth refusal")
+
+
+async def run_lan_snapshot_deadlines():
+    """A fresh authenticated socket may receive its first STATUS after 2 s."""
+    requests = []
+
+    async def serve(reader, writer):
+        async def emit(frame):
+            writer.write(struct.pack("<H", len(frame)) + frame)
+            await writer.drain()
+
+        try:
+            assert await reader.readexactly(36) == b"AQS1" + TOKEN
+            await emit(bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO)
+            while True:
+                (length,) = struct.unpack("<H", await reader.readexactly(2))
+                request = await reader.readexactly(length)
+                assert request == bytes([ble.OP_STATUS]), request
+                requests.append(request)
+                if len(requests) == 1:
+                    await emit(bytes([ble.F_STATUS]) + b"{}")
+                    await asyncio.sleep(2.15)
+                    await emit(bytes([ble.F_STATUS]) + STATUS)
+                elif len(requests) == 2:
+                    await emit(bytes([ble.F_STATUS]) + STATUS.replace(b'"qf":7', b'"qf":8'))
+                # Later requests deliberately receive no STATUS or LIVE.
+        except asyncio.IncompleteReadError:
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    link = ble.LanLink("127.0.0.1", TOKEN, port, timeout=3)
+    try:
+        await link.connect()
+        session = ble.Session(link, read_timeout=3)
+        await session.start()
+        started = asyncio.get_running_loop().time()
+        assert (await session.info())["proto"] == 2
+        assert asyncio.get_running_loop().time() - started < 0.5
+        started = asyncio.get_running_loop().time()
+        assert (await session.status())["qf"] == 7
+        assert asyncio.get_running_loop().time() - started >= 2
+        assert (await session.status())["qf"] == 8  # fresh, not the cached 7
+        assert len(requests) == 2
+
+        session.read_timeout = 0.02
+        for uuid in (ble.STATUS, ble.LIVE):
+            try:
+                await session.read_char(uuid)
+            except ble.ProtocolError as error:
+                assert uuid in str(error) and "0.02s" in str(error), error
+            else:
+                raise AssertionError("missing LAN snapshot must fail at the session deadline")
+        # Direct LanLink callers are also bounded by the link timeout.
+        link.timeout = 0.02
+        try:
+            await link.read_gatt_char(ble.LIVE)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("direct LAN read must not wait indefinitely")
+    finally:
+        await link.disconnect()
+        server.close()
+        await server.wait_closed()
+    print("PASS ble_sync LAN snapshots: fresh OP_STATUS, >2 s response, empty push rejection and deadline cancellation")
 
 
 if __name__ == "__main__":

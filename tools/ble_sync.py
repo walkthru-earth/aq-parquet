@@ -81,6 +81,7 @@ class LanLink:
         self.host, self.port, self.token, self.timeout = host, port, token, timeout
         self.callbacks: dict[str, object] = {}
         self.latest = {STATUS: b"{}", LIVE: b"{}"}
+        self.snapshot_ready = {STATUS: asyncio.Event(), LIVE: asyncio.Event()}
         self.info_json = b"{}"
         self.payload_max = LAN_PAYLOAD_MAX
         self.reader = None
@@ -119,15 +120,22 @@ class LanLink:
                 (length,) = struct.unpack("<H", header)
                 frame = await self.reader.readexactly(length)
                 if frame and frame[0] == F_STATUS:
-                    self.latest[STATUS] = bytes(frame[1:])
+                    self._snapshot(STATUS, frame[1:])
                     self._deliver(STATUS, frame[1:])
                 elif frame and frame[0] == F_LIVE:
-                    self.latest[LIVE] = bytes(frame[1:])
+                    self._snapshot(LIVE, frame[1:])
                     self._deliver(LIVE, frame[1:])
                 else:
                     self._deliver(RESPONSE, frame)
         except (asyncio.IncompleteReadError, ConnectionError, asyncio.CancelledError):
             self.is_connected = False
+
+    def _snapshot(self, uuid: str, data: bytes):
+        self.latest[uuid] = bytes(data)
+        if data and data != b"{}":
+            self.snapshot_ready[uuid].set()
+        else:
+            self.snapshot_ready[uuid].clear()
 
     def _deliver(self, uuid: str, data: bytes):
         callback = self.callbacks.get(uuid)
@@ -140,11 +148,15 @@ class LanLink:
     async def read_gatt_char(self, uuid: str):
         if uuid == INFO:
             return bytearray(self.info_json)
-        # Pushes arrive on the device's next tick after HELLO; give the first one a moment.
-        for _ in range(20):
-            if self.latest[uuid] != b"{}":
-                break
-            await asyncio.sleep(0.1)
+        # OP_STATUS produces a STATUS push, not a RESPONSE frame. Request one
+        # even when cached, and never report the initial empty placeholder.
+        # Session supplies the overall deadline; this also bounds direct calls.
+        async with asyncio.timeout(self.timeout):
+            if uuid == STATUS:
+                self._snapshot(STATUS, b"{}")
+                await self.write_gatt_char(CONTROL, bytes([OP_STATUS]))
+            while self.latest[uuid] in (b"", b"{}"):
+                await self.snapshot_ready[uuid].wait()
         return bytearray(self.latest[uuid])
 
     async def write_gatt_char(self, _uuid: str, data: bytes, response=True):
