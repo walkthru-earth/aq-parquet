@@ -1,8 +1,8 @@
 # aq-parquet
 
-ESP32-S3 air-quality firmware with board-specific trials and shared sensor, Parquet, configuration, BLE and Wi-Fi/LAN sync modules. The measured CoreS3 firmware generates Parquet directly from real measurements and stores finalized files on microSD. A Waveshare ESP32-S3-SIM7670G-4G V2 / PMS5003T and TF diagnostic has been flashed and booted; TF mounting and valid PMS5003T UART frames are now verified. Storage write/read behavior and the Waveshare logger/sync backend remain unverified or unimplemented. Host tools validate and retrieve CoreS3 files without converting them; object-storage upload is later work.
+ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have an active Arduino firmware and separate hardware documentation. Both write real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
 
-The repo holds one active trial per board. Each board owns its pinout, power, storage and hardware evidence; device protocols and data design live under `docs/shared/`. Shared firmware code lives in [`firmware/common/`](firmware/common/README.md): base encoding/drivers, opt-in settings/logging, and opt-in BLE/Wi-Fi/file-sync services. The current CoreS3 logger consumes all three; the Waveshare diagnostic consumes only base modules.
+Each board owns its pins, peripherals, schema and acquisition callbacks. Four opt-in libraries under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), and the sampling/storage worker (**AQLogger**). Both logger adapters consume these libraries. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
@@ -12,11 +12,14 @@ The repo holds one active trial per board. Each board owns its pinout, power, st
 
 ## Current status
 
-The CoreS3 source is now **v6.4**, consuming the shared runtime/connectivity modules. This source has passed build and host checks; it has not been flashed in this session. The measured v6.3 image below remains separate evidence. See the [module map](firmware/common/README.md).
+| Firmware | Measurements and board adapter | Current hardware evidence |
+| --- | --- | --- |
+| [CoreS3 v6.5](firmware/arduino-m5unified/README.md) | 77 columns; M5Unified sensors, RTC, display and SPI card arbitration | Shared engine sampling, unattended startup and identical USB/BLE/LAN Parquet readback; [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
+| [Waveshare logger v1](firmware/arduino-waveshare-sim7670g/README.md) | 49 columns; PMS5003T UART, one-bit SDMMC, OPI PSRAM, headless pairing | Real SD readback, warm-up/null handling, reset retention, host UTC transition and compression; [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
-The existing [CoreS3 Arduino-ESP32/M5Unified trial](firmware/arduino-m5unified/README.md) is pinned to Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The flashed firmware records one scalar snapshot every **10 seconds**, using a **77-column** schema with explicit nulls/status for unavailable measurements. The PMS display retains its three touch-navigable pages.
+Both implement the same offline archive, configuration, BLE and authenticated local TCP/mDNS services. Waveshare first encrypted macOS pairing and Wi-Fi/LAN transfer still need completion; advertising discovery is verified. It runs on USB power with battery fields null, and has no external RTC anchor. Cellular/GNSS/camera integration remains separate future board work. See the [module map](firmware/common/README.md) and [official Waveshare resource audit](docs/boards/waveshare-esp32-s3-sim7670g/software-resources.md).
 
-The current CoreS3 source uses **77-column schema v3**, with the SHA-256-identified v2 measurement dictionary, TIMESTAMP annotations, row-group statistics and multi-row-group files. The flashed v6.3 image and earlier schema-specific readbacks are recorded in the [CoreS3 bench record](docs/boards/m5stack-cores3/bench-verified.md); those results do not describe the Waveshare target. Earlier full-window/compression numbers below remain tied to the 73-column image. [Iceberg/OGC decisions, Mermaid diagrams and contract usage](docs/shared/table-and-observation-model.md) explain the staged design. Iceberg remains host/cloud work; the dictionary does not claim SensorThings API compliance.
+The CoreS3 dependencies include Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The Waveshare trial pins its own Arduino/NimBLE dependencies and has no M5 library dependency. Earlier CoreS3 full-window/compression numbers below remain tied to their recorded images. [Iceberg/OGC decisions and contract usage](docs/shared/table-and-observation-model.md) describe later host/cloud work; the dictionaries do not claim SensorThings API compliance.
 
 An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **UNCOMPRESSED** and opt-in **LZ4_RAW** codecs, per-column min/max statistics and `TIMESTAMP(NANOS, UTC)` on the UTC fields. Reboot restores uncompressed output. Persistent station identity and UTC-aligned Hive partitions use:
 
@@ -31,11 +34,11 @@ Measured on one board/card: a full automatic 60-row batch was **28,059 bytes** a
 
 Offline logging needs no internet. The measured 60-row LZ4 rate projects to about **2.03 MB/day / 0.74 GB/year before filesystem overhead** at ten-minute rotation. A 32 GB card therefore offers multi-year storage capacity in principle, not a guaranteed card or battery lifetime. [Capacity assumptions and future synchronization](docs/shared/telemetry-pipeline.md#offline-capacity-and-reconnection) explain allocation-unit overhead, power, clock drift and the uploader that still needs to be built.
 
-**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC is a host-supplied estimate and must be supplied after each reboot; until then, files go under the station's `unsynced/boot=<boot>/` tree with null UTC values. Unsupported battery current and ambient temperature/humidity are null; camera/audio streams are outside this scalar trial.
+**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC is a host-supplied estimate. CoreS3 can restore its earlier estimate from its RTC; Waveshare needs a new host anchor after reboot. Until an anchor exists, files use `unsynced/boot=<boot>/` with null UTC. Unsupported measurements remain null; the Waveshare PMS5003T supplies ambient temperature/humidity. Camera/audio streams are outside these scalar loggers.
 
 ## Getting started
 
-Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare target currently builds a [PMS5003T/TF diagnostic](firmware/arduino-waveshare-sim7670g/README.md); commands below after the safety sequence describe the measured CoreS3 logger.
+Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare [trial README](firmware/arduino-waveshare-sim7670g/README.md) covers its logger, headless pairing and retained diagnostic. Commands below after the safety sequence show the CoreS3 logger; the same serial readback helper accepts either checked ESP32 port.
 
 ```sh
 pixi install
@@ -72,7 +75,7 @@ Firmware SDKs are not conda packages, so the project fetches them itself at pinn
 
 ## Hardware
 
-Current boards: [M5Stack CoreS3](docs/boards/m5stack-cores3/README.md) (K128, 16 MB flash, 8 MB Quad PSRAM) and [Waveshare ESP32-S3-SIM7670G-4G V2](docs/boards/waveshare-esp32-s3-sim7670g/README.md) (16 MB flash, 8 MB embedded PSRAM, PMS5003T on GPIO1/2). Sensor modules are optional; the standalone PMS5003T and M134/PMSA003 have different frame data and are documented separately.
+Current boards: [M5Stack CoreS3](docs/boards/m5stack-cores3/README.md) (K128, 16 MB flash, 8 MB Quad PSRAM) and [Waveshare ESP32-S3-SIM7670G-4G V2](docs/boards/waveshare-esp32-s3-sim7670g/README.md) (16 MB flash, 8 MB OPI PSRAM, PMS5003T on GPIO1/2). Sensor modules are optional; the standalone PMS5003T and M134/PMSA003 have different frame data and are documented separately.
 
 ## License and attribution
 
