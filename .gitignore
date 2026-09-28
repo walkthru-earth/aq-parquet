@@ -16,3 +16,5 @@ backup/
 __pycache__/
 *.py[cod]
 exports/
+# Arduino upload can also create build caches under a sketch directory.
+firmware/**/build/
