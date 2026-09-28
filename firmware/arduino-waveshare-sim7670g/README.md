@@ -1,17 +1,64 @@
 # Arduino-ESP32 Waveshare V2 / PMS5003T trial
 
-**Status: active diagnostic; flash and boot verified 2026-09-28, valid PMS frames and TF mount verified; storage write/read and logger/sync integration pending.** Framework: Arduino-ESP32 **3.3.11**, Arduino CLI **1.5.1**, with the shared `firmware/common` library. The separate trial is justified by a concrete hardware change: Waveshare V2 uses GPIO1/2 for the owner's PMS5003T and a one-bit SDMMC TF slot, while the existing CoreS3 trial uses M5Unified board services, GPIO18/17 for PMSA003 and SPI SD. The PMS5003T also changes the meaning of two frame words to temperature and humidity. These cannot be addressed by changing a build target alone.
+**Status: active logger; full-image boot, SD Parquet write/serial readback, unsynced/host-UTC behavior and BLE advertising/discovery verified 2026-09-28. Encrypted BLE pairing/file transfer and Wi-Fi/LAN operation remain unverified.** Framework: Arduino-ESP32 **3.3.11**, Arduino CLI **1.5.1**, NimBLE-Arduino **2.5.1**, and LZ4 **1.10.0**, pinned in this trial's [dependency lock](dependencies.lock). The trial consumes AQCommon, AQRuntime, AQConnectivity and AQLogger from `firmware/common`.
 
-The first image is intentionally a **UART and read-only TF diagnostic**. It prints chip/flash/PSRAM facts and every 10 seconds reports frame count, frame age, parser errors, PM, temperature and humidity after a 30-second warm-up gate. It probes the onboard TF slot in one-bit SDMMC mode and reports card type/capacity without formatting or writing a file. It does not initialize the modem, camera, battery gauge, BLE or Parquet writer. Pin assumptions and the source references are in [Waveshare hardware](../../docs/boards/waveshare-esp32-s3-sim7670g/hardware.md) and [PMS5003T](../../docs/boards/waveshare-esp32-s3-sim7670g/pms5003t.md).
+The separate trial is justified by a concrete board change: Waveshare V2 uses GPIO1/2 for PMS5003T and one-bit SDMMC storage, while CoreS3 uses M5Unified, GPIO18/17 for PMSA003 and SPI SD. PMS5003T also replaces two frame words with temperature/RH. The trial owns its build settings, partitions, measurement dictionary and board adapter; it does not include another trial.
+
+## Build and flash
 
 ```sh
 pixi install
 pixi run waveshare-setup
-pixi run waveshare-build
+pixi run waveshare-build               # logger, 16 MB Quad flash / OPI PSRAM
+pixi run waveshare-diagnostic-build    # retained UART/read-only TF diagnostic
+pixi run waveshare-contract-test --sanitize
 ```
 
-**Before the first flash:** confirm the physical board is V2.0 and the attached serial port with `pixi run ports`; read `pixi run chip`, `pixi run flash-id`, and `pixi run efuse` on that port; confirm 16 MB flash and recoverable security fuses; take a complete backup and check its exact byte size. Waveshare's [FAQ](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ) documents UART download and BOOT+RESET recovery. Confirm these on the actual board. After that evidence, flash the built diagnostic with `pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin`. The script refuses an absent or wrong-size backup. It writes the ESP32-S3 flash and requires deliberate use; it does not touch eFuses or TF data. See [root safety rules](../../AGENTS.md#do-not-brick-the-board).
+The default logger image is `build/logger/logger.ino.bin`. The diagnostic image is `build/diagnostic/diagnostic.ino.bin` and keeps PSRAM disabled. Logger builds check the dictionary SHA-256 and selected flash/PSRAM SDK. The logger requires initialized physical **8 MiB OPI PSRAM** before starting. On 2026-09-28 the separate probe initialized 8 MiB and passed four patterns over a 512 KiB allocation; the full logger subsequently booted and used its PSRAM workspace. These runs do not establish whole-memory endurance. The first full logger build used 1,258,779 bytes program storage and 84,412 bytes static RAM; build size is tied to that image, not a permanent limit.
 
-**Next required gates:** enabled-PSRAM boot/readback, then a bounded SDMMC write/readback experiment using a designated test file on a checked card. Only after those results should the board get a versioned Parquet measurement contract and the existing local BLE/LAN sync path. The [shared sync modules](../common/README.md) are reusable, but this diagnostic has no logger/command backend and does not start them. The CoreS3 77-column schema and its bench figures cannot be relabeled as Waveshare results.
+Before the first write, follow the [identification and full-backup sequence](../../AGENTS.md#do-not-brick-the-board) on the checked port, confirm V2.0/16 MB flash and recoverable fuses, and retain the verified 16,777,216-byte backup. Flash commands require the named Waveshare backup and verify that the selected build target matches:
 
-**Last verified on real hardware:** 2026-09-28 — read-only identification, complete backup, flash and boot of the diagnostic. The first 45-second capture had no valid PMS frames and no TF card inserted. After the owner inserted a card, a second boot mounted it and reported 31,457,280,000 bytes; a subsequent capture after cable replacement received 45 valid PMS frames with zero parser errors and temperature/RH. Storage write/read and logger/sync validation remain pending. See the [bench record](../../docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) for hashes, methods and remaining gates.
+```sh
+pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin
+pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin diagnostic
+```
+
+[Recovery and pin ownership](../../docs/boards/waveshare-esp32-s3-sim7670g/hardware.md) are board-specific. A flash write changes ESP32 firmware; it does not format the TF card or write eFuses. Keep captures, fetched files, binaries and build reports under this trial's ignored `artifacts/`, outside `build/`.
+
+## Logger and measurement contract
+
+[logger/logger.ino](logger/logger.ino) owns UART1 at 9600 8N1, GPIO1 RX / GPIO2 TX, explicitly selects `Pms5003t`, and mounts TF at `/sd` with `SD_MMC.setPins(5, 4, 6)` and one-bit mode without formatting. The shared engine owns the ten-second monotonic deadline, one filesystem worker, bounded queues, row groups, file rotation, archive commands and local radio transports. The RGB indicator implementation reports startup/card/sensor state; its visual behavior has not been checked and it does not certify a finalized or copied file.
+
+The [49-field dictionary](logger/telemetry_fields.inc) is **`waveshare-sim7670g-telemetry-v1`**, with firmware identity **`arduino-waveshare-parquet-v1`** and a compiled SHA-256. It includes CF=1/atmospheric PM1/PM2.5/PM10, four particle-count bins (>0.3/>0.5/>1/>2.5 µm), PMS5003T ambient temperature and RH, sensor/parser status, runtime/storage counters and clock provenance. There are no >5/>10 µm counts or CoreS3 IMU/display/touch/RTC fields. Missing, warming (<30 s), stale (>5 s), sensor-error and model-mismatch snapshots retain null measurements. Receipt/completion timestamps describe acquisition timing, not instrument phenomenon time or calibration.
+
+The owner confirmed **USB-only operation, with no battery installed**. The gauge bus is not initialized or probed; `gauge_status=0` and battery voltage/percentage remain null. Camera, cellular modem and GNSS are not initialized, and no serial number, location, calibration or UTC is invented. A later battery adapter requires explicit installed-battery configuration and its own validation.
+
+Unknown UTC uses the `unsynced` Hive tree. An explicit host `SET_TIME`/`parquet time` supplies an anchor for this boot; there is no external RTC restore. Captured rows keep their original clock epoch. Unsynced and host-synchronized serial readbacks have been checked; UTC accuracy has not been measured. See [storage and sync](../../docs/boards/waveshare-esp32-s3-sim7670g/storage.md) for rotation, partial files, readback and remaining measurements.
+
+## Headless pairing and local provisioning
+
+The logger starts BLE without a display. On first use, shared settings generate a per-device random **fixed** pairing PIN; existing NVS settings remain authoritative. Retrieve it only through the physical checked UART:
+
+```sh
+pixi run owner-pin --port <checked-port>
+```
+
+The PIN bypasses the debug ring and has no BLE/LAN retrieval opcode. Do not retain its output in captures or artifacts. The normal phone CONFIG path configures Wi-Fi; Wi-Fi is off until enabled. To copy Wi-Fi SSID/PSK and Wi-Fi/LAN enable flags from another owner-controlled AQLogger console:
+
+```sh
+pixi run provision-usb --source-port <source-checked-port> --port <waveshare-checked-port>
+```
+
+This explicit command writes destination settings. Credentials stay in host memory and are not printed or saved; pairing PINs, LAN tokens and station identities remain per device. BLE and token-authenticated LAN support the existing protocol; file sync needs no internet or SIM. Only one host process may own each serial port.
+
+## Verification scope
+
+**Last verified on real hardware: 2026-09-28.** Identification/full backup, diagnostic boot, TF mount with reported 31,457,280,000-byte capacity, PMS5003T reception, the OPI PSRAM probe, full logger boot and serial Parquet readback were verified. One unsynced file held **16 rows × 49 columns**, **12,060 bytes**, CRC-32 **`102bc7ff`**, with matching PyArrow/DuckDB values and nulls. Its first two snapshots had warm-up nulls, later PMS readings were valid, temperature was **24.8 °C** and RH **41.9–42.2%**. Gauge status was zero, all battery and UTC/anchor values were null, adjacent sampling intervals were within **1 ms** of ten seconds, and no errors/drops were observed in that bounded run. A subsequent host-UTC change/readback was also checked. Firmware images/capture identities and methods belong in the [bench record](../../docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md).
+
+BLE advertising and macOS discovery of **`AQ-7500`** were verified. The first encrypted-pairing attempt timed out; the shared fixed-PIN callback fix was deployed and emitted its pairing marker, but secure pairing and BLE file transfer remain unverified. Wi-Fi was not configured, so LAN provisioning/discovery/file transfer remain unmeasured. No RGB visual verification, Android phone run, radio-load endurance or power-cut test is claimed.
+
+Sanitized synthetic contract tests exercise the actual shared parser/writer, warm/stale/error/model gates, signed temperature/RH, USB-only battery nulls, clock epochs, dictionary digest and both PyArrow/DuckDB readers for uncompressed/LZ4 files. The physical readback above separately verifies bounded SD writes. Neither establishes power-cut durability, timing under radio load, phone UI compatibility or environmental accuracy. The Android companion code transfers/indexes files without a CoreS3 schema/count restriction and already has ambient/RH history metrics; its live model lacks `rh` and labels `t` as board temperature, so full live environmental display needs a small companion update.
+
+**Next hardware gates:** owner-completed first secure pairing and encrypted BLE file transfer, explicit Wi-Fi/LAN provisioning/file transfer, multi-group/rotation and reset-partial preservation, and ten-second timing/error/drop checks under radio transfers. Longer endurance and power-cut testing require separate evidence. CoreS3's schema and bench results remain distinct.
+
+The final deployed logger includes the bounded startup archive scan, fixed-PIN pairing-state callback and complete-JSON MTU guard. A fresh 16-row reset file passed both readers with zero drop/error/missed counters; an earlier finalized file remained byte-identical after normal firmware resets. The host clock was explicitly supplied after that reset test, and the device was left recording. Image identities and limits are in the bench record; secure first pairing and Wi-Fi/LAN testing remain pending owner action.
