@@ -36,6 +36,7 @@ import binascii
 import datetime as dt
 import hashlib
 import json
+import math
 from pathlib import Path
 import struct
 import sys
@@ -167,11 +168,14 @@ class ProtocolError(RuntimeError):
 class Session:
     """One connection; serializes control requests and collects response frames."""
 
-    def __init__(self, client: BleakClient, verbose=False):
+    def __init__(self, client: BleakClient, verbose=False, *, read_timeout=20.0):
+        if not math.isfinite(read_timeout) or read_timeout <= 0:
+            raise ValueError("read timeout must be finite and positive")
         self.client = client
         self.frames: asyncio.Queue[bytes] = asyncio.Queue()
         self.verbose = verbose
         self.bytes_received = 0
+        self.read_timeout = read_timeout
 
     async def start(self):
         await self.client.start_notify(RESPONSE, self._on_response)
@@ -196,11 +200,27 @@ class Session:
                                 f"detail={data[3:].decode('utf-8', 'replace')!r}")
         return data
 
+    async def read_char(self, uuid: str) -> bytearray:
+        # Bleak 3.0.2's CoreBluetooth backend ignores read timeout kwargs and
+        # its delegate expires after 20 s, including during first pairing.
+        # Reads are idempotent: retry backend timeouts within one fixed deadline.
+        # The outer deadline also bounds backends that never finish a read.
+        try:
+            async with asyncio.timeout(self.read_timeout):
+                while True:
+                    try:
+                        return await self.client.read_gatt_char(uuid)
+                    except TimeoutError:
+                        await asyncio.sleep(0.1)
+        except TimeoutError:
+            raise ProtocolError(f"characteristic read {uuid} did not complete within "
+                                f"{self.read_timeout:g}s") from None
+
     async def info(self) -> dict:
-        return json.loads(bytes(await self.client.read_gatt_char(INFO)))
+        return json.loads(bytes(await self.read_char(INFO)))
 
     async def status(self) -> dict:
-        return json.loads(bytes(await self.client.read_gatt_char(STATUS)))
+        return json.loads(bytes(await self.read_char(STATUS)))
 
     async def list_files(self) -> tuple[dict[str, int], dict]:
         await self.request(bytes([OP_LIST]))
@@ -370,13 +390,20 @@ class Session:
         return {"delay_ms": delay_ms}
 
 
+def advertises_sync_service(ad):
+    # Protocol 2.1 puts service data in ADV and the UUID list in SCAN_RSP.
+    # A scan callback may contain ADV alone; discovery must recognize either.
+    return any(uuid.lower() == SERVICE for uuid in ad.service_uuids) or any(
+        uuid.lower() == SERVICE for uuid in ad.service_data)
+
+
 async def find(args):
     if getattr(args, "address", None):
         return args.address
     name = getattr(args, "name", None)
     found = await BleakScanner.find_device_by_filter(
-        lambda d, ad: SERVICE in [u.lower() for u in ad.service_uuids]
-        and (name is None or d.name == name),
+        lambda d, ad: advertises_sync_service(ad)
+        and (name is None or d.name == name or ad.local_name == name),
         timeout=args.timeout)
     if not found:
         raise SystemExit("no device advertising the AQ sync service; is it powered and unpaired-or-bonded to this host?")
@@ -402,7 +429,7 @@ async def connect(args):
         client = BleakClient(target, timeout=args.timeout)
         await client.connect()
         print(f"BLE CONNECTED mtu={client.mtu_size}", flush=True)
-    session = Session(client)
+    session = Session(client, read_timeout=args.timeout)
     await session.start()
     return client, session
 
@@ -431,7 +458,7 @@ async def cmd_scan(args):
 
     def on_adv(d, ad):
         advert = decode_advert(ad.service_data.get(SERVICE))
-        if SERVICE in [u.lower() for u in ad.service_uuids] or advert is not None:
+        if advertises_sync_service(ad):
             seen[d.address] = (d.name, ad.rssi, advert)
 
     async with BleakScanner(on_adv):
@@ -462,7 +489,7 @@ async def cmd_live(args):
         return handler
 
     try:
-        print(f"LIVE {bytes(await client.read_gatt_char(LIVE)).decode('utf-8', 'replace')}")
+        print(f"LIVE {bytes(await session.read_char(LIVE)).decode('utf-8', 'replace')}")
         await client.start_notify(LIVE, show("LIVE"))
         await client.start_notify(STATUS, show("STATUS"))
         while time.monotonic() < deadline and client.is_connected:
@@ -625,7 +652,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name", help="advertised local name, e.g. AQ-6b40")
     parser.add_argument("--address", help="skip scanning and connect to this address/UUID")
-    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--timeout", type=device.positive_seconds, default=20.0,
+                        help="seconds per discovery, connection and characteristic read; "
+                             "allow time for the system pairing dialog on first access")
     parser.add_argument("--lan", metavar="HOST[:PORT]", help="use the LAN transport (needs a token) instead of BLE")
     parser.add_argument("--token", help="LAN token as 64 hex characters")
     parser.add_argument("--token-file", help="file holding the LAN token hex (see `token --save`)")

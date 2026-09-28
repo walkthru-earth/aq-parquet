@@ -8,6 +8,8 @@ the firmware.
 import asyncio
 import binascii
 import struct
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import ble_sync as ble
 
@@ -100,6 +102,8 @@ class FakeClient:
 
 
 async def run():
+    await run_discovery()
+    await run_read_deadlines()
     client = FakeClient()
     session = ble.Session(client)
     await session.start()
@@ -156,6 +160,124 @@ async def run():
     await run_lan()
 
 
+async def run_discovery():
+    """Connect discovery accepts ADV service data without the SCAN_RSP UUIDs."""
+    candidate = SimpleNamespace(name=None, address="test-device")
+    unrelated = SimpleNamespace(service_uuids=[], service_data={"other": b"x"},
+                                local_name="AQ-6b40")
+    adv_only = SimpleNamespace(service_uuids=[],
+                               service_data={ble.SERVICE.upper(): b"\x01\x04"},
+                               local_name="AQ-6b40")
+    legacy = SimpleNamespace(service_uuids=[ble.SERVICE.upper()],
+                             service_data={}, local_name=None)
+    assert not ble.advertises_sync_service(unrelated)
+    assert ble.advertises_sync_service(adv_only)
+    assert ble.advertises_sync_service(legacy)
+
+    class Scanner:
+        @staticmethod
+        async def find_device_by_filter(predicate, timeout):
+            assert timeout == 5
+            assert not predicate(candidate, unrelated)
+            assert not predicate(SimpleNamespace(name="AQ-other"),
+                                 SimpleNamespace(service_uuids=[ble.SERVICE],
+                                                 service_data={}, local_name="AQ-other"))
+            assert predicate(SimpleNamespace(name="AQ-6b40"), legacy)
+            return candidate if predicate(candidate, adv_only) else None
+
+    original = ble.BleakScanner
+    ble.BleakScanner = Scanner
+    try:
+        assert await ble.find(SimpleNamespace(name="AQ-6b40", timeout=5)) is candidate
+        assert await ble.find(SimpleNamespace(address="known-device")) == "known-device"
+    finally:
+        ble.BleakScanner = original
+    print("PASS ble_sync discovery: ADV-only service data, scan-response UUIDs and name matching")
+
+
+async def run_read_deadlines():
+    """The pairing read can outlast one backend timeout, but never its deadline."""
+    client = FakeClient()
+    client.connect = AsyncMock()
+    args = SimpleNamespace(address="known-device", timeout=90)
+    with patch.object(ble, "BleakClient", return_value=client) as constructor:
+        connected, session = await ble.connect(args)
+    constructor.assert_called_once_with("known-device", timeout=90)
+    assert connected is client and session.read_timeout == 90
+    assert (await session.info())["proto"] == 2
+    assert (await session.status())["qf"] == 7
+
+    # Simulate the CoreBluetooth delegate's timeout while pairing, followed by
+    # success once the user has answered. No backend-specific kwargs are needed.
+    read = AsyncMock(side_effect=[TimeoutError(), bytearray(INFO)])
+    session = ble.Session(SimpleNamespace(read_gatt_char=read), read_timeout=0.4)
+    assert (await session.info())["proto"] == 2
+    assert read.await_count == 2
+    assert all(call.args == (ble.INFO,) and not call.kwargs for call in read.await_args_list)
+
+    # INFO, STATUS and the initial LIVE read all cancel a stalled backend at
+    # the session deadline, rather than waiting for a backend's own timeout.
+    for uuid in (ble.INFO, ble.STATUS, ble.LIVE):
+        cancelled = asyncio.Event()
+
+        async def stalled(_uuid):
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+
+        session = ble.Session(SimpleNamespace(read_gatt_char=stalled), read_timeout=0.02)
+        started = asyncio.get_running_loop().time()
+        try:
+            if uuid == ble.INFO:
+                await session.info()
+            elif uuid == ble.STATUS:
+                await session.status()
+            else:
+                await session.read_char(uuid)
+        except ble.ProtocolError as error:
+            assert uuid in str(error) and "0.02s" in str(error), error
+        else:
+            raise AssertionError("stalled characteristic read must fail")
+        assert cancelled.is_set()
+        assert asyncio.get_running_loop().time() - started < 0.5
+
+    # Repeated backend timeouts cannot reset the outer deadline or spin freely.
+    read = AsyncMock(side_effect=TimeoutError)
+    session = ble.Session(SimpleNamespace(read_gatt_char=read), read_timeout=0.15)
+    started = asyncio.get_running_loop().time()
+    try:
+        await session.info()
+    except ble.ProtocolError:
+        pass
+    else:
+        raise AssertionError("backend timeouts must exhaust the fixed deadline")
+    assert 1 <= read.await_count <= 2
+    assert asyncio.get_running_loop().time() - started < 0.5
+
+    # ATT/connection failures and explicit caller cancellation must not retry.
+    for failure in (RuntimeError("ATT read refused"), asyncio.CancelledError()):
+        read = AsyncMock(side_effect=failure)
+        session = ble.Session(SimpleNamespace(read_gatt_char=read), read_timeout=0.4)
+        try:
+            await session.status()
+        except type(failure) as error:
+            assert error is failure
+        else:
+            raise AssertionError("non-timeout failure must propagate")
+        assert read.await_count == 1
+
+    # The LIVE command must use Session too, not bypass the configured deadline.
+    client.is_connected = True
+    client.disconnect = AsyncMock()
+    live_session = SimpleNamespace(read_char=AsyncMock(return_value=bytearray(b'{"buf":1}')))
+    with patch.object(ble, "connect", AsyncMock(return_value=(client, live_session))):
+        await ble.cmd_live(SimpleNamespace(seconds=0))
+    live_session.read_char.assert_awaited_once_with(ble.LIVE)
+    client.disconnect.assert_awaited_once()
+    print("PASS ble_sync read deadlines: configured pairing retries, INFO/STATUS/LIVE bounds, cancellation and errors")
+
+
 async def run_lan():
     """A scripted TCP device: handshake, HELLO, framed requests, pushes between CHUNKs."""
     fake = FakeClient(chunk=200)
@@ -200,7 +322,7 @@ async def run_lan():
     payload, transfer = await session.fetch(NAME, 1000)
     assert payload == FILE and transfer["windows"] == 1, transfer
     assert pushed == [b'{"seq":1}'], pushed
-    assert await link.read_gatt_char(ble.LIVE) == bytearray(b'{"seq":1}')
+    assert await session.read_char(ble.LIVE) == bytearray(b'{"seq":1}')
     await link.disconnect()
     bad = ble.LanLink("127.0.0.1", bytes(32), port)
     try:
