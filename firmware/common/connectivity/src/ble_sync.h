@@ -20,7 +20,19 @@ constexpr std::uint32_t kMaxRead = 16384;
 constexpr std::uint16_t kMaxMtu = 517;
 // Largest frame ever notified: the GATT attribute-value limit, not MTU - 3.
 constexpr std::uint16_t kMaxFrame = 512;
-constexpr std::size_t kMaxJson = 240;
+// Leave room for framing and bounded cached snapshots below the 512-byte
+// GATT attribute cap. The larger limit retains all STATUS counter fields.
+constexpr std::size_t kMaxJson = 480;
+static_assert(kMaxJson + 16 <= kMaxFrame,
+              "JSON characteristic exceeds GATT cap");
+
+// Shared snapshot notification policy. The full value remains available by
+// long read when it cannot fit the negotiated ATT notification payload.
+constexpr bool snapshot_notification_fits(std::size_t length,
+                                          std::uint16_t negotiated_mtu) {
+  return length > 0 && length <= kMaxJson && negotiated_mtu >= 3 &&
+         length <= static_cast<std::size_t>(negotiated_mtu - 3);
+}
 
 enum Op : std::uint8_t {
   kOpList = 0x01,
@@ -149,6 +161,7 @@ config::PairMode pair_mode();
 void clear_bonds();
 
 // From the sampling loop, after the row was queued. Payloads <= kMaxJson.
+// Cache the complete value; omit notifications exceeding negotiated MTU - 3.
 void publish_live(const char *json, std::size_t length);
 void publish_status(const char *json, std::size_t length);
 // Alongside publish_status(): refreshes the advertising service data when the

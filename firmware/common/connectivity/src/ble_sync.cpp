@@ -231,8 +231,12 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   NimBLEDevice::setSecurityAuth(true, mitm, true);
   NimBLEDevice::setSecurityIOCap(mitm ? BLE_HS_IO_DISPLAY_ONLY
                                       : BLE_HS_IO_NO_INPUT_OUTPUT);
-  if (mode == config::PairMode::Fixed)
-    NimBLEDevice::setSecurityPasskey(fixed_passkey);
+  // NimBLE 2.5.1 bypasses onPassKeyDisplay() when a nondefault static
+  // security passkey is set. Keep its callback path for both pairing modes:
+  // our callback returns the same per-device fixed PIN while also publishing
+  // pairing/UI state. The library default is only a callback sentinel; it is
+  // never the passkey returned by this implementation unless that is the
+  // intentionally configured per-device value.
   bonds = static_cast<std::uint32_t>(NimBLEDevice::getNumBonds());
 
   server = NimBLEDevice::createServer();
@@ -318,7 +322,8 @@ void publish_live(const char *json, std::size_t length) {
   if (!enabled.load() || !live_char)
     return;
   live_char->setValue(reinterpret_cast<const std::uint8_t *>(json), length);
-  if (connected.load() && authenticated.load())
+  if (connected.load() && authenticated.load() &&
+      snapshot_notification_fits(length, mtu.load()))
     live_char->notify(reinterpret_cast<const std::uint8_t *>(json), length,
                       conn_handle.load());
 }
@@ -327,7 +332,8 @@ void publish_status(const char *json, std::size_t length) {
   if (!enabled.load() || !status_char)
     return;
   status_char->setValue(reinterpret_cast<const std::uint8_t *>(json), length);
-  if (connected.load() && authenticated.load())
+  if (connected.load() && authenticated.load() &&
+      snapshot_notification_fits(length, mtu.load()))
     status_char->notify(reinterpret_cast<const std::uint8_t *>(json), length,
                         conn_handle.load());
 }
