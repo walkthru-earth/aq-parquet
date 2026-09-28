@@ -24,5 +24,7 @@ if [[ "${installed_version}" != "${ARDUINO_CLI_VERSION}" ]]; then
 fi
 "${trial_dir}/arduino-cli.sh" core update-index
 "${trial_dir}/arduino-cli.sh" core install "esp32:esp32@${ARDUINO_ESP32_VERSION}"
+"${trial_dir}/arduino-cli.sh" lib install "NimBLE-Arduino@${NIMBLE_ARDUINO_VERSION}"
 "${trial_dir}/arduino-cli.sh" version
 "${trial_dir}/arduino-cli.sh" core list
+"${trial_dir}/arduino-cli.sh" lib list
