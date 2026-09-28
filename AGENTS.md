@@ -8,7 +8,7 @@ This repo can hold **more than one framework trial** against the same board and 
 ```
 firmware/
   <framework>-<variant>/   one self-contained trial, own build system and lockfile
-  common/                  base code plus opt-in runtime/connectivity libraries, each with AGENTS.md
+  common/                  base code plus opt-in runtime/connectivity/logger libraries, each with AGENTS.md
 docs/shared/               board-neutral data, protocol and security contracts
 docs/boards/<board>/       board wiring, power, drivers and measured evidence
 tools/                     host scripts: device readback, Parquet validation, logs
@@ -41,6 +41,7 @@ Trial directory names state the framework first, for example `firmware/idf-cpp/`
 | CoreS3 real-board evidence | `docs/boards/m5stack-cores3/bench-verified.md` |
 | Shared BLE/Wi-Fi, settings/logging and archive sessions | `firmware/common/README.md`, then the relevant nested AGENTS.md |
 | Waveshare official examples, modem/GNSS/camera/gauge adoption | `docs/boards/waveshare-esp32-s3-sim7670g/software-resources.md` |
+| Waveshare SDMMC logging and memory qualification | `docs/boards/waveshare-esp32-s3-sim7670g/storage.md` |
 | Waveshare V2 pins, rails, TF, boot | `docs/boards/waveshare-esp32-s3-sim7670g/hardware.md` |
 | Waveshare PMS5003T wiring and byte contract | `docs/boards/waveshare-esp32-s3-sim7670g/pms5003t.md` |
 | Phone BLE/LAN sync and background triggers | `docs/shared/ble-sync-protocol.md`, `background-sync-triggers.md` |
@@ -71,7 +72,7 @@ Identify the exact board and serial port before any flash write. The sequence be
 
 Further rules.
 
-- The Waveshare V2 board has embedded 8 MB PSRAM and a quad 16 MB flash, as read from the attached ESP32-S3 on 2026-09-28. Its exact PSRAM build mode remains unverified; the first diagnostic does not initialize PSRAM. Its GPIO2 is free of the V1 fuel-gauge conflict only on V2. See its board docs.
+- The Waveshare V2 board has embedded 8 MB PSRAM and a quad 16 MB flash, as read from the attached ESP32-S3 on 2026-09-28. The logger uses OPI PSRAM (`qio_opi` selected SDK); an allocated 512 KiB/four-pattern probe passed on this unit. The retained diagnostic disables PSRAM. Validate the selected SDK, not Arduino's misleading copied `build/sdkconfig`, before changing the memory target. Its GPIO2 is free of the V1 fuel-gauge conflict only on V2. See its board docs.
 - CoreS3 is **Quad PSRAM, 16 MB flash**. Selecting Octal PSRAM because another S3 board uses it produces a board that does not boot.
 - Never add pulls or drivers to ESP32-S3 strapping pins 0, 3, 45, 46 without a board-level audit. They may already carry board functions; Waveshare uses GPIO46 for TF card detect.
 - Do not write eFuses. There is no undo. Nothing in this project needs them. Reading them with `pixi run efuse` is safe.
@@ -81,7 +82,7 @@ Further rules.
 
 ## Reading the board back
 
-For Bluetooth and LAN, `pixi run ble-sync …` (`tools/ble_sync.py`) is the host client for `docs/shared/ble-sync-protocol.md`; on macOS launch it from Terminal.app. Only `time`, `flush`, `set` and `reboot` write to the device. `--lan aq-xxxx.local --token-file artifacts/lan-token.txt` runs the same commands over TCP once `token --save` has fetched the token over BLE; the token is a bearer secret and stays in git-ignored `artifacts/`, never in docs or logs. If a worker-side command goes unanswered while sampling continues, look for `PARQUET ERROR operation=worker-stall` on serial and decode any task-watchdog backtrace with `xtensa-esp-elf-addr2line -pfiaC -e firmware/arduino-m5unified/build/bringup.ino.elf <addresses>` (see `docs/boards/m5stack-cores3/bench-verified.md`). `pixi run capture --port <port> --seconds <n>` records serial output for a bounded time and stops, so a silent board cannot hang the caller. Add `--out <file>` to keep the log, or `--until "<text>"` to stop early. `pixi run monitor <port> <baud>` is the interactive terminal.
+For Bluetooth and LAN, `pixi run ble-sync …` (`tools/ble_sync.py`) is the host client for `docs/shared/ble-sync-protocol.md`; on macOS launch it from Terminal.app. Only `time`, `flush`, `set` and `reboot` write to the device. Headless fixed-PIN readback uses `pixi run owner-pin --port <checked-port>` over the physical console; never retain its output. `provision-usb` copies Wi-Fi credentials in memory between explicit source/destination ports; exporting credentials to another device requires the owner's specific authorization. `--lan aq-xxxx.local --token-file artifacts/lan-token.txt` runs the same commands over TCP once `token --save` has fetched the token over BLE; the token is a bearer secret and stays in git-ignored `artifacts/`, never in docs or logs. If a worker-side command goes unanswered while sampling continues, look for `PARQUET ERROR operation=worker-stall` on serial and decode any task-watchdog backtrace with `xtensa-esp-elf-addr2line -pfiaC -e firmware/arduino-m5unified/build/bringup.ino.elf <addresses>` (see `docs/boards/m5stack-cores3/bench-verified.md`). `pixi run capture --port <port> --seconds <n>` records serial output for a bounded time and stops, so a silent board cannot hang the caller. Add `--out <file>` to keep the log, or `--until "<text>"` to stop early. `pixi run monitor <port> <baud>` is the interactive terminal.
 
 On CoreS3, if a capture returns nothing, the board may be sitting in the ROM download bootloader, which prints nothing at all. Confirm with `pixi run chip`, which still answers there.
 
@@ -101,7 +102,7 @@ During an active Parquet run, prefer `pixi run parquet-device capture --port <po
 
 `pixi run fmt`, `pixi run fmt-check`, `pixi run lint` (cppcheck over `firmware/`), `pixi run hooks` to install pre-commit.
 
-For writer/schema or readback changes, also run `pixi run parquet-test --sanitize` and proportionate SD readback tests. The format tasks discover project C/C++ files, excluding build/vendor trees. Preserve vendored source bytes/licenses and their `.clang-format-ignore` exclusion. Project lint excludes vendor diagnostics and checks one configuration; the linked codec is tested with sanitizers.
+For writer/schema or readback changes, also run `pixi run parquet-test --sanitize` and proportionate SD readback tests. The format tasks discover project C/C++ files, excluding build/vendor trees. Preserve vendored source bytes/licenses and their `.clang-format-ignore` exclusion. Project lint excludes vendor diagnostics and checks the base and Waveshare logger configurations; the linked codec is tested with sanitizers.
 
 For the measurement contract, also run `pixi run telemetry-contract-test --sanitize`. `telemetry_fields.inc` is the single source for names/types/procedure/unit/validity; update its compiled SHA-256 intentionally when editing it. Do not invent deployment, calibration, sensor serials or UTC. Version schema changes explicitly; backward compatibility is not required, but existing saved files must not be deleted or rewritten without authorization. Mermaid diagrams should distinguish implemented work from planned services; metadata compatibility is not OGC API compliance.
 
