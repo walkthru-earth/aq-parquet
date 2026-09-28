@@ -1,6 +1,6 @@
 # Waveshare V2 software resources
 
-Source-checked **2026-09-28** for ESP32-S3-SIM7670G-4G **V2.0**. This is a resource/adoption map; only the diagnostic, PMS5003T UART reception and TF mount in the [bench record](bench-verified.md) have run on our unit. Modem, GNSS, camera, battery gauge and charging behavior remain untested.
+Source-checked **2026-09-28** for ESP32-S3-SIM7670G-4G **V2.0**. This is a resource/adoption map; diagnostic/full logger boot, PMS5003T UART reception, TF mount and bounded Parquet write/serial readback, host-UTC behavior, OPI PSRAM and BLE advertising/discovery have run on our unit. Encrypted BLE transfer and Wi-Fi/LAN remain unverified; RGB visual behavior was not checked. Modem, GNSS, camera, battery gauge and charging behavior remain untested. Physical evidence belongs in the [bench record](bench-verified.md).
 
 ## Is there an M5Unified equivalent?
 
@@ -17,10 +17,10 @@ The practical source is the product's [V2 example archive](https://files.wavesha
 
 | Hardware | Verified upstream example/API | V2 compatibility and project status |
 | --- | --- | --- |
-| TF storage | Archive `SD/SD.ino`: `SD_MMC.setPins`, `begin`, `cardType`, `cardSize` | CLK5/CMD4/D0=6, one-bit mode. Diagnostic already uses this mapping and mounted the inserted card. No Parquet file IO yet. |
+| TF storage | Archive `SD/SD.ino`: `SD_MMC.setPins`, `begin`, `cardType`, `cardSize` | CLK5/CMD4/D0=6, one-bit mode. Diagnostic mounted the card; the logger's storage worker wrote/finalized bounded Parquet files fetched over serial and checked by two readers. Endurance/power-cut durability remain unmeasured. |
 | Fuel gauge | Archive `bat/bat.ino`; [MAX17048 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/MAX17048-MAX17049.pdf) | Address 0x36, SDA15/SCL16. The sample reads VCELL register 0x02, calls it `soc`, and scales raw/65535×5; do not use that as battery percentage. SOC is register 0x04. Potential gauge adapter only. |
 | Camera | Archive `CameraWebServer/`, `CAMERA_MODEL_WAVESHARE_7670_BOARD`; [Espressif camera driver](https://github.com/espressif/esp32-camera) `esp_camera_init`, `esp_camera_sensor_get` | V2 XCLK39, SCCB SDA15/SCL16, D0…D7=7…14, VSYNC42/HREF41/PCLK46, no reset/power GPIO. CAM DIP ON; V2 normally ships OV5640. Gauge shares SCCB pins; GPIO46 also appears as TF detect in the guide. Audit controller/detect ownership before combining. Camera remains disabled. |
-| RGB indicator | Archive `RGB/RGB.ino`: `Adafruit_NeoPixel(1,38,NEO_GRB+NEO_KHZ800)` | WS2812B GPIO38. Potential board status adapter; not enabled. |
+| RGB indicator | Archive `RGB/RGB.ino`: `Adafruit_NeoPixel(1,38,NEO_GRB+NEO_KHZ800)` | WS2812B GPIO38. Current adapter uses Arduino `rgbLedWrite` for startup/card/sensor state; visual behavior has not been verified. |
 | GNSS | Archive `ESP-IDF/ESP32-S3-XXX7670X-4G-GNSS/`: UART AT commands, then NMEA output | Example ESP RX17/TX18, 115200 8N1, UART1. PMS already owns UART1 in our diagnostic: choose a separate controller and verify UART direction against the V2 schematic before integration. GNSS antenna/fix required; no fabricated position/time. |
 | Cellular sockets | Archive IDF `ESP32-S3-XXX7670X-4G-TCP/` and `...HTTP/` | Same UART mapping; modem-side TCP/HTTP AT flows, not an ESP IP/PPP interface. APN/server values are demo settings. Examples accept error strings in some success checks and require review before reuse. Not implemented. |
 
@@ -44,4 +44,4 @@ Keep V2 pins, SD mount, rail/USB routing and optional peripheral ownership in th
 
 Before adoption, pin source/dependencies and preserve licenses. The archive has no top-level license for Waveshare's sketches/IDF demos; bundled Adafruit licenses do not grant a blanket license over those files. Prefer documented pin facts and separately licensed upstream drivers (Espressif camera and ESP-IoT-Solution: Apache-2.0; individual dependency notices still apply).
 
-Open measurements: modem identity/firmware/USB descriptors and PPP, UART AT/GNSS, gauge correctness on an inserted battery, battery/solar charging and 5 V rail availability, PSRAM build mode, and camera/gauge/TF coexistence. None follows from the existing TF capacity result.
+Open measurements: encrypted BLE pairing/file transfer, Wi-Fi/LAN provisioning/file transfer, multi-group/LZ4/reset-partial behavior, sampling under radio load, storage/PSRAM endurance, modem identity/firmware/USB descriptors and PPP, UART AT/GNSS, gauge correctness on an explicitly installed battery, battery/solar charging and 5 V rail availability, and camera/gauge/TF coexistence. The bounded logger/PSRAM runs do not establish endurance or power-cut durability.

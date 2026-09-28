@@ -1,21 +1,25 @@
 # Waveshare ESP32-S3-SIM7670G-4G V2 hardware
 
-Source-checked 2026-09-28 for PCB revision **V2.0**, as confirmed by the owner. The board identification, flash capacity/type, PSRAM capacity, and eFuse status were read from the connected unit on 2026-09-28; wiring and peripheral function remain source-checked. See the [bench record](bench-verified.md). [Waveshare product documentation](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G), [Arduino guide with V1/V2 tables](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/Arduino), [FAQ and recovery](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ).
+Source-checked 2026-09-28 for PCB revision **V2.0**, as confirmed by the owner. Identification, flash capacity/type, PSRAM initialization/readback, eFuse status, PMS UART reception and bounded logger TF write/serial readback were measured on the unit. Remaining pin assignments and optional peripheral function are source-checked; RGB visual operation, encrypted BLE transfer and Wi-Fi/LAN remain unverified. See the [bench record](bench-verified.md). [Waveshare product documentation](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G), [Arduino guide with V1/V2 tables](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/Arduino), [FAQ and recovery](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ).
 
 | Function | V2 pins / source status | Ownership rule |
 | --- | --- | --- |
 | PMS5003T UART | Host RX GPIO1, TX GPIO2, per owner's four-wire connection | Dedicated `HardwareSerial(1)`, 9600 8N1; sensor TX crosses to host RX |
 | TF slot | SDMMC CLK GPIO5, CMD GPIO4, DATA0 GPIO6, card detect GPIO46 | One storage worker; use SDMMC one-bit mode, not CoreS3 SPI pins |
-| Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Do not use V1 GPIO3/GPIO2 gauge mapping; one I²C owner |
+| Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Disabled: owner confirmed USB only/no battery. Later adapter must use one I²C owner and explicit installed-battery configuration; V1 GPIO3/GPIO2 mapping is wrong here |
 | Camera | V2 mapping includes XCLK GPIO39 and PCLK GPIO46 | Camera and TF card detect need a conflict check before use together |
-| RGB LED | GPIO38 | Optional diagnostic only |
-| SIM7670G, camera, GNSS | Onboard | Not initialized by the first UART/TF diagnostic trial |
+| RGB LED | GPIO38 | Logger implements startup/card/sensor state; visual operation unverified; no file-copy or durability claim |
+| SIM7670G, camera, GNSS | Onboard | Not initialized by the diagnostic or current logger adapter |
 
-Waveshare identifies the module as ESP32-S3R8 with **16 MB flash and 8 MB PSRAM**. Its FAQ gives conflicting PSRAM-mode advice. The first diagnostic build leaves PSRAM disabled and does not need it. Before a Parquet/PSRAM build or any flash write, read the connected board with `ports`, `chip`, `flash-id`, and `efuse`, make a full backup matching the verified flash capacity, then confirm the image byte count. Do not reuse the CoreS3 Quad-PSRAM setting by inference.
+Waveshare identifies the module as ESP32-S3R8 with **16 MB flash and 8 MB PSRAM**. Its FAQ gives conflicting PSRAM-mode advice. The first diagnostic leaves PSRAM disabled. A separate 2026-09-28 OPI build booted on this unit, reported initialized physical/heap capacity of **8,388,608 bytes**, and passed four patterns over a 512 KiB allocation. The logger consequently selects **Quad/QIO flash with OPI PSRAM** (`qio_opi` SDK), checks initialized physical capacity before starting, and puts its bounded writer workspace in PSRAM. The full logger subsequently booted and wrote/read Parquet files; this establishes bounded operation, not all-address or endurance coverage. Evidence and image identities belong in [bench-verified.md](bench-verified.md). Do not reuse CoreS3's Quad-PSRAM setting.
+
+Before any first flash write on another unit, run the root `ports`, `chip`, `flash-id`, `efuse` and full verified-backup sequence. Firmware build wrappers verify the exact locked target and selected SDK; board identity and flash size still require physical readback.
 
 The board's UART download and BOOT+RESET recovery are described in the [Waveshare FAQ](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ). Verify the actual port and recovery behavior on this V2 unit before treating CoreS3 serial-control observations as portable. Strapping pin GPIO46 is already used for card detect in the vendor example; do not add a pull or driver to it.
 
 The pictured PMS power connection uses the exposed 5 V and GND. Confirm the selected 5 V rail is present under the board's chosen USB/battery supply mode before attributing absent UART frames to the sensor. No board power measurement has been made here.
+
+The current logger has no external RTC adapter. UTC stays null after boot until an explicit host anchor arrives; GNSS/modem time is not substituted. USB-only operation does not provide battery presence, voltage, percentage or charging evidence. The MAX17048 acknowledging on I²C would not establish an installed battery, so the current adapter does not probe it.
 
 ## Power slider and DIP switches
 
