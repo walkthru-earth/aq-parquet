@@ -25,6 +25,7 @@ printf '%s  %s\n' "${dictionary_digest}" \
   --library "${common_dir}" \
   --library "${common_dir}/runtime" \
   --library "${common_dir}/connectivity" \
+  --library "${common_dir}/logger" \
   --warnings all \
   --build-path "${build_dir}" \
   --export-binaries \
