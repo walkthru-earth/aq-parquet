@@ -1,14 +1,27 @@
 # Sync protocol: device ↔ phone over BLE and LAN
 
 
-> **Board scope:** The contract and design intent here can be reused across board trials. The implemented firmware, fixed `cores3-*` schema IDs and dated measurements below are CoreS3-specific. The Waveshare V2 trial currently has only a PMS5003T UART diagnostic; it must version its own measurement contract before producing Parquet or advertising this sync service.
-Load when implementing or debugging the Bluetooth LE service, the Wi-Fi/TCP server, or a phone client. Protocol version **2**, defined 2026-09-17; version 1 (2026-09-16, BLE file sync only) is a strict subset, so a v1 phone keeps working against a v2 device. Revision **2.1** (2026-09-18, firmware `-v6.3`) adds the [advertising payload](#advertising-payload-v21) and moves the UUID list to the scan response; `info.proto` stays 2 because nothing a connected phone sees changed. Implemented in the Arduino trial; see [bench-verified](../boards/m5stack-cores3/bench-verified.md#board-1-bluetooth-le-sync) for exactly what was measured and on which phone. Radio constraints live in [wireless](../boards/m5stack-cores3/cores3-wireless.md); the file/row contract in [telemetry-pipeline](telemetry-pipeline.md).
+> **Board scope:** AQCommon, AQRuntime, AQConnectivity and AQLogger implement this shared contract for the CoreS3 and Waveshare V2 logger adapters. `info` identifies the board-owned schema, dictionary and firmware; a `cores3-*` identity or CoreS3 measurement must not be relabeled as Waveshare evidence. The retained Waveshare UART/TF diagnostic does not start these services.
+
+Load when implementing or debugging BLE, the local Wi-Fi/TCP server, or a phone
+client. Protocol version **2** was defined 2026-09-17; version 1 (BLE file sync)
+is a strict subset. Revision **2.1** (2026-09-18, CoreS3 firmware `-v6.3`) adds
+[advertising](#advertising-payload-v21) and moves the UUID list to the scan
+response. The 2026-09-28 AQLogger integration raises STATUS/LIVE JSON capacity
+from 240 to 480 bytes and adds board-specific optional LIVE fields; UUIDs,
+request opcodes and `info.proto=2` remain unchanged. Clients must handle the
+larger cached values as described below. Hardware evidence and limits belong to
+the [CoreS3 bench](../boards/m5stack-cores3/bench-verified.md) and
+[Waveshare bench](../boards/waveshare-esp32-s3-sim7670g/bench-verified.md).
+CoreS3-specific radio constraints remain in its
+[wireless note](../boards/m5stack-cores3/cores3-wireless.md); the shared row/file
+contract is in [telemetry-pipeline](telemetry-pipeline.md).
 
 Version 2 adds, on top of the v1 file sync: **device configuration and control** (`GET_CONFIG`/`SET_CONFIG`, Wi-Fi scan and provisioning, reboot, log tail), **pairing modes** for devices without a screen, and a **LAN transport** — the same frames over one TCP socket, discovered with mDNS, authenticated with a token the phone can only obtain over the bonded BLE link. BLE introduces, LAN accelerates. Revision 2.1 adds a way for the device to tell a phone that is *not* connected that something changed; why and how a phone uses it is in [background-sync-triggers](background-sync-triggers.md).
 
 ## Purpose and non-goals
 
-The system is **offline-first**: the device logs to its card with no network, and the local copy on a phone (or laptop, or another device) is the source of truth. Any link between device and phone — BLE today, Wi-Fi or LoRa device-to-device later — is a sync transport, and if the device or the phone happens to have Wi-Fi or a SIM, that is welcome but never required. Cloud upload, when it exists, is a separate opt-in step that runs *after* local sync and is off by default. This document covers the BLE transport. A phone within Bluetooth range must be able to, without internet or any server:
+The system is **offline-first**: the card is the data origin, and a local archive on a phone, laptop or hub is its first copy. Logging and local sync work with no internet. Any link between device and phone — BLE today, Wi-Fi or LoRa device-to-device later — is a sync transport, and if the device or the phone happens to have Wi-Fi or a SIM, that is welcome but never required. Cloud upload, when it exists, is a separate opt-in step that runs *after* local sync and is off by default. This document covers the BLE transport. A phone within Bluetooth range must be able to, without internet or any server:
 
 1. identify the device and its schema,
 2. watch the latest readings,
@@ -16,7 +29,7 @@ The system is **offline-first**: the device logs to its card with no network, an
 4. list every finalized Parquet file on the microSD,
 5. copy those files, byte-exact and verified, into the phone's own storage.
 
-The device **never** deletes, rewrites or renames a file because of the phone. Sync is a pull of immutable files; deduplication happens on the phone. There is no SQL, no query pushdown, no row-level API. The phone holds whole files, exactly as the USB-serial `parquet list` / `parquet get` path delivers them today (`tools/export_parquet.py`).
+The device **never** deletes, rewrites or renames a finalized file because of the phone. Sync is a pull of immutable files; deduplication happens on the phone. There is no SQL, no query pushdown, no row-level API. The phone holds whole files, exactly as the USB-serial `parquet list` / `parquet get` path delivers them today (`tools/export_parquet.py`).
 
 ## Transport summary
 
@@ -24,7 +37,7 @@ The device **never** deletes, rewrites or renames a file because of the phone. S
 | --- | --- |
 | Role | Device = GATT server / peripheral. Phone = central. One connection at a time. |
 | Advertising | Connectable, legacy PDUs, public address (the ESP32-S3 factory MAC, the same bytes `device_id` is built from — never a resolvable private address, see [address stability](#advertising-payload-v21)). **ADV**: flags + 10-byte [service data](#advertising-payload-v21) under the service UUID (31 bytes exactly). **Scan response**: complete local name `AQ-xxxx` (`xxxx` = last four hex digits of `device_id`) + complete 128-bit service UUID list. Before 2.1 the UUID list was in the ADV and there was no service data; Android, CoreBluetooth and bleak all merge both PDUs into one record, so a UUID filter finds the device either way. |
-| MTU | Device accepts up to 517. Phone MUST request ≥ 247 before using `control`. Frame sizes derive from the negotiated MTU: `payload_max = min(MTU − 3, 512)`. The 512 cap is the GATT attribute-value limit; Android silently drops notifications above it (measured 2026-09-17), macOS does not, so a device that sends 514-byte frames works from a laptop and fails from a phone. |
+| MTU | Device accepts up to 517. Phone MUST request ≥ 247 before using `control`; request 517 where supported. MTU ≥ 483 carries the maximum 480-byte STATUS/LIVE JSON in one notification. When an actual JSON value exceeds MTU − 3, its notification is omitted; use characteristic long reads for the complete cached snapshot. Frame sizes derive from the negotiated MTU: `payload_max = min(MTU − 3, 512)`. The 512 cap is the GATT attribute-value limit; Android silently drops notifications above it (measured 2026-09-17), macOS does not, so a device that sends 514-byte frames works from a laptop and fails from a phone. |
 | Security | LE Secure Connections, bonding. Pairing mode is configurable (below); the default is chosen at first boot from whether a display is present, the way Meshtastic does it. In `random` and `fixed` modes every characteristic requires an encrypted **and authenticated** link (MITM); in `none` mode encrypted only. After the first bond, reconnects are silent. Unbonding is done on the phone, or with `ble.clear_bonds`; the device keeps up to 3 bonds and evicts the oldest. |
 | Endianness | Every multi-byte integer is **little-endian**. |
 | Text | UTF-8, no terminator, length implied by frame length. JSON where stated, ASCII-only keys. |
@@ -34,10 +47,16 @@ The device **never** deletes, rewrites or renames a file because of the phone. S
 | `ble.pair` | Passkey | Default when | Notes |
 | --- | --- | --- | --- |
 | `random` | fresh 6 digits per attempt, shown on the display and printed on serial (`BLE PAIR passkey=`) | a display is detected at first boot | Physical ownership is proven by reading the screen. This is the v1 behaviour and stays the CoreS3 default. |
-| `fixed` | `ble.pin`, random **per-device** 6-digit value at first boot | no display is detected at first boot (bare ESP32-S3 PCB) | Same phone UX (Android asks for six digits). The owner must obtain the generated value through a trusted provisioning path (serial output or a temporary attached display) or configure another value before deployment. Firmware does not ship a universal PIN. Existing installations that still stored legacy `123456` rotate it once at boot. |
+| `fixed` | `ble.pin`, random **per-device** 6-digit value at first boot | no display is detected at first boot (bare ESP32-S3 PCB) | Same phone UX (Android asks for six digits). The owner obtains it with physical serial `parquet owner-pin` (or an attached pairing display), or configures another value before deployment. This owner reply is excluded from LOG_TAIL and is not printed at boot. Firmware does not ship a universal PIN. Existing installations that still stored legacy `123456` rotate it once at boot. |
 | `none` | Just Works | never by default | Encrypted, unauthenticated, no prompt. For lab benches only; must be enabled deliberately. Characteristics drop the `AUTHEN` requirement in this mode so reads succeed. |
 
 The mode and PIN are stored in NVS (`aqcfg` namespace) and are **applied at the next boot**, because the NimBLE security parameters are fixed at stack start; `SET_CONFIG` answers with `reboot_required` set and the phone offers `REBOOT`. The first-boot auto-detection result is stored, so removing the display later does not silently change the mode (again like Meshtastic — change the mode before removing the screen). A lost phone is handled by re-pairing or by `ble.clear_bonds=1`.
+
+The pinned NimBLE 2.5.1 server supplies both pairing modes through
+`onPassKeyDisplay`: fixed mode returns the stored per-device PIN and logs only
+`passkey=fixed`; random mode generates its per-attempt value. Do not install a
+nondefault static `setSecurityPasskey`, which bypasses this callback and its
+pairing/UI state. The stack's default value acts only as a callback sentinel.
 
 ### Advertising payload (v2.1)
 
@@ -63,12 +82,12 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 | --- | --- | --- | --- |
 | **Service** AQ Sync | `c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01` | — | — |
 | `info` | `…-0002-…` | read | JSON, ≤ 400 bytes, static for a boot |
-| `status` | `…-0003-…` | read, notify | JSON, ≤ 240 bytes |
-| `live` | `…-0004-…` | read, notify | JSON, ≤ 240 bytes |
+| `status` | `…-0003-…` | read, notify | JSON, ≤ 480 bytes |
+| `live` | `…-0004-…` | read, notify | JSON, ≤ 480 bytes |
 | `control` | `…-0005-…` | write (with response) | binary request, ≤ 512 bytes |
 | `response` | `…-0006-…` | notify | binary frames, ≤ `payload_max` (≤ 512) |
 
-`status` and `live` are ≤ 240 bytes so one notification always carries the whole value on MTU ≥ 247. `info` may exceed one PDU; phones use a normal long read. All `response` traffic for one request is emitted in order on the single `response` characteristic, so the phone needs one notification handler and no reassembly beyond concatenating `CHUNK` payloads.
+`status` and `live` are ≤ 480 bytes; their characteristic capacities are 496 bytes and the BLE frame cap remains 512 bytes. MTU ≥ 483 is required to carry the largest JSON snapshot in one notification. Each publisher caches the complete JSON value first, then omits its notification when the actual value exceeds negotiated MTU − 3. No partial JSON notification is sent. Clients with smaller MTUs must perform characteristic long reads for complete snapshots; STATUS may update its cache without emitting a notification. `info` may also exceed one PDU and uses a normal long read. All `response` traffic for one request is emitted in order on the single `response` characteristic, so the phone needs one notification handler and no reassembly beyond concatenating `CHUNK` payloads.
 
 ### `info` (read)
 
@@ -78,7 +97,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
-`station`, `dev` and `boot` are the same identities written into every Parquet row and Hive path. `max_read` is the largest `length` the device honours per `READ`. `proto` is 2 on firmware that implements this document; a phone that only knows v1 may ignore everything from `0x08` up.
+`schema`, `cols`, `dict` and `fw` describe the consuming board image; the example above is CoreS3, while Waveshare advertises its own 49-column dictionary. Clients must use that identity when interpreting shortened LIVE keys. `station`, `dev` and `boot` are the same identities written into every Parquet row and Hive path. `max_read` is the largest `length` the device honours per `READ`. `proto` is 2 on firmware that implements this document; a phone that only knows v1 may ignore everything from `0x08` up.
 
 ### `status` (read, notify)
 
@@ -103,6 +122,12 @@ Notified after every stored sample (every 10 s) and after any `control` request 
 | `clk` / `rtc` | firmware v6.2. `clk` is the anchor source, same codes as `clock_status`: 0 none, 1 host time set on this boot, 2 restored at boot from the RTC (an earlier host sync, whole seconds plus drift). `rtc` is the RTC chip state: 0 not read, 1 in use or written, 2 unusable (absent, voltage-low, invalid calendar). Absent on ≤ v6.1. A phone SHOULD offer "set time" whenever `clk != 1`, not only when `utc == 0`: with `clk == 2` the rows are dated, but nothing has checked that clock against a fresh source since the last sync |
 | `sd` | 1 when the card is mounted and the output directory exists |
 | `part` | retained `.partial` files seen at the last listing |
+| `qf` / `qb` | retained quarantine file count / bytes after startup quarantine; includes earlier boots |
+
+A board without an enabled RTC adapter reports `rtc=2`. Each boot starts with
+`utc=0`, `clk=0` and null UTC row fields until host SET_TIME; it cannot restore a
+previous host anchor from hardware. CoreS3 can restore the earlier host-written
+BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 ### `live` (read, notify)
 
@@ -121,9 +146,10 @@ Notified once per sample. Keys follow the dictionary names in `telemetry_fields.
 | `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid |
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |
-| `n03`…`n10` | `particles_gt*_per_01l` |
-| `t` | `imu_temperature_c` (board temperature, **not** ambient) |
-| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` — raw `M5.Power` reports, unqualified; with no battery attached the board has shown `bat` values from 16,372 down to 23 mV with `pct` 0. Display, do not interpret. |
+| `n03`…`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |
+| `t` | Board-specific: CoreS3 `imu_temperature_c` is board temperature; Waveshare PMS5003T `ambient_temperature_c` is ambient temperature. Interpret through `info.schema`/dictionary, never the short key alone |
+| `rh` | Waveshare PMS5003T `relative_humidity_percent`; absent when unavailable |
+| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement |
 | `als` | `light_ch0_raw` |
 
 PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
@@ -140,7 +166,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `0x04` | `CLOSE` | `handle` u16 | `CLOSED` |
 | `0x05` | `SET_TIME` | `epoch_s` i64 | `TIME_SET` or `ERROR` 9; `status` notify |
 | `0x06` | `FLUSH` | — | `FLUSHED` or `ERROR` 10; `status` notify |
-| `0x07` | `STATUS` | — | `status` notify only; **no `response` frame**, so the phone must not wait on `response` for it. Over LAN this produces a `STATUS` push frame, so it doubles as a keep-alive ping. |
+| `0x07` | `STATUS` | — | `status` cache/notify only; **no `response` frame**, so the phone must not wait on `response` for it. If the value exceeds MTU − 3 the notification is omitted and the phone reads the cached characteristic. Over LAN this produces a `STATUS` push frame, so it doubles as a keep-alive ping. |
 | `0x08` | `GET_CONFIG` | — | `CONFIG` |
 | `0x09` | `SET_CONFIG` | `key=value` lines, utf8, `\n`-separated (see [configuration](#device-configuration-v2)) | `CONFIG` or `ERROR` 12 with the offending key as `detail` |
 | `0x0A` | `WIFI_SCAN` | — | `WIFI_AP` × n, then `WIFI_SCAN_END`; `ERROR` 15 if the radio cannot scan |
@@ -170,7 +196,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `LIVE` | `0x49` | LAN only, push: live JSON |
 | `ERROR` | `0x7F` | `op` u8, `code` u8, `detail` utf8 |
 
-The status JSON remains bounded to 240 bytes. In addition to the existing counters, `part` is the number of retained `.partial` files found by the startup/list scan, while `qf` and `qb` are the total file count and total bytes currently under `/output/quarantine/` after startup quarantine completes. `qf` and `qb` include files preserved by earlier boots, not only files moved during the current boot; both saturate at their unsigned integer limits rather than wrapping.
+The status JSON remains bounded to 480 bytes. The actual formatter retains every key at 398 bytes with the widest representable counter values (393 for LZ4), checked by `pixi run logger-status-test`. In addition to the existing counters, `part` is the number of retained `.partial` files found by the startup/list scan, while `qf` and `qb` are the total file count and total bytes currently under `/output/quarantine/` after startup quarantine completes. `qf` and `qb` include files preserved by earlier boots, not only files moved during the current boot; both saturate at their unsigned integer limits rather than wrapping.
 
 `ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU — another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` is **omitted from LIST** and logged on serial as `BLE LIST SKIP`; `LIST_END.count` counts only entries actually sent. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count — and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16–18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
 
@@ -182,12 +208,12 @@ Rules:
 - **`OPEN`** runs the finalized-file check (magic `PAR1` head and tail, footer length sane) and computes the CRC-32 (IEEE, same as the serial `crc32=` field) over the whole file before answering. At most one file is open per connection; a new `OPEN` implicitly closes the previous one. Handles start at 1 and are invalid after disconnect.
 - **`READ`** is clipped to `max_read` and to end-of-file. Chunks are delivered in offset order; `next_offset` tells the phone where to continue. Offsets are absolute, so a phone can resume after a disconnect by `OPEN` + `READ` from where it stopped, provided `size` and `crc32` in the new `OPENED` frame match the earlier one (the file is immutable, so they must).
 - A file is **complete** only when the phone has `size` bytes, its own CRC-32 equals `OPENED.crc32`, and the head/tail magic is `PAR1`. Anything else is discarded, never presented as data.
-- `SET_TIME` uses the device's monotonic clock at the moment the write arrived, the same way `parquet time` does. Only rows sampled afterwards get UTC; earlier rows stay in the `unsynced` tree by contract. The phone should send its own clock only when it believes it is correct, and should say so in its UI. Since firmware v6.2 the value is also written to the BM8563 RTC (UTC) and restored at the next boot as `clk == 2`, so a `SET_TIME` on a device that already reports `utc == 1` is a legitimate *refresh*: it starts a new epoch, and the device logs the skew of the clock it replaced on serial (`PARQUET CLOCK … skew_ms=…`). The `TIME_SET` frame is unchanged; the skew is not returned over the link yet.
+- `SET_TIME` uses the device's monotonic clock at the moment the write arrived, the same way `parquet time` does. Only rows sampled afterwards get UTC; earlier rows stay in the `unsynced` tree by contract. The phone should send its own clock only when it believes it is correct, and should say so in its UI. On CoreS3 since firmware v6.2 the value is also written through the BM8563 RTC adapter (UTC) and restored at the next boot as `clk == 2`. AQLogger performs optional RTC reads/writes only on its main-loop task; a board with no RTC callback stays unsynchronized after every reboot until SET_TIME. Thus a `SET_TIME` on a device that already reports `utc == 1` is a legitimate *refresh*: it starts a new epoch, and the device logs the skew of the clock it replaced on serial (`PARQUET CLOCK … skew_ms=…`). The `TIME_SET` frame is unchanged; the skew is not returned over the link yet.
 - `FLUSH` finalizes the RAM batch — and, on firmware v6, any row groups already in the open file — so the phone can pull everything up to now. Use it deliberately (a "sync now" action); it produces a short file and does not change the rotation interval. The `FLUSHED` row count is RAM rows plus rows that were already on the card in the open file.
 
 ## Device configuration (v2)
 
-`GET_CONFIG` returns, and `SET_CONFIG` accepts, the keys below. `SET_CONFIG` is **partial**: only the keys present change. Values are validated as a whole before anything is stored; one bad key rejects the request with `ERROR` 12 and nothing changes. Keys marked *action* are not stored, they do something once. Secrets are write-only: `wifi.psk` is never echoed, `GET_CONFIG` reports `psk_set` instead; the fixed BLE PIN is also not echoed and is represented by `pin_set`.
+`GET_CONFIG` returns, and `SET_CONFIG` accepts, the keys below. `SET_CONFIG` is **partial**: only the keys present change. Values are validated as a whole before anything is stored; one bad key rejects the request with `ERROR` 12 and nothing changes. Keys marked *action* are not stored, they do something once. NVS persistence is checked per key, not a transaction; a persistence failure can leave a partial saved configuration even though the live snapshot is not published. No whole-record power-cut atomicity is claimed. Secrets are write-only: `wifi.psk` is never echoed, `GET_CONFIG` reports `psk_set` instead; the fixed BLE PIN is also not echoed and is represented by `pin_set`.
 
 | Key | Value | Applied | Meaning |
 | --- | --- | --- | --- |
@@ -216,11 +242,31 @@ wifi.psk=correct horse battery staple
 wifi.on=1
 ```
 
-Changing Wi-Fi settings over a LAN session is allowed but will usually drop that session; the phone should do provisioning over BLE. `REBOOT` finalizes the RAM batch first, so no rows are lost; it answers `REBOOTING` with the delay before restart (≈ 500 ms) so the phone can disconnect cleanly.
+Changing Wi-Fi settings over a LAN session is allowed but will usually drop that session; the phone should do provisioning over BLE. `REBOOT` attempts to finalize pending rows first when storage is healthy; failures remain visible in the logger counters and do not establish durability. It answers `REBOOTING` with the delay before restart (≈ 500 ms) so the phone can disconnect cleanly.
 
-`LOG_TAIL` returns the newest `max_bytes` of an 8 KiB ring buffer that mirrors everything the firmware prints on serial — the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API.
+`LOG_TAIL` returns the newest `max_bytes` of an 8 KiB diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies — the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API.
 
 `WIFI_SCAN` runs on the Wi-Fi task, not on the storage worker, and takes 2–4 s; the phone should show progress. Hidden networks are omitted; duplicate SSIDs (several access points) are reported once with the strongest RSSI.
+
+### Physical UART owner provisioning
+
+These are local serial commands, not BLE/LAN opcodes or CONFIG fields. They run
+on the existing command worker and require access to the checked board port.
+
+| Command | Reply and scope |
+| --- | --- |
+| `parquet owner-pin` | Fixed mode: raw `AQ OWNER_PIN <six digits>`. Random/none mode returns a nonsecret mode/display error. No boot PIN print or log-ring copy |
+| `parquet wifi-profile` | One raw `AQ WIFI_PROFILE ssid=<hex UTF-8> psk=<hex UTF-8> wifi_on=<0/1> lan_on=<0/1>` line. No PIN or token |
+| `parquet config-hex <hex>` | Up to 511 decoded bytes of complete `key=value` lines, validated through the shared SET_CONFIG handler. Returns secret-free `AQ CONFIG ok=1 reboot_required=<0/1>`, or an allowlisted invalid-key error |
+
+The profile and PIN responses bypass DebugLog and cannot appear in LOG_TAIL or
+network replies. Hex is transport encoding, not encryption. Hosts must consume
+these values in memory, redact serial streams and exclude credentials from
+captures, artifacts and documentation. `config-hex` preserves the existing
+validation, NVS and action behavior (Wi-Fi apply, bond clearing, token/session
+rotation); malformed hex, bounds violations, embedded NULs and invalid settings
+are rejected. Unknown error text is reduced to an allowlisted identifier so a
+malformed credential cannot be echoed into the diagnostic ring.
 
 ## LAN transport (v2)
 
@@ -258,7 +304,7 @@ Ownership rules are unchanged: the LAN task never touches the SD card or the dis
 
 ## Ownership on the device
 
-BLE callbacks run on the NimBLE host task. They **never** touch the SD card or the display. A `control` write is converted into a command on the same queue the serial parser feeds; the single storage worker executes it and emits `response`/`status` notifications itself. `live` and `status` notifications after a sample come from the sampling loop, after the row has been queued. This keeps the existing rule: one storage owner, display and SD serialized through the application mutex, 10-second sampling deadline untouched. The 8-deep sample queue gives the worker ~80 s of slack; a `READ` window is capped at `max_read` so one excursion is short even on a slow link.
+BLE callbacks run on the NimBLE host task. They **never** touch the SD card or the display. A `control` write is converted into a command on the same queue the serial parser feeds; the AQLogger storage worker executes it and emits `response`/`status` notifications itself. `live` and `status` notifications after a sample come from the sampling loop, after the row has been queued. This keeps the existing rule: one storage owner, display and SD serialized through the application mutex, 10-second sampling deadline untouched. The 8-deep sample queue gives the worker ~80 s of slack; a `READ` window is capped at `max_read` so one excursion is short even on a slow link.
 
 Notifications can be refused by the host when its buffers are full. The worker retries a bounded number of times with a short delay; a persistent refusal ends the transfer with `READ_END` status 7 rather than skipping a chunk.
 
@@ -267,8 +313,8 @@ Notifications can be refused by the host when its buffers are full. The worker r
 ```mermaid
 sequenceDiagram
     participant P as Phone
-    participant D as CoreS3
-    P->>D: scan for service UUID, connect, MTU 517, bond (passkey on screen)
+    participant D as Board logger
+    P->>D: scan service UUID, connect, request MTU 517, bond using owner passkey
     P->>D: read info
     P->>D: LIST
     D-->>P: FILE × n, LIST_END
@@ -286,6 +332,12 @@ sequenceDiagram
 
 Local archive identity is `(station, relative name)`; the file is immutable so `bytes` and `crc32` act as a consistency check, and a mismatch is an error to surface, not a version to merge. Store each file at `<archive root>/<station uuid from info>/<relative name verbatim>`. Station files therefore land at `…/<uuid>/station=<uuid>/year=…` — the repetition is intentional: `benchmarks/…` and `legacy-parquet/…` names carry no station of their own, and two devices must never collide. Below the station directory the tree is a drop-in mirror of the SD card and of `tools/export_parquet.py` output.
 
-## Still to measure
+## Hardware measurement scope
 
-The 2.1 advertisement is measured once (2026-09-18, OnePlus 7 Pro): the interactive scan finds the device with the UUID list in the scan response, the controller matches a service-data mask in an offloaded (`PendingIntent`) filter, and a `new_files` flip woke the closed app 19 s later ([bench](../boards/m5stack-cores3/bench-verified.md#board-1-advertising-payload-wakes-the-phone-firmware-v63-protocol-21)); its latency distribution and the `no_utc` wake are not. Throughput and energy of a full sync over BLE and over LAN, notification-drop and sampling-jitter behaviour with Wi-Fi **on** (coexistence), heap headroom with BLE + Wi-Fi + mDNS + TCP all active, `fixed`/`none` pairing on a display-less board (only simulated on the CoreS3 so far), and bonded-reconnect latency. Record results in [bench-verified](../boards/m5stack-cores3/bench-verified.md) with firmware hash and phone model.
+The advertisement wake result remains one CoreS3 event on a OnePlus 7 Pro
+(2026-09-18); its latency distribution and `no_utc` wake are not established.
+Radio throughput, energy, coexistence/drop behavior, heap headroom and bonded
+reconnect behavior are image/board-specific. The shared formatter and protocol
+fixtures do not measure any of these. Consult each board's bench record for
+completed short checks and outstanding endurance, power-cut and phone-background
+work; do not transfer CoreS3 measurements to Waveshare by sharing code.
