@@ -63,3 +63,48 @@ The owner replaced the cable and reported the fan running. Without changing the 
 This verifies valid PMS5003T UART reception on GPIO1 and the model-specific PM/temperature/RH decoding. It does not establish environmental accuracy, calibration, sensor identity/serial number, hardware UTC, sensor RX command operation, storage write/read durability, or Waveshare Parquet/BLE/LAN integration. The supplied physical wiring and cable replacement were owner observations; no rail voltage was measured.
 
 Capture: ignored `artifacts/waveshare-v2-pms-working-20260928.log`, **668 bytes**, SHA-256 `4d40b18462b57afe84a0e9a164d4af96d7befd393ee48c2452bdbafb87883135`. The diagnostic binary/ELF identities remain the ones recorded above; later shared-module builds were not flashed during this run.
+
+## Both boards attached, continued reception, 2026-09-28
+
+A bounded 35-second capture without requesting a reset received four fresh, warmed reports with cumulative frame counts **1,035 / 1,046 / 1,057 / 1,069**, zero checksum/length/sensor errors, PM2.5 **70 / 71 / 73 / 70 µg/m³**, temperature **23.5–23.6 °C** and RH **43.9–44.6%**. CoreS3 was attached on a separate identified port during the capture. No TF mount was reprobed and no diagnostic firmware changed in this check.
+
+Capture: ignored `artifacts/waveshare-v2-dual-connected-20260928.log`, **544 bytes**, SHA-256 `aaa0ece2d8aacd160b76c9660185b1c8cf0c5d1f78c1baff61c94ec7b896622f`. This adds continued UART reception evidence, not calibration or cross-sensor agreement.
+
+## OPI PSRAM qualification
+
+**2026-09-28.** The ESP32-S3R8/revision-0.2 chip identity selects 8 MiB OPI PSRAM with 16 MiB quad flash. A separate pinned-Arduino probe (`tools/fixtures/waveshare_psram_probe/`) booted with `qio_opi`, reported physical and heap PSRAM of 8,388,608 bytes, and tested four address-varying patterns over a 524,288-byte allocation. All patterns passed and the allocation was released. This checks initialization and that allocated region; it is not a destructive whole-memory or endurance test.
+
+Probe BIN SHA-256 `56cb4bc284d20e6892216981b6b7871e6ba406e326d64c4fef0de261f5c0336d`; retained runtime log `artifacts/psram-probe-runtime.log`, 338 bytes, SHA-256 `ff486b9b38da75362b9ab6e05a44fa3a17fcdec6194f13ea9aa1f23f568456e4`. The actual compiler SDK header is `qio_opi/include/sdkconfig.h` with `CONFIG_SPIRAM_MODE_OCT`; Arduino's copied `build/sdkconfig` described QUAD and was misleading. `tools/check_arduino_target.py` now checks the actual compiler-selected SDK.
+
+## Shared logger v1: card, measurements, clock and codec
+
+**2026-09-28, V2.0, USB power, no battery, PMS5003T connected, original inserted TF card.** First logger BIN SHA-256 `c8de9791e6caa3b987c8743988b8e9e54bbbfa08f308830dd7c0ddee0489f75f`, ELF `b4a70a91e4fb1714a51323d44d69694a59eb8838e5c107bdadf10ae3e7a68b8d`, build 1,258,779 program bytes / 84,412 static RAM bytes. One upload was interrupted before verification while a capture was opened too soon; that incomplete application did not boot. Repeating the upload with exclusive port ownership completed and verified its hash. This was a host sequencing error; no button, DIP switch, partition erase or eFuse change was needed.
+
+The trial uses AQCommon/AQRuntime/AQConnectivity/AQLogger with a board-owned 49-field `waveshare-sim7670g-telemetry-v1` dictionary (SHA-256 `e840c946c10378d28831b38f71daf66981d2ea99cf47ccba80fcd2e64f920ffd`). Device `a4cb8fd77500`, station `7abe1b6b-e014-42e7-b259-bf61cee9f288`, boot `b9f01bc95ba6bba3098e2137571ffd4b`. SDMMC one-bit uses CLK5/CMD4/D0=6; UART1 uses RX1/TX2 at 9600 8N1. No gauge/RTC/modem/GNSS/camera driver was initialized. RGB behavior was not visually inspected.
+
+| Readback | Rows / bytes | CRC32 | SHA-256 |
+| --- | --- | --- | --- |
+| `data_unsynced_b9f01bc95ba6bba3098e2137571ffd4b_0-15-0.parquet` | 16 / 12,060 | `102bc7ff` | `af6a1edb994cda3f1690e8964ae7b71becb02d57637196f6c69449703e39aca1` |
+| `data_0015_b9f01bc95ba6bba3098e2137571ffd4b_41-43-2.parquet` | 3 / 8,557 | `2787faa4` | `735e6110de4ca01e06879d01e21429a9d4370e6bf880277d4edbe767360412f6` |
+| Codec duplicate: uncompressed sequences 44–46 | 3 / 8,579 | `28985c87` | `9d275f6feab6a1de57cd618215501f8b47df608de2bd6af72dad6d2f0c060798` |
+| Codec duplicate: LZ4_RAW sequences 44–46 | 3 / 8,436 | `fb24f3d7` | `711616fdc148763856e7134f654144a1ca9c4dd8547a58de6235360317d06bcf` |
+
+All four serial readbacks passed the helper's exact size/CRC/structure checks and PyArrow/DuckDB comparison. Codec copies had identical values and nulls and remain separately labeled diagnostic duplicates. On this three-row comparison, finalization was 64,120 µs uncompressed / 70,402 µs LZ4; LZ4 CPU 783 µs. This tiny file establishes codec interoperability, not a speed or endurance advantage.
+
+- The first two rows were warm-up status 1 with particulate/temperature/RH null. Remaining rows had PMS status 4; sensor-reported ambient temperature 24.8 °C and RH 41.9–42.2%. Gauge status was 0 and all battery measurements null. Sensor accuracy, calibration and rail voltages were not measured.
+- Before host time, all event UTC/anchor fields were null, `clock_status=0`, `clock_epoch=0`, and the file used the station's `unsynced/boot=…` path. Stored 16-row acquisition intervals were 9,999,000–10,001,000 µs (mean 10,000,000); jitter 326–1,326 µs. Drop/storage-error counters were zero.
+- An explicit host UTC command anchored epoch seconds `1790555133` at monotonic `415489682` µs. The worker first finalized sequences 16–40 in the old unsynced tree, then wrote sequences 41–43 in the UTC day/window tree with `clock_status=1` and `clock_epoch=1`; anchor fields and nanosecond UTC annotations were present. Earlier rows were not rewritten.
+- BLE scan found `AQ-7500` and decoded no-UTC/new-file/card flags. A connection negotiated a 517-byte ATT MTU (Bleak reported usable 515), but the first encrypted INFO read timed out without a completed Mac bond. Fixed-PIN callback handling was corrected and deployed: serial then reported `BLE PAIR passkey=fixed`; a subsequent attempt still ended with ATT insufficient encryption. No secure BLE file transfer is claimed. The CLI now honors a bounded overall GATT-read deadline while waiting for pairing.
+- Wi-Fi was left unconfigured. Automatic approval review rejected copying the CoreS3 SSID/PSK to this device because that credential export lacked specific authorization. The copy was not performed. LAN file transfer remains unmeasured until owner-approved provisioning. The shared service remains implemented and the CoreS3 LAN result is separate evidence.
+
+Evidence is retained in `firmware/arduino-waveshare-sim7670g/artifacts/logger-v1/`: firmware/ELF images, upload logs, serial readbacks, BLE scans/attempts and codec files. No fixed PIN or Wi-Fi password was retained. `codec-test.log` is 1,177 bytes with SHA-256 `9d9d368422cb7edaff09bafc18bd248beb23ce4ddae55f320905d21ef639d6e4`. Each RAM batch was explicitly flushed before subsequent firmware writes. Multi-group automatic rotation, interrupted-partial recovery, card endurance, radio-load timing and power-cut durability are not established by these bounded runs.
+
+### Final shared-engine image, reset and retained files
+
+After fixing the shared fixed-PIN callback and MTU guard, an intermediate image (`50d3811e913e80efa0f18d9627b082edb3d44da88206bedc57d6ce0f4b02f798`) booted as `88e137231bf2d3dd7811c22d8075d173`. Its 14-row null-UTC file passed both readers (11,476 bytes, CRC32 `b0257d27`, SHA-256 `d440c4ea52bffea5ae2d8f59dc97fdca80722858ffe0af6bb57d35f537614386`). Re-fetching the original 16-row file after these resets produced the unchanged `af6a1edb…e39aca1` hash, establishing retention and immutable bytes across normal firmware resets. This does not establish power-cut durability.
+
+The CoreS3 no-reader check subsequently identified the common startup filename-dump problem. The final Waveshare v1 image also contains the bounded startup scan, with BIN SHA-256 `241862228dd9f6a31fc2f9910dcf670b3c966b0ba10463567aa6eb6d131cb8ae`, ELF `984b8b494a107eb6bdd639689267c7a0288a92593f4f2f3148dd9f4a56a7a3df`; build 1,259,027 program bytes / 84,412 static RAM bytes. Every prior RAM batch was flushed first.
+
+Final boot `5bd8d6e02d728897b07c4b462dfc1bc9` preserved device/station identity and again started without an RTC/UTC anchor. `data_unsynced_5bd8d6e02d728897b07c4b462dfc1bc9_0-15-0.parquet` contains 16 rows / 49 columns, 12,060 bytes, SHA-256 `2bfa7f3939845e4d3cccfd15302ae80de7e8ce3af334d2d0e8e49597e9ab5649`, and passed CRC/structure/PyArrow/DuckDB checks. Sequence 0–15 is complete; all drop/error/missed-deadline counters are zero. Warm-up statuses are 1,1 then valid 4; battery/gauge behavior remains null/0. UTC and anchors stayed null until an explicit host time command. Jitter was 605–1,605 µs; intervals 9,999,000–10,001,000 µs.
+
+The board was then explicitly anchored from the host at Unix seconds `1790556502`, monotonic `166340683` µs, and left running the final logger for continued recording. Firmware reset will require another host anchor. First secure Mac pairing and Wi-Fi/LAN remain uncompleted; the security requirement was not lowered to obtain a test. No battery, modem, GNSS or camera was enabled.
