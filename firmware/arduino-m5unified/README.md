@@ -2,7 +2,7 @@
 
 **Status: active. Real-sensor Parquet SD logging, full 60/90-row uncompressed files, UTC Hive checks and identical-row LZ4 compression comparisons were verified on hardware on 2026-09-08. Bluetooth LE file sync (`arduino-cores3-parquet-v4`) was flashed and verified from a host BLE client on 2026-09-16; protocol v2 with Wi-Fi/LAN sync (`-v5`) on 2026-09-17; file schema v3 with multi-row-group files, statistics and TIMESTAMP annotations (`-v6`, then the `-v6.1` lifetime fix) flashed and read back the same day; the BM8563 RTC hand-off (`-v6.2`) and the protocol 2.1 advertising payload that wakes the phone (`-v6.3`) both on 2026-09-18.**
 
-## Work in progress (last verified 2026-09-18, resume here)
+## Earlier bring-up and phone integration (through 2026-09-18)
 
 ### Flashed 2026-09-18 11:02Z: `arduino-cores3-parquet-v6.3`, advertising payload (protocol 2.1)
 
@@ -236,8 +236,14 @@ On macOS run these from Terminal.app: CoreBluetooth aborts clients launched from
 
 The original 16 MB UIFlow image is preserved under `backup/`. `pixi run restore --board m5stack-cores3 --port <checked-port> backup/<matching-file>.bin` writes it back and is destructive, so name the image explicitly. Never write eFuses or raise the esptool baud on this board.
 
-**Last verified on hardware: 2026-09-18, board MAC ending `6b:40` (`arduino-cores3-parquet-v6.3`: advertising payload and phone wake; `-v6.2`: RTC write, RTC-restored dated boot, skew log; 2026-09-17: `-v6` two-row-group schema-v3 files at 1800 s, phone LAN pull; `-v5` LAN/Wi-Fi sync).**
+**Last verified on hardware: 2026-09-28, board MAC ending `6b:40` (`arduino-cores3-parquet-v6.5`: shared sampling/storage worker, RTC-restored boot, sensor rows and identical USB/BLE/LAN file readback). Earlier full-window and phone-wake results remain tied to their recorded images.**
 
-## Shared module extraction (source/build verification)
+## Shared module extraction (v6.4 hardware verification)
 
-Source firmware **v6.4** consumes [AQCommon, AQRuntime and AQConnectivity](../common/README.md). BLE, Wi-Fi/LAN, configuration, logs, immutable file sessions and common control handlers live outside this trial. `telemetry_logger.cpp` supplies its worker queue, archive policy and snapshots; `ltr553.h` is a thin M5 internal-I²C adapter. Its 77-column dictionary, provenance, RTC, sampling, display arbitration and rotation/quarantine policy remain board-owned. The source extraction is build/host-tested; the earlier CoreS3 radio/SD bench numbers remain tied to their retained images, and no new CoreS3 image was flashed for the extraction.
+Source firmware **v6.4** consumes [AQCommon, AQRuntime and AQConnectivity](../common/README.md). BLE, Wi-Fi/LAN, configuration, logs, immutable file sessions and common control handlers live outside this trial. `telemetry_logger.cpp` supplies its worker queue, archive policy and snapshots; `ltr553.h` is a thin M5 internal-I²C adapter. Its 77-column dictionary, provenance, RTC, sampling, display arbitration and rotation/quarantine policy remain board-owned. The image was flashed and verified with a four-row sensor file, RTC restoration, configuration/log handlers, 1,079-file listing and identical CRC/SHA-256/reader results over BLE and LAN. The [dated bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-esp32-s3-modules-firmware-v64) includes the initial Wi-Fi retry and intermittent macOS name discovery; earlier endurance/phone-wake numbers remain tied to their retained images.
+
+## Shared sampling and archive engine (v6.5)
+
+`telemetry_logger.cpp` is now the CoreS3 acquisition/RTC/storage adapter for [AQLogger](../common/logger/README.md). The common library owns deadlines, the queue, worker, file rotation, immutable finalization, clock epochs and sync dispatch. This trial retains M5 initialization, display/SD bus hooks, LTR553 acquisition and the 77-field dictionary. The `/sd/parquet` legacy listing route, station NVS namespace, configuration and board provenance are preserved. A seven-row file passed both readers and matched across USB, encrypted BLE and authenticated LAN; earlier v6.4 tests above remain separate evidence. See the [v6.5 bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-logger-engine-firmware-v65).
+
+The final v6.5 image also replaces the automatic startup filename dump with a bounded archive summary. On the measured card, unattended startup reached 17 buffered samples at 209 seconds with zero drop/error/missed counters; explicit listing still returned 1,089 entries and both legacy files. A final 30-row file passed USB/LAN readback. The earlier failed no-reader boot and its 12 visible drops are retained separately in the bench record, alongside the final image hashes.
