@@ -294,6 +294,39 @@ The eFuse block reports `PSRAM_CAP = None`, `PSRAM_VENDOR = None` and the derive
 
 The diagnostic detected exactly **8,388,608 bytes**, so the separate 8 MB PSRAM is now bench-verified. The build configuration selected QSPI/Quad PSRAM and explicitly did not select Octal. A future zero reading should be treated as a build or initialization regression.
 
+## Board 1 shared ESP32-S3 modules (firmware v6.4)
+
+**2026-09-28 local (Africa/Cairo; captures span 2026-09-27 UTC)**, both boards attached. CoreS3 was identified as `/dev/cu.usbmodem101`, MAC `44:1B:F6:E2:6B:40`; Waveshare had a separate CH343 serial port. The retained 16 MB original backup was confirmed present. The v6.3 RAM batch was flushed before flashing; a preflash file was saved and validated with both readers, and a final flush saved sequence 14–16 on the card immediately before upload.
+
+Firmware **`arduino-cores3-parquet-v6.4`**, binary SHA-256 `763b835b9e5de042428791ed5b1842385d3a95b1101efd382708cef643bb8644`, retained as `artifacts/firmware/cores3-parquet-v6.4-763b835b.bin`; ELF SHA-256 `f18556f58673900e8c2fde4cc875b70d640a3ef7e6714534cc3b1e0bf6517bb3`. Upload used the pinned Quad-PSRAM/16 MB CoreS3 configuration at 115200 and reported **Hash of data verified**. Build: 1,422,279 program / 86,036 static RAM bytes; schema v3 and the 77-field dictionary digest unchanged.
+
+| Check | Observation |
+| --- | --- |
+| Boot and identity | Station UUID preserved; new boot `5769e2a9b957a2480d0870807d3a5368`; SD mounted; UTC restored from BM8563 before first row. Existing two unfinished files were quarantined, not repaired/deleted. |
+| Sensor and shared LTR553 adapter | PMSA003 valid with zero frame checksum/length errors; four readback rows have valid light/proximity status 3, light raw 5/2 and proximity 0. IMU reports remained enabled/fresh. |
+| Sampling | Four-row readback sequence 0–3 has jitter 7,756 / 10,734 / 10,757 / 10,750 µs, no dropped rows or storage errors, clock source 2. Later bounded serial captures continued to report valid sensor rows and zero drops. This is a short observation, not an endurance bound. |
+| Wi-Fi/LAN | Existing settings and bearer token worked. Initial association failed with status 6, then the automatic retry connected; mDNS/TCP service worked. INFO identifies v6.4; GET_CONFIG and 2,048-byte LOG_TAIL succeeded. |
+| BLE | After the owner disabled phone Bluetooth/Wi-Fi, Mac bonded sessions from Terminal.app read INFO/CONFIG, listed files and retrieved 2,048-byte logs. MTU reported 515 on host / 517 on device. Advertising service data decoded version 1, SD/LAN/new-files flags, file count and boot tag. |
+| Shared archive enumeration | Both BLE and LAN LIST completed with **1,079 files and two retained partials**. |
+| Same file over both links | Four rows, 11,897 bytes, CRC32 `1a69992a`, SHA-256 `4e6057cf6497f313b0e6e584331ba57e978a4315cfbaf7363eb32661c93f1ce7`; identical BLE/LAN copies, validated by PyArrow and DuckDB. |
+
+File: `station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=09/day=27/data_2330_5769e2a9b957a2480d0870807d3a5368_0-3-0.parquet`. It records v6.4 provenance and RTC-source UTC without altering prior files. The first LAN fetch took **12.390 s** while phone activity was present; a later fetch with the phone disconnected took **1.237 s**. BLE direct-address fetch took **8.817 s**. These small-file timings include OPEN/CRC/control overhead and do not replace earlier throughput measurements or prove the cause of the difference.
+
+Mac name-based BLE discovery was intermittent even when a separate scan saw the device. The host filter was corrected to accept either ADV service data or the UUID list in SCAN_RSP; its regression/frame/LAN tests passed. The final readback used the UUID observed by the successful scan (`--address`), so this run does not establish that the name-discovery issue is fully resolved.
+
+Artifacts live in ignored `artifacts/shared-v6.4/`. Selected identities:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `flash.log` | 7,613 | `6a8fbcc18cebc27bb1d9133e0a8577b7ed71d7bad6047375c51336be2e8b4f5a` |
+| `postflash-serial.log` | 199,320 | `6a3c5e0c64c48f56b0aca14560d06dad8e14fc31e87585667506ff890d4b6fb4` |
+| `rejoin-serial.log` | 4,212 | `dacbc361b17e63cf2c034660c88d1945ee49f5c9720a6da429b650c925f77808` |
+| `lan-list.json` (text listing) | 192,662 | `7aff27d5679637c54c329d3772734f15db26e3227f45105e3b97da4586909abf` |
+| `lan-fetch.json` | 571 | `1a652c6e4251725d0a4b4a25d746be9c97fb35663bcb9eaca95f4d8a721d2c21` |
+| `lan-isolated-fetch.json` | 572 | `51862739d3fce72fb47a3fda084b9a58c6c95aff0b4f7d610e67e0d1beca7515` |
+
+No new power-cut, full-window, compression-endurance or phone-background-wake claim follows from this test. Waveshare remained on its UART/TF diagnostic during this check.
+
 ## Still unverified on hardware
 
 Nothing below has been observed on a real board yet. Do not promote any of it into this file without a measurement.
@@ -305,7 +338,31 @@ Nothing below has been observed on a real board yet. Do not promote any of it in
 - RTC retention across a full power-off and drift over hours/days. The write, read-back, dated software reboot and a 3-minute skew (−513 ms, resolution-bound) are measured above (firmware v6.2, 2026-09-18); backup power for the BM8563 with the main battery removed is not.
 - LCD page text and layout for clipping under explicit visual inspection.
 - Long-duration PMSA003 sampling, physical warm-up sufficiency and optional SHT20 isolation; the ten-minute acquisition run above is not lifetime qualification.
-- Wi-Fi association, mDNS, the LAN TCP server, upload, OTA and sleep behavior. BLE sync is verified above for short host-client sessions (v1 file sync, v2 configuration ops); the Wi-Fi scan is the only radio operation measured, and BLE+Wi-Fi coexistence, long syncs and an instrumented phone sync are not.
+- Upload, OTA and sleep behavior; sustained radio/display/storage stress on the extracted v6.4 image. Wi-Fi association, mDNS, LAN sync and BLE are measured above; earlier phone/coexistence results stay tied to their recorded firmware images.
 - The Companion Device Manager side of background sync (association, presence events, the exemptions) and the Wi-Fi-arrival trigger end to end; the advertising-flag wake is measured above for one event on one phone.
 
 Move a line out of this list only after a dated measurement records the method and result.
+
+## Board 1: shared logger engine, firmware v6.5
+
+**2026-09-28, MAC `44:1B:F6:E2:6B:40`, original card and M134 attached.** Flushed the v6.4 RAM batch before flashing. The first v6.5 image (`2b4b092cff97e48f64a43be0e28f96c7b7f8cb61549bd3908899b4b3690ec677`, ELF `2a5bf50142763ec447a937a6e6c28b85b3c2b940aa6743b4f5380239b2255350`) moves the sampling/storage/clock/sync worker into AQLogger; the trial keeps acquisition, M5 bus arbitration and RTC hooks. It built at 1,426,331 program bytes / 89,260 static RAM bytes.
+
+- Boot `f4067bfc4d2381394ae5d3f61bee812b` preserved station `53315f5f-cb85-4d8d-b623-d56266084189`, pairing bonds, Wi-Fi/LAN settings and token. RTC readback restored the earlier host estimate (`clk=2`, `rtc=1`). PMSA003, IMU, LTR553 and SD initialization succeeded. Legacy listings and the two existing quarantined partials remained available. No display visual inspection or new power-cut claim is made.
+- A manual flush produced `station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=09/day=28/data_0015_f4067bfc4d2381394ae5d3f61bee812b_0-6-0.parquet`: seven rows, one row group, 77 columns, 13,139 bytes, CRC32 `d9817653`, SHA-256 `0b0e97188e336a81a3d04ac089e9ad12761682cf6f5a5cf2b963c4cbb08a8503`. USB, encrypted BLE (Mac's existing bond) and authenticated LAN copies matched exactly; PyArrow and DuckDB agreed. Stored light status was 3 and PMS status 4 in all rows; unavailable ambient temperature/RH stayed null.
+- Stored jitter was 921–19,915 µs; acquisition intervals deviated from ten seconds by at most 18,993 µs. STATUS reported zero drop/error/missed deadlines. The short file and transfer checks are not a new endurance or full-window benchmark. Wi-Fi initially retried before reconnecting; previous credentials were retained.
+- Evidence is retained outside `build/` in `firmware/arduino-m5unified/artifacts/shared-v6.5/` (`postflash-serial.log`, `usb.log`, `usb.json`, `ble-info.json`, `ble-fetch.json`, `lan-info.json`, `lan-fetch.json` and their readback trees). The BLE small-file transfer took 6.958 seconds; it is not a sustained throughput result.
+
+The fixed-PIN callback and small-MTU JSON guard were subsequently compiled into the final v6.5 image. Both preserve authentication/encryption settings; oversized STATUS/LIVE values remain readable in full but are not notified. Final image identities and post-flash checks follow below.
+
+### Final image and unattended startup correction
+
+A follow-up boot of the intermediate MTU image (`2fabe6ffa2d93c8454fc14fd68c9a85fe3c78580381c58e3e7f2e0b79faa4016`) without a USB reader exposed a pre-existing startup behavior: the worker printed every archived filename before accepting samples. With this card it stalled behind roughly 1,100 paths until a serial capture drained the output. STATUS showed zero buffered rows and increasing drops, and BLE file requests timed out. The preserved 28-row file from boot `47a43a0874b9fa3d01c8ab655037ac32` contains sequences 0–7 then 20–39 and the visible drop counter 12; no missing rows were fabricated. That file (`21,718` bytes, SHA-256 `8a5a8922920d10c128b9598f1079cd739f1d8906cfe6325a2a63c5ef1cf3cae0`) remains on card and in `stalled-boot-readback/`. Opening the reader resumed the worker. This failed run is separate from the successful runs above.
+
+AQLogger now scans/stats/counts at startup and emits one bounded summary. Full filename output is preserved only for explicit `parquet list`. Final v6.5 BIN SHA-256 `d5af58814f15c5361cecae99389d8f19b378ce8e25a03b9093072ed8ec8ce478`, ELF `a5d8f4b717b68236ed9da157bb2fa6f04e7afe315abe07ec6676140335017bd3`; build 1,426,575 program bytes / 89,260 static RAM bytes. Archive and RAM rows were flushed before installing it.
+
+- Boot `74482e87bee9e969d696d309942a9685` was left with **no serial reader**. Authenticated LAN at uptime 119 s reported buffered 8 / drop 0 / error 0 / missed 0. Encrypted BLE at uptime 209 s reported buffered 17 with the same zero counters and successfully fetched the original seven-row file with unchanged SHA-256. This exceeds the eight-row queue slack and verifies the startup correction under that condition.
+- Explicit serial listing then completed with 1,089 finalized-file entries, both legacy files, the two retained partials and `PARQUET LIST END`. No file was deleted or repaired.
+- New final-image file `data_0045_74482e87bee9e969d696d309942a9685_0-29-0.parquet` has 30 rows, 77 columns, one group, 22,514 bytes, CRC32 `53ef22c7`, SHA-256 `a2ebfb759460a320901b001082e7018f1e5be347074d1fc3e70c9f8129bbaf66`. USB and authenticated LAN readbacks passed both readers and matched. Sequence 0–29 is complete; drop/error/missed counters are zero. Jitter ranged 183–118,304 µs and acquisition intervals 9,897,886–10,017,794 µs, including the BLE transfer/list check. This remains a short run rather than a full-window or endurance claim.
+- A real fresh LAN INFO request initially returned empty cached STATUS before the next push. The host client now requests existing OP_STATUS and waits for a nonempty snapshot under its deadline. Actual delayed mock TCP tests passed; real final-image INFO at uptime 449 s then returned current status with zero drop/error/missed counters and one finalized file.
+
+Selected artifact hashes: `no-reader-info-1.json` (816 bytes) `a45baa5e3f07e1df189c1ff35d616436ca743320fe5f8804bf0ead3393f0c1f2`; `scan-ble-info.json` (770 bytes) `26b915b6db65572964cb88fff2c583f9967706b9808e055ecfc7966cb11225ef`; `scan-explicit-list.log` (198,627 bytes) `b34054bca8c5468aaeff64f4b154f9368c07c877030825f4509fcc757997b3b6`. Final binaries, failed-run rows and successful readbacks remain in separate artifact subdirectories. The board was left running this final logger.
