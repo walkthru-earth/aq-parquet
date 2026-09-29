@@ -6,7 +6,7 @@ Source-checked 2026-09-28 for PCB revision **V2.0**, as confirmed by the owner. 
 | --- | --- | --- |
 | PMS5003T UART | Host RX GPIO1, TX GPIO2, per owner's four-wire connection | Dedicated `HardwareSerial(1)`, 9600 8N1; sensor TX crosses to host RX |
 | TF slot | SDMMC CLK GPIO5, CMD GPIO4, DATA0 GPIO6, card detect GPIO46 | One storage worker; use SDMMC one-bit mode, not CoreS3 SPI pins |
-| Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Disabled: owner confirmed USB only/no battery. Later adapter must use one I²C owner and explicit installed-battery configuration; V1 GPIO3/GPIO2 mapping is wrong here |
+| Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Logger adapter owns this I²C bus with explicit installed-battery configuration; V1 GPIO3/GPIO2 mapping is wrong here. A bounded USB-attached readback succeeded on 2026-09-30. |
 | Camera | V2 mapping includes XCLK GPIO39 and PCLK GPIO46 | Camera and TF card detect need a conflict check before use together |
 | RGB LED | GPIO38 | Logger implements startup/card/sensor state; visual operation unverified; no file-copy or durability claim |
 | SIM7670G, camera, GNSS | Onboard | Not initialized by the diagnostic or current logger adapter |
@@ -19,7 +19,7 @@ The board's UART download and BOOT+RESET recovery are described in the [Waveshar
 
 The pictured PMS power connection uses the exposed 5 V and GND. Confirm the selected 5 V rail is present under the board's chosen USB/battery supply mode before attributing absent UART frames to the sensor. No board power measurement has been made here.
 
-The current logger has no external RTC adapter. UTC stays null after boot until an explicit host anchor arrives; GNSS/modem time is not substituted. USB-only operation does not provide battery presence, voltage, percentage or charging evidence. The MAX17048 acknowledging on I²C would not establish an installed battery, so the current adapter does not probe it.
+The current logger has no external RTC adapter. UTC stays null after boot until an explicit host anchor arrives; GNSS/modem time is not substituted. The owner subsequently installed an 18650 and verified battery-only boot. The logger explicitly configures it as installed and samples MAX17048 cell voltage and estimated SOC; an I²C acknowledgement alone still would not establish battery presence. The V2 schematic routes ETA6098 `STAT` and solar-charger `CHRG` to indicator circuits without a verified ESP32 input, so the logger does not infer charging from voltage or USB attachment.
 
 ## Power slider and DIP switches
 

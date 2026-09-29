@@ -62,9 +62,10 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
             abs(ambient.max + 3.7) < 1e-6, "signed temperature bounds")
     utc = group.column(by_name["event_time_utc_ns"]).statistics
     require(utc.null_count == (0 if anchored else 90) and utc.has_min_max == anchored, "UTC bounds")
-    for name in ("battery_mv", "battery_percent"):
+    for name, expected in (("battery_mv", 4000), ("battery_percent", 75)):
         stats = group.column(by_name[name]).statistics
-        require(stats.null_count == 90 and not stats.has_min_max, "no installed battery")
+        require(stats.null_count == 2 and stats.min == stats.max == expected,
+                f"battery null and valid statistics: {name}")
     for i in range(len(fields)):
         require(group.column(i).compression == ("LZ4" if compressed else "UNCOMPRESSED"), "codec")
     table = pa.table({name: column.cast(pa.int64()) if name in utc_fields else column
@@ -89,8 +90,10 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
                 abs(row["ambient_temperature_c"] + 3.7) < 1e-6, "temperature validity")
         require(row["relative_humidity_percent"] is None if i < 5 or i == 6 else
                 abs(row["relative_humidity_percent"] - 63.4) < 1e-5, "RH validity and range")
-        require(row["gauge_status"] == 0 and row["battery_mv"] is None and
-                row["battery_percent"] is None, "USB-only battery nulls")
+        require(row["gauge_status"] == (i if i < 2 else 2) and
+                row["battery_mv"] == (None if i < 2 else 4000) and
+                row["battery_percent"] == (None if i < 2 else 75),
+                "absent, read-error and valid gauge values")
         require(row["clock_status"] == row["clock_epoch"] == int(anchored), "clock provenance")
         require(row["clock_anchor_mono_us"] == (15000000 if anchored else None) and
                 row["clock_anchor_utc_ns"] == (1788890000000000000 if anchored else None), "anchor")

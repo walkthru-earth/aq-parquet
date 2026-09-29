@@ -24,7 +24,7 @@ constexpr const char *kConfiguration =
     "\"pms_stale_after_ms\":5000,\"pms_uart_rx\":1,\"pms_uart_tx\":2,"
     "\"pms_baud\":9600,\"pms_model\":\"PMS5003T\","
     "\"battery_presence\":\"explicit-owner-configuration\","
-    "\"battery_percent\":\"integer-percent-truncated\","
+    "\"battery_percent\":\"integer-percent-truncated-capped-at-100\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
 constexpr const char *kTimeSemantics =
@@ -143,8 +143,20 @@ struct GaugeSnapshot {
   bool battery_installed = false; // explicit owner configuration only
   bool read_ok = false;
   std::int32_t millivolts = 0;
-  std::int32_t percent = 0; // whole percent, truncated by adapter
+  std::int32_t percent = 0; // whole percent, truncated and capped at 100
 };
+// MAX17048 VCELL (0x02) is 78.125 uV/LSB; SOC (0x04) is 1/256 %/LSB.
+// The gauge can estimate above 100% near full charge; cap the UI value while
+// rejecting a clearly implausible raw result. This board read 107.8% on USB;
+// the 120% rejection threshold is a project heuristic, not a datasheet limit.
+inline GaugeSnapshot decode_max17048(std::uint16_t vcell, std::uint16_t soc) {
+  const auto millivolts = static_cast<std::int32_t>(vcell) * 5 / 64;
+  const bool plausible =
+      millivolts >= 2500 && millivolts <= 4500 && soc <= 120 * 256;
+  const auto percent =
+      soc >= 100 * 256 ? 100 : static_cast<std::int32_t>(soc) / 256;
+  return {true, plausible, millivolts, percent};
+}
 inline void apply_gauge(Sample &row, const GaugeSnapshot &gauge) {
   row.integer(gauge_status, !gauge.battery_installed ? 0
                             : !gauge.read_ok         ? 1

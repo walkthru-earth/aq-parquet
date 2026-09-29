@@ -15,11 +15,14 @@ pinned toolchain and partition files. Never borrow a sibling trial's settings.
   services. Board code supplies only descriptors, sensor collection, card
   capacity hooks and board GPIO setup. No second radio initializer.
 - GPIO38 RGB is a board-local startup/card/sensor indicator. Camera, modem,
-  GNSS, fuel gauge and charger control are disabled. Do not guess modem
+  GNSS and charger control are disabled. The board adapter alone owns MAX17048
+  I²C on SDA15/SCL16; never initialize that controller from another driver.
+  Do not guess modem
   power pins or change USB routing/DIP switches for the logger.
-- Owner confirmed **USB only, no battery**. Keep battery measurements null;
-  a MAX17048 response cannot prove battery presence. Battery integration is
-  later work. No external RTC: UTC remains null until host synchronization,
+- The owner subsequently installed an 18650 and verified battery-only boot.
+  `kBatteryInstalled` is the explicit board configuration; a MAX17048 response
+  still cannot prove battery presence. Read failures leave battery fields null.
+  Charger state has no verified ESP32 signal. No external RTC: UTC remains null until host synchronization,
   and a reboot starts a new unanchored clock epoch.
 - Fixed pairing PIN is random per device. Retrieve it only through the
   explicit physical-serial owner command; never put PIN/PSK/token values in

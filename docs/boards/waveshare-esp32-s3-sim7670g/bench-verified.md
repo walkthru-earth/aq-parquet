@@ -108,3 +108,46 @@ The CoreS3 no-reader check subsequently identified the common startup filename-d
 Final boot `5bd8d6e02d728897b07c4b462dfc1bc9` preserved device/station identity and again started without an RTC/UTC anchor. `data_unsynced_5bd8d6e02d728897b07c4b462dfc1bc9_0-15-0.parquet` contains 16 rows / 49 columns, 12,060 bytes, SHA-256 `2bfa7f3939845e4d3cccfd15302ae80de7e8ce3af334d2d0e8e49597e9ab5649`, and passed CRC/structure/PyArrow/DuckDB checks. Sequence 0–15 is complete; all drop/error/missed-deadline counters are zero. Warm-up statuses are 1,1 then valid 4; battery/gauge behavior remains null/0. UTC and anchors stayed null until an explicit host time command. Jitter was 605–1,605 µs; intervals 9,999,000–10,001,000 µs.
 
 The board was then explicitly anchored from the host at Unix seconds `1790556502`, monotonic `166340683` µs, and left running the final logger for continued recording. Firmware reset will require another host anchor. First secure Mac pairing and Wi-Fi/LAN remain uncompleted; the security requirement was not lowered to obtain a test. No battery, modem, GNSS or camera was enabled.
+
+
+## Android installation and erased-bond diagnosis (2026-09-29)
+
+OnePlus 7 Pro (GM1911), Android 16 / API 36, USB ADB; Android app commit
+`06ab6ccd97869ddd40b48e858ba081b254fa2ef3`, debug APK SHA-256
+`5d135ca063ce1a4c326d14fa52e032cc68c5e74408210601d5e8b2eb420cf524`.
+Updated the existing app with the matching debug signing certificate and `adb install -r`,
+without uninstalling or clearing data. Home opened, no AndroidRuntime crash was observed,
+and existing archive summaries remained visible (AQ-7500: 99 files; AQ-6b40: 1,151).
+This does not establish a controlled Android schema-migration path or a new file transfer.
+
+The phone's automatic AQ-7500 BLE reconnect reached connected state and then disconnected
+with GATT status 5 before service discovery. Android Bluetooth diagnostics recorded
+`HCI_ERR_AUTH_FAILURE` with `encryption_change:key_missing` both before and after this app
+update. The owner confirmed this board had been reflashed/erased after pairing with the phone.
+The app initially masked that callback with a generic service-discovery error and required
+Ready before opening the device screen; those UI/diagnostic defects are being corrected in
+this app, rather than weakening BLE authentication or silently deleting bonds.
+
+The identified WCH console `/dev/cu.wchusbserial5B901533371` answered a read-only
+`parquet status` without a reset: station `81c0da75-009b-4922-94f9-64e310f006b8`,
+interval 900 s, buffered 22, finalized 5, dropped 0, errors 0, failed false,
+`waveshare-sim7670g-telemetry-v1`. The current firmware-image SHA-256 was **not measured**;
+prior image identities above must not be assumed for this erased/reflashed deployment.
+No image, clock, settings, PIN or bond was changed or saved during this diagnosis.
+Foreground Android pairing repair and authenticated collection after it remain unverified.
+
+## Battery gauge adapter readback (2026-09-30 Cairo; 2026-09-29 UTC)
+
+The owner installed a correctly oriented 18650, observed the reverse-battery LED off, and reported that the board stayed on after USB was unplugged. Those are owner observations, not a measured battery rail or capacity test. For the following readback the V2.0 board was attached to USB at checked WCH port `/dev/cu.wchusbserial5B901533371` with the battery installed. The prior verified 16,777,216-byte backup `backup/waveshare-sim7670g-v2-flash-20260927T222602Z.bin` was present. Each running logger was flushed before reflashing so completed rows remained on the TF card. Flash writes verified their hashes; no eFuses or TF files were erased.
+
+The initial adapter image, SHA-256 `6429adfb1b42ace7a71e6e3a53dc5b60becbb7332f62d59a214d830c26b88d59`, booted and wrote two rows, but both had `gauge_status=1` and null battery fields. A bounded diagnostic image, SHA-256 `5c8672b0bd501871d1192d5679261d6f1a429aeba4474d4204353ce635fe8f84`, then showed successful MAX17048 VCELL/SOC I²C transactions on SDA15/SCL16: raw VCELL 54,704–54,720 (about 4.274–4.275 V) and raw SOC 27,593 (107.8%). The first adapter had rejected the above-100% estimate. This is a gauge estimate while USB was attached, not a charger-state or percentage-accuracy measurement. The corrected adapter truncates whole percent, caps reported values at 100, and rejects raw SOC above 120% as a project plausibility heuristic.
+
+Final logger image SHA-256 `63951c913b0995ee7d2180a68fb4fc995202b48cfe6741655909e2b420febc0c` (retained in trial `artifacts/`) booted and the serial logger status reported no drop/error/failure. Its serially fetched unsynced file `data_unsynced_e0a27366d5d4fdf895042322232bf1d2_0-2-0.parquet` was 8,480 bytes, CRC-32 `7f4fefd4`, SHA-256 `bb6400653823db0d64ea611ee529f66c7cd929e34e784e4fb93a0af55289790d`, three rows in one row group, and passed the helper's size/CRC/structure and PyArrow/DuckDB comparison. All three rows had `gauge_status=2`, `battery_mv=4275`, `battery_percent=100`, with zero dropped rows, missed deadlines and storage errors. Adjacent sampling intervals were 10,000,000 and 10,001,000 microseconds. The raw SOC was 27,755 (108.4%) in the observed final serial samples; the stored 100% is a capped display estimate. The file and all three image copies live in the trial's git-ignored `artifacts/`, outside `build/`.
+
+This short USB-attached Parquet run does not test battery-only gauge readings, charging detection, percentage calibration or endurance. The existing shared live serializer maps valid row fields to `bat`/`pct`; the phone observation below separately verifies their display. The V2 schematic provides no verified ESP32 charger-status input, so `chg`/`vbus` remain absent rather than inferred from voltage.
+
+### Android live battery display (2026-09-30 Cairo)
+
+OnePlus 7 Pro (GM1911), Android 16, AQ app installed APK SHA-256 `105783e2c2655fea0a9c83cff0fcf577aee3fab17f7d7937899a103f2c26c9b7` (local companion commit `5df7aa86171fc72e94a0bd72bfda75cb2f3fc056`) was connected to AQ-7500 over Bluetooth while the final battery-gauge image above was running. ADB opened the existing app without reinstalling, found **Simple** selected, and switched the reversible display preference to **Detailed**. On Today, the battery card showed **100%** and **4,277 mV** while current PM/ambient readings continued updating. The screenshot is retained at `firmware/arduino-waveshare-sim7670g/artifacts/battery-android-live-20260930.png` (310,269 bytes; SHA-256 `8080782f9cc55761599a8dd92354a05c93c43ec7c972f66bc88734fdb61bc988`). No Android source or APK change was required for `bat`/`pct`; the companion parser and card already accepted them. This is a visible app readout over the connected link, not a captured GATT packet, battery-only test, capacity calibration, charging-state validation or file-transfer test. The app showed no charging or USB value, as those fields are not produced by this board adapter.
+
+The owner then disconnected **the Waveshare board's USB cable** while leaving its battery switch on; the phone stayed USB-connected for ADB observation. AQ-7500 remained Bluetooth-connected and the Android Battery card subsequently showed **100%** and **4,067 mV**, down from 4,277 mV with board USB attached. Particle/ambient readings changed and the device status age was 4 seconds at capture, with uptime 12 minutes 50 seconds. This verifies a fresh battery-only voltage and SOC display over the live phone link; it does not calibrate the 100% estimate or measure load current, battery capacity, run time or charging state. The battery-only screenshot is retained at `firmware/arduino-waveshare-sim7670g/artifacts/battery-android-live-battery-only-20260930.png` (322,123 bytes; SHA-256 `70250dffca9867bc284612c9e0a89a6d47e1569a789bd75810856b84a102d78f`).

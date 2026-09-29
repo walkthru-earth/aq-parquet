@@ -1,6 +1,7 @@
 #include "telemetry_contract.h"
 #include <Arduino.h>
 #include <SD_MMC.h>
+#include <Wire.h>
 #include <aq_logger.h>
 #include <debug_log.h>
 #include <esp_heap_caps.h>
@@ -19,12 +20,57 @@ constexpr int kSensorTx = 2;
 constexpr int kSdClk = 5;
 constexpr int kSdCmd = 4;
 constexpr int kSdData0 = 6;
+constexpr int kGaugeSda = 15;
+constexpr int kGaugeScl = 16;
+constexpr std::uint8_t kGaugeAddress = 0x36;
+// The owner installed an 18650 and verified battery-only operation. A gauge
+// ACK alone cannot prove presence; set false if this image is used without it.
+constexpr bool kBatteryInstalled = true;
 HardwareSerial sensor(1);
 plantower::Parser parser{plantower::Model::Pms5003t};
 PmsSnapshot latest;
 bool logging = false;
 bool storage_mounted = false;
+bool gauge_bus_ready = false;
 constexpr int kStatusLed = 38;
+
+bool read_gauge_word(std::uint8_t reg, std::uint16_t &value, int &error) {
+  Wire.beginTransmission(kGaugeAddress);
+  Wire.write(reg);
+  error = Wire.endTransmission(false);
+  if (error != 0)
+    return false;
+  const auto received = Wire.requestFrom(kGaugeAddress, std::uint8_t{2});
+  if (received != 2) {
+    error = 10 + received;
+    return false;
+  }
+  value = (static_cast<std::uint16_t>(Wire.read()) << 8) |
+          static_cast<std::uint8_t>(Wire.read());
+  return true;
+}
+
+GaugeSnapshot read_gauge() {
+  if (!kBatteryInstalled)
+    return {};
+  GaugeSnapshot unavailable{true};
+  if (!gauge_bus_ready)
+    return unavailable;
+  std::uint16_t vcell = 0;
+  std::uint16_t soc = 0;
+  int vcell_error = 0;
+  int soc_error = 0;
+  const bool vcell_ok = read_gauge_word(0x02, vcell, vcell_error);
+  const bool soc_ok = vcell_ok && read_gauge_word(0x04, soc, soc_error);
+  static unsigned diagnostics = 0;
+  if (diagnostics++ < 6)
+    aqlog.printf("AQ GAUGE read vcell_ok=%u vcell_error=%d vcell_raw=%u "
+                 "soc_ok=%u soc_error=%d soc_raw=%u\n",
+                 vcell_ok, vcell_error, vcell, soc_ok, soc_error, soc);
+  if (!vcell_ok || !soc_ok)
+    return unavailable;
+  return decode_max17048(vcell, soc);
+}
 
 void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
   PmsSnapshot snapshot = latest;
@@ -32,18 +78,19 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
     snapshot.age_ms =
         static_cast<std::uint32_t>((now - snapshot.received_mono_us) / 1000);
   apply_pms(row, snapshot, now);
-  // Owner confirmed USB-only operation. Gauge ACK cannot prove battery
-  // presence; battery measurements remain null until a later adapter exists.
-  apply_gauge(row, {});
+  apply_gauge(row, read_gauge());
 }
 
 const telemetry::KeyValue kMetadata[] = {
     {"pms_status", "0=missing,1=warming,2=stale,3=sensor-error,4=valid,"
                    "5=model-mismatch"},
     {"gauge_status",
-     "0=battery-not-installed-or-disabled,1=read-error,2=valid"},
-    {"unavailable", "USB-only: battery not installed; no onboard external RTC; "
-                    "modem/GNSS/camera not sampled"},
+     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid"},
+    {"unavailable",
+     "charging and USB input status unknown; no onboard external "
+     "RTC; modem/GNSS/camera not sampled"},
+    {"battery_presence",
+     kBatteryInstalled ? "owner-confirmed-installed" : "configured-absent"},
     {"sensor_model", "PMS5003T"},
     {"hardware_revision", "Waveshare ESP32-S3-SIM7670G-4G V2.0"},
     {"storage_bus", "SDMMC one-bit CLK5 CMD4 D0=6; no automatic format"},
@@ -78,8 +125,8 @@ void setup() {
   delay(500);
   rgbLedWrite(kStatusLed, 0, 0, 8);
   aqlog.printf("AQ BOARD waveshare-sim7670g-v2 firmware=%s sensor=PMS5003T "
-               "power=usb battery=absent display=absent rtc=absent\n",
-               kFirmware);
+               "battery=%s display=absent rtc=absent\n",
+               kFirmware, kBatteryInstalled ? "installed" : "absent");
   const bool psram_ok =
       esp_psram_is_initialized() && esp_psram_get_size() == 8 * 1024 * 1024;
   aqlog.printf("AQ MEMORY flash_bytes=%lu psram_physical_bytes=%lu "
@@ -91,6 +138,15 @@ void setup() {
     aqlog.println("AQ ERROR operation=psram logging=false");
     rgbLedWrite(kStatusLed, 8, 0, 0);
     return;
+  }
+  if (kBatteryInstalled) {
+    gauge_bus_ready = Wire.begin(kGaugeSda, kGaugeScl);
+    if (gauge_bus_ready) {
+      Wire.setClock(100000);
+      Wire.setTimeOut(20);
+    }
+    aqlog.printf("AQ GAUGE bus_ready=%u sda=%d scl=%d addr=0x%02x\n",
+                 gauge_bus_ready, kGaugeSda, kGaugeScl, kGaugeAddress);
   }
   sensor.begin(9600, SERIAL_8N1, kSensorRx, kSensorTx);
   const bool pins_ok = SD_MMC.setPins(kSdClk, kSdCmd, kSdData0);
