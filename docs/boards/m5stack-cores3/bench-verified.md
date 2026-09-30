@@ -151,7 +151,7 @@ Verified **2026-09-16** with the pinned Arduino stack plus NimBLE-Arduino 2.5.1,
 
 Not measured: full 766-file sync duration and energy, Wi-Fi coexistence (Wi-Fi stays off), notification loss under RF stress, bonded reconnect latency, behaviour with a second central attempting to connect, `.partial` handling over BLE (none existed), and any phone client.
 
-**Phone client, 2026-09-16 (owner's report, not instrumented):** the Android app (`m5stack-aq-android` commit `c557350`, debug APK SHA-256 `147803f2…`) was sideloaded onto the owner's Android phone and, in the owner's words, "connected to device and all works like a charm" against the v4 firmware above: pairing, live readings and file sync. No timing, file count or phone model was recorded, so this line is a report, not a measurement; the first instrumented phone-vs-board sync is still owed.
+**Phone client, 2026-09-16 (owner's report, not instrumented):** the Android app (`opensensor-space-android` commit `c557350`, debug APK SHA-256 `147803f2…`) was sideloaded onto the owner's Android phone and, in the owner's words, "connected to device and all works like a charm" against the v4 firmware above: pairing, live readings and file sync. No timing, file count or phone model was recorded, so this line is a report, not a measurement; the first instrumented phone-vs-board sync is still owed.
 
 ## Board 1, protocol v2: configuration, Wi-Fi, LAN sync, phone
 
