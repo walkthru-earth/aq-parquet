@@ -21,6 +21,7 @@ efuse = "tools/espefuse-summary.sh"
 # esptool default read the whole 16 MB in 97 s, while --baud 921600 aborted
 # partway with "Serial data stream stopped, possible serial noise or corruption".
 backup = "tools/backup-flash.sh"
+backup-test = "python tools/test_backup_flash.py"
 # Restore a backup taken above. Destructive, pass the file explicitly.
 restore = "tools/restore-flash.sh"
 # Show the partition table of a saved backup image. Read-only, pass the file.

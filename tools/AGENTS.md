@@ -10,6 +10,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Telemetry dictionary, units and validity | `telemetry-contract-test --sanitize` |
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
 | Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
+| Full-flash backup publication (offline fake esptool) | `backup-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`

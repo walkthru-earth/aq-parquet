@@ -22,14 +22,29 @@ fi
 # Only use this after flash-id has independently confirmed 16 MB on this port.
 backup_dir="${repo_root}/backup"
 image="${backup_dir}/${board}-flash-$(date -u +%Y%m%dT%H%M%SZ).bin"
+umask 077
 mkdir -p "${backup_dir}"
-# Keep esptool at its default serial speed. A failed read must not leave an
-# apparently valid image; verify its exact capacity before reporting success.
-python -m esptool --chip esp32s3 --port "${port}" read-flash 0 0x1000000 "${image}"
-bytes="$(stat -f %z "${image}")"
+# Read into a unique private path. A failed read must never leave a partial
+# image under the restoreable backup name, and a same-second run must not
+# replace an earlier verified backup.
+temporary="$(mktemp "${backup_dir}/.${board}-flash.XXXXXXXX")"
+trap 'rm -f "${temporary}"' EXIT
+# Keep esptool at its default serial speed.
+python -m esptool --chip esp32s3 --port "${port}" read-flash 0 0x1000000 "${temporary}"
+bytes="$(stat -f %z "${temporary}")"
 if [[ "${bytes}" != 16777216 ]]; then
-  printf 'backup size mismatch: %s bytes in %s\n' "${bytes}" "${image}" >&2
+  printf 'backup size mismatch: %s bytes in %s\n' "${bytes}" "${temporary}" >&2
   exit 1
 fi
-/usr/bin/shasum -a 256 "${image}"
+# Complete the hash before publication; shasum failure leaves no final image.
+digest="$(/usr/bin/shasum -a 256 "${temporary}" | awk '{print $1}')"
+if [[ ! "${digest}" =~ ^[0-9a-f]{64}$ ]]; then
+  printf 'backup SHA-256 could not be verified: %s\n' "${temporary}" >&2
+  exit 1
+fi
+if ! ln "${temporary}" "${image}"; then
+  printf 'backup already exists or could not be published: %s\n' "${image}" >&2
+  exit 1
+fi
+printf '%s  %s\n' "${digest}" "${image}"
 printf 'backup verified: %s (%s bytes)\n' "${image}" "${bytes}"
