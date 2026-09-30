@@ -192,8 +192,8 @@ The serial helper verified size, CRC and Parquet structure; PyArrow and DuckDB
 agreed. Its sampling intervals were 9,999,000–10,001,000 µs, with no missing
 sequence; PM and ambient fields were null in all nine rows. This establishes
 normal-reset SD retention and serial readback on this image. The low-MTU
-LIST/OPEN error behavior has a host sanitizer test; this hardware run did not
-negotiate a small BLE payload or complete a phone file transfer.
+LIST/OPEN error behavior has a host sanitizer test; this serial readback phase
+did not negotiate a small BLE payload or complete a phone file transfer.
 
 The new image also finalized
 `data_unsynced_d0c6a561200d839339e76198a17faa7c_0-68-0.parquet`:
@@ -205,3 +205,27 @@ agreed. Sequence 0–68 was contiguous; acquisition intervals were
 finalized file, zero dropped rows/errors and `failed=false`. All 69 PM and
 ambient fields were null in this run; sensor attachment or cause was not
 diagnosed here. UTC remained unanchored.
+
+### Foreground Android sync after the shared-engine flash (2026-09-30 Cairo)
+
+The connected OnePlus 7 Pro (GM1911, Android 16 / API 36) installed Android
+app commit `d1f91e4` in place; debug APK SHA-256
+`4f00537c996d77a39bea9a09f322b62309d1e955a3868ba05d3dfbb46206de7f`.
+The Waveshare was still running the image flashed above; no further flash or
+eFuse operation was performed. The app connected to AQ-7500 over BLE, read
+station `81c0da75-009b-4922-94f9-64e310f006b8`, and Today showed zero
+dropped rows and storage errors. The owner-facing **Finalize buffered rows**
+action was confirmed once, making a new short Parquet file available without
+changing the rotation interval.
+
+Files then showed 150 finalized files with one pending transfer. Foreground
+**Sync all** completed **1/1 file, 16.8 KiB displayed** over Bluetooth, and
+the app reported that the card's listing was archived and verified. The phone
+archive count rose from 1,399 to 1,400. An explicit LIST refresh updated the
+listing age; History retained its current-station PM2.5 day chart after tab
+navigation and app background/resume. This verifies one foreground BLE file
+transfer against the reflashed board and one lifecycle path. The file's exact
+byte count and digest were not separately measured on the phone; the app's
+verified indicator is its size/CRC/PAR1 check. Full archive, low-MTU phone,
+LAN, screen-off and multi-device transfers remain unmeasured here. The board
+still had no UTC anchor, so new rows stayed untimed.
