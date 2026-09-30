@@ -76,6 +76,7 @@ private:
     ArchiveSession *session;
     std::uint16_t count = 0;
     bool ok = true;
+    bool unsendable = false;
   };
   static constexpr std::size_t kPayloadCapacity = 1024;
   ArchiveHooks archive_;

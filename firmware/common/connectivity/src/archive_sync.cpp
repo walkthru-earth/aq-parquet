@@ -79,6 +79,9 @@ void ArchiveSession::emit_file(void *context, const char *name,
                     unsigned(name_length), unsigned(payload_max));
       session.archive_.log(session.archive_.context, line);
     }
+    // An incomplete listing must not look like an empty archive to a client.
+    list.ok = false;
+    list.unsendable = true;
     return;
   }
   std::uint8_t frame[5 + 400];
@@ -102,8 +105,11 @@ void ArchiveSession::emit_file(void *context, const char *name,
 void ArchiveSession::list() {
   ListContext list{this};
   const unsigned partials = archive_.list(archive_.context, emit_file, &list);
-  if (!list.ok)
+  if (!list.ok) {
+    if (list.unsendable)
+      error(ble::kOpList, ble::kErrBusy, payload_max() >= 6 ? "mtu" : nullptr);
     return;
+  }
   std::uint8_t frame[13];
   frame[0] = ble::kFrameListEnd;
   put_u16(frame + 1, list.count);
@@ -130,6 +136,10 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
   char path[416];
   if (!archive_.resolve(archive_.context, name, path, sizeof(path))) {
     error(ble::kOpOpen, ble::kErrInvalidName, "charset");
+    return;
+  }
+  if (name_length + 11 > payload_max()) {
+    error(ble::kOpOpen, ble::kErrBusy, payload_max() >= 6 ? "mtu" : nullptr);
     return;
   }
   close();

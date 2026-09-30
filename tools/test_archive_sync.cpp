@@ -102,8 +102,11 @@ struct Fixture {
               return !f.refuse_frame || f.frames.size() != f.refuse_frame;
             },
             [](void *ctx, ble::Link link, ble::Op op, ble::Error error,
-               const char *) {
-              static_cast<Fixture *>(ctx)->errors.push_back({link, op, error});
+               const char *detail) {
+              auto &f = *static_cast<Fixture *>(ctx);
+              assert(3 + (detail ? std::strlen(detail) : 0) <=
+                     f.payload[unsigned(link)]);
+              f.errors.push_back({link, op, error});
               return true;
             },
             [](void *ctx) { ++static_cast<Fixture *>(ctx)->progress; }};
@@ -196,11 +199,23 @@ int main(int argc, char **argv) {
   f.clear();
   f.payload[0] = 18;
   session.handle(request(ble::kOpList), true);
-  assert(f.frames.size() == 1 &&
-         get_u16(f.frames.back().bytes.data() + 1) == 0);
+  expect_error(f, ble::kErrBusy);
+  assert(f.listed == 1); // no false empty listing or cleared new-files hint
   f.payload[0] = 517;
 
   auto handle = open(f, session);
+  f.clear();
+  f.payload[0] = 24; // LIST fits, but OPENED has a larger header
+  auto too_small = request(ble::kOpOpen);
+  const char *file_name = "sample.parquet";
+  std::memcpy(too_small.bytes + 1, file_name, std::strlen(file_name));
+  too_small.length += std::strlen(file_name);
+  session.handle(too_small, true);
+  expect_error(f, ble::kErrBusy);
+  f.payload[0] = 517;
+  f.clear();
+  session.handle(read(handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512); // rejected OPEN preserves prior handle
   f.clear();
   session.handle(read(handle, 0, UINT32_MAX), true);
   verify_read(f, handle, 0, ble::kMaxRead, 512);
