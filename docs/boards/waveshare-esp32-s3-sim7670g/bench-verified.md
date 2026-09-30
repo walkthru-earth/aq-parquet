@@ -159,3 +159,49 @@ OnePlus 7 Pro (GM1911, Android 16 / API 36), Android app commit `dba3e69`, debug
 History displayed two retained station generations after the earlier reflash/NVS reset: current `81c0da75-009b-4922-94f9-64e310f006b8` and earlier `7abe1b6b-e014-42e7-b259-bf61cee9f288`. The current station's 30 September PM2.5 Day chart showed 23.3 µg/m³ at 2% coverage. Selecting Earlier opened its latest local day, 29 September, and showed 36.5 µg/m³ at 18% coverage; switching to Week retained that date and showed the 23–29 September chart. The two short generation chips and one-line horizontally scrollable metric chips fitted the phone screen. Screenshots are retained in ignored trial artifacts: `history-android-current-20260930.png` (SHA-256 `1832c216861e926198ba91aec625018439368b66d195b466f06887ffff9cd6c7`) and `history-android-earlier-20260930.png` (SHA-256 `0e80bc7ea09de10c87b146bb45120290e74d5df10484a2c8fa60f89d7b105634`).
 
 Before the app fix, History presented 99 retained SD copies with the earlier Hive producer station under the current INFO-station archive as “still indexing” and described them all as untimed. The fixed page excludes those copies from the current station's timeline counts and explains that they remain unchanged in the archive. After an automatic collection of four more files, the current namespace held 20 own files (three with real UTC, two estimated) plus 99 retained earlier-producer copies. This is a phone UI/history observation, not a controlled reset/reflash, full sync, firmware time-setting, or station-provenance migration test. Android `./gradlew --no-daemon verify` passed for the fix; file bytes and outer archive namespaces were not changed.
+
+## Shared archive payload fix on Waveshare (2026-09-30 UTC)
+
+The checked WCH port `/dev/cu.wchusbserial5B901533371` identified the same
+ESP32-S3 revision 0.2 / MAC `a4:cb:8f:d7:75:00`: 16 MB quad flash, 8 MB
+embedded PSRAM, secure boot disabled and flash encryption disabled. The prior
+full 16,777,216-byte backup
+`backup/waveshare-sim7670g-v2-flash-20260927T222602Z.bin` was rechecked at
+SHA-256 `d88ddcd6bbbc69972396df9a1d67d75b006f5058d000e07cd850717fffd07a45`.
+An attempted fresh full read was stopped because default-speed readback takes
+about 25 minutes on this CH343 link; no new backup was published. The earlier
+verified full image remained available before the write.
+
+The running logger first finalized its buffered nine rows to the SD card.
+`pixi run waveshare-contract-test --sanitize`, the shared archive sanitizer,
+format/lint gates and both board builds passed. The logger build used
+1,283,515 program bytes and 85,804 static RAM bytes. The retained application
+image is `artifacts/firmware/waveshare-archive-mtu-ce220d12.bin` (1,283,664
+bytes; SHA-256
+`ce220d128f4cedff3a55e3ec18f23f0c6427af59873dc08eff13d88d14fe9707`).
+`waveshare-flash` verified the written application hash and reset the board;
+it did not format the TF card or write eFuses. The first read-only status after
+boot reported the same station, two buffered rows, zero drops/errors, and
+`failed=false`.
+
+The pre-flash file
+`data_unsynced_7368afc74a14c8e944ce810b3b29d8c2_0-8-0.parquet` remained
+fetchable after the flash: 9 rows, 49 columns, 9,432 bytes, CRC-32 `7ee9aaa3`,
+SHA-256 `a26d382e374a51490084bbd8416269c7ca3c377d70202ad19a32a377c84b2bf0`.
+The serial helper verified size, CRC and Parquet structure; PyArrow and DuckDB
+agreed. Its sampling intervals were 9,999,000–10,001,000 µs, with no missing
+sequence; PM and ambient fields were null in all nine rows. This establishes
+normal-reset SD retention and serial readback on this image. The low-MTU
+LIST/OPEN error behavior has a host sanitizer test; this hardware run did not
+negotiate a small BLE payload or complete a phone file transfer.
+
+The new image also finalized
+`data_unsynced_d0c6a561200d839339e76198a17faa7c_0-68-0.parquet`:
+69 rows in one row group, 22,131 bytes, CRC-32 `9d3a871c`, SHA-256
+`abb028ceff1ad338b8e3ce895de3c771dbbd061354619367e23da0274e1af9aa`.
+Serial fetch verified its size, CRC and `PAR1` structure, and PyArrow/DuckDB
+agreed. Sequence 0–68 was contiguous; acquisition intervals were
+9,999,000–10,001,000 µs, mean 10,000,015 µs. The following status showed one
+finalized file, zero dropped rows/errors and `failed=false`. All 69 PM and
+ambient fields were null in this run; sensor attachment or cause was not
+diagnosed here. UTC remained unanchored.
