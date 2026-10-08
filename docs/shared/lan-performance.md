@@ -43,7 +43,7 @@ binary hashes must not be described as isolated scheduling-only images.
 expects `arduino-waveshare-parquet-v2`, while the pre-existing working-copy
 identity differs. The scheduling change does not alter that identity.
 
-No board was flashed for this change. Host socket timing and compilation are
+At completion of the initial host gates, no board had been flashed. Host socket timing and compilation are
 not measured Wi-Fi throughput, coexistence, sampling or SD results on a board.
 Keep Android, iPhone and host-collector results separate.
 
@@ -119,3 +119,13 @@ The follow-up passes `debug-log-test`, `wifi-link-test`, `config-test`,
 identity assertion remains a separate working-copy limitation. Build/test
 results alone do not establish a post-deployment throughput gain. Record actual
 old/new-image measurements separately in the selected board's bench record.
+
+
+## Subsequent real-board result
+
+The owner subsequently authorized the CoreS3 v6.7 deployment. The same 87,654-byte
+file transferred without a USB reader in 0.925–1.045 seconds across three short
+host runs; two simultaneous collectors each reached about 57 KB/s. The old-image
+console-drained/undrained comparison supported USB log backpressure. Full image,
+backup, transfer identities, different client counts and qualification limits are
+recorded in the [dated CoreS3 bench result](../boards/m5stack-cores3/bench-verified.md#2026-10-08--cores3-v67-lan-latency-and-usb-backpressure).

@@ -445,3 +445,68 @@ background behavior, power-cut durability or Waveshare radio behavior.
 Both board builds and sanitizer archive/socket fixtures passed; the Waveshare
 image was compiled but not flashed in this session. The CoreS3 was left running
 v6.6 with its existing Wi-Fi/LAN profile.
+
+
+## 2026-10-08 — CoreS3 v6.7 LAN latency and USB backpressure
+
+Owner authorized the upgrade and speed check on AQ-6b40 at
+`/dev/cu.usbmodem20301`. In order, ports/chip/flash-id/eFuse read-only checks
+confirmed ESP32-S3 rev0.2, MAC `44:1b:f6:e2:6b:40`, 16 MB Quad flash,
+secure boot/encryption disabled and download access enabled. Before writing,
+a full **16,777,216-byte** backup was verified at
+`backup/m5stack-cores3-flash-20261008T081738Z.bin`, SHA-256
+`629cc82d07ba6ba2f9a220f9ed6a063f23b9115aa522bee34bf6962970ef8dd9`.
+No eFuse or card-format operation was performed.
+
+The deployed v6.7 application SHA-256 is
+`d914f4e6834a0abefb4f1bbdb2ac98f0f91f252305f120ea0dbb5f9db033935c`;
+ELF SHA-256 is
+`6e1dc74dddccbe83acdfb8f5a9db2e77b952439e5be5bd88b00f62df6a57da4b`.
+Build size: 1,431,859 program bytes / 92,332 static RAM bytes. Upload verified
+the written hash. INFO then reported `arduino-cores3-parquet-v6.7` and the
+preserved station/full hardware identity; the existing private LAN token worked.
+The image includes the owner's pending common configuration work as well as
+scheduling commit `c0d5c1e` and diagnostic/provenance commit `be8f52f`; it is a
+working-copy image, not a claim of a reproducible clean-commit binary.
+Both board builds and relevant sanitized host gates passed. Waveshare was not
+flashed; its unrelated pending schema firmware-identity assertion still fails.
+
+All transfers below fetched the same immutable **87,654-byte**, 180-row file
+`station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=09/day=17/data_1000_495ccef9f3eb8c5917070c921c9baec8_107-286-3.parquet`,
+using six READ windows at advertised `max_read=16384`. Every copy passed
+CRC-32 `4c8cbc19`, PAR1, SHA-256
+`a8ceaebea9f6f3a2d12c183ae5d3c683b2902c1d10066962cbfebc458fef9d7f`,
+and independent PyArrow/DuckDB validation. Timings include OPEN through CLOSE,
+excluding subsequent local reader inspection; KB/s below means decimal bytes/s.
+
+| Image / console condition | Host collectors / total connections | Seconds | Bytes/s per collector |
+| --- | --- | --- | --- |
+| v6.6 initial baseline, USB not drained | 1 / not captured | 33.672 | 2,603 |
+| v6.6, USB actively drained and discarded | 1 / 2 | 2.149 | 40,793 |
+| v6.6 repeat, USB not drained, same boot as preceding row | 1 / 2 | 16.459 | 5,326 |
+| v6.7, USB actively drained | 1 / 1 | 0.912 | 96,096 |
+| v6.7, USB not drained, three sequential runs | 1 / 1 | 1.014 / 1.045 / 0.925 | 86,427 / 83,846 / 94,764 |
+| v6.7, USB not drained, simultaneous collectors | 2 / 2 | 1.519 / 1.524 | 57,708 / 57,503 |
+
+The state/transfer activity of the second v6.6 connection was not established;
+client counts and radio/load differ between images. These are short real-board
+host results, not a controlled sustained-throughput or phone-speed multiplier.
+The old-image drained/undrained pair nevertheless supports USB-console
+backpressure as a material contributor. The cached SDK can block debug writes
+for seconds; LAN command and archive READ diagnostics previously gated request
+queueing and READ_END. They now remain in LOG_TAIL without console IO; bounded
+socket readiness and queue-first worker wakeups remove fixed scheduling waits.
+No radio sleep setting, READ/frame limit or integrity check was relaxed.
+
+New-image status snapshots advanced from uptime 62–63 s / buffered 2 to buffered
+8 after collection, with `drop=err=miss=fail=0`. A subsequent physical serial
+fetch of the same file also passed both readers, CRC and identical SHA-256,
+confirming the serial DATA path still works. The original file's acquisition
+interval statistics describe its original boot, not this new-image sampling run.
+Retained binaries, secret-free reports, upload log and readbacks live in ignored
+`firmware/arduino-m5unified/artifacts/lan-performance-20261008/`.
+
+The sensor remains on v6.7. Android/iPhone throughput after the upgrade, BLE,
+background/coexistence/endurance and other boards still need their own dated
+qualification. The mobile app was separately rebuilt/installed and now shows
+measured average KiB/s; a host result is not a phone observation.
