@@ -4,7 +4,9 @@
 #include "../firmware/common/connectivity/src/wifi_link.cpp"
 
 #include <cassert>
+#include <chrono>
 #include <csignal>
+#include <thread>
 #include <vector>
 
 DebugLog aqlog;
@@ -135,6 +137,30 @@ int main() {
     assert(read_frame(phones[peer]) ==
            std::vector<std::uint8_t>(frame, frame + 2));
   }
+  // The task waits on socket readiness, rather than sleeping after each
+  // request. Use a longer idle timeout here to tolerate host scheduling noise;
+  // arriving bytes must interrupt it, including on a nonzero peer slot.
+  for (const std::uint8_t peer : {std::uint8_t(0), std::uint8_t(2)}) {
+    const auto before = requests.size();
+    std::thread phone([&, peer] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      const std::uint8_t bytes[] = {1, 0, ble::kOpStatus};
+      write_bytes(phones[peer], bytes, sizeof(bytes));
+    });
+    const auto started = std::chrono::steady_clock::now();
+    lan::poll_server(500000);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    phone.join();
+    assert(requests.size() == before + 1 && requests.back().peer == peer);
+    assert(elapsed < std::chrono::milliseconds(400));
+  }
+  // Socket waiting is bounded when no request arrives (radio housekeeping
+  // and idle expiry must still run); no spin loop replaces the fixed sleep.
+  const auto idle_started = std::chrono::steady_clock::now();
+  lan::poll_server(20000);
+  assert(std::chrono::steady_clock::now() - idle_started >=
+         std::chrono::milliseconds(15));
+
   // TCP can split a full-size body at any byte or coalesce several frames.
   std::vector<std::uint8_t> full(2 + ble::kMaxControlBytes, 0x55);
   full[0] = 0;

@@ -626,7 +626,7 @@ void push_documents() {
   }
 }
 
-void poll_server() {
+void poll_server(int wait_us = 0) {
   const bool drop_all = drop_requested.exchange(false);
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
     if (drop_all || clients[peer].drop.load())
@@ -646,8 +646,13 @@ void poll_server() {
         highest = fds[peer];
     }
   }
-  timeval wait{0, 0};
-  if (::select(highest + 1, &readable, nullptr, nullptr, &wait) > 0) {
+  // Socket readiness wakes the task immediately; the timeout only bounds
+  // radio/settings, expiry and snapshot housekeeping when the network is idle.
+  timeval wait{0, wait_us};
+  const int ready = ::select(highest + 1, &readable, nullptr, nullptr, &wait);
+  if (ready < 0 && wait_us)
+    vTaskDelay(kTick); // avoid a busy loop if the socket layer fails
+  if (ready > 0) {
     if (FD_ISSET(listen_fd, &readable))
       accept_client();
     for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
@@ -674,8 +679,10 @@ void lan_task(void *) {
       run_scan();
       scan_pending = false;
     }
-    poll_server();
-    vTaskDelay(kTick);
+    if (listen_fd >= 0)
+      poll_server(100000);
+    else
+      vTaskDelay(kTick);
   }
 }
 } // namespace

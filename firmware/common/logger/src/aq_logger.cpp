@@ -1,6 +1,7 @@
 #include "aq_logger.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_status.h"
+#include "aq_logger_work_queue.h"
 #include "debug_log.h"
 #include "device_config.h"
 #include "lz4_codec.h"
@@ -104,6 +105,7 @@ WriterState *writer_state = nullptr;
 QueueHandle_t samples = nullptr;
 QueueHandle_t commands = nullptr;
 SemaphoreHandle_t spi_mutex = nullptr;
+SemaphoreHandle_t worker_wakeup = nullptr;
 std::atomic<std::uint32_t> dropped{0}, errors{0}, finalized{0}, buffered{0};
 std::atomic<std::uint32_t> write_us{0}, sync_us{0}, queue_peak{0};
 std::atomic<std::uint32_t> total_kib{0}, used_kib{0}, rotation_seconds{900};
@@ -1386,7 +1388,9 @@ void storage_worker(void *) {
   Command command;
   for (;;) {
     worker_heartbeat_us = esp_timer_get_time();
-    if (xQueueReceive(samples, &row, pdMS_TO_TICKS(50)) == pdTRUE) {
+    // Sample priority is retained without sleeping before every control
+    // request. Successful producers signal after copying to a queue.
+    if (xQueueReceive(samples, &row, 0) == pdTRUE) {
       if (!storage_ready || failed || count == kMaxRows) {
         ++dropped;
       } else {
@@ -1415,8 +1419,12 @@ void storage_worker(void *) {
       }
     }
     worker_failed = failed;
-    if (xQueueReceive(commands, &command, 0) != pdTRUE)
+    if (xQueueReceive(commands, &command, 0) != pdTRUE) {
+      // Drain pending samples before sleeping. Queue-then-signal also covers
+      // an enqueue racing this check: the signal remains pending until taken.
+      work::wait_if_idle(samples, worker_wakeup);
       continue;
+    }
     if (command.source == Command::Source::Control) {
       WorkerState state{count, failed, storage_ready};
       current_request = &command.control;
@@ -1591,7 +1599,7 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   counter(row, "last_sync_us", sync_us.load());
   integer(row, "queue_high_water", queue_peak.load());
   counter(row, "collection_completed_mono_us", esp_timer_get_time());
-  if (xQueueSend(samples, &row, 0) != pdTRUE)
+  if (!work::enqueue(samples, &row, worker_wakeup))
     ++dropped;
   const auto depth =
       static_cast<std::uint32_t>(uxQueueMessagesWaiting(samples));
@@ -1717,9 +1725,12 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   spi_mutex = xSemaphoreCreateMutex();
   samples = xQueueCreate(8, sizeof(Sample));
   commands = xQueueCreate(6, sizeof(Command));
+  // Created before the worker: wakeups do not depend on task-handle
+  // publication.
+  worker_wakeup = xSemaphoreCreateBinary();
   writer_state = static_cast<WriterState *>(heap_caps_calloc(
       1, sizeof(WriterState), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (!spi_mutex || !samples || !commands || !writer_state) {
+  if (!spi_mutex || !samples || !commands || !worker_wakeup || !writer_state) {
     aqlog.println("PARQUET ERROR operation=allocate logging=false");
     return false;
   }
@@ -1808,7 +1819,7 @@ void poll() {
     if (byte == '\n') {
       input.text[length] = '\0';
       input.received_mono_us = esp_timer_get_time();
-      if (overflow || xQueueSend(commands, &input, 0) != pdTRUE)
+      if (overflow || !work::enqueue(commands, &input, worker_wakeup))
         aqlog.println(
             "PARQUET ERROR operation=command reason=too-long-or-busy");
       length = 0;
@@ -1832,7 +1843,7 @@ bool start_links(bool display_detected) {
 }
 
 bool enqueue_request(const ble::ControlRequest &request) {
-  if (!commands || request.length == 0 ||
+  if (!commands || !worker_wakeup || request.length == 0 ||
       request.length > sizeof(request.bytes))
     return false;
   // BLE and LAN invoke this concurrently; xQueueSend copies this local value.
@@ -1840,7 +1851,7 @@ bool enqueue_request(const ble::ControlRequest &request) {
   command.source = Command::Source::Control;
   command.received_mono_us = request.received_mono_us;
   command.control = request;
-  return xQueueSend(commands, &command, 0) == pdTRUE;
+  return work::enqueue(commands, &command, worker_wakeup);
 }
 
 const char *station_text_id() { return station_text; }

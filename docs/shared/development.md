@@ -31,7 +31,17 @@ Run `pixi run fmt-check` and `pixi run lint` for project C/C++ changes. The form
 
 Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer changes require `pixi run parquet-test --sanitize`; measurement-contract changes require `pixi run telemetry-contract-test --sanitize`. Build every affected trial. Host tests establish parser/format behavior; board-specific storage, timing and power-loss claims require real hardware evidence.
 
-The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `connectivity-build-test`, `logger-build-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
+The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `connectivity-build-test`, `logger-build-test`, `logger-work-queue-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
+
+The LAN task waits for socket readiness with a 100 ms housekeeping timeout; it
+no longer sleeps after every request. The archive worker checks one sample and
+one command per pass, and waits on a binary wakeup only when idle. All sample,
+serial and radio producers copy to the bounded queues before signaling; wakeups
+may coalesce without dropping queued work. `logger-work-queue-test` covers the
+queue-check/wait race, pre-start signals, sample priority and saturation. These
+are scheduling and host-test guarantees, not measured on-board transfer speeds.
+See [LAN performance qualification](lan-performance.md) for the one-versus-two
+collector procedure and current validation limits.
 
 ## Local provisioning and client boundaries
 
