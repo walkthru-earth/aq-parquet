@@ -2,6 +2,16 @@
 
 **Status: active. Real-sensor Parquet SD logging, full 60/90-row uncompressed files, UTC Hive checks and identical-row LZ4 compression comparisons were verified on hardware on 2026-09-08. Bluetooth LE file sync (`arduino-cores3-parquet-v4`) was flashed and verified from a host BLE client on 2026-09-16; protocol v2 with Wi-Fi/LAN sync (`-v5`) on 2026-09-17; file schema v3 with multi-row-group files, statistics and TIMESTAMP annotations (`-v6`, then the `-v6.1` lifetime fix) flashed and read back the same day; the BM8563 RTC hand-off (`-v6.2`) and the protocol 2.1 advertising payload that wakes the phone (`-v6.3`) both on 2026-09-18.**
 
+## Concurrent LAN collection (2026-10-08)
+
+`arduino-cores3-parquet-v6.6` supports three authenticated Wi-Fi clients plus
+one BLE connection, with independent archive handles and no connection takeover.
+Each phone still pairs over BLE once to obtain LAN access. This image was flashed
+and its hash verified on the backed-up CoreS3. Two host collectors downloaded
+identical verified files alongside a third existing connection; the logger
+reported zero drops/errors. See the dated [bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-concurrent-lan-collectors-firmware-v66)
+for image identity, measured rate and phone/Waveshare qualification limits.
+
 ## Earlier bring-up and phone integration (through 2026-09-18)
 
 ### Flashed 2026-09-18 11:02Z: `arduino-cores3-parquet-v6.3`, advertising payload (protocol 2.1)

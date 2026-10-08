@@ -1,4 +1,4 @@
-"""Exercise three independent LAN collectors against one real sensor.
+"""Exercise independent LAN collectors against one real sensor.
 
 Read-only: never configures, flushes, deletes or rewrites the sensor archive.
 Keep the token in an ignored private file; only nonsecret results are printed.
@@ -21,7 +21,7 @@ from parquet_device import output_destination, validate_file
 
 async def run(args: argparse.Namespace) -> dict:
     token = bytes.fromhex(args.token_file.read_text().strip())
-    links = [LanLink(args.host, token, timeout=30) for _ in range(3)]
+    links = [LanLink(args.host, token, timeout=30) for _ in range(args.clients)]
     sessions = [Session(link) for link in links]
     challenger = LanLink(args.host, token, timeout=10)
     try:
@@ -37,7 +37,10 @@ async def run(args: argparse.Namespace) -> dict:
             if "refused code=7" not in str(error):
                 raise
         else:
-            raise ProtocolError("fourth collector was accepted by a full pool")
+            raise ProtocolError("additional collector was accepted; the three-client pool was not full")
+        configuration = await sessions[0].get_config()
+        if configuration["lan"]["clients"] != 3:
+            raise ProtocolError("expected three active sensor clients")
         listed, _ = await sessions[0].list_files()
         candidates = [(name, size) for name, size in listed.items() if 12 <= size <= 32 * 1024 * 1024]
         if not candidates:
@@ -53,11 +56,11 @@ async def run(args: argparse.Namespace) -> dict:
         opened = await asyncio.gather(*(session.open(name) for session in sessions))
         await links[0].disconnect()
         retained = await asyncio.gather(*(
-            sessions[i].read_window(opened[i][0], 0, min(4096, opened[i][1])) for i in (1, 2)
+            sessions[i].read_window(opened[i][0], 0, min(4096, opened[i][1])) for i in range(1, args.clients)
         ))
         if any(window != payload[:len(window)] for window in retained):
             raise ProtocolError("surviving client lost its file after another disconnected")
-        for i in (1, 2):
+        for i in range(1, args.clients):
             await sessions[i].close(opened[i][0])
         destination = output_destination(args.out, name)
         if destination.exists():
@@ -69,7 +72,7 @@ async def run(args: argparse.Namespace) -> dict:
         inspected = validate_file(destination)
         return {
             "firmware": infos[0].get("fw"), "station": infos[0].get("station"),
-            "clients": 3, "fourth_busy": True, "disconnect_isolated": True,
+            "host_clients": args.clients, "sensor_clients": 3, "fourth_busy": True, "disconnect_isolated": True,
             "name": name, "bytes": len(payload), "crc32": f"{binascii.crc32(payload) & 0xffffffff:08x}",
             "sha256": hashlib.sha256(payload).hexdigest(), "seconds": round(elapsed, 3),
             "transfers": [details for _, details in downloads],
@@ -83,6 +86,8 @@ async def run(args: argparse.Namespace) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--clients", type=int, choices=(2, 3), default=3,
+                        help="host collectors; use 2 when a phone already occupies the third slot")
     parser.add_argument("--host", required=True)
     parser.add_argument("--token-file", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)

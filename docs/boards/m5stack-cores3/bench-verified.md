@@ -389,3 +389,59 @@ The Wi-Fi card was discovery-only and did not connect when tapped. No
 authenticated LAN transfer occurred. The permission prompt itself and
 allow/deny/revoke paths were not reported. No firmware write, archive mutation or
 new power/storage/endurance result follows from this observation.
+
+
+## Board 1, concurrent LAN collectors (firmware v6.6)
+
+Verified **2026-10-08** on the same CoreS3 at `/dev/cu.usbmodem20301`.
+`ports`, `chip`, `flash-id` and read-only `efuse` confirmed ESP32-S3 rev0.2,
+16 MB Quad flash and unchanged recovery/security state. Before flashing, a new
+**16,777,216-byte** backup was verified at
+`backup/m5stack-cores3-flash-20261008T073546Z.bin`, SHA-256
+`0e2c9e694e956abf157b00bee6c78f3de919119f7dc6930201bb3d9a8ad82b4f`.
+
+The CoreS3 v6.6 application image SHA-256 is
+`8bdb849389789c20a55565d9af651cda1b2e3623d7128849164279ff35dcde21`;
+ELF SHA-256 is
+`f9d221a450bc9821468e64b95d1107e497309732b09d40f8cfdc20c728e7f602`.
+The pinned build reported 1,431,459 program bytes and 92,324 static RAM bytes.
+Upload verified the written flash hash. Binaries, filtered secret-free logger
+status, result summary and Parquet readback are retained in ignored
+`firmware/arduino-m5unified/artifacts/lan-multi-v6.6/`.
+The flashed working tree also included the owner's pending CONFIG_CHUNK/configuration
+changes; commit `ae12c85` records only this task's concurrency changes.
+
+- Bonjour advertised `_aqsync._tcp`, `proto=2`, the preserved station
+  `53315f5f-cb85-4d8d-b623-d56266084189`, device `441bf6e26b40` and
+  `fw=arduino-cores3-parquet-v6.6` at `aq-6b40.local:47390`.
+- An existing client already occupied one slot. Two authenticated host TCP
+  collectors connected alongside it; CONFIG reported **three clients**. A fourth
+  connection returned authentication-handshake ERROR code 7 without takeover.
+  The existing third client's platform and transfer state were not established.
+- `pixi run lan-concurrency-bench --clients 2 --host aq-6b40.local
+  --token-file <private ignored token file> --out <ignored readback directory>`
+  downloaded the same immutable 180-row file on both connections:
+  `station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=09/day=17/data_1000_495ccef9f3eb8c5917070c921c9baec8_107-286-3.parquet`.
+  Both copies had **87,654 bytes**, CRC-32 `4c8cbc19` and SHA-256
+  `a8ceaebea9f6f3a2d12c183ae5d3c683b2902c1d10066962cbfebc458fef9d7f`.
+  PyArrow and DuckDB agreed on all rows. The two-download interval was
+  49.801 seconds (approximately 1.8 KB/s per collector in this short check).
+- Both collectors reopened the file before one disconnected. The survivor's
+  original handle still returned the correct first window and closed normally.
+- Logger status before and after collection showed `dropped=0 errors=0
+  failed=false`, with buffered rows increasing from 11 to 31. Three observed
+  successive sample deadlines remained approximately ten seconds apart.
+
+An initial attempt preceded successful hostname resolution after boot; a later
+three-host attempt was refused because the existing client occupied one slot.
+The final two-host check completed without interrupting that third connection.
+Direct Python BLE access from the non-app process aborted under macOS's existing
+Bluetooth permission boundary; no BLE test is claimed for this image.
+
+This establishes concurrent authenticated host TCP collection and independent
+handles on **this CoreS3 image**. It does not qualify simultaneous Android/iOS
+phones, BLE+three-LAN transfers, multi-sensor phone runs, sustained throughput,
+background behavior, power-cut durability or Waveshare radio behavior.
+Both board builds and sanitizer archive/socket fixtures passed; the Waveshare
+image was compiled but not flashed in this session. The CoreS3 was left running
+v6.6 with its existing Wi-Fi/LAN profile.
