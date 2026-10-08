@@ -12,10 +12,12 @@
 #include <lwip/inet.h>
 #include <lwip/sockets.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 
 namespace lan {
 namespace {
@@ -24,6 +26,7 @@ constexpr std::int64_t kConnectTimeoutUs = 30LL * 1000000LL;
 constexpr std::int64_t kRetryUs = 30LL * 1000000LL;
 constexpr std::int64_t kHandshakeUs = 5LL * 1000000LL;
 constexpr std::int64_t kIdleUs = 300LL * 1000000LL;
+constexpr std::int64_t kSendUs = 1000000LL;
 constexpr std::size_t kHandshakeBytes = 4 + config::kTokenBytes;
 constexpr std::size_t kMaxScanEntries = 48;
 
@@ -38,9 +41,34 @@ std::atomic<bool> reapply{true}, drop_requested{false};
 std::atomic<bool> scan_pending{false};
 std::atomic<std::uint8_t> scan_link{0};
 std::atomic<std::uint32_t> scan_generation{0};
-std::atomic<int> client_fd{-1};
-std::atomic<bool> client_authenticated{false};
-std::atomic<std::uint32_t> generation{0}, ui{0}, sessions{0}, bytes_out{0};
+std::atomic<std::uint8_t> scan_peer{0};
+std::atomic<std::uint32_t> ui{0}, sessions{0}, bytes_out{0};
+
+// Only the LAN task changes parser/timing state. Socket identity,
+// authentication and generation are changed under socket_mutex; worker sends
+// validate there.
+struct Client {
+  std::atomic<int> fd{-1};
+  std::atomic<bool> authenticated{false}, drop{false};
+  std::atomic<std::uint32_t> generation{0};
+  std::uint8_t rx[2 + ble::kMaxControlBytes + kHandshakeBytes]{};
+  std::size_t rx_length = 0;
+  std::int64_t since_us = 0, last_rx_us = 0;
+  bool needs_snapshots = false;
+};
+Client clients[ble::kMaxLanClients];
+
+std::uint8_t authenticated_clients() {
+  return static_cast<std::uint8_t>(std::count_if(
+      std::begin(clients), std::end(clients),
+      [](const Client &client) { return client.authenticated.load(); }));
+}
+
+bool any_client() {
+  return std::any_of(
+      std::begin(clients), std::end(clients),
+      [](const Client &client) { return client.fd.load() >= 0; });
+}
 
 // Latest pushes, copied by the sampling loop and sent by the LAN task.
 char status_json[ble::kMaxJson + 16]{};
@@ -69,29 +97,32 @@ void set_status(const char *state, bool link_up) {
   std::memcpy(current.mac, mac, sizeof(mac));
   current.rssi = rssi;
   std::snprintf(current.host, sizeof(current.host), "%s", host_label);
-  current.client = client_fd.load() >= 0;
-  current.authenticated = client_authenticated.load();
+  current.client = any_client();
+  current.clients = authenticated_clients();
+  current.authenticated = current.clients > 0;
   current.sessions = sessions.load();
   current.bytes_out = bytes_out.load();
   portEXIT_CRITICAL(&status_mutex);
   touch_ui();
 }
 
-// ---- socket helpers (all writes go through here, under socket_mutex)
+// ---- socket helpers. An fd never escapes the socket_mutex for a send/close.
 
 bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
   std::size_t sent = 0;
+  const auto deadline_us = esp_timer_get_time() + kSendUs;
   while (sent < length) {
-    const int count = ::send(fd, data + sent, length - sent, 0);
+    // SO_SNDTIMEO bounds one send; this also bounds partial-progress loops.
+    int count;
+    if (esp_timer_get_time() >= deadline_us) {
+      errno = ETIMEDOUT;
+      count = -1;
+    } else {
+      count = ::send(fd, data + sent, length - sent, 0);
+    }
     if (count <= 0) {
-      // A framed stream must never skip a frame. If the peer stopped
-      // draining (phone Wi-Fi in power save, measured 2026-09-17: the
-      // OPENED reply vanished and the phone waited 60 s), end the session so
-      // the peer sees EOF at once and reconnects/resumes.
-      aqlog.printf(
-          "LAN SEND FAILED errno=%d sent=%u of=%u action=drop-session\n", errno,
-          unsigned(sent), unsigned(length));
-      drop_requested = true;
+      aqlog.printf("LAN SEND FAILED errno=%d sent=%u of=%u\n", errno,
+                   unsigned(sent), unsigned(length));
       return false;
     }
     sent += static_cast<std::size_t>(count);
@@ -100,22 +131,40 @@ bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
   return true;
 }
 
-bool send_framed(int fd, const std::uint8_t *frame, std::size_t length) {
+// Called with socket_mutex held, including for the unassigned busy socket.
+bool send_framed_locked(int fd, const std::uint8_t *frame, std::size_t length) {
   if (fd < 0 || length == 0 || length > kPayloadMax)
     return false;
   std::uint8_t buffer[2 + kPayloadMax];
   buffer[0] = length & 0xff;
   buffer[1] = (length >> 8) & 0xff;
   std::memcpy(buffer + 2, frame, length);
-  if (xSemaphoreTake(socket_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+  return write_all(fd, buffer, 2 + length);
+}
+
+bool send_to(std::uint8_t peer, const std::uint8_t *frame, std::size_t length,
+             std::uint32_t expected_generation = 0,
+             bool require_authenticated = true) {
+  if (peer >= ble::kMaxLanClients || !socket_mutex)
     return false;
-  const bool ok = write_all(fd, buffer, 2 + length);
+  // Every holder is bounded by the cumulative write deadline above. Wait for
+  // frame ownership rather than silently losing a reply on lock contention.
+  xSemaphoreTake(socket_mutex, portMAX_DELAY);
+  auto &client = clients[peer];
+  const int fd = client.fd.load();
+  const bool valid =
+      fd >= 0 && !drop_requested.load() && !client.drop.load() &&
+      (!require_authenticated || client.authenticated.load()) &&
+      (!expected_generation || client.generation.load() == expected_generation);
+  const bool ok = valid && send_framed_locked(fd, frame, length);
+  if (valid && !ok)
+    client.drop = true;
   xSemaphoreGive(socket_mutex);
   return ok;
 }
 
-bool send_error_to(int fd, ble::Op op, ble::Error code, const char *detail) {
-  std::uint8_t frame[3 + 64];
+std::size_t error_frame(std::uint8_t *frame, ble::Op op, ble::Error code,
+                        const char *detail) {
   frame[0] = ble::kFrameError;
   frame[1] = static_cast<std::uint8_t>(op);
   frame[2] = static_cast<std::uint8_t>(code);
@@ -127,25 +176,36 @@ bool send_error_to(int fd, ble::Op op, ble::Error code, const char *detail) {
     length += copy;
   }
   aqlog.printf("LAN ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
-  return send_framed(fd, frame, length);
+  return length;
 }
 
-void close_client(const char *reason) {
-  const int fd = client_fd.exchange(-1);
-  const bool was_authenticated = client_authenticated.exchange(false);
+bool send_error_to(std::uint8_t peer, ble::Op op, ble::Error code,
+                   const char *detail) {
+  std::uint8_t frame[3 + 64];
+  const auto length = error_frame(frame, op, code, detail);
+  return send_to(peer, frame, length, 0, false);
+}
+
+void close_client(std::uint8_t peer, const char *reason) {
+  auto &client = clients[peer];
+  // Wait for any whole-frame send to finish before closing; no unlocked
+  // fallback can close an fd that another task is still using.
+  xSemaphoreTake(socket_mutex, portMAX_DELAY);
+  const int fd = client.fd.exchange(-1);
+  const bool was_authenticated = client.authenticated.exchange(false);
   if (fd >= 0) {
-    if (xSemaphoreTake(socket_mutex, pdMS_TO_TICKS(5000)) == pdTRUE) {
-      ::close(fd);
-      xSemaphoreGive(socket_mutex);
-    } else {
-      ::close(fd);
-    }
-    aqlog.printf("LAN DISCONNECT reason=%s authenticated=%s\n", reason,
-                 was_authenticated ? "true" : "false");
+    ::close(fd);
+    ++client.generation;
   }
-  if (was_authenticated)
-    ++generation;
-  touch_ui();
+  client.drop = false;
+  xSemaphoreGive(socket_mutex);
+  client.rx_length = 0;
+  client.needs_snapshots = false;
+  if (fd >= 0) {
+    aqlog.printf("LAN DISCONNECT slot=%u reason=%s authenticated=%s\n",
+                 unsigned(peer), reason, was_authenticated ? "true" : "false");
+    touch_ui();
+  }
 }
 
 // ---- server task state
@@ -154,23 +214,6 @@ int listen_fd = -1;
 bool radio_on = false, connected = false, mdns_on = false;
 std::int64_t connect_started_us = 0, retry_at_us = 0;
 config::Settings settings;
-
-// Handshake / frame parser for the one client.
-std::uint8_t rx[2 + ble::kMaxControlBytes + kHandshakeBytes];
-std::size_t rx_length = 0;
-bool handshake_done = false;
-std::int64_t client_since_us = 0, last_rx_us = 0;
-
-// A second connection while a session is active. It gets kHandshakeUs to
-// present the token; a valid token takes the slot over (the old session is
-// most often half-open: Android destroys a backgrounded app's sockets without
-// a FIN, so the device would otherwise hold the slot until the idle timeout).
-int challenger_fd = -1;
-std::uint8_t challenger_rx[kHandshakeBytes];
-std::size_t challenger_length = 0;
-std::int64_t challenger_since_us = 0;
-char challenger_peer[INET_ADDRSTRLEN] = "?";
-void close_challenger(const char *reason);
 
 void start_server() {
   if (listen_fd >= 0 || !settings.lan_on)
@@ -188,7 +231,7 @@ void start_server() {
   address.sin_port = htons(config::kLanPort);
   if (::bind(listen_fd, reinterpret_cast<sockaddr *>(&address),
              sizeof(address)) != 0 ||
-      ::listen(listen_fd, 1) != 0) {
+      ::listen(listen_fd, ble::kMaxLanClients) != 0) {
     aqlog.printf("LAN ERROR operation=bind-listen errno=%d\n", errno);
     ::close(listen_fd);
     listen_fd = -1;
@@ -213,8 +256,8 @@ void start_server() {
 }
 
 void stop_server(const char *reason) {
-  close_client(reason);
-  close_challenger(reason);
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
+    close_client(peer, reason);
   if (mdns_on) {
     MDNS.end();
     mdns_on = false;
@@ -260,6 +303,10 @@ void poll_radio() {
   const std::int64_t now = esp_timer_get_time();
   if (reapply.exchange(false)) {
     settings = config::get();
+    // Reconcile lan.on and invalidate old sessions even when the station
+    // stays associated through WiFi.begin() with the same network.
+    stop_server("settings");
+    connected = false;
     if (!settings.wifi_on || !settings.ssid[0]) {
       radio_off("settings");
       return;
@@ -328,19 +375,17 @@ std::uint8_t auth_code(wifi_auth_mode_t mode) {
   }
 }
 
-bool respond(ble::Link link, std::uint32_t link_generation,
+bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
              const std::uint8_t *frame, std::size_t length) {
-  if (link == ble::Link::Lan) {
-    if (link_generation != generation.load())
-      return false;
-    return send_response(frame, length);
-  }
-  return ble::send_response(frame, length);
+  if (link == ble::Link::Lan)
+    return send_response(frame, length, peer, link_generation);
+  return ble::send_response(frame, length, link_generation);
 }
 
 void run_scan() {
   const auto link = static_cast<ble::Link>(scan_link.load());
   const auto link_generation = scan_generation.load();
+  const auto peer = scan_peer.load();
   const bool temporary = !radio_on;
   if (temporary) {
     WiFi.persistent(false);
@@ -355,7 +400,7 @@ void run_scan() {
     frame[1] = 0;
     frame[2] = 0;
     frame[3] = ble::kErrWifiUnavailable;
-    respond(link, link_generation, frame, sizeof(frame));
+    respond(link, link_generation, peer, frame, sizeof(frame));
     if (temporary)
       WiFi.mode(WIFI_OFF);
     return;
@@ -384,7 +429,7 @@ void run_scan() {
     frame[2] = auth_code(WiFi.encryptionType(best));
     frame[3] = static_cast<std::uint8_t>(WiFi.channel(best));
     std::memcpy(frame + 4, ssid.c_str(), ssid.length());
-    if (!respond(link, link_generation, frame, 4 + ssid.length()))
+    if (!respond(link, link_generation, peer, frame, 4 + ssid.length()))
       break;
     ++count;
   }
@@ -394,7 +439,7 @@ void run_scan() {
   end[1] = count & 0xff;
   end[2] = (count >> 8) & 0xff;
   end[3] = 0;
-  respond(link, link_generation, end, sizeof(end));
+  respond(link, link_generation, peer, end, sizeof(end));
   aqlog.printf("WIFI SCAN END found=%d reported=%u\n", found, unsigned(count));
   if (temporary)
     WiFi.mode(WIFI_OFF);
@@ -415,233 +460,211 @@ bool token_matches(const std::uint8_t *handshake) {
 }
 
 void configure_client_socket(int fd) {
-  timeval send_timeout{15, 0}; // sleepy phones stall for seconds, not minutes
+  timeval send_timeout{1,
+                       0}; // bound one stalled peer's impact on other sessions
   ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout,
                sizeof(send_timeout));
   int nodelay = 1;
   ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 }
 
-void close_challenger(const char *reason) {
-  if (challenger_fd < 0)
-    return;
-  ::close(challenger_fd);
-  challenger_fd = -1;
-  challenger_length = 0;
-  aqlog.printf("LAN CHALLENGER peer=%s result=%s\n", challenger_peer, reason);
-}
-
 void accept_client() {
-  sockaddr_in peer{};
-  socklen_t peer_length = sizeof(peer);
-  const int fd =
-      ::accept(listen_fd, reinterpret_cast<sockaddr *>(&peer), &peer_length);
+  sockaddr_in address{};
+  socklen_t address_length = sizeof(address);
+  const int fd = ::accept(listen_fd, reinterpret_cast<sockaddr *>(&address),
+                          &address_length);
   if (fd < 0)
     return;
+  configure_client_socket(fd);
   char peer_text[INET_ADDRSTRLEN] = "?";
-  inet_ntop(AF_INET, &peer.sin_addr, peer_text, sizeof(peer_text));
-  if (client_fd.load() >= 0) {
-    if (challenger_fd >= 0) {
-      aqlog.printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
-      send_error_to(fd, static_cast<ble::Op>(0), ble::kErrBusy,
-                    "session-active");
-      ::close(fd);
-      return;
-    }
-    // Hold the newcomer aside: with the token it takes the slot over.
-    configure_client_socket(fd);
-    challenger_fd = fd;
-    challenger_length = 0;
-    challenger_since_us = esp_timer_get_time();
-    std::memcpy(challenger_peer, peer_text, sizeof(challenger_peer));
-    aqlog.printf("LAN CHALLENGER peer=%s result=waiting-for-token\n",
-                 peer_text);
+  inet_ntop(AF_INET, &address.sin_addr, peer_text, sizeof(peer_text));
+  std::uint8_t peer = 0;
+  for (; peer < ble::kMaxLanClients; ++peer)
+    if (clients[peer].fd.load() < 0)
+      break;
+  if (peer == ble::kMaxLanClients) {
+    aqlog.printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
+    std::uint8_t frame[3 + 64];
+    const auto length = error_frame(frame, static_cast<ble::Op>(0),
+                                    ble::kErrBusy, "sessions-full");
+    xSemaphoreTake(socket_mutex, portMAX_DELAY);
+    send_framed_locked(fd, frame, length);
+    ::close(fd);
+    xSemaphoreGive(socket_mutex);
     return;
   }
-  configure_client_socket(fd);
-  rx_length = 0;
-  handshake_done = false;
-  client_since_us = last_rx_us = esp_timer_get_time();
-  client_fd = fd;
-  client_authenticated = false;
+  auto &client = clients[peer];
+  client.rx_length = 0;
+  client.since_us = client.last_rx_us = esp_timer_get_time();
+  client.needs_snapshots = false;
+  xSemaphoreTake(socket_mutex, portMAX_DELAY);
+  client.drop = false;
+  client.authenticated = false;
+  ++client.generation;
+  client.fd = fd;
+  xSemaphoreGive(socket_mutex);
   set_status(connected ? "connected" : "connecting", connected);
-  aqlog.printf("LAN CONNECT peer=%s\n", peer_text);
+  aqlog.printf("LAN CONNECT peer=%s slot=%u\n", peer_text, unsigned(peer));
 }
 
-void send_hello(int fd) {
+bool send_hello(std::uint8_t peer) {
   const char *info = ble::info_json();
   const std::size_t info_length = std::strlen(info);
   std::uint8_t frame[4 + 400];
+  if (info_length > 400)
+    return false;
   frame[0] = ble::kFrameHello;
   frame[1] = kProtocolVersion;
   frame[2] = kPayloadMax & 0xff;
   frame[3] = (kPayloadMax >> 8) & 0xff;
   std::memcpy(frame + 4, info, info_length);
-  send_framed(fd, frame, 4 + info_length);
+  return send_to(peer, frame, 4 + info_length);
 }
 
-// The client behind fd has just proven the token: HELLO, then the current
-// STATUS/LIVE documents so the new session need not wait for the next push.
-void open_session(int fd) {
-  handshake_done = true;
-  client_authenticated = true;
-  ++generation;
+bool open_session(std::uint8_t peer) {
+  auto &client = clients[peer];
+  xSemaphoreTake(socket_mutex, portMAX_DELAY);
+  ++client.generation;
+  client.authenticated = true;
+  xSemaphoreGive(socket_mutex);
   ++sessions;
-  send_hello(fd);
-  status_dirty = status_length > 0;
-  live_dirty = live_length > 0;
+  if (!send_hello(peer)) {
+    close_client(peer, "hello-failed");
+    return false;
+  }
+  client.needs_snapshots = true;
   set_status("connected", true);
-  aqlog.printf("LAN AUTH result=ok session=%lu\n",
+  aqlog.printf("LAN AUTH result=ok slot=%u session=%lu\n", unsigned(peer),
                static_cast<unsigned long>(sessions.load()));
+  return true;
 }
 
-void handle_challenger_bytes() {
-  const int count = ::recv(challenger_fd, challenger_rx + challenger_length,
-                           kHandshakeBytes - challenger_length, 0);
+void handle_client_bytes(std::uint8_t peer) {
+  auto &client = clients[peer];
+  const int count = ::recv(client.fd.load(), client.rx + client.rx_length,
+                           sizeof(client.rx) - client.rx_length, 0);
   if (count <= 0) {
-    close_challenger(count == 0 ? "peer-closed" : "recv-error");
+    close_client(peer, count == 0 ? "peer-closed" : "recv-error");
     return;
   }
-  challenger_length += static_cast<std::size_t>(count);
-  if (challenger_length < kHandshakeBytes)
-    return;
-  if (!token_matches(challenger_rx)) {
-    send_error_to(challenger_fd, static_cast<ble::Op>(0), ble::kErrAuth,
-                  "token");
-    close_challenger("auth-rejected");
-    return;
-  }
-  // Valid token: the newcomer wins, the old session is closed without a reply
-  // (its pending worker replies are dropped by the generation check).
-  close_client("preempted");
-  const int fd = challenger_fd;
-  challenger_fd = -1;
-  challenger_length = 0;
-  rx_length = 0;
-  client_since_us = last_rx_us = esp_timer_get_time();
-  client_fd = fd;
-  aqlog.printf("LAN TAKEOVER peer=%s\n", challenger_peer);
-  open_session(fd);
-}
-
-void handle_client_bytes() {
-  const int fd = client_fd.load();
-  const int count = ::recv(fd, rx + rx_length, sizeof(rx) - rx_length, 0);
-  if (count <= 0) {
-    close_client(count == 0 ? "peer-closed" : "recv-error");
-    return;
-  }
-  rx_length += static_cast<std::size_t>(count);
-  last_rx_us = esp_timer_get_time();
-  if (!handshake_done) {
-    if (rx_length < kHandshakeBytes)
+  client.rx_length += static_cast<std::size_t>(count);
+  client.last_rx_us = esp_timer_get_time();
+  if (!client.authenticated.load()) {
+    if (client.rx_length < kHandshakeBytes)
       return;
-    if (!token_matches(rx)) {
+    if (!token_matches(client.rx)) {
       aqlog.println("LAN AUTH result=rejected");
-      send_error_to(fd, static_cast<ble::Op>(0), ble::kErrAuth, "token");
-      close_client("auth");
+      send_error_to(peer, static_cast<ble::Op>(0), ble::kErrAuth, "token");
+      close_client(peer, "auth");
       return;
     }
-    std::memmove(rx, rx + kHandshakeBytes, rx_length - kHandshakeBytes);
-    rx_length -= kHandshakeBytes;
-    open_session(fd);
+    std::memmove(client.rx, client.rx + kHandshakeBytes,
+                 client.rx_length - kHandshakeBytes);
+    client.rx_length -= kHandshakeBytes;
+    if (!open_session(peer))
+      return;
   }
-  // Framed requests: u16 length + body.
+  // Framed requests: u16 length + body. Parser storage is bounded per slot.
   for (;;) {
-    if (rx_length < 2)
+    if (client.rx_length < 2 || client.drop.load())
       return;
-    const std::size_t body = rx[0] | (rx[1] << 8);
+    const std::size_t body = client.rx[0] | (client.rx[1] << 8);
     if (body == 0 || body > ble::kMaxControlBytes) {
-      send_error_to(fd, static_cast<ble::Op>(0), ble::kErrMalformed, "length");
-      close_client("bad-frame");
+      send_error_to(peer, static_cast<ble::Op>(0), ble::kErrMalformed,
+                    "length");
+      close_client(peer, "bad-frame");
       return;
     }
-    if (rx_length < 2 + body)
+    if (client.rx_length < 2 + body)
       return;
     ble::ControlRequest request;
     request.received_mono_us = esp_timer_get_time();
     request.link = ble::Link::Lan;
-    request.link_generation = generation.load();
+    request.peer = peer;
+    request.link_generation = client.generation.load();
     request.length = static_cast<std::uint16_t>(body);
-    std::memcpy(request.bytes, rx + 2, body);
-    std::memmove(rx, rx + 2 + body, rx_length - 2 - body);
-    rx_length -= 2 + body;
-    aqlog.printf("LAN CMD op=0x%02x bytes=%u\n", unsigned(request.bytes[0]),
-                 unsigned(request.length));
+    std::memcpy(request.bytes, client.rx + 2, body);
+    std::memmove(client.rx, client.rx + 2 + body, client.rx_length - 2 - body);
+    client.rx_length -= 2 + body;
+    aqlog.printf("LAN CMD slot=%u op=0x%02x bytes=%u\n", unsigned(peer),
+                 unsigned(request.bytes[0]), unsigned(request.length));
     if (!request_handler(request))
-      send_error_to(fd, static_cast<ble::Op>(request.bytes[0]), ble::kErrBusy,
+      send_error_to(peer, static_cast<ble::Op>(request.bytes[0]), ble::kErrBusy,
                     "queue-full");
   }
 }
 
 void push_documents() {
-  const int fd = client_fd.load();
-  if (fd < 0 || !client_authenticated.load())
-    return;
-  std::uint8_t frame[1 + ble::kMaxJson + 16];
-  if (status_dirty.exchange(false)) {
-    std::size_t length;
-    portENTER_CRITICAL(&push_mutex);
-    length = status_length;
-    std::memcpy(frame + 1, status_json, length);
-    portEXIT_CRITICAL(&push_mutex);
-    frame[0] = ble::kFrameStatus;
-    send_framed(fd, frame, 1 + length);
-  }
-  if (live_dirty.exchange(false)) {
-    std::size_t length;
-    portENTER_CRITICAL(&push_mutex);
-    length = live_length;
-    std::memcpy(frame + 1, live_json, length);
-    portEXIT_CRITICAL(&push_mutex);
-    frame[0] = ble::kFrameLive;
-    send_framed(fd, frame, 1 + length);
+  const bool new_status = status_dirty.exchange(false);
+  const bool new_live = live_dirty.exchange(false);
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
+    auto &client = clients[peer];
+    if (!client.authenticated.load() || client.drop.load())
+      continue;
+    std::uint8_t frame[1 + ble::kMaxJson + 16];
+    if (new_status || client.needs_snapshots) {
+      std::size_t length;
+      portENTER_CRITICAL(&push_mutex);
+      length = status_length;
+      std::memcpy(frame + 1, status_json, length);
+      portEXIT_CRITICAL(&push_mutex);
+      frame[0] = ble::kFrameStatus;
+      if (length)
+        send_to(peer, frame, 1 + length);
+    }
+    if (new_live || client.needs_snapshots) {
+      std::size_t length;
+      portENTER_CRITICAL(&push_mutex);
+      length = live_length;
+      std::memcpy(frame + 1, live_json, length);
+      portEXIT_CRITICAL(&push_mutex);
+      frame[0] = ble::kFrameLive;
+      if (length)
+        send_to(peer, frame, 1 + length);
+    }
+    client.needs_snapshots = false;
   }
 }
 
 void poll_server() {
-  if (drop_requested.exchange(false))
-    close_client("dropped");
+  const bool drop_all = drop_requested.exchange(false);
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
+    if (drop_all || clients[peer].drop.load())
+      close_client(peer, "dropped");
   if (listen_fd < 0)
     return;
-  const int fd = client_fd.load();
-  const int challenger = challenger_fd;
   fd_set readable;
   FD_ZERO(&readable);
   FD_SET(listen_fd, &readable);
   int highest = listen_fd;
-  if (fd >= 0) {
-    FD_SET(fd, &readable);
-    if (fd > highest)
-      highest = fd;
-  }
-  if (challenger >= 0) {
-    FD_SET(challenger, &readable);
-    if (challenger > highest)
-      highest = challenger;
+  int fds[ble::kMaxLanClients];
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
+    fds[peer] = clients[peer].fd.load();
+    if (fds[peer] >= 0) {
+      FD_SET(fds[peer], &readable);
+      if (fds[peer] > highest)
+        highest = fds[peer];
+    }
   }
   timeval wait{0, 0};
   if (::select(highest + 1, &readable, nullptr, nullptr, &wait) > 0) {
     if (FD_ISSET(listen_fd, &readable))
       accept_client();
-    if (fd >= 0 && FD_ISSET(fd, &readable))
-      handle_client_bytes();
-    if (challenger >= 0 && challenger_fd == challenger &&
-        FD_ISSET(challenger, &readable))
-      handle_challenger_bytes();
+    for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
+      if (fds[peer] >= 0 && FD_ISSET(fds[peer], &readable))
+        handle_client_bytes(peer);
   }
   const std::int64_t now = esp_timer_get_time();
-  if (challenger_fd >= 0 && now - challenger_since_us > kHandshakeUs)
-    close_challenger("handshake-timeout");
-  const int current_fd = client_fd.load();
-  if (current_fd >= 0) {
-    if (!handshake_done && now - client_since_us > kHandshakeUs)
-      close_client("handshake-timeout");
-    else if (now - last_rx_us > kIdleUs)
-      close_client("idle");
-    else
-      push_documents();
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
+    const auto &client = clients[peer];
+    if (client.fd.load() < 0)
+      continue;
+    if (!client.authenticated.load() && now - client.since_us > kHandshakeUs)
+      close_client(peer, "handshake-timeout");
+    else if (now - client.last_rx_us > kIdleUs)
+      close_client(peer, "idle");
   }
+  push_documents();
 }
 
 void lan_task(void *) {
@@ -682,7 +705,8 @@ bool begin(const char *host, const ble::Identity &identity,
 
 void apply_settings() { reapply = true; }
 
-bool request_scan(ble::Link link, std::uint32_t link_generation) {
+bool request_scan(ble::Link link, std::uint32_t link_generation,
+                  std::uint8_t peer) {
   // Both transport tasks may request a scan. Publish its owner before making
   // it visible to the LAN task, while excluding a second concurrent caller.
   portENTER_CRITICAL(&scan_mutex);
@@ -692,6 +716,7 @@ bool request_scan(ble::Link link, std::uint32_t link_generation) {
   }
   scan_link = static_cast<std::uint8_t>(link);
   scan_generation = link_generation;
+  scan_peer = peer;
   scan_pending = true;
   portEXIT_CRITICAL(&scan_mutex);
   return true;
@@ -699,18 +724,16 @@ bool request_scan(ble::Link link, std::uint32_t link_generation) {
 
 void drop_session() { drop_requested = true; }
 
-bool send_response(const std::uint8_t *frame, std::size_t length) {
-  const int fd = client_fd.load();
-  if (fd < 0 || !client_authenticated.load())
-    return false;
-  return send_framed(fd, frame, length);
+bool send_response(const std::uint8_t *frame, std::size_t length,
+                   std::uint8_t peer, std::uint32_t expected_generation) {
+  return send_to(peer, frame, length, expected_generation);
 }
 
-bool send_error(ble::Op op, ble::Error code, const char *detail) {
-  const int fd = client_fd.load();
-  if (fd < 0 || !client_authenticated.load())
-    return false;
-  return send_error_to(fd, op, code, detail);
+bool send_error(ble::Op op, ble::Error code, const char *detail,
+                std::uint8_t peer, std::uint32_t expected_generation) {
+  std::uint8_t frame[3 + 64];
+  const auto length = error_frame(frame, op, code, detail);
+  return send_to(peer, frame, length, expected_generation);
 }
 
 void publish_status(const char *json, std::size_t length) {
@@ -733,19 +756,27 @@ void publish_live(const char *json, std::size_t length) {
   live_dirty = true;
 }
 
-std::uint16_t payload_max() {
-  return client_fd.load() >= 0 && client_authenticated.load() ? kPayloadMax : 0;
+std::uint16_t payload_max(std::uint8_t peer) {
+  return peer < ble::kMaxLanClients && !drop_requested.load() &&
+                 clients[peer].fd.load() >= 0 &&
+                 clients[peer].authenticated.load() &&
+                 !clients[peer].drop.load()
+             ? kPayloadMax
+             : 0;
 }
 
-std::uint32_t connection_generation() { return generation.load(); }
+std::uint32_t connection_generation(std::uint8_t peer) {
+  return peer < ble::kMaxLanClients ? clients[peer].generation.load() : 0;
+}
 
 Status status() {
   Status copy;
   portENTER_CRITICAL(&status_mutex);
   copy = current;
   portEXIT_CRITICAL(&status_mutex);
-  copy.client = client_fd.load() >= 0;
-  copy.authenticated = client_authenticated.load();
+  copy.client = any_client();
+  copy.clients = authenticated_clients();
+  copy.authenticated = copy.clients > 0;
   copy.sessions = sessions.load();
   copy.bytes_out = bytes_out.load();
   return copy;

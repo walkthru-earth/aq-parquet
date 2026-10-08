@@ -9,7 +9,7 @@ namespace {
 ble::RequestHandler worker_handler = nullptr;
 bool dispatch_request(const ble::ControlRequest &request) {
   if (request.length && request.bytes[0] == ble::kOpWifiScan &&
-      lan::request_scan(request.link, request.link_generation))
+      lan::request_scan(request.link, request.link_generation, request.peer))
     return true;
   // A pending scan is queued so common control emits busy on its link.
   return worker_handler(request);

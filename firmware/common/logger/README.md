@@ -40,6 +40,11 @@ One worker owns the filesystem, and receives copied nonblocking control requests
 from BLE/LAN. Card data is the origin: finalized files can be copied over serial,
 BLE or token-authenticated local LAN without any cloud service. The runtime uses
 the existing protocol UUIDs, settings, station NVS key and archive sessions.
+BLE and up to three authenticated LAN clients retain independent file handles;
+OPEN, CLOSE and disconnect affect only the requesting connection. Queued stale
+commands and responses are rejected by connection generation. Each READ briefly
+reopens its immutable file on the worker, so idle client handles use no filesystem
+descriptors and the existing card descriptor budget is preserved.
 STATUS, LIVE and advertising retain the phone wire contract; absent/invalid LIVE
 measurements are omitted independently. PMS5003T temperature/RH use `t`/`rh`;
 CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.

@@ -13,13 +13,8 @@ constexpr std::size_t kPayloadCapacity = 1024;
 
 void send_config(ble::Link link, const ControlReplies &replies) {
   const lan::Status wifi = lan::status();
-  config::WifiView view{wifi.state,
-                        wifi.ip,
-                        wifi.rssi,
-                        wifi.mac,
-                        wifi.authenticated ? 1U : 0U,
-                        wifi.host,
-                        ble::link().bonds};
+  config::WifiView view{wifi.state,   wifi.ip,   wifi.rssi,        wifi.mac,
+                        wifi.clients, wifi.host, ble::link().bonds};
   std::uint8_t frame[2 + 400];
   const std::size_t length =
       config::build_json(reinterpret_cast<char *>(frame + 2), 400, view);

@@ -76,7 +76,7 @@ void configuration() {
   assert(json.find("\"psk\":") == std::string::npos);
   assert(json.find("\"token\":") == std::string::npos);
   assert(json.find("\"bonds\":3") != std::string::npos);
-  assert(json.find("\"clients\":1") != std::string::npos);
+  assert(json.find("\"clients\":3") != std::string::npos);
   const auto before = config::get();
   peer = Peer{};
   handle(request(ble::kOpSetConfig, ble::Link::Ble,
@@ -187,6 +187,7 @@ Status status() {
   std::strcpy(value.ip, "192.0.2.1");
   std::strcpy(value.host, "aq-fixture");
   value.authenticated = true;
+  value.clients = 3;
   return value;
 }
 void drop_session() { ++sessions_dropped; }

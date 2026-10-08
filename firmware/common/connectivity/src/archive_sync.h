@@ -2,9 +2,9 @@
 
 #include "ble_sync.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
 namespace aqsync {
 using FileEmitter = void (*)(void *context, const char *name,
@@ -32,23 +32,28 @@ struct ArchiveHooks {
 };
 
 // Transport adapters are independent of the filesystem and may be faked in
-// host tests. Generations increment whenever the corresponding peer changes.
+// host tests. Callbacks receive link and peer; respond/error also receive the
+// expected generation and must refuse delivery to a replacement connection.
+// Generations increment whenever the corresponding peer changes.
 // BLE payloads are additionally capped at the GATT 512-byte attribute limit;
 // all links are bounded to the 1024-byte protocol capacity. generation,
 // payload_max, respond and error are required; progress is optional.
 struct ArchiveTransport {
   void *context = nullptr;
-  std::uint32_t (*generation)(void *, ble::Link) = nullptr;
-  std::uint16_t (*payload_max)(void *, ble::Link) = nullptr;
-  bool (*respond)(void *, ble::Link, const std::uint8_t *,
-                  std::size_t) = nullptr;
-  bool (*error)(void *, ble::Link, ble::Op, ble::Error, const char *) = nullptr;
+  std::uint32_t (*generation)(void *, ble::Link, std::uint8_t) = nullptr;
+  std::uint16_t (*payload_max)(void *, ble::Link, std::uint8_t) = nullptr;
+  bool (*respond)(void *, ble::Link, std::uint8_t, std::uint32_t,
+                  const std::uint8_t *, std::size_t) = nullptr;
+  bool (*error)(void *, ble::Link, std::uint8_t, std::uint32_t, ble::Op,
+                ble::Error, const char *) = nullptr;
   void (*progress)(void *) = nullptr;
 };
 
-// One immutable file handle shared between BLE/LAN, bound to the link and
-// connection generation that opened it. Construct once, then call exclusively
-// from the same storage worker that owns the archive. Radio callbacks must
+// Independent immutable logical file handles for BLE and each LAN peer, bound
+// to their connection generations. READ reopens its path only for that request,
+// so additional clients do not consume extra filesystem descriptors.
+// Construct once, then call exclusively from the storage worker that owns the
+// archive. Radio callbacks must
 // enqueue ControlRequest copies; they must never call this class directly.
 class ArchiveSession {
 public:
@@ -65,12 +70,11 @@ public:
 
 private:
   struct OpenFile {
-    FILE *file = nullptr;
+    char path[416]{};
     std::uint16_t handle = 0;
     std::uint32_t size = 0;
     std::uint32_t crc = 0;
     std::uint32_t generation = 0;
-    ble::Link link = ble::Link::Ble;
   };
   struct ListContext {
     ArchiveSession *session;
@@ -81,10 +85,14 @@ private:
   static constexpr std::size_t kPayloadCapacity = 1024;
   ArchiveHooks archive_;
   ArchiveTransport transport_;
-  OpenFile open_;
+  std::array<OpenFile, 1 + ble::kMaxLanClients> open_{};
   std::uint16_t next_handle_ = 1;
   ble::Link request_link_ = ble::Link::Ble;
+  std::uint8_t request_peer_ = 0;
+  std::uint32_t request_generation_ = 0;
 
+  OpenFile &file();
+  void close_current();
   std::size_t payload_max() const;
   bool respond(const std::uint8_t *frame, std::size_t length);
   bool error(ble::Op op, ble::Error code, const char *detail = nullptr);

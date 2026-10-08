@@ -87,12 +87,15 @@ bool apply_advert_data(const AdvertState &state) {
 void touch_ui() { ++ui; }
 
 bool notify(NimBLECharacteristic *characteristic, const std::uint8_t *data,
-            std::size_t length) {
+            std::size_t length, std::uint32_t expected_generation) {
   if (!characteristic || !connected.load())
     return false;
+  const auto session =
+      expected_generation ? expected_generation : generation.load();
   const auto handle = conn_handle.load();
   for (unsigned attempt = 0; attempt < kNotifyRetries; ++attempt) {
-    if (!connected.load())
+    if (!connected.load() || generation.load() != session ||
+        conn_handle.load() != handle)
       return false;
     if (characteristic->notify(data, length, handle))
       return true;
@@ -104,12 +107,13 @@ bool notify(NimBLECharacteristic *characteristic, const std::uint8_t *data,
 class ServerCallbacks : public NimBLEServerCallbacks {
 public:
   void onConnect(NimBLEServer *, NimBLEConnInfo &info) override {
+    // Invalidate old worker replies before exposing the new peer handle.
+    ++generation;
     conn_handle = info.getConnHandle();
     mtu = info.getMTU();
-    connected = true;
     advertising = false;
     authenticated = info.isAuthenticated();
-    ++generation;
+    connected = true;
     touch_ui();
     aqlog.printf("BLE CONNECT peer=%s mtu=%u\n",
                  info.getAddress().toString().c_str(), unsigned(mtu.load()));
@@ -356,11 +360,13 @@ void publish_advert(const AdvertState &state) {
                static_cast<unsigned long>(state.finalized));
 }
 
-bool send_response(const std::uint8_t *frame, std::size_t length) {
-  return notify(response_char, frame, length);
+bool send_response(const std::uint8_t *frame, std::size_t length,
+                   std::uint32_t expected_generation) {
+  return notify(response_char, frame, length, expected_generation);
 }
 
-bool send_error(Op op, Error code, const char *detail) {
+bool send_error(Op op, Error code, const char *detail,
+                std::uint32_t expected_generation) {
   std::uint8_t frame[3 + 64];
   frame[0] = kFrameError;
   frame[1] = static_cast<std::uint8_t>(op);
@@ -373,7 +379,7 @@ bool send_error(Op op, Error code, const char *detail) {
     length += copy;
   }
   aqlog.printf("BLE ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
-  return send_response(frame, length);
+  return send_response(frame, length, expected_generation);
 }
 
 std::uint16_t payload_max() {

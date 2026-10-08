@@ -16,6 +16,7 @@
 namespace ble {
 constexpr std::uint8_t kProtocolVersion = 2;
 constexpr std::size_t kMaxControlBytes = 512;
+constexpr std::uint8_t kMaxLanClients = 3;
 constexpr std::uint32_t kMaxRead = 16384;
 constexpr std::uint16_t kMaxMtu = 517;
 // Largest frame ever notified: the GATT attribute-value limit, not MTU - 3.
@@ -118,6 +119,7 @@ struct ControlRequest {
   std::uint16_t conn_handle = 0;
   std::int64_t received_mono_us = 0;
   Link link = Link::Ble;
+  std::uint8_t peer = 0; // LAN slot; BLE always uses zero
   std::uint32_t link_generation = 0;
 };
 
@@ -171,8 +173,10 @@ void publish_advert(const AdvertState &state);
 
 // From the storage worker. Blocks briefly on host back-pressure; false when
 // the peer is gone or the host kept refusing the notification.
-bool send_response(const std::uint8_t *frame, std::size_t length);
-bool send_error(Op op, Error code, const char *detail);
+bool send_response(const std::uint8_t *frame, std::size_t length,
+                   std::uint32_t expected_generation = 0);
+bool send_error(Op op, Error code, const char *detail,
+                std::uint32_t expected_generation = 0);
 // Largest `response` payload for the current link (MTU - 3), or 0 if none.
 std::uint16_t payload_max();
 // Increments on every connect/disconnect so the worker can drop stale handles.

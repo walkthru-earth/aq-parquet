@@ -31,7 +31,7 @@ Run `pixi run fmt-check` and `pixi run lint` for project C/C++ changes. The form
 
 Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer changes require `pixi run parquet-test --sanitize`; measurement-contract changes require `pixi run telemetry-contract-test --sanitize`. Build every affected trial. Host tests establish parser/format behavior; board-specific storage, timing and power-loss claims require real hardware evidence.
 
-The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `connectivity-build-test`, `logger-build-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
+The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `connectivity-build-test`, `logger-build-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
 
 ## Local provisioning and client boundaries
 

@@ -1,6 +1,7 @@
 #include "archive_sync.h"
 #include <sync_codec.h>
 
+#include <cstdio>
 #include <cstring>
 
 namespace aqsync {
@@ -27,7 +28,8 @@ ArchiveSession::ArchiveSession(const ArchiveHooks &archive,
     : archive_(archive), transport_(transport) {}
 
 std::size_t ArchiveSession::payload_max() const {
-  const auto raw = transport_.payload_max(transport_.context, request_link_);
+  const auto raw =
+      transport_.payload_max(transport_.context, request_link_, request_peer_);
   if (request_link_ == ble::Link::Ble && raw > ble::kMaxFrame)
     return ble::kMaxFrame;
   return raw > kPayloadCapacity ? kPayloadCapacity : raw;
@@ -37,30 +39,46 @@ bool ArchiveSession::respond(const std::uint8_t *frame, std::size_t length) {
   // Progress during a long LIST/READ must refresh the worker heartbeat.
   if (transport_.progress)
     transport_.progress(transport_.context);
-  return transport_.respond(transport_.context, request_link_, frame, length);
+  if (request_generation_ !=
+      transport_.generation(transport_.context, request_link_, request_peer_))
+    return false;
+  return transport_.respond(transport_.context, request_link_, request_peer_,
+                            request_generation_, frame, length);
 }
 
 bool ArchiveSession::error(ble::Op op, ble::Error code, const char *detail) {
-  return transport_.error(transport_.context, request_link_, op, code, detail);
+  if (request_generation_ !=
+      transport_.generation(transport_.context, request_link_, request_peer_))
+    return false;
+  return transport_.error(transport_.context, request_link_, request_peer_,
+                          request_generation_, op, code, detail);
+}
+
+ArchiveSession::OpenFile &ArchiveSession::file() {
+  return open_[request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0];
 }
 
 bool ArchiveSession::handle_matches(std::uint16_t file_handle) const {
-  return open_.file && file_handle == open_.handle &&
-         request_link_ == open_.link;
+  const auto &opened =
+      open_[request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0];
+  return opened.handle && file_handle == opened.handle &&
+         request_generation_ == opened.generation;
 }
 
-void ArchiveSession::close() {
-  if (open_.file) {
-    ArchiveLock lock(archive_);
-    std::fclose(open_.file);
-  }
-  open_ = OpenFile{};
-}
+void ArchiveSession::close_current() { file() = OpenFile{}; }
+
+void ArchiveSession::close() { open_.fill(OpenFile{}); }
 
 void ArchiveSession::reconcile() {
-  if (open_.file &&
-      open_.generation != transport_.generation(transport_.context, open_.link))
-    close();
+  for (std::size_t i = 0; i < open_.size(); ++i) {
+    auto &opened = open_[i];
+    const auto link = i == 0 ? ble::Link::Ble : ble::Link::Lan;
+    const auto peer = static_cast<std::uint8_t>(i == 0 ? 0 : i - 1);
+    if (opened.handle &&
+        opened.generation !=
+            transport_.generation(transport_.context, link, peer))
+      opened = OpenFile{};
+  }
 }
 
 void ArchiveSession::emit_file(void *context, const char *name,
@@ -142,32 +160,35 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
     error(ble::kOpOpen, ble::kErrBusy, payload_max() >= 6 ? "mtu" : nullptr);
     return;
   }
-  close();
+  close_current();
   std::uint32_t size = 0, crc = 0;
   if (!archive_.finalized(archive_.context, path, size, crc)) {
     error(ble::kOpOpen, ble::kErrNotFinalized, name);
     return;
   }
-  FILE *file;
+  bool accessible;
   {
     ArchiveLock lock(archive_);
-    file = std::fopen(path, "rb");
+    FILE *probe = std::fopen(path, "rb");
+    accessible = probe != nullptr;
+    if (probe)
+      std::fclose(probe);
   }
-  if (!file) {
+  if (!accessible) {
     error(ble::kOpOpen, ble::kErrOpenFailed, name);
     return;
   }
-  open_.file = file;
-  open_.handle = next_handle_++;
+  auto &opened = this->file();
+  std::memcpy(opened.path, path, std::strlen(path) + 1);
+  opened.handle = next_handle_++;
   if (next_handle_ == 0)
     next_handle_ = 1;
-  open_.size = size;
-  open_.crc = crc;
-  open_.link = request_link_;
-  open_.generation = transport_.generation(transport_.context, open_.link);
+  opened.size = size;
+  opened.crc = crc;
+  opened.generation = request_generation_;
   std::uint8_t frame[11 + 400];
   frame[0] = ble::kFrameOpened;
-  put_u16(frame + 1, open_.handle);
+  put_u16(frame + 1, opened.handle);
   put_u32(frame + 3, size);
   put_u32(frame + 7, crc);
   std::memcpy(frame + 11, name, name_length);
@@ -175,7 +196,7 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
     char line[512];
     std::snprintf(line, sizeof(line),
                   "BLE OPEN handle=%u bytes=%lu crc32=%08lx name=%s\n",
-                  unsigned(open_.handle), static_cast<unsigned long>(size),
+                  unsigned(opened.handle), static_cast<unsigned long>(size),
                   static_cast<unsigned long>(crc), name);
     archive_.log(archive_.context, line);
   }
@@ -196,14 +217,15 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     error(ble::kOpRead, ble::kErrBadHandle);
     return;
   }
-  if (offset > open_.size) {
+  const auto &opened = file();
+  if (offset > opened.size) {
     error(ble::kOpRead, ble::kErrRange);
     return;
   }
   if (length > ble::kMaxRead)
     length = ble::kMaxRead;
-  if (offset + length > open_.size)
-    length = open_.size - offset;
+  if (length > opened.size - offset)
+    length = opened.size - offset;
   const std::size_t max_payload = payload_max();
   if (max_payload <= 7) {
     end(offset, ble::kErrBusy);
@@ -212,10 +234,27 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
   constexpr std::size_t kChunkCap = kPayloadCapacity - 7;
   const std::size_t chunk_max =
       max_payload - 7 > kChunkCap ? kChunkCap : max_payload - 7;
+  // Only the storage worker accesses files. A transient descriptor keeps the
+  // mounted filesystem's existing descriptor budget independent of peers.
+  struct ReadFile {
+    const ArchiveHooks &archive;
+    FILE *value = nullptr;
+    explicit ReadFile(const ArchiveHooks &hooks) : archive(hooks) {}
+    ReadFile(const ReadFile &) = delete;
+    ReadFile &operator=(const ReadFile &) = delete;
+    ~ReadFile() {
+      if (value) {
+        ArchiveLock lock(archive);
+        std::fclose(value);
+      }
+    }
+  } input{archive_};
   bool seek_ok;
   {
     ArchiveLock lock(archive_);
-    seek_ok = std::fseek(open_.file, static_cast<long>(offset), SEEK_SET) == 0;
+    input.value = std::fopen(opened.path, "rb");
+    seek_ok = input.value &&
+              std::fseek(input.value, static_cast<long>(offset), SEEK_SET) == 0;
   }
   if (!seek_ok) {
     end(offset, ble::kErrOpenFailed);
@@ -229,7 +268,7 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     std::size_t count;
     {
       ArchiveLock lock(archive_);
-      count = std::fread(frame + 7, 1, want, open_.file);
+      count = std::fread(frame + 7, 1, want, input.value);
     }
     if (count == 0) {
       end(offset + sent, ble::kErrOpenFailed);
@@ -260,7 +299,7 @@ void ArchiveSession::close(std::uint16_t file_handle) {
     error(ble::kOpClose, ble::kErrBadHandle);
     return;
   }
-  close();
+  close_current();
   std::uint8_t frame[3];
   frame[0] = ble::kFrameClosed;
   put_u16(frame + 1, file_handle);
@@ -271,12 +310,24 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
                             bool storage_ready) {
   if (!request.length)
     return false;
+  if (request.length > sizeof(request.bytes))
+    return true;
   const auto op = static_cast<ble::Op>(request.bytes[0]);
   if (op != ble::kOpList && op != ble::kOpOpen && op != ble::kOpRead &&
       op != ble::kOpClose)
     return false;
-  request_link_ = request.link;
   reconcile();
+  if ((request.link == ble::Link::Lan && request.peer >= ble::kMaxLanClients) ||
+      (request.link == ble::Link::Ble && request.peer != 0))
+    return true;
+  request_link_ = request.link;
+  request_peer_ = request.peer;
+  request_generation_ = request.link_generation;
+  // Queued commands from a disconnected peer must not change a replacement
+  // peer's handle or deliver frames to that peer.
+  if (request_generation_ !=
+      transport_.generation(transport_.context, request_link_, request_peer_))
+    return true;
   const std::uint8_t *body = request.bytes + 1;
   const std::size_t length = request.length - 1;
   switch (op) {

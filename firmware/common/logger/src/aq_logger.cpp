@@ -1164,16 +1164,16 @@ void publish_live(const Sample &row) {
   }
 }
 
-// The request being executed; handlers answer on its link.
+// The request being executed; handlers answer on its link, peer and generation.
 const ble::ControlRequest *current_request = nullptr;
 
-std::uint32_t link_generation(ble::Link link) {
-  return link == ble::Link::Lan ? lan::connection_generation()
+std::uint32_t link_generation(ble::Link link, std::uint8_t peer = 0) {
+  return link == ble::Link::Lan ? lan::connection_generation(peer)
                                 : ble::connection_generation();
 }
 std::uint16_t link_payload_max() {
   if (current_request && current_request->link == ble::Link::Lan)
-    return lan::payload_max();
+    return lan::payload_max(current_request->peer);
   // GATT attribute values are at most 512 bytes; Android's stack silently
   // discards larger notifications while macOS accepts them (measured
   // 2026-09-17: every 514-byte CHUNK vanished on a OnePlus, the short final
@@ -1186,13 +1186,19 @@ bool respond(const std::uint8_t *frame, std::size_t length) {
   // frame so the stall detector only fires when sending truly stops.
   worker_heartbeat_us = esp_timer_get_time();
   return current_request && current_request->link == ble::Link::Lan
-             ? lan::send_response(frame, length)
-             : ble::send_response(frame, length);
+             ? lan::send_response(frame, length, current_request->peer,
+                                  current_request->link_generation)
+             : ble::send_response(
+                   frame, length,
+                   current_request ? current_request->link_generation : 0);
 }
 bool respond_error(ble::Op op, ble::Error code, const char *detail) {
   return current_request && current_request->link == ble::Link::Lan
-             ? lan::send_error(op, code, detail)
-             : ble::send_error(op, code, detail);
+             ? lan::send_error(op, code, detail, current_request->peer,
+                               current_request->link_generation)
+             : ble::send_error(
+                   op, code, detail,
+                   current_request ? current_request->link_generation : 0);
 }
 // Archive policy stays with the board worker; file-transfer sessions and wire
 // frames are shared across Arduino boards and BLE/LAN transports.
@@ -1215,18 +1221,25 @@ aqsync::ArchiveSession archive_session(
      },
      [](void *) { lock_bus(); }, [](void *) { unlock_bus(); },
      [](void *, const char *line) { aqlog.print(line); }},
-    {nullptr, [](void *, ble::Link link) { return link_generation(link); },
-     [](void *, ble::Link link) {
-       return link == ble::Link::Lan ? lan::payload_max() : ble::payload_max();
+    {nullptr,
+     [](void *, ble::Link link, std::uint8_t peer) {
+       return link_generation(link, peer);
      },
-     [](void *, ble::Link link, const std::uint8_t *frame, std::size_t length) {
-       return link == ble::Link::Lan ? lan::send_response(frame, length)
-                                     : ble::send_response(frame, length);
+     [](void *, ble::Link link, std::uint8_t peer) {
+       return link == ble::Link::Lan ? lan::payload_max(peer)
+                                     : ble::payload_max();
      },
-     [](void *, ble::Link link, ble::Op op, ble::Error code,
-        const char *detail) {
-       return link == ble::Link::Lan ? lan::send_error(op, code, detail)
-                                     : ble::send_error(op, code, detail);
+     [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
+        const std::uint8_t *frame, std::size_t length) {
+       return link == ble::Link::Lan
+                  ? lan::send_response(frame, length, peer, generation)
+                  : ble::send_response(frame, length, generation);
+     },
+     [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
+        ble::Op op, ble::Error code, const char *detail) {
+       return link == ble::Link::Lan
+                  ? lan::send_error(op, code, detail, peer, generation)
+                  : ble::send_error(op, code, detail, generation);
      },
      [](void *) { worker_heartbeat_us = esp_timer_get_time(); }});
 
@@ -1248,6 +1261,11 @@ struct WorkerState {
 void handle_control_request(const ble::ControlRequest &request,
                             WorkerState &state) {
   archive_session.reconcile();
+  if (!request.length || request.length > sizeof(request.bytes) ||
+      (request.link == ble::Link::Lan && request.peer >= ble::kMaxLanClients) ||
+      (request.link == ble::Link::Ble && request.peer != 0) ||
+      request.link_generation != link_generation(request.link, request.peer))
+    return;
   if (archive_session.handle(request, state.storage_ready) ||
       aqsync::handle_common_control(request, control_replies))
     return;
