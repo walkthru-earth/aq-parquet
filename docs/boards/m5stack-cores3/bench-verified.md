@@ -366,3 +366,26 @@ AQLogger now scans/stats/counts at startup and emits one bounded summary. Full f
 - A real fresh LAN INFO request initially returned empty cached STATUS before the next push. The host client now requests existing OP_STATUS and waits for a nonempty snapshot under its deadline. Actual delayed mock TCP tests passed; real final-image INFO at uptime 449 s then returned current status with zero drop/error/missed counters and one finalized file.
 
 Selected artifact hashes: `no-reader-info-1.json` (816 bytes) `a45baa5e3f07e1df189c1ff35d616436ca743320fe5f8804bf0ead3393f0c1f2`; `scan-ble-info.json` (770 bytes) `26b915b6db65572964cb88fff2c583f9967706b9808e055ecfc7966cb11225ef`; `scan-explicit-list.log` (198,627 bytes) `b34054bca8c5468aaeff64f4b154f9368c07c877030825f4509fcc757997b3b6`. Final binaries, failed-run rows and successful readbacks remain in separate artifact subdirectories. The board was left running this final logger.
+
+## 2026-10-08 — first iOS companion phone observation
+
+Companion app commit `e1a3c6d` from `opensensor-space-android`, installed on the
+owner's iPhone 16 Pro running iOS 26.6.2. The supplied phone screenshot showed
+Bonjour discovery of `aq-6b40`. That name matches this board's recorded service
+name; its station UUID and running firmware image were not read back in this
+session. The last image recorded above is final v6.5, SHA-256
+`d5af58814f15c5361cecae99389d8f19b378ce8e25a03b9093072ed8ec8ce478`;
+this phone observation does not independently verify that image is still running.
+
+After reporting that the other phone was disconnected, the owner reported
+"connected" and confirmed that the iOS app was showing live readings. This
+qualifies an owner-observed foreground Bluetooth connection and displayed
+readings. There is no captured BLE trace, recorded numeric value, measured
+notification cadence or comparison with the board's screen. A fresh pairing/PIN
+flow, STATUS notifications, stale timeout, background/resume, simultaneous phones
+and sustained operation remain unqualified for this iOS app.
+
+The Wi-Fi card was discovery-only and did not connect when tapped. No
+authenticated LAN transfer occurred. The permission prompt itself and
+allow/deny/revoke paths were not reported. No firmware write, archive mutation or
+new power/storage/endurance result follows from this observation.
