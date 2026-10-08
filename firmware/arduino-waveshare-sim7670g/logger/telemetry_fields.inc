@@ -1,4 +1,4 @@
-// Version 1 dictionary. FIELD(name, physical_type, procedure, unit, validity).
+// Version 2 dictionary. FIELD(name, physical_type, procedure, unit, validity).
 // Property URI = urn:walkthru-earth:waveshare-sim7670g:property:<name>.
 // PMS5003T has FOUR count bins; bytes 24/26 carry temperature and humidity.
 FIELD(schema_version, Int32, logger, "1", always)
@@ -23,6 +23,9 @@ FIELD(particles_gt03_per_01l, Int32, pms5003t, "count/0.1L", pms_valid)
 FIELD(particles_gt05_per_01l, Int32, pms5003t, "count/0.1L", pms_valid)
 FIELD(particles_gt10_per_01l, Int32, pms5003t, "count/0.1L", pms_valid)
 FIELD(particles_gt25_per_01l, Int32, pms5003t, "count/0.1L", pms_valid)
+FIELD(sensor_serial_code, Int64, owner_provisioned_identity, "1", exact_pms5003t_serial)
+FIELD(pm25_batch_candidate_ug_m3, Float, airgradient_20260408_count_candidate_v1, "ug/m3", owner_opt_in_exact_batch_pms_valid_not_cairo_validated)
+FIELD(pm25_batch_candidate_status, Int32, batch_candidate_gate, "code", always)
 FIELD(ambient_temperature_c, Float, pms5003t, "degC", pms_valid)
 FIELD(relative_humidity_percent, Float, pms5003t, "%", pms_valid_range_0_100)
 FIELD(pms_firmware, Int32, pms5003t, "code", pms_present)

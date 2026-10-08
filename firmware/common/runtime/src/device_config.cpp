@@ -16,6 +16,8 @@ portMUX_TYPE settings_mutex = portMUX_INITIALIZER_UNLOCKED;
 Settings current;
 Settings booted; // pair/pin the running BLE stack was started with
 bool persistent = false;
+char hardware_vendor[16]{};
+char hardware_model[16]{};
 
 std::uint32_t random_pin() { return esp_random() % 1000000U; }
 
@@ -25,9 +27,92 @@ bool save_string(Preferences &store, const char *key, const char *value) {
     return false;
   // putString returns zero for both an empty success and a failure. Read the
   // persisted value back so empty credentials do not mask failed writes.
-  char readback[kPskMax + 1]{};
+  char readback[96]{};
+  if (length >= sizeof(readback))
+    return false;
   return store.getString(key, readback, sizeof(readback)) == length + 1 &&
          std::strcmp(readback, value) == 0;
+}
+
+bool sensor_serial_chars(const char *value) {
+  if (std::strlen(value) > kSensorSerialMax)
+    return false;
+  for (const char *p = value; *p; ++p)
+    if (!(*p >= 'A' && *p <= 'Z') && !(*p >= '0' && *p <= '9') && *p != '-')
+      return false;
+  return true;
+}
+
+bool valid_pms5003t_serial(const char *serial) {
+  const auto length = std::strlen(serial);
+  if (length < 18 || length > 26 || std::strncmp(serial, "PMS5003T-", 9) != 0)
+    return false;
+  for (const char *p = serial + 9; *p; ++p)
+    if (*p < '0' || *p > '9')
+      return false;
+  const int year = (serial[9] - '0') * 1000 + (serial[10] - '0') * 100 +
+                   (serial[11] - '0') * 10 + serial[12] - '0';
+  const int month = (serial[13] - '0') * 10 + serial[14] - '0';
+  const int day = (serial[15] - '0') * 10 + serial[16] - '0';
+  if (year < 2000 || month < 1 || month > 12)
+    return false;
+  constexpr int days[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+  return day >= 1 && day <= days[month] + (month == 2 && leap ? 1 : 0);
+}
+
+bool exact_batch_candidate(const Settings &settings) {
+  if (std::strcmp(settings.sensor_vendor, "Plantower") != 0 ||
+      std::strcmp(settings.sensor_model, "PMS5003T") != 0 ||
+      !valid_pms5003t_serial(settings.sensor_serial) ||
+      std::strncmp(settings.sensor_serial, "PMS5003T-20260408", 17) != 0)
+    return false;
+  return true;
+}
+
+// Sensor identity and opt-in share one NVS value so a failed multi-key save
+// cannot pair an old opt-in with a replacement unit's new serial on reboot.
+void encode_sensor(char *out, std::size_t size, const Settings &settings) {
+  std::snprintf(out, size, "%s|%s|%s|%u", settings.sensor_vendor,
+                settings.sensor_model, settings.sensor_serial,
+                settings.sensor_batch_candidate ? 1U : 0U);
+}
+
+bool decode_sensor(char *value, Settings &settings) {
+  char *vendor = value;
+  char *first = std::strchr(vendor, '|');
+  if (!first)
+    return false;
+  *first++ = '\0';
+  char *model = first;
+  char *second = std::strchr(model, '|');
+  if (!second)
+    return false;
+  *second++ = '\0';
+  char *serial = second;
+  char *third = std::strchr(serial, '|');
+  if (!third)
+    return false;
+  *third++ = '\0';
+  if (std::strchr(third, '|') ||
+      std::strlen(vendor) >= sizeof(settings.sensor_vendor) ||
+      std::strlen(model) >= sizeof(settings.sensor_model) ||
+      !sensor_serial_chars(serial) ||
+      (*serial && !valid_pms5003t_serial(serial)) ||
+      (std::strcmp(third, "0") != 0 && std::strcmp(third, "1") != 0))
+    return false;
+  if (*vendor && (std::strcmp(vendor, hardware_vendor) != 0 ||
+                  std::strcmp(model, hardware_model) != 0))
+    return false;
+  if ((*vendor == '\0') != (*model == '\0') || (*serial && !*vendor))
+    return false;
+  std::memcpy(settings.sensor_vendor, vendor, std::strlen(vendor) + 1);
+  std::memcpy(settings.sensor_model, model, std::strlen(model) + 1);
+  std::memcpy(settings.sensor_serial, serial, std::strlen(serial) + 1);
+  settings.sensor_batch_candidate = std::strcmp(third, "1") == 0;
+  if (settings.sensor_batch_candidate && !exact_batch_candidate(settings))
+    return false;
+  return true;
 }
 
 bool save_locked(const Settings &settings) {
@@ -43,6 +128,9 @@ bool save_locked(const Settings &settings) {
   ok = store.putUChar("lanon", settings.lan_on ? 1 : 0) && ok;
   ok =
       store.putBytes("token", settings.token, kTokenBytes) == kTokenBytes && ok;
+  char sensor[80];
+  encode_sensor(sensor, sizeof(sensor), settings);
+  ok = ok && save_string(store, "sensor", sensor);
   store.end();
   return ok;
 }
@@ -104,6 +192,13 @@ std::size_t json_escape(char *out, std::size_t size, const char *text) {
 }
 } // namespace
 
+void set_sensor_hardware(const char *vendor, const char *model) {
+  std::snprintf(hardware_vendor, sizeof(hardware_vendor), "%s",
+                vendor ? vendor : "");
+  std::snprintf(hardware_model, sizeof(hardware_model), "%s",
+                model ? model : "");
+}
+
 const char *pair_name(PairMode mode) {
   switch (mode) {
   case PairMode::Fixed:
@@ -151,6 +246,15 @@ bool load(bool display_detected) {
     settings.lan_on = store.getUChar("lanon", 1) != 0;
     if (store.getBytes("token", settings.token, kTokenBytes) != kTokenBytes)
       esp_fill_random(settings.token, kTokenBytes);
+    char sensor[80]{};
+    if (store.getString("sensor", sensor, sizeof(sensor)) > 0 &&
+        !decode_sensor(sensor, settings)) {
+      settings.sensor_vendor[0] = '\0';
+      settings.sensor_model[0] = '\0';
+      settings.sensor_serial[0] = '\0';
+      settings.sensor_batch_candidate = false;
+      aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
+    }
   }
   store.end();
   persistent = true;
@@ -189,6 +293,8 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
   bad_key[0] = '\0';
   std::size_t position = 0;
   bool any = false;
+  bool sensor_identity_changed = false;
+  bool sensor_candidate_explicit = false;
   while (position < length) {
     // One line: key '=' value, terminated by '\n' or end of text.
     std::size_t end = position;
@@ -280,6 +386,34 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
       if (!parse_bool(value, flag))
         return reject();
       pending.rotate_token = flag;
+    } else if (std::strcmp(key, "sensor.vendor") == 0) {
+      if (std::strlen(value) >= sizeof(next.sensor_vendor) ||
+          (value[0] && std::strcmp(value, hardware_vendor) != 0))
+        return reject();
+      sensor_identity_changed = sensor_identity_changed ||
+                                std::strcmp(value, next.sensor_vendor) != 0;
+      std::snprintf(next.sensor_vendor, sizeof(next.sensor_vendor), "%s",
+                    value);
+    } else if (std::strcmp(key, "sensor.model") == 0) {
+      if (std::strlen(value) >= sizeof(next.sensor_model) ||
+          (value[0] && std::strcmp(value, hardware_model) != 0))
+        return reject();
+      sensor_identity_changed =
+          sensor_identity_changed || std::strcmp(value, next.sensor_model) != 0;
+      std::snprintf(next.sensor_model, sizeof(next.sensor_model), "%s", value);
+    } else if (std::strcmp(key, "sensor.serial") == 0) {
+      if (!sensor_serial_chars(value))
+        return reject();
+      sensor_identity_changed = sensor_identity_changed ||
+                                std::strcmp(value, next.sensor_serial) != 0;
+      std::snprintf(next.sensor_serial, sizeof(next.sensor_serial), "%s",
+                    value);
+    } else if (std::strcmp(key, "sensor.batch_candidate") == 0) {
+      bool flag;
+      if (!parse_bool(value, flag))
+        return reject();
+      sensor_candidate_explicit = true;
+      next.sensor_batch_candidate = flag;
     } else {
       return reject();
     }
@@ -290,6 +424,21 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
   }
   if (next.wifi_on && !next.ssid[0]) {
     std::snprintf(bad_key, bad_key_size, "wifi.ssid");
+    return false;
+  }
+  if (sensor_identity_changed && !sensor_candidate_explicit)
+    next.sensor_batch_candidate = false;
+  if ((next.sensor_vendor[0] == '\0') != (next.sensor_model[0] == '\0') ||
+      (next.sensor_serial[0] && !next.sensor_vendor[0])) {
+    std::snprintf(bad_key, bad_key_size, "sensor.identity");
+    return false;
+  }
+  if (next.sensor_serial[0] && !valid_pms5003t_serial(next.sensor_serial)) {
+    std::snprintf(bad_key, bad_key_size, "sensor.serial");
+    return false;
+  }
+  if (next.sensor_batch_candidate && !exact_batch_candidate(next)) {
+    std::snprintf(bad_key, bad_key_size, "sensor.batch_candidate");
     return false;
   }
   if (pending.rotate_token)
@@ -330,12 +479,16 @@ std::size_t build_json(char *out, std::size_t size, const WifiView &wifi) {
       "u,"
       "\"display\":%u},\"wifi\":{\"on\":%u,\"ssid\":\"%s\",\"psk_set\":%u,"
       "\"state\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,\"mac\":\"%s\"},"
-      "\"lan\":{\"on\":%u,\"port\":%u,\"host\":\"%s\",\"clients\":%u}}",
+      "\"lan\":{\"on\":%u,\"port\":%u,\"host\":\"%s\",\"clients\":%u},"
+      "\"sensor\":{\"vendor\":\"%s\",\"model\":\"%s\",\"serial\":\"%s\","
+      "\"batch_candidate\":%u}}",
       pair_name(settings.pair), settings.pin <= 999999U ? 1U : 0U,
       settings.pin == kLegacyDefaultPin ? 1U : 0U, wifi.bonds,
       settings.display ? 1U : 0U, settings.wifi_on ? 1U : 0U, ssid,
       settings.psk[0] ? 1U : 0U, wifi.state, wifi.ip, wifi.rssi, wifi.mac,
-      settings.lan_on ? 1U : 0U, unsigned(kLanPort), wifi.host, wifi.clients);
+      settings.lan_on ? 1U : 0U, unsigned(kLanPort), wifi.host, wifi.clients,
+      settings.sensor_vendor, settings.sensor_model, settings.sensor_serial,
+      settings.sensor_batch_candidate ? 1U : 0U);
   return written > 0 && std::size_t(written) < size ? std::size_t(written) : 0;
 }
 } // namespace config

@@ -12,6 +12,10 @@ bool same(const config::Settings &a, const config::Settings &b) {
   return a.pair == b.pair && a.pin == b.pin && a.display == b.display &&
          a.wifi_on == b.wifi_on && std::strcmp(a.ssid, b.ssid) == 0 &&
          std::strcmp(a.psk, b.psk) == 0 && a.lan_on == b.lan_on &&
+         std::strcmp(a.sensor_vendor, b.sensor_vendor) == 0 &&
+         std::strcmp(a.sensor_model, b.sensor_model) == 0 &&
+         std::strcmp(a.sensor_serial, b.sensor_serial) == 0 &&
+         a.sensor_batch_candidate == b.sensor_batch_candidate &&
          std::memcmp(a.token, b.token, config::kTokenBytes) == 0;
 }
 
@@ -133,6 +137,61 @@ void credentials() {
   std::puts(json); // runner parses this synthetic, secret-free CONFIG document
 }
 
+void sensor_identity() {
+  config::set_sensor_hardware("Plantower", "PMS5003T");
+  assert(config::load(false));
+  reject("sensor.vendor=Other\nsensor.model=PMS5003T", "sensor.vendor");
+  reject("sensor.vendor=Plantower\nsensor.model=PMSA003", "sensor.model");
+  reject("sensor.serial=bad barcode", "sensor.serial");
+  reject("sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-202602291332",
+         "sensor.serial");
+  reject("sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-202613011332",
+         "sensor.serial");
+  reject("sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-20260408",
+         "sensor.serial");
+  reject("sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-202605011332\nsensor.batch_candidate=1",
+         "sensor.batch_candidate");
+  accept("sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-202604081332\nsensor.batch_candidate=1");
+  const auto selected = config::get();
+  assert(selected.sensor_batch_candidate &&
+         std::strcmp(selected.sensor_serial, "PMS5003T-202604081332") == 0);
+  assert(config::load(false) && same(selected, config::get()));
+  config::WifiView wifi{"connected", "192.0.2.1",  -40, "00:00:00:00:00:01",
+                        1,           "aq-fixture", 2};
+  char json[config::kSensorSerialMax + 480]{};
+  const auto length = config::build_json(json, 480, wifi);
+  assert(length && length < 480);
+  assert(std::strstr(json, "\"serial\":\"PMS5003T-202604081332\""));
+  assert(std::strstr(json, "\"batch_candidate\":1"));
+  accept("sensor.serial=PMS5003T-20260408123456789\nwifi.ssid=" +
+         std::string(32, '\\'));
+  config::WifiView widest{
+      "connecting", "255.255.255.255",       -2147483647, "ff:ff:ff:ff:ff:ff",
+      4294967295U,  "aq-123456789012345678", 4294967295U};
+  assert(config::build_json(json, 480, widest) != 0);
+  accept("sensor.serial=PMS5003T-202605011332");
+  assert(!config::get().sensor_batch_candidate);
+  reject("sensor.batch_candidate=1", "sensor.batch_candidate");
+  accept("sensor.serial=PMS5003T-2026040813327\nsensor.batch_candidate=1");
+  assert(config::get().sensor_batch_candidate);
+  accept("sensor.batch_candidate=0");
+  accept("sensor.serial=PMS5003T-202402291");
+  accept("sensor.serial=");
+  assert(!config::get().sensor_serial[0]);
+  fake_platform::nvs.fail_write_key = "sensor";
+  const auto before = config::get();
+  config::Actions actions;
+  char bad_key[64];
+  assert(!apply("sensor.serial=PMS5003T-202604081332", actions, bad_key));
+  assert(std::strcmp(bad_key, "nvs") == 0 && same(before, config::get()));
+  fake_platform::nvs.fail_write_key.clear();
+}
+
 void persistence_failure() {
   assert(config::load(false));
   accept("wifi.ssid=fixture-network\nwifi.psk=fixture-password");
@@ -191,6 +250,8 @@ int main(int argc, char **argv) {
     validation();
   else if (test == "credentials")
     credentials();
+  else if (test == "sensor")
+    sensor_identity();
   else if (test == "nvs")
     persistence_failure();
   else if (test == "unavailable")

@@ -20,6 +20,7 @@ constexpr std::uint16_t kLanPort = 47390;
 constexpr std::size_t kTokenBytes = 32;
 constexpr std::size_t kSsidMax = 32;
 constexpr std::size_t kPskMax = 63;
+constexpr std::size_t kSensorSerialMax = 32;
 
 struct Settings {
   PairMode pair = PairMode::Random;
@@ -30,6 +31,10 @@ struct Settings {
   char psk[kPskMax + 1]{};
   bool lan_on = true;
   std::uint8_t token[kTokenBytes]{};
+  char sensor_vendor[16]{};
+  char sensor_model[16]{};
+  char sensor_serial[kSensorSerialMax + 1]{};
+  bool sensor_batch_candidate = false;
 };
 
 // One-shot actions requested through SET_CONFIG; not stored.
@@ -46,6 +51,10 @@ struct Actions {
 // false when NVS was unusable, in which
 // case defaults are used and nothing persists.
 bool load(bool display_detected);
+
+// Board adapter declares the physically wired sensor before load/start_links.
+// An unset board refuses sensor identity provisioning.
+void set_sensor_hardware(const char *vendor, const char *model);
 
 Settings get();
 // Runtime view for JSON/UI: whether a `ble.*` change is waiting for a reboot.
@@ -69,7 +78,7 @@ struct WifiView {
   const char *host; // mDNS host label
   unsigned bonds;
 };
-// Builds the CONFIG JSON (<= 400 bytes). Never includes the PSK or token.
+// Builds the CONFIG JSON (<= 480 bytes). Never includes the PSK or token.
 std::size_t build_json(char *out, std::size_t size, const WifiView &wifi);
 
 const char *pair_name(PairMode mode);

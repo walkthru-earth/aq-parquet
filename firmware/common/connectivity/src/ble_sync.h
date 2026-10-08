@@ -69,6 +69,7 @@ enum Frame : std::uint8_t {
   kFrameHello = 0x47,
   kFrameStatus = 0x48,
   kFrameLive = 0x49,
+  kFrameConfigChunk = 0x4a,
   kFrameError = 0x7f,
 };
 enum Error : std::uint8_t {

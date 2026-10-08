@@ -64,6 +64,7 @@ void handle(const ble::ControlRequest &request, Peer &peer) {
 }
 
 void configuration() {
+  config::set_sensor_hardware("Plantower", "PMS5003T");
   assert(config::load(false));
   Peer peer;
   handle(request(ble::kOpGetConfig, ble::Link::Lan), peer);
@@ -98,6 +99,64 @@ void configuration() {
   assert(peer.errors[0].link == ble::Link::Lan &&
          peer.errors[0].code == ble::kErrInvalidConfig);
   assert(bonds_cleared == 1 && sessions_dropped == 1 && wifi_reapplied == 1);
+}
+
+void config_chunks() {
+  config::Actions actions;
+  char bad_key[48];
+  const std::string profile =
+      "sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+      "sensor.serial=PMS5003T-202604081332\nsensor.batch_candidate=1";
+  assert(config::apply_lines(profile.data(), profile.size(), bad_key,
+                             sizeof(bad_key), actions));
+  Peer large;
+  std::string expected;
+  // Choose a valid UTF-8 SSID that crosses a 128-byte CONFIG_CHUNK boundary.
+  for (std::size_t prefix = 0; prefix <= 30; ++prefix) {
+    const std::string setting =
+        "wifi.ssid=" + std::string(prefix, 'x') + "\xC3\xA9";
+    assert(config::apply_lines(setting.data(), setting.size(), bad_key,
+                               sizeof(bad_key), actions));
+    large = Peer{};
+    handle(request(ble::kOpGetConfig, ble::Link::Lan), large);
+    assert(large.successful.size() == 1 &&
+           large.successful[0].bytes[0] == ble::kFrameConfig);
+    expected.assign(large.successful[0].bytes.begin() + 2,
+                    large.successful[0].bytes.end());
+    const auto at = expected.find("\xC3\xA9");
+    if (at != std::string::npos && at % 128 == 127)
+      break;
+  }
+  const auto unicode_at = expected.find("\xC3\xA9");
+  assert(unicode_at != std::string::npos && unicode_at % 128 == 127);
+
+  Peer small;
+  small.payload = 244; // MTU 247: CONFIG cannot fit one ATT notification.
+  handle(request(ble::kOpGetConfig), small);
+  assert(small.errors.empty() && small.successful.size() >= 3);
+  std::string actual;
+  for (const auto &reply : small.successful) {
+    const auto &bytes = reply.bytes;
+    assert(reply.link == ble::Link::Ble && bytes[0] == ble::kFrameConfigChunk &&
+           bytes.size() <= 244);
+    assert(bytes[1] == large.successful[0].bytes[1] &&
+           aq::sync::get_u16(bytes.data() + 2) == expected.size() &&
+           aq::sync::get_u16(bytes.data() + 4) == actual.size());
+    actual.append(bytes.begin() + 6, bytes.end());
+  }
+  assert(actual == expected);
+
+  Peer failed;
+  failed.payload = 244;
+  failed.fail_attempt = 2;
+  handle(request(ble::kOpGetConfig), failed);
+  assert(failed.successful.size() == 1 && failed.attempts == 2);
+
+  Peer full;
+  full.payload = 514; // MTU 517 carries legacy single-frame CONFIG.
+  handle(request(ble::kOpGetConfig), full);
+  assert(full.successful.size() == 1 &&
+         full.successful[0].bytes[0] == ble::kFrameConfig);
 }
 
 void token_guard() {
@@ -196,6 +255,7 @@ void apply_settings() { ++wifi_reapplied; }
 
 int main() {
   configuration();
+  config_chunks();
   token_guard();
   logs();
   dispatch();

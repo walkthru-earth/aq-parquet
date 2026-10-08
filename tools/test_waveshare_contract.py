@@ -38,7 +38,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
         require(field.type == expected and field.nullable, f"schema: {field.name}")
     metadata = parquet.metadata.metadata
     require(metadata[b"schema_version"].decode() == dictionary["schema"] ==
-            "waveshare-sim7670g-telemetry-v1", "schema identity")
+            "waveshare-sim7670g-telemetry-v2", "schema identity")
     require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"], "dictionary identity")
     require(metadata[b"dictionary_uri"].decode() == dictionary["uri"], "dictionary URI")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
@@ -72,7 +72,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
                       for name, column in zip(table.column_names, table.columns, strict=True)})
     for i, row in enumerate(table.to_pylist()):
         now = 10000000 + i * 10000000
-        require(row["schema_version"] == 1 and row["sequence"] == i, "row identity")
+        require(row["schema_version"] == 2 and row["sequence"] == i, "row identity")
         require(row["monotonic_us"] == now and row["scheduled_us"] == now - 123 and
                 row["sample_jitter_us"] == 123, "synthetic cadence")
         require(row["collection_completed_mono_us"] == now + 1234, "collection completion")
@@ -86,6 +86,12 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
                                        "particles_gt05_per_01l", "particles_gt10_per_01l",
                                        "particles_gt25_per_01l")):
             require(row[name] == (offset + 1 if i >= 5 else None), f"PMS word mapping: {name}")
+        require(row["sensor_serial_code"] == 202604081332, "exact provisioned serial code")
+        require(row["pm25_batch_candidate_status"] == (0 if i == 5 else 2 if i < 5 else 3),
+                "candidate gate")
+        candidate = row["pm25_batch_candidate_ug_m3"]
+        require(candidate is None if i < 6 else abs(candidate - 0.003964 * 7) < 1e-7,
+                "count-based candidate, never raw mass multiplied")
         require(row["ambient_temperature_c"] is None if i < 5 else
                 abs(row["ambient_temperature_c"] + 3.7) < 1e-6, "temperature validity")
         require(row["relative_humidity_percent"] is None if i < 5 or i == 6 else
@@ -132,12 +138,12 @@ def main() -> None:
                 "stale compiled dictionary digest")
         fields = dictionary["fields"]
         names = {field["name"] for field in fields}
-        require(len(fields) == len(names) == 49, "unique versioned fields")
+        require(len(fields) == len(names) == 52, "unique versioned fields")
         require(len({field["property"] for field in fields}) == len(fields), "property identifiers")
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "arduino-waveshare-parquet-v1", "firmware identity")
+        require(dictionary["firmware"] == "arduino-waveshare-parquet-v2.1", "firmware identity")
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")
@@ -149,7 +155,7 @@ def main() -> None:
                 subprocess.run([str(executable), str(path), "lz4" if compressed else "none",
                                 "anchored" if anchored else "unsynced"], check=True)
                 check_file(path, dictionary, anchored, compressed)
-                print(f"PASS Waveshare 90 x 49: anchored={anchored} lz4={compressed}; both readers", flush=True)
+                print(f"PASS Waveshare 90 x 52: anchored={anchored} lz4={compressed}; both readers", flush=True)
         if args.dictionary_out:
             with args.dictionary_out.open("x") as output:
                 json.dump(dictionary, output, indent=2)

@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <aq_logger.h>
 #include <debug_log.h>
+#include <device_config.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
 #include <esp_timer.h>
@@ -77,7 +78,10 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
   if (snapshot.present)
     snapshot.age_ms =
         static_cast<std::uint32_t>((now - snapshot.received_mono_us) / 1000);
-  apply_pms(row, snapshot, now);
+  const auto settings = config::get();
+  apply_pms(row, snapshot, now,
+            {settings.sensor_vendor, settings.sensor_model,
+             settings.sensor_serial, settings.sensor_batch_candidate});
   apply_gauge(row, read_gauge());
 }
 
@@ -92,6 +96,13 @@ const telemetry::KeyValue kMetadata[] = {
     {"battery_presence",
      kBatteryInstalled ? "owner-confirmed-installed" : "configured-absent"},
     {"sensor_model", "PMS5003T"},
+    {"pm25_batch_candidate_formula",
+     "AirGradient PMS5003T-20260408 v1: 0.003964 * particles_gt03_per_01l + 0"},
+    {"pm25_batch_candidate_validation",
+     "owner-opt-in research candidate; not Cairo-reference-validated; raw PM "
+     "unchanged"},
+    {"pm25_batch_candidate_status",
+     "0=disabled,1=identity-mismatch,2=PMS-unavailable,3=candidate-only"},
     {"hardware_revision", "Waveshare ESP32-S3-SIM7670G-4G V2.0"},
     {"storage_bus", "SDMMC one-bit CLK5 CMD4 D0=6; no automatic format"},
 };
@@ -157,6 +168,7 @@ void setup() {
       mounted, mounted ? static_cast<unsigned>(SD_MMC.cardType()) : 0U,
       mounted ? static_cast<unsigned long long>(SD_MMC.cardSize()) : 0ULL);
   logging = aqlogger::begin(kLoggerConfig, kHooks, mounted);
+  config::set_sensor_hardware("Plantower", "PMS5003T");
   if (logging && !aqlogger::start_links(false))
     aqlog.println("AQ ERROR operation=sync-start");
   aqlog.printf("AQ READY logging=%u mounted=%u sample_ms=10000 "

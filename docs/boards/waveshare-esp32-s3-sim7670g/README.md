@@ -4,6 +4,7 @@ Board reference for the owner's V2.0 board. On 2026-09-28, identification, full 
 
 - [Hardware and pin ownership](hardware.md)
 - [PMS5003T wiring and UART contract](pms5003t.md)
+- [Cairo PM2.5 publication and field-quality contract](cairo-pm25-publication.md)
 - [Logger storage, measurement contract and local sync](storage.md)
 - [Hardware evidence and limitations](bench-verified.md)
 - [Official software resources and V2 adoption limits](software-resources.md)

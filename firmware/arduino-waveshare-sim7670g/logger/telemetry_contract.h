@@ -8,15 +8,15 @@
 
 namespace telemetry {
 namespace contract {
-constexpr std::int32_t kSchemaVersion = 1;
-constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v1";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v1";
+constexpr std::int32_t kSchemaVersion = 2;
+constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v2";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v2";
 constexpr const char *kFirmware = "arduino-waveshare-parquet-v2.1";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/arduino-waveshare-sim7670g/logger/telemetry_fields.inc";
-constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v1";
+constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v2";
 constexpr std::int64_t kPmsWarmupUs = 30000000;
 constexpr std::uint32_t kPmsStaleAfterMs = 5000;
 constexpr const char *kConfiguration =
@@ -25,7 +25,9 @@ constexpr const char *kConfiguration =
     "\"pms_baud\":9600,\"pms_model\":\"PMS5003T\","
     "\"battery_presence\":\"explicit-owner-configuration\","
     "\"battery_percent\":\"integer-percent-truncated-capped-at-100\","
-    "\"snapshot\":\"latest-available-not-average\"}";
+    "\"snapshot\":\"latest-available-not-average\","
+    "\"sensor_identity\":\"owner-provisioned-nvs-and-per-row\","
+    "\"batch_candidate\":\"off-by-default-not-cairo-validated\"}";
 constexpr const char *kUnknown = "unknown";
 constexpr const char *kTimeSemantics =
     "event_time_utc_ns estimates snapshot start; collection_completed_mono_us "
@@ -49,7 +51,7 @@ constexpr Definition kFields[] = {
 #include "telemetry_fields.inc"
 #undef FIELD
 };
-static_assert(field_count == 49, "Version the schema when changing fields");
+static_assert(field_count == 52, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 using Sample = aqlogger::Row;
 
@@ -102,9 +104,41 @@ enum PmsStatus : std::int32_t {
   kPmsValid = 4,
   kPmsModelMismatch = 5,
 };
+struct SensorProfile {
+  const char *vendor = "";
+  const char *model = "";
+  const char *serial = "";
+  bool batch_candidate = false;
+};
+enum BatchCandidateStatus : std::int32_t {
+  kBatchDisabled = 0,
+  kBatchIdentityMismatch = 1,
+  kBatchSourceUnavailable = 2,
+  kBatchCandidate = 3,
+};
+inline std::int64_t serial_code(const SensorProfile &sensor) {
+  if (!sensor.vendor || !sensor.model || !sensor.serial ||
+      std::strcmp(sensor.vendor, "Plantower") != 0 ||
+      std::strcmp(sensor.model, "PMS5003T") != 0 ||
+      std::strlen(sensor.serial) < 18 || std::strlen(sensor.serial) > 26 ||
+      std::strncmp(sensor.serial, "PMS5003T-", 9) != 0)
+    return 0;
+  std::int64_t code = 0;
+  for (const char *p = sensor.serial + 9; *p; ++p) {
+    if (*p < '0' || *p > '9')
+      return 0;
+    code = code * 10 + (*p - '0');
+  }
+  return code;
+}
+inline bool exact_batch(const SensorProfile &sensor) {
+  return serial_code(sensor) != 0 &&
+         std::strncmp(sensor.serial, "PMS5003T-20260408", 17) == 0;
+}
 // Sensor stays powered: warm-up uses boot uptime. Add a sensor-start anchor
 // if sleep/reset control is introduced. Apply only to a fresh, zeroed row.
-inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now) {
+inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now,
+                      const SensorProfile &sensor = {}) {
   const auto &frame = pms.frame;
   const auto status =
       !pms.present                    ? kPmsMissing
@@ -115,6 +149,14 @@ inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now) {
           ? kPmsModelMismatch
           : kPmsValid;
   row.integer(pms_status, status);
+  const auto identity = serial_code(sensor);
+  if (identity)
+    row.counter(sensor_serial_code, identity);
+  const auto candidate_status = !sensor.batch_candidate ? kBatchDisabled
+                                : !exact_batch(sensor)  ? kBatchIdentityMismatch
+                                : status != kPmsValid ? kBatchSourceUnavailable
+                                                      : kBatchCandidate;
+  row.integer(pm25_batch_candidate_status, candidate_status);
   row.counter(pms_frames, pms.frames);
   row.counter(pms_checksum_errors, pms.checksum_errors);
   row.counter(pms_length_errors, pms.length_errors);
@@ -134,6 +176,9 @@ inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now) {
   row.integer(pm10_atmospheric_ug_m3, frame.atmospheric_pm10);
   for (std::size_t i = 0; i < 4; ++i)
     row.integer(particles_gt03_per_01l + i, frame.particle_counts[i]);
+  if (candidate_status == kBatchCandidate)
+    row.number(pm25_batch_candidate_ug_m3,
+               0.003964F * frame.particle_counts[0]);
   row.number(ambient_temperature_c, frame.temperature_deci_c / 10.0F);
   if (frame.humidity_deci_percent <= 1000)
     row.number(relative_humidity_percent, frame.humidity_deci_percent / 10.0F);

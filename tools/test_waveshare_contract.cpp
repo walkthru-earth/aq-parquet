@@ -55,6 +55,37 @@ void assert_gates() {
   pms.age_ms = kPmsStaleAfterMs;
   apply_pms(ready, pms, kPmsWarmupUs);
   assert(ready.data[pms_status] == kPmsValid && ready.valid[pm1_cf1_ug_m3]);
+  const SensorProfile exact{"Plantower", "PMS5003T", "PMS5003T-202604081332",
+                            true};
+  Sample candidate{};
+  apply_pms(candidate, pms, kPmsWarmupUs, exact);
+  assert(candidate.data[pm25_batch_candidate_status] == kBatchCandidate &&
+         candidate.valid[pm25_batch_candidate_ug_m3] &&
+         candidate.data[sensor_serial_code] == 202604081332LL &&
+         candidate.data[pm25_atmospheric_ug_m3] ==
+             ready.data[pm25_atmospheric_ug_m3]);
+  Sample longer_serial{};
+  apply_pms(longer_serial, pms, kPmsWarmupUs,
+            {"Plantower", "PMS5003T", "PMS5003T-2026040813327", true});
+  assert(longer_serial.data[pm25_batch_candidate_status] == kBatchCandidate &&
+         longer_serial.data[sensor_serial_code] == 2026040813327LL);
+  Sample other_batch{};
+  apply_pms(other_batch, pms, kPmsWarmupUs,
+            {"Plantower", "PMS5003T", "PMS5003T-202605011332", true});
+  assert(other_batch.data[pm25_batch_candidate_status] ==
+             kBatchIdentityMismatch &&
+         !other_batch.valid[pm25_batch_candidate_ug_m3]);
+  Sample wrong_vendor{};
+  apply_pms(wrong_vendor, pms, kPmsWarmupUs,
+            {"Other", "PMS5003T", "PMS5003T-202604081332", true});
+  assert(wrong_vendor.data[pm25_batch_candidate_status] ==
+             kBatchIdentityMismatch &&
+         !wrong_vendor.valid[sensor_serial_code]);
+  Sample unavailable{};
+  apply_pms(unavailable, pms, kPmsWarmupUs - 1, exact);
+  assert(unavailable.data[pm25_batch_candidate_status] ==
+             kBatchSourceUnavailable &&
+         !unavailable.valid[pm25_batch_candidate_ug_m3]);
   ++pms.age_ms;
   apply_pms(stale, pms, kPmsWarmupUs);
   assert(stale.data[pms_status] == kPmsStale && !stale.valid[pm1_cf1_ug_m3]);
@@ -143,7 +174,8 @@ int main(int argc, char **argv) {
       pms.frame.particle_count_fields = 6;
     if (i == 6)
       pms.frame.humidity_deci_percent = 1001;
-    apply_pms(row, pms, now);
+    apply_pms(row, pms, now,
+              {"Plantower", "PMS5003T", "PMS5003T-202604081332", i != 5});
     if (i == 0)
       apply_gauge(row, {}); // explicit no-battery configuration
     else if (i == 1)

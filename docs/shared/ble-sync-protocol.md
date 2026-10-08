@@ -16,6 +16,10 @@ the [CoreS3 bench](../boards/m5stack-cores3/bench-verified.md) and
 CoreS3-specific radio constraints remain in its
 [wireless note](../boards/m5stack-cores3/cores3-wireless.md); the shared row/file
 contract is in [telemetry-pipeline](telemetry-pipeline.md).
+The 2026-09-30 Waveshare v2 addition extends authenticated CONFIG with sensor
+identity and an opt-in batch candidate; it keeps `info.proto=2` and raw LIVE
+values unchanged. This addition has host/build evidence only, pending a board
+flash and readback.
 
 Version 2 adds, on top of the v1 file sync: **device configuration and control** (`GET_CONFIG`/`SET_CONFIG`, Wi-Fi scan and provisioning, reboot, log tail), **pairing modes** for devices without a screen, and a **LAN transport** — the same frames over one TCP socket, discovered with mDNS, authenticated with a token the phone can only obtain over the bonded BLE link. BLE introduces, LAN accelerates. Revision 2.1 adds a way for the device to tell a phone that is *not* connected that something changed; why and how a phone uses it is in [background-sync-triggers](background-sync-triggers.md).
 
@@ -87,7 +91,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 | `control` | `…-0005-…` | write (with response) | binary request, ≤ 512 bytes |
 | `response` | `…-0006-…` | notify | binary frames, ≤ `payload_max` (≤ 512) |
 
-`status` and `live` are ≤ 480 bytes; their characteristic capacities are 496 bytes and the BLE frame cap remains 512 bytes. MTU ≥ 483 is required to carry the largest JSON snapshot in one notification. Each publisher caches the complete JSON value first, then omits its notification when the actual value exceeds negotiated MTU − 3. No partial JSON notification is sent. Clients with smaller MTUs must perform characteristic long reads for complete snapshots; STATUS may update its cache without emitting a notification. `info` may also exceed one PDU and uses a normal long read. All `response` traffic for one request is emitted in order on the single `response` characteristic, so the phone needs one notification handler and no reassembly beyond concatenating `CHUNK` payloads.
+`status` and `live` are ≤ 480 bytes; their characteristic capacities are 496 bytes and the BLE frame cap remains 512 bytes. MTU ≥ 483 is required to carry the largest JSON snapshot in one notification. Each publisher caches the complete JSON value first, then omits its notification when the actual value exceeds negotiated MTU − 3. No partial JSON notification is sent. Clients with smaller MTUs must perform characteristic long reads for complete snapshots; STATUS may update its cache without emitting a notification. `info` may also exceed one PDU and uses a normal long read. All `response` traffic for one request is emitted in order on the single `response` characteristic. CONFIG replies that exceed the ATT payload use ordered `CONFIG_CHUNK` frames over BLE.
 
 ### `info` (read)
 
@@ -167,8 +171,8 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `0x05` | `SET_TIME` | `epoch_s` i64 | `TIME_SET` or `ERROR` 9; `status` notify |
 | `0x06` | `FLUSH` | — | `FLUSHED` or `ERROR` 10; `status` notify |
 | `0x07` | `STATUS` | — | `status` cache/notify only; **no `response` frame**, so the phone must not wait on `response` for it. If the value exceeds MTU − 3 the notification is omitted and the phone reads the cached characteristic. Over LAN this produces a `STATUS` push frame, so it doubles as a keep-alive ping. |
-| `0x08` | `GET_CONFIG` | — | `CONFIG` |
-| `0x09` | `SET_CONFIG` | `key=value` lines, utf8, `\n`-separated (see [configuration](#device-configuration-v2)) | `CONFIG` or `ERROR` 12 with the offending key as `detail` |
+| `0x08` | `GET_CONFIG` | — | `CONFIG` or BLE `CONFIG_CHUNK` sequence |
+| `0x09` | `SET_CONFIG` | `key=value` lines, utf8, `\n`-separated (see [configuration](#device-configuration-v2)) | `CONFIG` or BLE `CONFIG_CHUNK` sequence; `ERROR` 12 with the offending key as `detail` |
 | `0x0A` | `WIFI_SCAN` | — | `WIFI_AP` × n, then `WIFI_SCAN_END`; `ERROR` 15 if the radio cannot scan |
 | `0x0B` | `REBOOT` | — | `REBOOTING`, then the device finalizes any RAM batch and restarts |
 | `0x0C` | `LOG_TAIL` | `max_bytes` u16 (device clips to its ring size, 8192) | `LOG` × n, then `LOG_END` |
@@ -184,7 +188,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `CLOSED` | `0x23` | `handle` u16 |
 | `TIME_SET` | `0x30` | `epoch_s` i64, `monotonic_us` i64 |
 | `FLUSHED` | `0x31` | `rows` u16 written, `fin` u32 files finalized so far |
-| `CONFIG` | `0x40` | `flags` u8 (bit 0 = reboot required for a pending `ble.*` change), JSON ≤ 400 bytes |
+| `CONFIG` | `0x40` | `flags` u8 (bit 0 = reboot required for a pending `ble.*` change), JSON ≤ 480 bytes |
 | `WIFI_AP` | `0x41` | `rssi` i8, `auth` u8 (0 open, 1 WEP, 2 WPA, 3 WPA2, 4 WPA/WPA2, 5 WPA2-Enterprise, 6 WPA3, 7 WPA2/WPA3, 255 other), `channel` u8, `ssid` utf8 |
 | `WIFI_SCAN_END` | `0x42` | `count` u16, `status` u8 (0 ok, else error code) |
 | `REBOOTING` | `0x43` | `delay_ms` u16 |
@@ -194,6 +198,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `HELLO` | `0x47` | LAN only: `proto` u8, `payload_max` u16, info JSON (same document as the `info` characteristic) |
 | `STATUS` | `0x48` | LAN only, push: status JSON |
 | `LIVE` | `0x49` | LAN only, push: live JSON |
+| `CONFIG_CHUNK` | `0x4A` | BLE only: `flags` u8 (same as CONFIG), `total_json_bytes` u16 LE, `offset` u16 LE, then a raw UTF-8 JSON slice. The header is 6 bytes; slices are at most 128 bytes and frames never exceed negotiated `payload_max`. A UTF-8 character may cross frames, so assemble bytes before decoding JSON. Require contiguous offsets from zero until `offset + slice_bytes = total_json_bytes`, with identical flags and total length on each chunk. There is no terminal frame; abandon an incomplete answer and make a fresh GET_CONFIG request |
 | `ERROR` | `0x7F` | `op` u8, `code` u8, `detail` utf8 |
 
 The status JSON remains bounded to 480 bytes. The actual formatter retains every key at 398 bytes with the widest representable counter values (393 for LZ4), checked by `pixi run logger-status-test`. In addition to the existing counters, `part` is the number of retained `.partial` files found by the startup/list scan, while `qf` and `qb` are the total file count and total bytes currently under `/output/quarantine/` after startup quarantine completes. `qf` and `qb` include files preserved by earlier boots, not only files moved during the current boot; both saturate at their unsigned integer limits rather than wrapping.
@@ -225,14 +230,31 @@ Rules:
 | `wifi.psk` | ≤ 63 bytes, empty for an open network | immediately | passphrase, stored in NVS in clear (flash encryption is not used on this board by rule) |
 | `lan.on` | `0` \| `1` | immediately | TCP sync server + mDNS while Wi-Fi is connected (on by default) |
 | `lan.rotate_token` | `1` | *action* | new LAN token; every LAN session is dropped, phones must fetch the token again over BLE |
+| `sensor.vendor` | `Plantower` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified vendor; must match the board's declared physical sensor |
+| `sensor.model` | `PMS5003T` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified model; does not change the hardcoded UART parser |
+| `sensor.serial` | `PMS5003T-` + valid `YYYYMMDD` + 1–9 unit digits, or empty | immediately | scanned or manually entered module sticker, echoed in CONFIG; an empty value clears it. Impossible calendar dates and mismatched model prefixes are rejected |
+| `sensor.batch_candidate` | `0` \| `1` | immediately | opt in to the separate, unvalidated Waveshare batch candidate; `1` requires `Plantower`, `PMS5003T`, and an exact `PMS5003T-20260408` batch prefix followed by 1–9 unit digits. Changing identity without explicitly setting this key turns it off |
 
 ```json
 {"ble":{"pair":"random","pin_set":1,"pin_default":0,"bonds":1,"display":1},
  "wifi":{"on":1,"ssid":"home","psk_set":1,"state":"connected","ip":"192.168.1.42","rssi":-58,"mac":"e0..6b40"},
- "lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0}}
+ "lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0},
+ "sensor":{"vendor":"Plantower","model":"PMS5003T", "serial":"PMS5003T-202604081332","batch_candidate":0}}
 ```
 
 `wifi.state` is one of `off`, `connecting`, `connected`, `failed` (wrong passphrase or no such network; the device keeps retrying every 30 s while `wifi.on`). `pin_set` says a fixed PIN exists without disclosing it. `pin_default` remains for backward-compatible clients and is 0 after automatic migration away from the legacy universal PIN. `display` reports what the device detected at boot.
+
+The Waveshare v2 Parquet dictionary keeps `pm25_atmospheric_ug_m3`, CF=1 PM,
+and particle counts unchanged. A separate
+`pm25_batch_candidate_ug_m3 = 0.003964 * particles_gt03_per_01l` is populated
+only when the owner opts in with the exact supported PMS5003T batch and the
+PMS snapshot is valid. `pm25_batch_candidate_status` is 0 disabled, 1 identity
+mismatch, 2 PMS unavailable/warming/stale/error, or 3 candidate calculated.
+`sensor_serial_code` stores all 9–17 sticker digits for a valid provisioned
+PMS5003T identity; this per-row value preserves identity across configuration
+changes during an open file. A status of 3 does **not** mean Cairo calibration
+or regulatory validity. File `calibration_id` remains `unknown`; LIVE `pm25`
+continues to mean raw atmospheric PM2.5 and has no batch candidate key.
 
 `SET_CONFIG` payload example (one request, three keys):
 

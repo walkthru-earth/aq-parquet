@@ -32,7 +32,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         for scenario in ("headless", "screen", "migration", "validation",
-                         "credentials", "nvs", "unavailable"):
+                         "credentials", "sensor", "nvs", "unavailable"):
             result = subprocess.run([str(executable), scenario], check=True,
                                     capture_output=True, text=True)
             if scenario == "credentials":

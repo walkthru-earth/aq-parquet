@@ -11,21 +11,44 @@ namespace {
 using namespace aq::sync;
 constexpr std::size_t kPayloadCapacity = 1024;
 
-void send_config(ble::Link link, const ControlReplies &replies) {
+void send_config(ble::Link link, ble::Op op, const ControlReplies &replies) {
   const lan::Status wifi = lan::status();
   config::WifiView view{wifi.state,   wifi.ip,   wifi.rssi,        wifi.mac,
                         wifi.clients, wifi.host, ble::link().bonds};
-  std::uint8_t frame[2 + 400];
-  const std::size_t length =
-      config::build_json(reinterpret_cast<char *>(frame + 2), 400, view);
+  std::uint8_t frame[2 + ble::kMaxJson];
+  const std::size_t length = config::build_json(
+      reinterpret_cast<char *>(frame + 2), ble::kMaxJson, view);
   if (!length) {
-    replies.error(replies.context, link, ble::kOpGetConfig, ble::kErrMalformed,
-                  "json");
+    replies.error(replies.context, link, op, ble::kErrMalformed, "json");
     return;
   }
   frame[0] = ble::kFrameConfig;
   frame[1] = config::reboot_required() ? 1 : 0;
-  replies.respond(replies.context, link, frame, 2 + length);
+  const auto payload_max = replies.payload_max(replies.context, link);
+  if (link == ble::Link::Lan || 2 + length <= payload_max) {
+    replies.respond(replies.context, link, frame, 2 + length);
+    return;
+  }
+  constexpr std::size_t kHeader = 6;
+  if (payload_max <= kHeader) {
+    replies.error(replies.context, link, op, ble::kErrBusy, "mtu");
+    return;
+  }
+  std::uint8_t chunk[ble::kMaxFrame];
+  chunk[0] = ble::kFrameConfigChunk;
+  chunk[1] = frame[1];
+  put_u16(chunk + 2, static_cast<std::uint16_t>(length));
+  constexpr std::size_t kSliceCap = 128;
+  const auto slice_max =
+      payload_max - kHeader < kSliceCap ? payload_max - kHeader : kSliceCap;
+  for (std::size_t offset = 0; offset < length; offset += slice_max) {
+    const auto count =
+        length - offset < slice_max ? length - offset : slice_max;
+    put_u16(chunk + 4, static_cast<std::uint16_t>(offset));
+    std::memcpy(chunk + kHeader, frame + 2 + offset, count);
+    if (!replies.respond(replies.context, link, chunk, kHeader + count))
+      return;
+  }
 }
 
 void send_log_tail(ble::Link link, std::uint16_t max_bytes,
@@ -71,7 +94,7 @@ bool handle_common_control(const ble::ControlRequest &request,
   const std::size_t length = request.length - 1;
   switch (request.bytes[0]) {
   case ble::kOpGetConfig:
-    send_config(request.link, replies);
+    send_config(request.link, ble::kOpGetConfig, replies);
     return true;
   case ble::kOpSetConfig: {
     char bad_key[48];
@@ -88,7 +111,7 @@ bool handle_common_control(const ble::ControlRequest &request,
       lan::drop_session();
     if (actions.wifi_changed)
       lan::apply_settings();
-    send_config(request.link, replies);
+    send_config(request.link, ble::kOpSetConfig, replies);
     return true;
   }
   case ble::kOpLogTail:
