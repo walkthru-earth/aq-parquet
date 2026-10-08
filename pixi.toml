@@ -53,6 +53,7 @@ waveshare-diagnostic-build = "firmware/arduino-waveshare-sim7670g/build.sh diagn
 waveshare-contract-test = "python tools/test_waveshare_contract.py"
 logger-build-test = "bash tools/test_logger_build.sh"
 logger-work-queue-test = "python tools/test_logger_work_queue.py"
+debug-log-test = "python tools/test_debug_log.py"
 owner-pin = "python tools/owner_pin.py"
 provision-usb = "python tools/provision_usb.py"
 logger-status-test = "python tools/test_logger_status.py --sanitize"

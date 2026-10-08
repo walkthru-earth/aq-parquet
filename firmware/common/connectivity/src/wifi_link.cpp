@@ -121,8 +121,8 @@ bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
       count = ::send(fd, data + sent, length - sent, 0);
     }
     if (count <= 0) {
-      aqlog.printf("LAN SEND FAILED errno=%d sent=%u of=%u\n", errno,
-                   unsigned(sent), unsigned(length));
+      aqlog.record_only().printf("LAN SEND FAILED errno=%d sent=%u of=%u\n",
+                                 errno, unsigned(sent), unsigned(length));
       return false;
     }
     sent += static_cast<std::size_t>(count);
@@ -175,7 +175,8 @@ std::size_t error_frame(std::uint8_t *frame, ble::Op op, ble::Error code,
     std::memcpy(frame + 3, detail, copy);
     length += copy;
   }
-  aqlog.printf("LAN ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
+  aqlog.record_only().printf("LAN ERROR op=0x%02x code=%u\n", unsigned(op),
+                             unsigned(code));
   return length;
 }
 
@@ -202,8 +203,9 @@ void close_client(std::uint8_t peer, const char *reason) {
   client.rx_length = 0;
   client.needs_snapshots = false;
   if (fd >= 0) {
-    aqlog.printf("LAN DISCONNECT slot=%u reason=%s authenticated=%s\n",
-                 unsigned(peer), reason, was_authenticated ? "true" : "false");
+    aqlog.record_only().printf(
+        "LAN DISCONNECT slot=%u reason=%s authenticated=%s\n", unsigned(peer),
+        reason, was_authenticated ? "true" : "false");
     touch_ui();
   }
 }
@@ -220,7 +222,7 @@ void start_server() {
     return;
   listen_fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (listen_fd < 0) {
-    aqlog.printf("LAN ERROR operation=socket errno=%d\n", errno);
+    aqlog.record_only().printf("LAN ERROR operation=socket errno=%d\n", errno);
     return;
   }
   int reuse = 1;
@@ -232,7 +234,8 @@ void start_server() {
   if (::bind(listen_fd, reinterpret_cast<sockaddr *>(&address),
              sizeof(address)) != 0 ||
       ::listen(listen_fd, ble::kMaxLanClients) != 0) {
-    aqlog.printf("LAN ERROR operation=bind-listen errno=%d\n", errno);
+    aqlog.record_only().printf("LAN ERROR operation=bind-listen errno=%d\n",
+                               errno);
     ::close(listen_fd);
     listen_fd = -1;
     return;
@@ -245,12 +248,12 @@ void start_server() {
     MDNS.addServiceTxt("aqsync", "tcp", "fw", device_identity.firmware);
     mdns_on = true;
   } else {
-    aqlog.println("LAN ERROR operation=mdns");
+    aqlog.record_only().println("LAN ERROR operation=mdns");
   }
   portENTER_CRITICAL(&status_mutex);
   current.mdns = mdns_on;
   portEXIT_CRITICAL(&status_mutex);
-  aqlog.printf(
+  aqlog.record_only().printf(
       "LAN LISTEN port=%u host=%s.local mdns=%s service=_aqsync._tcp\n",
       unsigned(config::kLanPort), host_label, mdns_on ? "true" : "false");
 }
@@ -265,7 +268,7 @@ void stop_server(const char *reason) {
   if (listen_fd >= 0) {
     ::close(listen_fd);
     listen_fd = -1;
-    aqlog.printf("LAN STOP reason=%s\n", reason);
+    aqlog.record_only().printf("LAN STOP reason=%s\n", reason);
   }
   portENTER_CRITICAL(&status_mutex);
   current.mdns = false;
@@ -278,7 +281,7 @@ void radio_off(const char *reason) {
     WiFi.disconnect(true, false);
     WiFi.mode(WIFI_OFF);
     radio_on = false;
-    aqlog.printf("WIFI OFF reason=%s\n", reason);
+    aqlog.record_only().printf("WIFI OFF reason=%s\n", reason);
   }
   connected = false;
   set_status("off", false);
@@ -296,7 +299,7 @@ void radio_connect() {
   connect_started_us = esp_timer_get_time();
   retry_at_us = 0;
   set_status("connecting", false);
-  aqlog.printf("WIFI CONNECT ssid=%s\n", settings.ssid);
+  aqlog.record_only().printf("WIFI CONNECT ssid=%s\n", settings.ssid);
 }
 
 void poll_radio() {
@@ -320,21 +323,22 @@ void poll_radio() {
   if (up && !connected) {
     connected = true;
     set_status("connected", true);
-    aqlog.printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n", settings.ssid,
-                 WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    aqlog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
+                               settings.ssid, WiFi.localIP().toString().c_str(),
+                               WiFi.RSSI());
     start_server();
   } else if (!up && connected) {
     connected = false;
     stop_server("wifi-lost");
-    aqlog.println("WIFI LOST");
+    aqlog.record_only().println("WIFI LOST");
     radio_connect();
   } else if (!up && retry_at_us == 0 &&
              now - connect_started_us > kConnectTimeoutUs) {
     set_status("failed", false);
     retry_at_us = now + kRetryUs;
-    aqlog.printf("WIFI FAILED ssid=%s status=%d retry_s=%lld\n", settings.ssid,
-                 int(WiFi.status()),
-                 static_cast<long long>(kRetryUs / 1000000));
+    aqlog.record_only().printf("WIFI FAILED ssid=%s status=%d retry_s=%lld\n",
+                               settings.ssid, int(WiFi.status()),
+                               static_cast<long long>(kRetryUs / 1000000));
     WiFi.disconnect();
   } else if (!up && retry_at_us && now >= retry_at_us) {
     radio_connect();
@@ -391,10 +395,10 @@ void run_scan() {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
   }
-  aqlog.println("WIFI SCAN BEGIN");
+  aqlog.record_only().println("WIFI SCAN BEGIN");
   const int found = WiFi.scanNetworks(false, false);
   if (found < 0) {
-    aqlog.printf("WIFI SCAN FAILED code=%d\n", found);
+    aqlog.record_only().printf("WIFI SCAN FAILED code=%d\n", found);
     std::uint8_t frame[4];
     frame[0] = ble::kFrameWifiScanEnd;
     frame[1] = 0;
@@ -440,7 +444,8 @@ void run_scan() {
   end[2] = (count >> 8) & 0xff;
   end[3] = 0;
   respond(link, link_generation, peer, end, sizeof(end));
-  aqlog.printf("WIFI SCAN END found=%d reported=%u\n", found, unsigned(count));
+  aqlog.record_only().printf("WIFI SCAN END found=%d reported=%u\n", found,
+                             unsigned(count));
   if (temporary)
     WiFi.mode(WIFI_OFF);
 }
@@ -483,7 +488,7 @@ void accept_client() {
     if (clients[peer].fd.load() < 0)
       break;
   if (peer == ble::kMaxLanClients) {
-    aqlog.printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
+    aqlog.record_only().printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
     std::uint8_t frame[3 + 64];
     const auto length = error_frame(frame, static_cast<ble::Op>(0),
                                     ble::kErrBusy, "sessions-full");
@@ -504,7 +509,8 @@ void accept_client() {
   client.fd = fd;
   xSemaphoreGive(socket_mutex);
   set_status(connected ? "connected" : "connecting", connected);
-  aqlog.printf("LAN CONNECT peer=%s slot=%u\n", peer_text, unsigned(peer));
+  aqlog.record_only().printf("LAN CONNECT peer=%s slot=%u\n", peer_text,
+                             unsigned(peer));
 }
 
 bool send_hello(std::uint8_t peer) {
@@ -534,8 +540,9 @@ bool open_session(std::uint8_t peer) {
   }
   client.needs_snapshots = true;
   set_status("connected", true);
-  aqlog.printf("LAN AUTH result=ok slot=%u session=%lu\n", unsigned(peer),
-               static_cast<unsigned long>(sessions.load()));
+  aqlog.record_only().printf("LAN AUTH result=ok slot=%u session=%lu\n",
+                             unsigned(peer),
+                             static_cast<unsigned long>(sessions.load()));
   return true;
 }
 
@@ -553,7 +560,7 @@ void handle_client_bytes(std::uint8_t peer) {
     if (client.rx_length < kHandshakeBytes)
       return;
     if (!token_matches(client.rx)) {
-      aqlog.println("LAN AUTH result=rejected");
+      aqlog.record_only().println("LAN AUTH result=rejected");
       send_error_to(peer, static_cast<ble::Op>(0), ble::kErrAuth, "token");
       close_client(peer, "auth");
       return;
@@ -586,8 +593,9 @@ void handle_client_bytes(std::uint8_t peer) {
     std::memcpy(request.bytes, client.rx + 2, body);
     std::memmove(client.rx, client.rx + 2 + body, client.rx_length - 2 - body);
     client.rx_length -= 2 + body;
-    aqlog.printf("LAN CMD slot=%u op=0x%02x bytes=%u\n", unsigned(peer),
-                 unsigned(request.bytes[0]), unsigned(request.length));
+    aqlog.record_only().printf("LAN CMD slot=%u op=0x%02x bytes=%u\n",
+                               unsigned(peer), unsigned(request.bytes[0]),
+                               unsigned(request.length));
     if (!request_handler(request))
       send_error_to(peer, static_cast<ble::Op>(request.bytes[0]), ble::kErrBusy,
                     "queue-full");
@@ -702,11 +710,11 @@ bool begin(const char *host, const ble::Identity &identity,
                 WiFi.macAddress().c_str());
   reapply = true;
   if (xTaskCreate(lan_task, "aq-lan", 8192, nullptr, 1, nullptr) != pdPASS) {
-    aqlog.println("LAN ERROR operation=task");
+    aqlog.record_only().println("LAN ERROR operation=task");
     return false;
   }
-  aqlog.printf("LAN BEGIN host=%s port=%u\n", host_label,
-               unsigned(config::kLanPort));
+  aqlog.record_only().printf("LAN BEGIN host=%s port=%u\n", host_label,
+                             unsigned(config::kLanPort));
   return true;
 }
 

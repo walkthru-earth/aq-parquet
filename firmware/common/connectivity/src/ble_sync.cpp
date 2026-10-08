@@ -137,7 +137,7 @@ public:
   }
   std::uint32_t onPassKeyDisplay() override {
     // `random`: fresh six digits for each pairing attempt, shown by the display
-    // loop and printed so a bench log can reproduce the pairing. `fixed`: the
+    // loop. Never record the numeric key in diagnostic logs. `fixed`: the
     // owner's random per-device PIN for boards without a screen; still shown
     // when a screen exists. The pairing overlay is drawn in both modes.
     const std::uint32_t key = mode == config::PairMode::Fixed
@@ -150,7 +150,7 @@ public:
     if (mode == config::PairMode::Fixed)
       aqlog.println("BLE PAIR passkey=fixed");
     else
-      aqlog.printf("BLE PAIR passkey=%06lu\n", static_cast<unsigned long>(key));
+      aqlog.record_only().println("BLE PAIR passkey=random");
     return key;
   }
   void onAuthenticationComplete(NimBLEConnInfo &info) override {
@@ -193,8 +193,9 @@ public:
       return;
     }
     std::memcpy(request.bytes, value.data(), request.length);
-    aqlog.printf("BLE CMD op=0x%02x bytes=%u\n", unsigned(request.bytes[0]),
-                 unsigned(request.length));
+    aqlog.record_only().printf("BLE CMD op=0x%02x bytes=%u\n",
+                               unsigned(request.bytes[0]),
+                               unsigned(request.length));
     if (!request_handler(request))
       send_error(static_cast<Op>(request.bytes[0]), kErrBusy, "queue-full");
   }

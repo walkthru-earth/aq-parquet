@@ -15,6 +15,10 @@ std::size_t DebugLog::write(std::uint8_t) { return 1; }
 std::size_t DebugLog::write(const std::uint8_t *, std::size_t length) {
   return length;
 }
+std::size_t DebugLog::write_record_only(const std::uint8_t *,
+                                        std::size_t length) {
+  return length;
+}
 
 namespace {
 config::Settings fixture_settings;

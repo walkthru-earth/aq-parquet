@@ -1222,7 +1222,7 @@ aqsync::ArchiveSession archive_session(
        publish_advert();
      },
      [](void *) { lock_bus(); }, [](void *) { unlock_bus(); },
-     [](void *, const char *line) { aqlog.print(line); }},
+     [](void *, const char *line) { aqlog.record_only().print(line); }},
     {nullptr,
      [](void *, ble::Link link, std::uint8_t peer) {
        return link_generation(link, peer);

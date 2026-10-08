@@ -84,3 +84,38 @@ settings, flush, delete or rewrite sensor archives for a speed comparison.
    `bench-verified.md`, and phone observations in the mobile repository's
    `docs/status.md`. Report the measured improvement or remaining bottleneck;
    do not infer an on-board speed gain from the host scheduling regression.
+
+## Radio diagnostics and console backpressure
+
+The CoreS3 build identity for this follow-up is `arduino-cores3-parquet-v6.7`;
+its measurement schema and dictionary remain unchanged, and older finalized
+files retain their original provenance. The Waveshare working-copy identity
+belongs to unrelated configuration/schema work and is unchanged by this fix.
+
+High-rate Wi-Fi/BLE command and archive OPEN/READ/CLOSE diagnostics now use
+[DebugLog's `record_only()` facade](../../firmware/common/runtime/src/debug_log.h).
+It stores the complete diagnostic write in the existing bounded `LOG_TAIL`
+ring and never calls the borrowed console sink. This prevents a blocked USB
+console from delaying request enqueueing or READ_END delivery. The archive
+worker's serial `get`, `list`, `status` and physical owner/provisioning replies
+retain their previous console path; no serial TX timeout is changed. Normal
+boot and sampling diagnostics retain their console behavior. Radio diagnostic
+lines are retrieved through LOG_TAIL rather than a serial capture. Pairing
+diagnostics describe random/fixed mode and never record the returned PIN.
+
+The cached Arduino-ESP32 3.3.11 `HWCDC::write` uses a default 100 ms timeout
+and up to 20 consecutive TX-ring retries when the USB host stops draining.
+Two synchronous log writes previously gated each READ window. Availability
+clipping alone would leave a check/write race, so these diagnostic sites use
+no console IO at all. `debug-log-test` compiles the real implementation and
+checks blocked-sink isolation, complete newest-ring retention, successful
+serial forwarding and ring-only behavior even with a writable sink. Normal
+console diagnostics can still encounter SDK backpressure; this change is
+limited to the radio/archive request hot paths.
+
+The follow-up passes `debug-log-test`, `wifi-link-test`, `config-test`,
+`control-sync-test`, `logger-provision-test`, `telemetry-contract-test --sanitize`,
+`fmt-check` and `lint`, and both board builds. The prior Waveshare contract
+identity assertion remains a separate working-copy limitation. Build/test
+results alone do not establish a post-deployment throughput gain. Record actual
+old/new-image measurements separately in the selected board's bench record.

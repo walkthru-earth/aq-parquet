@@ -15,6 +15,12 @@ DebugLog::DebugLog() : output_(&Serial) {}
 size_t DebugLog::write(uint8_t byte) { return write(&byte, 1); }
 
 size_t DebugLog::write(const uint8_t *buffer, size_t size) {
+  if (write_record_only(buffer, size) == 0)
+    return 0;
+  return output_->write(buffer, size);
+}
+
+size_t DebugLog::write_record_only(const uint8_t *buffer, size_t size) {
   if (!buffer || size == 0)
     return 0;
   // Keep only the newest kRingBytes of an oversized write.
@@ -33,7 +39,7 @@ size_t DebugLog::write(const uint8_t *buffer, size_t size) {
   head_ = (head_ + count) % kRingBytes;
   total_ += static_cast<std::uint32_t>(size);
   portEXIT_CRITICAL(&ring_mutex);
-  return output_->write(buffer, size);
+  return size;
 }
 
 std::size_t DebugLog::tail(char *out, std::size_t max,

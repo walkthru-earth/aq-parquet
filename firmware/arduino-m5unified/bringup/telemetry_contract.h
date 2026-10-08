@@ -16,7 +16,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 3;
 constexpr const char *kSchemaName = "cores3-telemetry-v3";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v2";
-constexpr const char *kFirmware = "arduino-cores3-parquet-v6.6";
+constexpr const char *kFirmware = "arduino-cores3-parquet-v6.7";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/arduino-m5unified/bringup/telemetry_fields.inc";
