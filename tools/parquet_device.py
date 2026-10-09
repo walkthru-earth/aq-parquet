@@ -293,16 +293,24 @@ def capture(port, args) -> int:
 def command(port, args) -> int:
     text = " ".join(args.text.split())
     if text not in {"parquet status", "parquet schema", "parquet list", "parquet flush",
+                    "parquet erase-archive CONFIRM",
                     "parquet interval 600", "parquet interval 900", "parquet interval 1800",
                     "parquet interval 3600", "parquet codec none", "parquet codec lz4", "parquet codec-test"}:
         raise ValueError("supported commands: parquet status/schema/list/flush/interval 600|900|1800|3600/"
-                         "codec none/codec lz4/codec-test; use fetch for get")
+                         "codec none/codec lz4/codec-test/erase-archive CONFIRM; use fetch for get")
     send_command(port, text)
     for line in lines_until(port, time.monotonic() + args.timeout):
         print(line, flush=True)
         if line.startswith("PARQUET ERROR"):
             raise RuntimeError(line)
-        if text == "parquet schema":
+        if text == "parquet erase-archive CONFIRM":
+            # Native ESP-IDF output can share the UART line with a physical
+            # owner reply. Match the exact sentinel after an unrelated prefix.
+            if acknowledgement := re.search(r"PARQUET ERASE_ARCHIVE (ok=[01]\b.*)", line):
+                if acknowledgement[1].startswith("ok=1"):
+                    return 0
+                raise RuntimeError("PARQUET ERASE_ARCHIVE " + acknowledgement[1])
+        elif text == "parquet schema":
             if line == "PARQUET SCHEMA END":
                 return 0
         elif text == "parquet list":

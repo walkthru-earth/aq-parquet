@@ -30,6 +30,19 @@ constexpr std::int64_t estimate_ns(std::int64_t now_mono_us,
   return anchor_utc_ns + (now_mono_us - anchor_mono_us) * 1000;
 }
 
+// Whole-second legacy host requests and transport latency can make harmless
+// refreshes differ slightly. Keep the discontinuity threshold below the
+// ten-second sampling period; each future row still records its exact anchor.
+constexpr std::int64_t kEpochDiscontinuityNs = 2000000000LL;
+constexpr bool starts_new_epoch(std::int32_t previous_source,
+                                std::int32_t next_source,
+                                std::int64_t skew_ns) {
+  return previous_source == None ||
+         (previous_source == Rtc &&
+          (next_source == Host || next_source == Network)) ||
+         skew_ns > kEpochDiscontinuityNs || skew_ns < -kEpochDiscontinuityNs;
+}
+
 constexpr const char *source_name(std::int32_t source) {
   return source == Host      ? "host"
          : source == Rtc     ? "rtc"

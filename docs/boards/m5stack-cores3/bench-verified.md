@@ -665,3 +665,82 @@ bonded phone reconnect/BLE or LAN transfer were not tested on this native
 image. Network time worked, but its selected endpoint, router option 42,
 local/public failure transitions and accuracy were not independently measured.
 H3 mobile provisioning and location changes were not exercised on hardware.
+
+## Board 1, repeated phone clock updates fragment one interval
+
+On **2026-10-10** (Cairo local date; captured rows are **2026-10-09 UTC**),
+read-only USB inspection of `/dev/cu.usbmodem20301` and ADB inspection of the
+connected GM1911 compared the six `data_2100` files visible at local midnight.
+Their metadata reports `idf-cores3-parquet-v6.9`, schema v4, 900-second rotation,
+and boot `6f40c72a790f8323b18003bda9f0c957`, matching the preceding native run.
+This investigation did not re-read the flash image hash or flash/reset the board.
+
+| Sequence range | Rows | Clock epoch | Clock source |
+| --- | ---: | ---: | --- |
+| 55–95 | 41 | 4 | Host |
+| 96–96 | 1 | 5 | Host |
+| 97–113 | 17 | 5 | Host |
+| 114–114 | 1 | 6 | Host |
+| 115–117 | 3 | 6 | Host |
+| 118–118 | 1 | 7 | Host |
+
+All six already existed on SD and their Android copies were byte-identical.
+Serial transfers passed length/CRC checks and PyArrow/DuckDB agreed on every
+decoded column. The 64 rows cover consecutive sequences 55–118 without overlap
+or gaps. Host anchors changed at 21:06:50.515Z, 21:09:58.576Z and 21:10:40.679Z.
+Source inspection identifies the mechanism: Android sends `SET_TIME` on each
+authenticated connection; AQLogger finalizes pending rows on the update and
+then finalizes the first sample in the new epoch separately. Repeated updates
+therefore produce the observed chunk/singleton pairs. This is fragmentation,
+not duplicated downloads or duplicated observations.
+
+Evidence is ignored under
+`firmware/esp-idf-cores3/artifacts/duplicate-interval-20261010/`: `sd-list.log`,
+the six verified files under `sd/`, and `summary.json` with file hashes, clock
+anchors, reader results and Android comparisons. No clock/flush command or
+archive mutation was performed. Limits: one partial interval and existing
+Android copies; this does not qualify iOS, reconnect stability, endurance or
+power-loss durability. Buffered serial output also contained SD DMA allocation
+failures (`0x101`); their cause and relationship to reconnects were not tested.
+
+## Board 1, v6.10 interval fix and owner-authorized factory reset
+
+On **2026-10-10** (Cairo), the owner explicitly requested deletion of archive,
+pairing, Wi-Fi and station settings. Before writing, ports/chip/flash-ID/eFuse
+inspection identified this CoreS3, ESP32-S3 revision 0.2, 16 MiB flash, with
+flash encryption and secure boot disabled. A default-baud full-flash backup
+was verified at **16,777,216 bytes**, SHA-256
+`333ebd09003eaf9601bf9f7c555c251bff1570e7aa799e8199b56af657e5aab5`.
+The backup is private and ignored; it does not back up the SD card.
+
+The checked native v6.10 image was flashed first to enable physical-serial
+archive maintenance. `parquet erase-archive CONFIRM` acknowledged `ok=1`,
+removing **130 files and 63 directories**, and parked acquisition until reboot.
+The card was not formatted. Full flash erasure then removed NVS identity,
+configuration and bonds; the same checked image was reflashed with verified
+flash hashes. Image SHA-256:
+`0776f1e5c465de80bce0c7ea418f5fc0b0dc68afc6c278ef4637e0eef540cdd8`.
+
+Fresh boot reported station `f3c3fdc1-6f18-4be8-b7bb-fb27692bb60a`, boot
+`a11ea18e5ff5c2341ee6226296d7fa63`, `first_boot=true`, random displayed pairing
+PIN, zero BLE bonds, Wi-Fi disabled and no configured SSID. SD mounted at
+20 MHz; the initial scan found zero archive files, retained partials or
+quarantine files. The hardware RTC retained UTC as expected. A physical serial
+host anchor was subsequently accepted at epoch seconds `1791581620`, monotonic
+`124760508` microseconds.
+
+The firmware removes automatic anchor-triggered flushes and singleton rows;
+initial UTC, RTC upgrades and corrections larger than two seconds still split
+clock epochs. Small refreshes retain the current epoch while future rows keep
+their exact anchors. Host rotation tests cover row-group fullness without
+premature file closure. Format/lint, common/status/rotation/archive-reset,
+control/archive-sync, writer/telemetry and board contract gates passed, including
+sanitizer checks where supported. Both native board applications built; only
+this CoreS3 was flashed. Independent review found no blocking issue.
+
+Evidence is ignored under
+`firmware/esp-idf-cores3/artifacts/interval-fix-20261010/`: checked image,
+ELF/manifest, flash/reset logs and fresh boot capture. Limits: these checks
+establish erase, deployment, clean boot and host clock acceptance. Full-window
+rotation after the fix, bonded phone reconnect/transfer, endurance and power-cut
+durability are not established by this entry.

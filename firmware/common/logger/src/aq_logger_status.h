@@ -20,6 +20,8 @@ struct StatusSnapshot {
   std::int32_t generation = 0;
   std::int32_t clock_source = 0;
   std::int32_t rtc_state = 0;
+  std::int64_t utc_ms = 0;
+  std::int64_t clock_age_seconds = 0;
   bool storage_ok = false;
   std::uint32_t total_kib = 0;
   std::uint32_t used_kib = 0;

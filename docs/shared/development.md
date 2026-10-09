@@ -28,14 +28,14 @@ pixi run waveshare-build diagnostic
 | [Waveshare V2](../../firmware/esp-idf-waveshare-sim7670g/README.md) | `logger/main.cpp` or `diagnostic/main.cpp`, board IO adapter | 16 MB flash, OPI PSRAM for logger, no PSRAM for diagnostic, UART0 console and one-bit SDMMC | Native qualification pending; historical Arduino images in the board bench record |
 
 `tools/idf-dependencies.lock` pins ESP-IDF 6.1 and its exact source commit.
-Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.31**, mDNS **1.14.0**
+Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.32**, mDNS **1.14.0**
 and Waveshare led_strip **3.1.0~1**; official H3 **4.5.0** is vendored with exact
 source/license hashes in `firmware/common/location/vendor/h3/manifest.json`.
-Rechecking on **2026-10-09** found M5GFX **0.2.32** as the latest stable
-[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). Keep 0.2.31 for
-this first native hardware qualification so its SD and identity corrections
-are measured against the already built dependency; 0.2.32 requires a separate
-upgrade/build/board check. The other listed pins were the latest stable releases
+Rechecking on **2026-10-10** confirmed M5GFX **0.2.32** as the latest stable
+[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). The previous
+first-qualification exception for 0.2.31 is removed: this change upgrades the
+exact manifest pin and rebuilds CoreS3; dated device evidence records the
+remaining qualification limits. The other listed pins were the latest stable releases
 observed on that date. LZ4 remains vendored **1.10.0** with checked hashes; the
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
@@ -204,3 +204,12 @@ native run observed successful network UTC and a short USB file readback;
 router/local/public transitions and location provisioning remain unqualified.
 Finalized owner archives and old schemas were
 not rewritten.
+
+Physical serial `parquet erase-archive CONFIRM` (CoreS3 v6.10 / Waveshare v2.4)
+removes only `/sd/output` and historical `/sd/parquet`, including partials and
+quarantine. It closes archive/partial handles, discards the RAM batch, pauses
+acquisition, rejects further archive requests and remains paused until reboot,
+even after a deletion error. It never formats the card or deletes unrelated
+card content. Use only for an explicitly requested destructive reset. The
+`PARQUET ERASE_ARCHIVE` response reports success and deletion counts; a host
+fixture does not prove physical FAT durability.

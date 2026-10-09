@@ -63,6 +63,23 @@ void clock_contract() {
   const auto anchor = kMinEpochSeconds * 1000000000LL;
   assert(estimate_ns(1000020, 1000000, anchor) == anchor + 20000);
   assert(estimate_ns(999980, 1000000, anchor) == anchor - 20000);
+  assert(starts_new_epoch(None, Host, 0));
+  assert(starts_new_epoch(None, Rtc, 0));
+  assert(starts_new_epoch(Rtc, Host, 0));
+  assert(starts_new_epoch(Rtc, Network, 0));
+  for (const auto source : {Host, Network}) {
+    for (const auto next : {Host, Network}) {
+      assert(!starts_new_epoch(source, next, 0));
+      assert(!starts_new_epoch(source, next, kEpochDiscontinuityNs));
+      assert(!starts_new_epoch(source, next, -kEpochDiscontinuityNs));
+      assert(starts_new_epoch(source, next, kEpochDiscontinuityNs + 1));
+      assert(starts_new_epoch(source, next, -kEpochDiscontinuityNs - 1));
+      assert(starts_new_epoch(source, next,
+                              std::numeric_limits<std::int64_t>::min()));
+      assert(starts_new_epoch(source, next,
+                              std::numeric_limits<std::int64_t>::max()));
+    }
+  }
   assert(std::strcmp(source_name(None), "none") == 0);
   assert(std::strcmp(source_name(Host), "host") == 0);
   assert(std::strcmp(source_name(Rtc), "rtc") == 0);

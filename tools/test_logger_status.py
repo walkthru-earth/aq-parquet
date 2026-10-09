@@ -29,17 +29,22 @@ def main() -> None:
     snapshots = [json.loads(line) for line in result.stdout.splitlines()]
     expected_keys = {"up_s", "int_s", "buf", "fin", "drop", "err", "miss", "fail",
                      "codec", "utc", "gen", "clk", "rtc", "sd", "sd_kib",
-                     "sd_used_kib", "heap", "part", "qf", "qb", "open", "open_rg"}
-    assert len(snapshots) == 2
+                     "sd_used_kib", "heap", "part", "qf", "qb", "open", "open_rg",
+                     "utc_ms", "clk_age_s"}
+    assert len(snapshots) == 3
     assert {row["codec"] for row in snapshots} == {"UNCOMPRESSED", "LZ4_RAW"}
-    for row in snapshots:
+    for row in snapshots[:2]:
         assert row.keys() == expected_keys
         assert row["miss"] == -(2**63)
         assert row["qb"] == 2**64 - 1
         assert row["gen"] == row["clk"] == row["rtc"] == -(2**31)
         assert row["fail"] == row["utc"] == row["sd"] == 1
-        for key in expected_keys - {"miss", "qb", "gen", "clk", "rtc", "fail", "utc", "sd", "codec"}:
+        assert row["utc_ms"] == row["clk_age_s"] == 2**63 - 1
+        for key in expected_keys - {"miss", "qb", "gen", "clk", "rtc", "fail", "utc", "sd", "codec", "utc_ms", "clk_age_s"}:
             assert row[key] == 2**32 - 1
+    assert snapshots[2]["utc"] == 0
+    assert snapshots[2]["utc_ms"] is None and snapshots[2]["clk_age_s"] is None
+    assert snapshots[2].keys() == expected_keys
     lengths = [len(line) for line in result.stdout.splitlines()]
     print(f"Actual STATUS formatter worst numeric payloads: {lengths} bytes; all keys retained within 480")
 

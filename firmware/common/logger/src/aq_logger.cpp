@@ -1,7 +1,9 @@
 #include "aq_logger.h"
+#include "aq_logger_archive_reset.h"
 #include "aq_logger_directory.h"
 #include "aq_logger_location.h"
 #include "aq_logger_provision.h"
+#include "aq_logger_rotation.h"
 #include "aq_logger_status.h"
 #include "aq_logger_work_queue.h"
 #include "debug_log.h"
@@ -145,8 +147,6 @@ portMUX_TYPE clock_mutex = portMUX_INITIALIZER_UNLOCKED;
 std::int64_t anchor_mono_us = 0, anchor_utc_ns = 0;
 std::int32_t clock_generation = 0;
 std::int32_t clock_source = kClockNone;
-// Worker-owned: finalize the first genuine row for a fresh external anchor.
-std::int32_t pending_anchor_epoch = 0;
 // A host sync asks the main task to copy the anchor through the optional
 // board RTC callback; the storage worker never performs board RTC IO.
 std::atomic<bool> rtc_write_pending{false};
@@ -154,6 +154,7 @@ std::atomic<std::int64_t> rtc_write_requested_us{0};
 std::atomic<std::int32_t> rtc_state{0}; // 0 unread, 1 seeded, 2 unusable
 bool mounted = false;
 bool accepting = false;
+std::atomic<bool> archive_reset{false};
 std::atomic<Codec> selected_codec{Codec::Uncompressed};
 const char *codec_name(Codec codec) {
   return codec == Codec::Lz4Raw ? "LZ4_RAW" : "UNCOMPRESSED";
@@ -315,16 +316,12 @@ bool make_directories(const char *path) {
   }
 }
 
-// Rows per row group and row groups per file for the current rotation window.
+// Rows per row group for the current rotation window.
 // 600 s -> 60-row groups, one per file; 900 s -> 90 x 1; 1800 s -> 90 x 2;
 // 3600 s -> 90 x 4. The RAM batch (loss window) never exceeds kMaxRows.
 std::size_t rows_per_group() {
   const std::size_t rows = rotation_seconds.load() / 10;
   return rows < kMaxRows ? rows : kMaxRows;
-}
-std::size_t groups_per_file() {
-  const std::size_t groups = rotation_seconds.load() / 900;
-  return groups ? (groups < kMaxRowGroups ? groups : kMaxRowGroups) : 1;
 }
 
 std::int64_t window_index(const Sample &row) {
@@ -337,12 +334,10 @@ std::int64_t window_index(const Sample &row) {
 // clock correction).
 bool same_window(const Sample &row, std::int32_t epoch, bool dated,
                  std::int64_t window) {
-  if (row.data[clock_epoch] != epoch)
-    return false;
   const bool row_dated = row.valid[event_time_utc_ns] != 0;
-  if (row_dated != dated)
-    return false;
-  return !dated || window_index(row) == window;
+  return same_rotation_window(static_cast<std::int32_t>(row.data[clock_epoch]),
+                              row_dated, row_dated ? window_index(row) : 0,
+                              epoch, dated, window);
 }
 
 void close_failed(OutputFile &target, const char *operation,
@@ -632,8 +627,7 @@ bool commit(std::size_t &count, bool finalize) {
     buffered = 0;
   }
   if (target.open() &&
-      (finalize || target.writer.row_groups() >= groups_per_file() ||
-       target.writer.row_groups() >= kMaxRowGroups))
+      finalize_after_group(finalize, target.writer.row_groups(), kMaxRowGroups))
     return finalize_file(target);
   return true;
 }
@@ -977,8 +971,9 @@ const char *clock_source_name(std::int32_t source) {
 
 // Shared by `parquet time`, the BLE/LAN SET_TIME op and the boot-time RTC
 // seed. False for a bad epoch (before 2020 or after 2100, which also rejects
-// an RTC that was never written). Each call starts a new clock epoch; rows
-// already captured keep theirs. When an anchor already existed, `skew_ns`
+// an RTC that was never written). Initial UTC, RTC upgrades and corrections
+// larger than two seconds start a new epoch; small refreshes keep the current
+// file. Captured rows keep their timestamps and exact anchors. `skew_ns`
 // receives new minus old estimate of the same monotonic instant, i.e. how far
 // the previous clock (RTC or earlier host) had drifted from this host.
 bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
@@ -989,20 +984,22 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
     return false;
   const std::int64_t utc_ns = aq::utc::anchor_ns(seconds, subsecond_us);
   portENTER_CRITICAL(&clock_mutex);
+  const auto previous_source = clock_generation ? clock_source : kClockNone;
+  const auto skew =
+      clock_generation
+          ? utc_ns - aq::utc::estimate_ns(mono, anchor_mono_us, anchor_utc_ns)
+          : 0;
   if (previous)
-    *previous = clock_generation ? clock_source : kClockNone;
+    *previous = previous_source;
   if (skew_ns)
-    *skew_ns = clock_generation
-                   ? utc_ns - (aq::utc::estimate_ns(mono, anchor_mono_us,
-                                                    anchor_utc_ns))
-                   : 0;
+    *skew_ns = skew;
   anchor_mono_us = mono;
   anchor_utc_ns = utc_ns;
   clock_source = source;
-  ++clock_generation;
+  if (aq::utc::starts_new_epoch(previous_source, source, skew))
+    ++clock_generation;
   portEXIT_CRITICAL(&clock_mutex);
   if (source == kClockHost || source == aq::utc::Network) {
-    pending_anchor_epoch = clock_generation;
     rtc_write_requested_us = mono;
     rtc_write_pending = true;
   }
@@ -1076,13 +1073,16 @@ void service_rtc_write(std::int64_t now) {
 
 std::size_t build_status_json(char *out, std::size_t size) {
   std::int32_t generation, source;
+  std::int64_t now, mono_anchor, utc_anchor;
   portENTER_CRITICAL(&clock_mutex);
+  now = esp_timer_get_time();
   generation = clock_generation;
   source = clock_source;
+  mono_anchor = anchor_mono_us;
+  utc_anchor = anchor_utc_ns;
   portEXIT_CRITICAL(&clock_mutex);
   StatusSnapshot view;
-  view.uptime_seconds =
-      static_cast<std::uint32_t>(esp_timer_get_time() / 1000000);
+  view.uptime_seconds = static_cast<std::uint32_t>(now / 1000000);
   view.interval_seconds = rotation_seconds.load();
   view.buffered = buffered.load();
   view.finalized = finalized.load();
@@ -1095,6 +1095,10 @@ std::size_t build_status_json(char *out, std::size_t size) {
   view.generation = generation;
   view.clock_source = generation ? source : kClockNone;
   view.rtc_state = rtc_state.load();
+  if (generation) {
+    view.utc_ms = aq::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000;
+    view.clock_age_seconds = (now - mono_anchor) / 1000000;
+  }
   view.storage_ok = storage_ok.load();
   view.total_kib = total_kib.load();
   view.used_kib = used_kib.load();
@@ -1345,12 +1349,8 @@ void handle_control_request(const ble::ControlRequest &request,
     }
     report_host_clock(request.link == ble::Link::Ble ? "ble" : "lan", seconds,
                       request.received_mono_us, previous, skew_ns);
-    // Publish all captured rows immediately so the phone can reconcile with
-    // the acknowledgement's boot-scoped anchor before its LIST/download.
-    if (state.storage_ready && !state.failed && !write_batch(state.count)) {
-      state.failed = true;
-      worker_failed = true;
-    }
+    // Acceptance never flushes an unfinished interval. A genuine clock/UTC
+    // transition closes the previous file when its next sample arrives.
     std::uint8_t frame[21];
     frame[0] = ble::kFrameTimeSet;
     const auto length =
@@ -1479,13 +1479,7 @@ void storage_worker(void *) {
         }
         writer_state->rows[count++] = row;
         buffered = count;
-        if (pending_anchor_epoch && row.valid[event_time_utc_ns] &&
-            row.data[clock_epoch] >= pending_anchor_epoch) {
-          if (!write_batch(count))
-            failed = true;
-          else
-            pending_anchor_epoch = 0;
-        } else if (!row.valid[event_time_utc_ns] && count >= kUnsyncedRows) {
+        if (!row.valid[event_time_utc_ns] && count >= kUnsyncedRows) {
           if (!write_batch(count))
             failed = true;
         } else if (count >= rows_per_group() && !commit(count, false))
@@ -1503,8 +1497,6 @@ void storage_worker(void *) {
       const auto &anchor = command.network_time;
       if (set_clock(anchor.seconds, anchor.monotonic_us, aq::utc::Network,
                     nullptr, nullptr, anchor.subsecond_us)) {
-        if (storage_ready && !failed && !write_batch(count))
-          failed = true;
         aqlog.printf(
             "PARQUET TIME epoch_s=%lld source=network monotonic_us=%lld\n",
             static_cast<long long>(anchor.seconds),
@@ -1520,7 +1512,57 @@ void storage_worker(void *) {
       current_request = nullptr;
       continue;
     }
-    if (std::strcmp(command.text, "parquet owner-pin") == 0) {
+    if (std::strcmp(command.text, "parquet erase-archive CONFIRM") == 0) {
+      // Physical UART only: radio controls cannot reach this dispatcher.
+      // Pause acquisition before closing files or deleting the archive. Stay
+      // paused even on failure so a reset cannot be undone by a queued command.
+      if (!storage_ready) {
+        aq::console::printf("PARQUET ERASE_ARCHIVE ok=0 reason=no-storage\n");
+        continue;
+      }
+      archive_reset = true;
+      archive_session.close();
+      std::uint32_t files_removed = 0, directories_removed = 0;
+      bool erased;
+      {
+        BusLock lock;
+        bool closed = true;
+        for (auto *target :
+             {&writer_state->telemetry, &writer_state->benchmark}) {
+          if (target->file) {
+            closed &= std::fclose(target->file) == 0;
+            target->file = nullptr;
+          }
+        }
+        erased = closed &&
+                 aq::logger::detail::erase_archive("/sd/output", files_removed,
+                                                   directories_removed) &&
+                 aq::logger::detail::erase_archive("/sd/parquet", files_removed,
+                                                   directories_removed);
+      }
+      count = 0;
+      buffered = open_rows = open_groups = 0;
+      storage_ok = false;
+      worker_failed = !erased;
+      xQueueReset(samples);
+      xQueueReset(commands);
+      if (erased) {
+        partials_seen = partials_quarantined = 0;
+        quarantine_bytes = 0;
+        unlisted_files = false;
+      } else
+        ++errors;
+      aq::console::printf("PARQUET ERASE_ARCHIVE ok=%u files=%lu "
+                          "directories=%lu reboot_required=1\n",
+                          erased ? 1U : 0U,
+                          static_cast<unsigned long>(files_removed),
+                          static_cast<unsigned long>(directories_removed));
+      publish_status();
+      for (;;) {
+        worker_heartbeat_us = esp_timer_get_time();
+        vTaskDelay(pdMS_TO_TICKS(1000));
+      }
+    } else if (std::strcmp(command.text, "parquet owner-pin") == 0) {
       // Physical serial only. Bypass aqlog so the PIN never enters LOG_TAIL.
       // Control requests use a separate opcode dispatcher above and cannot
       // reach this command. No PIN is printed at boot.
@@ -1635,8 +1677,6 @@ void storage_worker(void *) {
         aqlog.println("PARQUET ERROR operation=time reason=invalid-epoch");
         continue;
       }
-      if (storage_ready && !failed && !write_batch(count))
-        failed = true;
       report_host_clock("serial", seconds, mono, previous, skew_ns);
       publish_status();
     } else if (std::strcmp(command.text, "parquet list") == 0)
@@ -1860,7 +1900,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
 }
 
 void poll() {
-  if (!accepting)
+  if (!accepting || archive_reset.load())
     return;
   const auto now = esp_timer_get_time();
   // Only an actual SNTP callback provides network time. Never treat an
@@ -1956,8 +1996,8 @@ bool start_links(bool display_detected) {
 }
 
 bool enqueue_request(const ble::ControlRequest &request) {
-  if (!commands || !worker_wakeup || request.length == 0 ||
-      request.length > sizeof(request.bytes))
+  if (archive_reset.load() || !commands || !worker_wakeup ||
+      request.length == 0 || request.length > sizeof(request.bytes))
     return false;
   // BLE and LAN invoke this concurrently; xQueueSend copies this local value.
   Command command{};

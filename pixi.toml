@@ -58,7 +58,9 @@ debug-log-test = "python tools/test_debug_log.py"
 owner-pin = "python tools/owner_pin.py"
 provision-usb = "python tools/provision_usb.py"
 logger-status-test = "python tools/test_logger_status.py --sanitize"
+logger-rotation-test = "python tools/test_logger_rotation.py"
 logger-directory-test = "python tools/test_logger_directory.py --sanitize"
+logger-archive-reset-test = "python tools/test_logger_archive_reset.py --sanitize"
 logger-provision-test = "python tools/test_logger_provision.py --sanitize"
 # Destructive: requires the checked port and exact full-backup file.
 waveshare-flash = "firmware/esp-idf-waveshare-sim7670g/flash.sh"
@@ -88,14 +90,16 @@ ninja = ">=1.13.2,<2"
 ccache = ">=4.14,<5"
 python = ">=3.14.7,<3.15"
 git = ">=2.55.0,<3"
-esptool = ">=5.3.1,<6"
+esptool = "==5.5.0"
 rust = ">=1.98.0,<1.99"
 clang-tools = ">=23.1.0,<24"
 pip = ">=26.2.1,<27"
 pyserial = ">=3.5,<4"
 cppcheck = ">=2.21.0,<3"
 pre-commit = ">=4.6.2,<5"
-pyarrow = ">=25.0.0,<26"
+# Arrow 25.0.1 is current upstream; conda-forge osx-arm64 still offers
+# 25.0.0 on 2026-10-10. Keep the validated reader until its patch is packaged.
+pyarrow = "==25.0.0"
 duckdb = ">=1.5.5,<2"
 
 [activation.env]

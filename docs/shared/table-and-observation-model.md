@@ -154,7 +154,7 @@ sequenceDiagram
     C->>C: Assign ingestion time separately
 ```
 
-The clock anchor pair in each row supports auditing the UTC mapping without relying on a later mutable global anchor. It does not fix host truncation, transport delay, oscillator drift or unknown sensor integration time. The receipt timestamp identifies even a stale/error-bearing checksum-valid PMS frame, while its measurement values remain governed by `pms_status`. Collection completion is not a physical phenomenon time or sensor result time. Clock corrections split files using the existing clock-epoch mechanism; unsynced rows remain unsynced.
+The clock anchor pair in each row supports auditing the UTC mapping without relying on a later mutable global anchor. It does not fix host truncation, transport delay, oscillator drift or unknown sensor integration time. The receipt timestamp identifies even a stale/error-bearing checksum-valid PMS frame, while its measurement values remain governed by `pms_status`. Collection completion is not a physical phenomenon time or sensor result time. Clock corrections larger than two seconds, initial UTC and RTC-to-external upgrades split files using the clock-epoch mechanism; small host/network refreshes retain their epoch with exact new anchors captured per future row. Unsynced rows remain unsynced.
 
 | Validity token | Meaning in this implementation |
 | --- | --- |

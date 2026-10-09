@@ -11,7 +11,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 3;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v3";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v3";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.3";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.4";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"

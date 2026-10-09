@@ -33,6 +33,8 @@ int main() {
   view.generation = view.clock_source = view.rtc_state =
       std::numeric_limits<std::int32_t>::min();
   view.quarantine_bytes = std::numeric_limits<std::uint64_t>::max();
+  view.utc_ms = view.clock_age_seconds =
+      std::numeric_limits<std::int64_t>::max();
   view.failed = view.utc = view.storage_ok = true;
   std::array<char, ble::kMaxJson + 16> buffer{};
   for (const auto codec :
@@ -56,4 +58,10 @@ int main() {
     assert(buffer[0] == '\0');
     assert(aqlogger::format_status(view, nullptr, 0) == 0);
   }
+  view.utc = false;
+  const auto length =
+      aqlogger::format_status(view, buffer.data(), buffer.size());
+  assert(length && length <= ble::kMaxJson);
+  assert(std::strstr(buffer.data(), "\"utc_ms\":null,\"clk_age_s\":null}"));
+  std::cout << buffer.data() << '\n';
 }

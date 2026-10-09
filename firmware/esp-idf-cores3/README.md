@@ -1,18 +1,18 @@
 # CoreS3 native ESP-IDF logger
 
 The current source is a pure **ESP-IDF 6.1** application, firmware identity
-**`idf-cores3-parquet-v6.9`**, with an **81-column** CoreS3 schema
+**`idf-cores3-parquet-v6.10`**, with an **81-column** CoreS3 schema
 `cores3-telemetry-v4` and dictionary `cores3-telemetry-v3`. The original 77
 columns retain their names, types and order; four nullable H3 location fields
 are appended. `bringup/main.cpp` owns board setup, sensors, display and native
 UART; `bringup/telemetry_logger.cpp` supplies the AQLogger adapter. M5Unified
-**0.2.25** and M5GFX **0.2.31** are native IDF components; there are no Arduino
+**0.2.25** and M5GFX **0.2.32** are native IDF components; there are no Arduino
 APIs or Arduino component in the application. Location uses the optional shared
 component with official H3 **4.5.0**. Shared connectivity uses native
 NimBLE/Wi-Fi/netif/SNTP and managed mDNS **1.14.0**. These stable release pins
 were checked on **2026-10-09**; LZ4 remains vendored **1.10.0**. The
 [development guide](../../docs/shared/development.md#host-and-toolchain) records
-the temporary M5GFX 0.2.31 qualification exception to latest release 0.2.32.
+the current M5GFX 0.2.32 pin and qualification scope.
 
 **A short native v6.9 run passed on 2026-10-09:** 20 MHz SD mount/write/USB readback,
 RTC/network UTC, valid sensors, retained station/settings/bonds and zero
