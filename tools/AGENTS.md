@@ -11,6 +11,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
 | Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
 | Full-flash backup publication (offline fake esptool) | `backup-test` |
+| Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`
@@ -21,3 +22,7 @@ C++ contract tests and cannot prove behavior on a physical board.
   artifacts and never print them.
 - Keep host fixtures deterministic. Record actual hardware evidence only in
   the relevant board's `bench-verified.md` with date, image hash and limits.
+
+- Firmware builds use the pinned native ESP-IDF wrapper and exact managed
+  component pins. Host tests remain in Pixi. Never introduce an Arduino build
+  route or infer physical native behavior from fixture compilation.

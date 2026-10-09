@@ -1,8 +1,9 @@
 # AQLogger
 
-Opt-in Arduino ESP32-S3 logger engine shared by board adapters. Consume alongside
-AQCommon, AQRuntime and AQConnectivity using `--library firmware/common/logger`.
-Exact Arduino-ESP32/NimBLE versions remain pinned by each trial's lockfile.
+Opt-in native ESP-IDF logger engine shared by ESP32-S3 board adapters. Add the
+common component directories to the board CMake project and declare
+`REQUIRES common runtime connectivity logger`. ESP-IDF and managed dependency
+versions are pinned by the shared toolchain lock and component manifests.
 
 ## Adapter contract
 
@@ -71,7 +72,7 @@ No filesystem ownership, retention or sampling-clock policy changes with this
 output choice.
 
 `parquet owner-pin` is a physical serial-only owner command for a headless
-fixed-PIN device. It emits `AQ OWNER_PIN` directly to Serial, bypassing the
+fixed-PIN device. It emits `AQ OWNER_PIN` directly to the physical console, bypassing the
 shared debug ring and BLE/LAN LOG_TAIL. Random pairing mode instead asks the
 owner to use the pairing display. There is no corresponding radio opcode,
 CONFIG secret field, or boot PIN print. Host tooling must consume/redact the
@@ -90,8 +91,8 @@ exclude it from captures and artifacts.
 
 ## Verification
 
-`pixi run bash tools/test_logger_build.sh` compiles the minimal generic ESP32-S3
-fixture with all real shared implementations and rejects accidental M5 library
+`pixi run logger-build-test` compiles the minimal generic ESP32-S3
+fixture with all real native shared implementations and rejects accidental M5 library
 ownership. It does not flash hardware. The fixture chooses OPI PSRAM purely for
 compilation; the board adapter owns the physical board's verified PSRAM mode.
 `pixi run python tools/test_logger_status.py --sanitize` tests the actual shared

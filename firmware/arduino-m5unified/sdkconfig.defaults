@@ -1,7 +1,0 @@
-# Arduino-ESP32 generates the full sdkconfig from its pinned prebuilt SDK and
-# the FQBN in dependencies.lock. build.sh verifies these safety-critical values.
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_QUAD=y
-# CONFIG_SPIRAM_MODE_OCT is not set
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_PARTITION_TABLE_CUSTOM=y

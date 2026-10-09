@@ -39,17 +39,18 @@ parquet-test = "python tools/test_parquet.py"
 pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
-# --- existing CoreS3 firmware trial: Arduino ESP32 + M5Unified ---
-arduino-setup = "firmware/arduino-m5unified/setup.sh"
-arduino-boards = "firmware/arduino-m5unified/arduino-cli.sh board listall m5stack_cores3"
-arduino-build = "firmware/arduino-m5unified/build.sh"
-# Destructive: pass the explicit checked port, e.g. pixi run arduino-flash /dev/cu.usbmodem101
-arduino-flash = "firmware/arduino-m5unified/flash.sh"
+# --- native ESP-IDF: one pinned SDK, independent board applications ---
+idf-setup = "tools/setup-idf.sh"
+idf = "tools/idf.sh"
+cores3-setup = "firmware/esp-idf-cores3/setup.sh"
+cores3-build = "firmware/esp-idf-cores3/build.sh"
+# Destructive: requires checked port and exact 16 MiB board backup.
+cores3-flash = "firmware/esp-idf-cores3/flash.sh"
 
 # --- Waveshare V2 logger and retained PMS5003T/TF diagnostic ---
-waveshare-setup = "firmware/arduino-waveshare-sim7670g/setup.sh"
-waveshare-build = "firmware/arduino-waveshare-sim7670g/build.sh"
-waveshare-diagnostic-build = "firmware/arduino-waveshare-sim7670g/build.sh diagnostic"
+waveshare-setup = "firmware/esp-idf-waveshare-sim7670g/setup.sh"
+waveshare-build = "firmware/esp-idf-waveshare-sim7670g/build.sh"
+waveshare-diagnostic-build = "firmware/esp-idf-waveshare-sim7670g/build.sh diagnostic"
 waveshare-contract-test = "python tools/test_waveshare_contract.py"
 logger-build-test = "bash tools/test_logger_build.sh"
 logger-work-queue-test = "python tools/test_logger_work_queue.py"
@@ -59,13 +60,14 @@ provision-usb = "python tools/provision_usb.py"
 logger-status-test = "python tools/test_logger_status.py --sanitize"
 logger-provision-test = "python tools/test_logger_provision.py --sanitize"
 # Destructive: requires the checked port and exact full-backup file.
-waveshare-flash = "firmware/arduino-waveshare-sim7670g/flash.sh"
+waveshare-flash = "firmware/esp-idf-waveshare-sim7670g/flash.sh"
 
 # --- host code quality ---
-fmt = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format -i"
-fmt-check = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' | xargs -0 clang-format --dry-run --Werror"
+fmt = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' -g '!**/managed_components/**' | xargs -0 clang-format -i"
+fmt-check = "rg --files -0 firmware tools -g '*.c' -g '*.h' -g '*.cpp' -g '*.hpp' -g '*.ino' -g '!**/vendor/**' -g '!**/build/**' -g '!**/managed_components/**' | xargs -0 clang-format --dry-run --Werror"
 lint = "bash tools/lint.sh"
 archive-sync-test = "python tools/test_archive_sync.py --sanitize"
+ble-advert-test = "python tools/test_ble_advert.py --sanitize"
 wifi-link-test = "python tools/test_wifi_link.py --sanitize"
 lan-concurrency-bench = "python tools/bench_lan_concurrency.py"
 control-sync-test = "python tools/test_control_sync.py --sanitize"
@@ -73,6 +75,7 @@ config-test = "python tools/test_device_config.py --sanitize"
 common-test = "python tools/test_common.py --sanitize"
 ltr553-test = "python tools/test_ltr553.py --sanitize"
 connectivity-build-test = "tools/build_connectivity_fixture.sh"
+waveshare-psram-build = "tools/idf.sh -C tools/fixtures/waveshare_psram_probe -B tools/fixtures/waveshare_psram_probe/build build"
 compression-bench = "python tools/benchmark_compression.py"
 hooks = "pre-commit install"
 

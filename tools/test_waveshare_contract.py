@@ -119,7 +119,7 @@ def main() -> None:
     parser.add_argument("--dictionary-out", type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    firmware = root / "firmware/arduino-waveshare-sim7670g/logger"
+    firmware = root / "firmware/esp-idf-waveshare-sim7670g/logger"
     common = root / "firmware/common"
     with tempfile.TemporaryDirectory(prefix="waveshare-contract-") as temporary:
         directory = Path(temporary)
@@ -143,7 +143,7 @@ def main() -> None:
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "arduino-waveshare-parquet-v2.1", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.2", "firmware identity")
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")

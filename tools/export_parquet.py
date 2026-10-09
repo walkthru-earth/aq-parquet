@@ -1,6 +1,6 @@
 """Export all currently listed finalized files without resetting or flushing.
 
-Use an artifacts/ directory OUTSIDE Arduino build/; compilation can clean build/.
+Use an artifacts/ directory OUTSIDE firmware build/; compilation can clean build/.
 Legacy names are exposed only by firmware supporting the legacy-parquet prefix.
 """
 import argparse
@@ -44,7 +44,7 @@ def main():
                         help="per-file transfer attempts before the export fails (default 3)")
     args = parser.parse_args()
     if "build" in args.out.parts:
-        parser.error("use artifacts/, not a build directory that Arduino may clean")
+        parser.error("use artifacts/, not a build directory that firmware tools may clean")
     if args.out.is_symlink():
         parser.error("output directory must not be a symbolic link")
     if (args.out / "manifest.json").exists():

@@ -1,6 +1,10 @@
 # Reusable firmware modules
 
-The common tree contains a base Arduino library, **AQCommon**, and three opt-in libraries: **AQRuntime**, **AQConnectivity** and **AQLogger**. Keeping settings/logging separate avoids charging a UART-only diagnostic for the log ring or radio stack. AQLogger adds the shared logger worker only when a board opts in. Pure framing/encoding/math code and the actual status/provisioning helpers are also host-testable. The current target is Arduino-ESP32 on ESP32-S3; this does not promise another SDK or MCU is integrated.
+The common tree contains four opt-in native ESP-IDF components: **AQCommon**,
+**AQRuntime**, **AQConnectivity** and **AQLogger**. The target is ESP32-S3 with
+ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
+math plus the actual status/provisioning helpers remain host-testable. Boards
+own peripheral initialization and consume only the required components.
 
 | Module | Shared responsibility | Consumer supplies |
 | --- | --- | --- |
@@ -11,7 +15,7 @@ The common tree contains a base Arduino library, **AQCommon**, and three opt-in 
 | `src/parquet_writer.*`, `lz4_codec.*` | Bounded Parquet encoding and pinned LZ4 | Columns, provenance, memory, file sink and rotation policy |
 | `src/sync_codec.h` | Little-endian frames, CRC32, safe relative names, structural file completion | Checked buffers, mount roots and reader conformance checks |
 | `runtime/src/device_config.*` | NVS pairing/Wi-Fi/LAN settings, tokens and CONFIG JSON | First-boot display capability; command execution and owner access to pairing PIN |
-| `runtime/src/debug_log.*` | Bounded diagnostic ring and console forwarding | Optional `Print` sink, configured before tasks start |
+| `runtime/src/debug_log.*` | Bounded diagnostic ring and console forwarding | Optional console function/context sink, configured before tasks start |
 | `connectivity/src/ble_sync.*` | Secure GATT pairing, advertising, framing and notifications | Stable identity, nonblocking request-queue handler, status/live snapshots |
 | `connectivity/src/wifi_link.*` | Wi-Fi station/provisioning, scans, mDNS, token-authenticated TCP | Stable identity, same request handler and configuration |
 | `connectivity/src/control_sync.*` | Configuration, BLE-only token and bounded log-tail commands | Worker-side response adapters |
@@ -38,12 +42,25 @@ flowchart TD
 
 ## Consumption
 
+Board projects list the common paths in `EXTRA_COMPONENT_DIRS`; their component
+`CMakeLists.txt` declares `REQUIRES common runtime connectivity logger` for a
+logger or `common runtime` for the retained Waveshare diagnostic’s parser and physical console. Use the root Pixi
+build tasks rather than Arduino CLI:
+
 ```sh
-# Base modules only, including the retained Waveshare UART/TF diagnostic.
-arduino-cli compile --library firmware/common ...
-# Shared logger with a board-owned schema and hardware adapter.
-arduino-cli compile --library firmware/common --library firmware/common/runtime --library firmware/common/connectivity --library firmware/common/logger ...
+pixi run idf-setup
+pixi run cores3-build
+pixi run waveshare-build
+pixi run waveshare-build diagnostic
 ```
+
+AQRuntime replaces Preferences with native NVS while preserving namespaces,
+keys and value types, including station identity. DebugLog uses `LogOutput`
+and the native physical console. AQConnectivity uses native NimBLE GATT/GAP,
+Wi-Fi events and `esp_netif_sntp`, plus managed mDNS 1.14.0. Driver credential
+storage is RAM only; `aqcfg` remains the sole persistent settings owner.
+Existing Arduino-era BLE bonds need hardware qualification and may require
+phone re-pairing. This does not authorize erasing identity or settings.
 
 Call `aqlogger::begin(config, hooks, sd_mounted)` once after board setup, then
 `start_links(display_detected)` and `poll()` on the main loop. Stable descriptors
@@ -67,9 +84,9 @@ requires board measurements.
 
 Both current board logger adapters consume AQLogger. CoreS3 retains M5Unified,
 its 77-column dictionary, SPI/display arbitration and optional BM8563 hooks.
-Waveshare supplies its 49-column PMS5003T dictionary and one-bit SDMMC adapter,
-with no RTC hook in this image. Its retained diagnostic remains a base-only
-consumer. Source integration does not transfer hardware measurements between
+Waveshare supplies its 52-column PMS5003T v2 dictionary and one-bit SDMMC adapter,
+with no RTC hook in this image. Its retained diagnostic consumes common/runtime for the parser and physical
+console, without starting the logger or radio services. Source integration does not transfer hardware measurements between
 boards; use each board's bench record for the deployed image and tested scope.
 
 STATUS/LIVE JSON allows 480 bytes while BLE frames remain capped at 512. MTU 483
@@ -93,7 +110,7 @@ Verification commands: `pixi run common-test`, `ltr553-test`, `config-test`,
 have no M5 dependency and are never flashed. Host fixtures establish logic and
 format boundaries, not real radio behavior, NVS atomicity or SD durability.
 
-### Verification on 2026-09-28
+### Historical Arduino verification on 2026-09-28
 
 The pre-AQLogger gates, formatting, cppcheck and host BLE/LAN protocol tests passed for the historical builds below. The host module tests use AddressSanitizer and UndefinedBehaviorSanitizer; Parquet/measurement fixtures also passed both readers.
 
@@ -105,9 +122,9 @@ The pre-AQLogger gates, formatting, cppcheck and host BLE/LAN protocol tests pas
 
 The retained Waveshare diagnostic produced the UART/TF observations in its [bench record](../../docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md). The historical CoreS3 v6.4 build was subsequently flashed and passed a [short hardware test](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-esp32-s3-modules-firmware-v64), including identical BLE/LAN Parquet readback. This does not extend the earlier full-window/endurance measurements to the extracted image.
 
-### AQLogger host/compile verification on 2026-09-28
+### Historical AQLogger host/Arduino compile verification on 2026-09-28
 
-The generic ESP32-S3 logger fixture compiled with all four libraries and no
+The generic ESP32-S3 logger fixture compiled with all four components and no
 M5Unified/M5GFX dependency: 1,139,806 program bytes and 83,500 static RAM bytes.
 ASan/UBSan checked the actual STATUS formatter (398/393 bytes for the two codecs,
 including numeric maxima and truncation boundaries), and actual SET_CONFIG

@@ -1,5 +1,5 @@
-#include "../firmware/arduino-m5unified/bringup/telemetry_contract.h"
 #include "../firmware/common/src/lz4_codec.h"
+#include "../firmware/esp-idf-cores3/bringup/telemetry_contract.h"
 
 #include <cassert>
 #include <cstdio>

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+set(IDF_TARGET esp32s3)
+set(EXTRA_COMPONENT_DIRS "../../../firmware/common/runtime" "component")
+set(COMPONENTS component)
+set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
+set(SDKCONFIG_DEFAULTS "../../../tools/idf-sdkconfig.defaults;sdkconfig.defaults")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(aq_psram_probe)

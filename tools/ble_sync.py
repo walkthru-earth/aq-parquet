@@ -704,7 +704,7 @@ def main():
     sub.add_parser("reboot", help="reboot the device after it finalizes its RAM batch (explicit)").set_defaults(run=cmd_reboot)
     args = parser.parse_args()
     if getattr(args, "out", None) is not None and "build" in args.out.parts:
-        parser.error("use artifacts/, not a build directory that Arduino may clean")
+        parser.error("use artifacts/, not a build directory that firmware tools may clean")
     try:
         asyncio.run(args.run(args))
     except ProtocolError as error:

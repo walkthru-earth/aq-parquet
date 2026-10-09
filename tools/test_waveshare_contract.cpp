@@ -1,4 +1,4 @@
-#include "../firmware/arduino-waveshare-sim7670g/logger/telemetry_contract.h"
+#include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include <lz4_codec.h>
 
 #include <array>

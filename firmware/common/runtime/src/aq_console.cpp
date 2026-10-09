@@ -3,8 +3,10 @@
 #include <sdkconfig.h>
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #include <driver/usb_serial_jtag.h>
+#include <driver/usb_serial_jtag_vfs.h>
 #else
 #include <driver/uart.h>
+#include <driver/uart_vfs.h>
 #endif
 #include <freertos/FreeRTOS.h>
 
@@ -29,6 +31,8 @@ bool begin() {
   config.tx_buffer_size = 4096;
   config.rx_buffer_size = 1024;
   ready = usb_serial_jtag_driver_install(&config) == ESP_OK;
+  if (ready)
+    usb_serial_jtag_vfs_use_driver();
 #else
   uart_config_t config{};
   config.baud_rate = CONFIG_ESP_CONSOLE_UART_BAUDRATE;
@@ -40,6 +44,8 @@ bool begin() {
   ready = uart_param_config(port, &config) == ESP_OK &&
           (uart_is_driver_installed(port) ||
            uart_driver_install(port, 2048, 0, 0, nullptr, 0) == ESP_OK);
+  if (ready)
+    uart_vfs_dev_use_driver(port);
 #endif
   return ready;
 }

@@ -1,0 +1,2 @@
+CONFIG_SPIRAM=n
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="diagnostic/partitions.csv"

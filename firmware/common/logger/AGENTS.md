@@ -1,12 +1,12 @@
 # Shared opt-in logger runtime
 
 AQLogger owns the monotonic sampling deadline, command queue and single archive
-worker for consumers that opt into this library. A board supplies a measurement
+worker for consumers that opt into this native ESP-IDF component. A board supplies a measurement
 contract, acquisition callback, mounted filesystem and optional bus/RTC hooks.
-This is an explicitly requested shared runtime extraction; board pin/peripheral
+The native runtime preserves the established logger contract; board pin/peripheral
 initialization and each board's schema/provenance remain in its own trial.
 
-- Never include a board trial, M5Unified, SD or SD_MMC here. Storage is already
+- Never include a board trial, M5Unified or a board filesystem/controller initializer here. Storage is already
   mounted and capacity callbacks borrow the board's filesystem instance.
 - Preserve the `parquet` NVS namespace and `station` key. Radio initialization
   belongs to AQConnectivity; retain its shared identity and protocol contract.

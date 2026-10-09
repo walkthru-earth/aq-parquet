@@ -114,7 +114,7 @@ def main() -> None:
         send.assert_called_once_with(None, "parquet schema")
         require(next(response) == "AFTER", "schema command consumes through END only")
     root = Path(__file__).resolve().parents[1]
-    firmware = root / "firmware/arduino-m5unified/bringup"
+    firmware = root / "firmware/esp-idf-cores3/bringup"
     common = root / "firmware/common/src"
     with tempfile.TemporaryDirectory(prefix="m5-contract-") as temporary:
         directory = Path(temporary)

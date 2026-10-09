@@ -18,3 +18,11 @@ __pycache__/
 exports/
 # Arduino upload can also create build caches under a sketch directory.
 firmware/**/build/
+
+# Native ESP-IDF generated files
+**/managed_components/
+**/sdkconfig.old
+tools/fixtures/**/build/
+firmware/common/logger/tests/compile/build/
+tools/fixtures/**/dependencies.lock
+firmware/common/logger/tests/compile/dependencies.lock

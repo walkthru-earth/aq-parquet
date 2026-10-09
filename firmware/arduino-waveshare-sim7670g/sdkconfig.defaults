@@ -1,7 +1,0 @@
-# Arduino-ESP32 generates sdkconfig from the pinned logger FQBN. ESP32-S3R8
-# OPI memory was qualified by an allocated-region pattern test on this unit.
-# The optional UART/TF diagnostic keeps its original PSRAM-disabled FQBN.
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
