@@ -1,5 +1,6 @@
 #include <numeric_sample.h>
 #include <sync_codec.h>
+#include <time_sync.h>
 #include <utc_clock.h>
 
 #include <array>
@@ -53,17 +54,52 @@ void clock_contract() {
   assert(supported_epoch(kMaxEpochSeconds));
   assert(!supported_epoch(kMinEpochSeconds - 1));
   assert(!supported_epoch(kMaxEpochSeconds + 1));
+  assert(supported_anchor(kMinEpochSeconds, 999999));
+  assert(supported_anchor(kMaxEpochSeconds, 0));
+  assert(!supported_anchor(kMaxEpochSeconds, 1));
+  assert(!supported_anchor(kMinEpochSeconds, 1000000));
+  assert(!supported_anchor(std::numeric_limits<std::int64_t>::max(), 0));
+  assert(anchor_ns(1800000000LL, 123456) == 1800000000123456000LL);
   const auto anchor = kMinEpochSeconds * 1000000000LL;
   assert(estimate_ns(1000020, 1000000, anchor) == anchor + 20000);
   assert(estimate_ns(999980, 1000000, anchor) == anchor - 20000);
   assert(std::strcmp(source_name(None), "none") == 0);
   assert(std::strcmp(source_name(Host), "host") == 0);
   assert(std::strcmp(source_name(Rtc), "rtc") == 0);
+  assert(std::strcmp(source_name(Network), "network") == 0);
   assert(std::strcmp(source_name(99), "none") == 0);
 }
 
 void wire_contract() {
   using namespace aq::sync;
+  std::uint8_t request_bytes[12]{};
+  put_i64(request_bytes, 1800000000LL);
+  put_u32(request_bytes + 8, 123456);
+  TimeRequest request;
+  assert(decode_time_request(request_bytes, 12, request) ==
+         TimeRequestResult::Ok);
+  assert(request.seconds == 1800000000LL && request.subsecond_us == 123456 &&
+         request.precision);
+  std::uint8_t acknowledgement[20]{};
+  assert(encode_time_ack(acknowledgement, request, 123456789) == 20);
+  assert(get_i64(acknowledgement) == 1800000000LL);
+  assert(get_i64(acknowledgement + 8) == 123456789);
+  assert(get_u32(acknowledgement + 16) == 123456);
+  assert(decode_time_request(request_bytes, 8, request) ==
+         TimeRequestResult::Ok);
+  assert(!request.precision && request.subsecond_us == 0);
+  assert(encode_time_ack(acknowledgement, request, 123456789) == 16);
+  for (const auto length : {0, 7, 9, 11, 13})
+    assert(decode_time_request(request_bytes, length, request) ==
+           TimeRequestResult::Malformed);
+  assert(decode_time_request(nullptr, 8, request) ==
+         TimeRequestResult::Malformed);
+  put_u32(request_bytes + 8, 1000000);
+  assert(decode_time_request(request_bytes, 12, request) ==
+         TimeRequestResult::InvalidEpoch);
+  put_i64(request_bytes, std::numeric_limits<std::int64_t>::max());
+  assert(decode_time_request(request_bytes, 8, request) ==
+         TimeRequestResult::InvalidEpoch);
   std::uint8_t bytes[8]{};
   put_u16(bytes, 0xa15b);
   assert(bytes[0] == 0x5b && bytes[1] == 0xa1);

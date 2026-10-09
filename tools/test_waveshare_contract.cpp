@@ -115,8 +115,16 @@ void assert_gates() {
   assert(corrected.data[clock_epoch] == 2);
   assert(corrected.data[event_time_utc_ns] == 1788889005000000000LL);
   assert(earlier.data[event_time_utc_ns] == utc);
+  Sample network{};
+  apply_clock(network, 40000000, 35000000, 1788889000123456000LL, 3,
+              kClockNetwork);
+  assert(network.data[clock_status] == kClockNetwork);
+  assert(network.valid[event_time_utc_ns] &&
+         network.data[event_time_utc_ns] == 1788889005123456000LL);
+  assert(network.valid[clock_anchor_mono_us] &&
+         network.valid[clock_anchor_utc_ns]);
   Sample unsynced{};
-  apply_clock(unsynced, 30000000, 0, 0, 0);
+  apply_clock(unsynced, 30000000, 0, 0, 0, kClockNetwork);
   assert(unsynced.data[clock_status] == kClockNone);
   assert(!unsynced.valid[event_time_utc_ns]);
 }

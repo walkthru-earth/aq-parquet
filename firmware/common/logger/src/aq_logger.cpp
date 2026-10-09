@@ -11,6 +11,7 @@
 #include <control_sync.h>
 #include <sync_codec.h>
 #include <sync_service.h>
+#include <time_sync.h>
 #include <utc_clock.h>
 
 #include <Arduino.h>
@@ -60,6 +61,9 @@ using aq::sync::put_u32;
 using aq::utc::days_from_civil;
 constexpr std::size_t kMaxRows = 90;
 constexpr std::int64_t kSampleUs = 10000000;
+// Keep unanchored data readable within a minute at normal sampling cadence.
+// The bounded RAM batch can still be lost if power disappears before flush.
+constexpr std::size_t kUnsyncedRows = 6;
 const char *kDirectory = "/sd/output";
 // One Parquet file in progress: created as `.partial`, grown by one row group
 // per completed RAM batch (each fsynced), finalized with the footer at the
@@ -95,11 +99,12 @@ struct WriterState {
 char staging_telemetry[4096];
 char staging_benchmark[4096];
 struct Command {
-  enum class Source : std::uint8_t { Serial, Control };
+  enum class Source : std::uint8_t { Serial, Control, Network };
   Source source = Source::Serial;
   char text[2 * ble::kMaxControlBytes + 32]{};
   std::int64_t received_mono_us = 0;
   ble::ControlRequest control{};
+  lan::TimeAnchor network_time{};
 };
 WriterState *writer_state = nullptr;
 QueueHandle_t samples = nullptr;
@@ -135,6 +140,8 @@ portMUX_TYPE clock_mutex = portMUX_INITIALIZER_UNLOCKED;
 std::int64_t anchor_mono_us = 0, anchor_utc_ns = 0;
 std::int32_t clock_generation = 0;
 std::int32_t clock_source = kClockNone;
+// Worker-owned: finalize the first genuine row for a fresh external anchor.
+std::int32_t pending_anchor_epoch = 0;
 // A host sync asks the main task to copy the anchor through the optional
 // board RTC callback; the storage worker never performs board RTC IO.
 std::atomic<bool> rtc_write_pending{false};
@@ -474,6 +481,20 @@ bool append_group(OutputFile &target, std::size_t count) {
 // `<stem>-<last>-<attempt>.parquet`.
 bool finalize_file(OutputFile &target) {
   char interval_text[12], groups_text[12];
+  char anchor_mono_text[24], anchor_utc_text[24], anchor_source_text[12];
+  std::int64_t footer_anchor_mono, footer_anchor_utc;
+  std::int32_t footer_anchor_source;
+  portENTER_CRITICAL(&clock_mutex);
+  footer_anchor_mono = anchor_mono_us;
+  footer_anchor_utc = anchor_utc_ns;
+  footer_anchor_source = clock_source;
+  portEXIT_CRITICAL(&clock_mutex);
+  std::snprintf(anchor_mono_text, sizeof(anchor_mono_text), "%lld",
+                static_cast<long long>(footer_anchor_mono));
+  std::snprintf(anchor_utc_text, sizeof(anchor_utc_text), "%lld",
+                static_cast<long long>(footer_anchor_utc));
+  std::snprintf(anchor_source_text, sizeof(anchor_source_text), "%ld",
+                static_cast<long>(footer_anchor_source));
   std::snprintf(interval_text, sizeof(interval_text), "%lu",
                 static_cast<unsigned long>(rotation_seconds.load()));
   std::snprintf(groups_text, sizeof(groups_text), "%u",
@@ -501,11 +522,23 @@ bool finalize_file(OutputFile &target) {
       {"board", config.board},
       {"sample_interval_ms", "10000"},
       {"clock", "0=unsynchronized/null,1=host estimate,2=restored from RTC "
-                "(earlier host estimate, whole seconds); partitions UTC"},
+                "(earlier external estimate, whole seconds),3=network SNTP; "
+                "partitions UTC"},
       {"durability",
        "RAM batch; unfinished rows lost on reset; each row group "
        "fsynced; footer at finalization; completed files retained"}};
   std::size_t metadata_count = 22;
+  // Evidence belongs to this file's boot, regardless of the rows' original
+  // clock status. Hosts may derive corrected partitions without editing raw
+  // UTC or treating a later reboot's clock as an anchor for this boot.
+  if (footer_anchor_source != kClockNone) {
+    metadata[metadata_count++] = {"reconciliation_anchor_mono_us",
+                                  anchor_mono_text};
+    metadata[metadata_count++] = {"reconciliation_anchor_utc_ns",
+                                  anchor_utc_text};
+    metadata[metadata_count++] = {"reconciliation_anchor_source",
+                                  anchor_source_text};
+  }
   for (std::size_t i = 0; i < config.metadata_count; ++i)
     metadata[metadata_count++] = config.metadata[i];
   const auto started = esp_timer_get_time();
@@ -935,10 +968,11 @@ const char *clock_source_name(std::int32_t source) {
 // the previous clock (RTC or earlier host) had drifted from this host.
 bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
                std::int64_t *skew_ns = nullptr,
-               std::int32_t *previous = nullptr) {
-  if (!aq::utc::supported_epoch(seconds))
+               std::int32_t *previous = nullptr,
+               std::uint32_t subsecond_us = 0) {
+  if (!aq::utc::supported_anchor(seconds, subsecond_us))
     return false;
-  const std::int64_t utc_ns = seconds * 1000000000;
+  const std::int64_t utc_ns = aq::utc::anchor_ns(seconds, subsecond_us);
   portENTER_CRITICAL(&clock_mutex);
   if (previous)
     *previous = clock_generation ? clock_source : kClockNone;
@@ -952,7 +986,8 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
   clock_source = source;
   ++clock_generation;
   portEXIT_CRITICAL(&clock_mutex);
-  if (source == kClockHost) {
+  if (source == kClockHost || source == aq::utc::Network) {
+    pending_anchor_epoch = clock_generation;
     rtc_write_requested_us = mono;
     rtc_write_pending = true;
   }
@@ -1274,25 +1309,38 @@ void handle_control_request(const ble::ControlRequest &request,
   const std::size_t body_length = request.length - 1;
   switch (request.bytes[0]) {
   case ble::kOpSetTime: {
-    if (body_length != 8) {
-      respond_error(ble::kOpSetTime, ble::kErrMalformed, nullptr);
+    aq::sync::TimeRequest time;
+    const auto decoded =
+        aq::sync::decode_time_request(request.bytes + 1, body_length, time);
+    if (decoded != aq::sync::TimeRequestResult::Ok) {
+      respond_error(ble::kOpSetTime,
+                    decoded == aq::sync::TimeRequestResult::Malformed
+                        ? ble::kErrMalformed
+                        : ble::kErrInvalidEpoch,
+                    nullptr);
       return;
     }
-    const std::int64_t seconds = get_i64(request.bytes + 1);
+    const auto seconds = time.seconds;
     std::int64_t skew_ns = 0;
     std::int32_t previous = kClockNone;
     if (!set_clock(seconds, request.received_mono_us, kClockHost, &skew_ns,
-                   &previous)) {
+                   &previous, time.subsecond_us)) {
       respond_error(ble::kOpSetTime, ble::kErrInvalidEpoch, nullptr);
       return;
     }
     report_host_clock(request.link == ble::Link::Ble ? "ble" : "lan", seconds,
                       request.received_mono_us, previous, skew_ns);
-    std::uint8_t frame[17];
+    // Publish all captured rows immediately so the phone can reconcile with
+    // the acknowledgement's boot-scoped anchor before its LIST/download.
+    if (state.storage_ready && !state.failed && !write_batch(state.count)) {
+      state.failed = true;
+      worker_failed = true;
+    }
+    std::uint8_t frame[21];
     frame[0] = ble::kFrameTimeSet;
-    put_i64(frame + 1, seconds);
-    put_i64(frame + 9, request.received_mono_us);
-    respond(frame, sizeof(frame));
+    const auto length =
+        aq::sync::encode_time_ack(frame + 1, time, request.received_mono_us);
+    respond(frame, length + 1);
     publish_status();
     return;
   }
@@ -1414,7 +1462,16 @@ void storage_worker(void *) {
         }
         writer_state->rows[count++] = row;
         buffered = count;
-        if (count >= rows_per_group() && !commit(count, false))
+        if (pending_anchor_epoch && row.valid[event_time_utc_ns] &&
+            row.data[clock_epoch] >= pending_anchor_epoch) {
+          if (!write_batch(count))
+            failed = true;
+          else
+            pending_anchor_epoch = 0;
+        } else if (!row.valid[event_time_utc_ns] && count >= kUnsyncedRows) {
+          if (!write_batch(count))
+            failed = true;
+        } else if (count >= rows_per_group() && !commit(count, false))
           failed = true;
       }
     }
@@ -1423,6 +1480,20 @@ void storage_worker(void *) {
       // Drain pending samples before sleeping. Queue-then-signal also covers
       // an enqueue racing this check: the signal remains pending until taken.
       work::wait_if_idle(samples, worker_wakeup);
+      continue;
+    }
+    if (command.source == Command::Source::Network) {
+      const auto &anchor = command.network_time;
+      if (set_clock(anchor.seconds, anchor.monotonic_us, aq::utc::Network,
+                    nullptr, nullptr, anchor.subsecond_us)) {
+        if (storage_ready && !failed && !write_batch(count))
+          failed = true;
+        aqlog.printf(
+            "PARQUET TIME epoch_s=%lld source=network monotonic_us=%lld\n",
+            static_cast<long long>(anchor.seconds),
+            static_cast<long long>(anchor.monotonic_us));
+        publish_status();
+      }
       continue;
     }
     if (command.source == Command::Source::Control) {
@@ -1545,6 +1616,8 @@ void storage_worker(void *) {
         aqlog.println("PARQUET ERROR operation=time reason=invalid-epoch");
         continue;
       }
+      if (storage_ready && !failed && !write_batch(count))
+        failed = true;
       report_host_clock("serial", seconds, mono, previous, skew_ns);
       publish_status();
     } else if (std::strcmp(command.text, "parquet list") == 0)
@@ -1763,6 +1836,17 @@ void poll() {
   if (!accepting)
     return;
   const auto now = esp_timer_get_time();
+  // Only an actual SNTP callback provides network time. Never treat an
+  // arbitrary system clock or mere Wi-Fi association as UTC evidence.
+  static Command network_command{};
+  static bool network_pending = false;
+  if (!network_pending)
+    network_pending = lan::take_time_anchor(network_command.network_time);
+  if (network_pending) {
+    network_command.source = Command::Source::Network;
+    if (work::enqueue(commands, &network_command, worker_wakeup))
+      network_pending = false;
+  }
   {
     static std::int64_t last_stall_warning_us = 0;
     const auto heartbeat = worker_heartbeat_us.load();

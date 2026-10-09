@@ -72,12 +72,14 @@ inline void prepare_columns(Column *columns, Sample *rows) {
 enum ClockSource : std::int32_t {
   kClockNone = aq::utc::None,
   kClockHost = aq::utc::Host,
+  kClockNetwork = aq::utc::Network,
 };
 // No RTC is available in this board contract. Caller supplies a coherent
-// host anchor; each captured row keeps its original epoch permanently.
+// host or SNTP anchor; each captured row keeps its original epoch permanently.
 inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
-                        std::int64_t utc_anchor, std::int32_t generation) {
-  row.integer(clock_status, generation ? kClockHost : kClockNone);
+                        std::int64_t utc_anchor, std::int32_t generation,
+                        std::int32_t source = kClockHost) {
+  row.integer(clock_status, generation ? source : kClockNone);
   row.integer(clock_epoch, generation);
   if (generation) {
     row.counter(event_time_utc_ns,

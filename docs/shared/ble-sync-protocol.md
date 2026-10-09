@@ -123,13 +123,13 @@ Notified after every stored sample (every 10 s) and after any `control` request 
 | `fin` / `drop` / `err` / `miss` | same counters as `PARQUET STATUS` and the row fields `files_finalized`, `rows_dropped`, `storage_errors`, `sample_deadlines_missed` |
 | `fail` | 1 when the storage worker has stopped writing after an error |
 | `utc` / `gen` | 1 when a UTC anchor is set; anchor generation (`clock_epoch`) |
-| `clk` / `rtc` | firmware v6.2. `clk` is the anchor source, same codes as `clock_status`: 0 none, 1 host time set on this boot, 2 restored at boot from the RTC (an earlier host sync, whole seconds plus drift). `rtc` is the RTC chip state: 0 not read, 1 in use or written, 2 unusable (absent, voltage-low, invalid calendar). Absent on ≤ v6.1. A phone SHOULD offer "set time" whenever `clk != 1`, not only when `utc == 0`: with `clk == 2` the rows are dated, but nothing has checked that clock against a fresh source since the last sync |
+| `clk` / `rtc` | firmware v6.2. `clk` is the anchor source, same codes as `clock_status`: 0 none, 1 host time set on this boot, 2 restored at boot from the RTC (an earlier external sync, whole seconds plus drift), 3 network SNTP. `rtc` is the RTC chip state: 0 not read, 1 in use or written, 2 unusable (absent, voltage-low, invalid calendar). Absent on ≤ v6.1. The phone automatically sends its current UTC on each authenticated connection before archive listing; there is no user-facing set-time action. An RTC-restored clock is refreshed as well |
 | `sd` | 1 when the card is mounted and the output directory exists |
 | `part` | retained `.partial` files seen at the last listing |
 | `qf` / `qb` | retained quarantine file count / bytes after startup quarantine; includes earlier boots |
 
 A board without an enabled RTC adapter reports `rtc=2`. Each boot starts with
-`utc=0`, `clk=0` and null UTC row fields until host SET_TIME; it cannot restore a
+`utc=0`, `clk=0` and null UTC row fields until automatic host SET_TIME or successful Wi-Fi SNTP; it cannot restore a
 previous host anchor from hardware. CoreS3 can restore the earlier host-written
 BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
@@ -168,7 +168,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `0x02` | `OPEN` | `name` utf8 (rest of packet) | `OPENED` or `ERROR` |
 | `0x03` | `READ` | `handle` u16, `offset` u32, `length` u32 | `CHUNK` × n, then `READ_END` |
 | `0x04` | `CLOSE` | `handle` u16 | `CLOSED` |
-| `0x05` | `SET_TIME` | `epoch_s` i64 | `TIME_SET` or `ERROR` 9; `status` notify |
+| `0x05` | `SET_TIME` | `epoch_s` i64, optionally `subsecond_us` u32 | `TIME_SET` or `ERROR` 9; `status` notify |
 | `0x06` | `FLUSH` | — | `FLUSHED` or `ERROR` 10; `status` notify |
 | `0x07` | `STATUS` | — | `status` cache/notify only; **no `response` frame**, so the phone must not wait on `response` for it. If the value exceeds MTU − 3 the notification is omitted and the phone reads the cached characteristic. Over LAN this produces a `STATUS` push frame, so it doubles as a keep-alive ping. |
 | `0x08` | `GET_CONFIG` | — | `CONFIG` or BLE `CONFIG_CHUNK` sequence |
@@ -186,7 +186,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `CHUNK` | `0x21` | `handle` u16, `offset` u32, `payload` (≤ `payload_max − 7`) |
 | `READ_END` | `0x22` | `handle` u16, `next_offset` u32, `status` u8 (0 = ok, else error code) |
 | `CLOSED` | `0x23` | `handle` u16 |
-| `TIME_SET` | `0x30` | `epoch_s` i64, `monotonic_us` i64 |
+| `TIME_SET` | `0x30` | `epoch_s` i64, `monotonic_us` i64, optional `subsecond_us` u32 matching the request |
 | `FLUSHED` | `0x31` | `rows` u16 written, `fin` u32 files finalized so far |
 | `CONFIG` | `0x40` | `flags` u8 (bit 0 = reboot required for a pending `ble.*` change), JSON ≤ 480 bytes |
 | `WIFI_AP` | `0x41` | `rssi` i8, `auth` u8 (0 open, 1 WEP, 2 WPA, 3 WPA2, 4 WPA/WPA2, 5 WPA2-Enterprise, 6 WPA3, 7 WPA2/WPA3, 255 other), `channel` u8, `ssid` utf8 |
@@ -205,7 +205,7 @@ The status JSON remains bounded to 480 bytes. The actual formatter retains every
 
 `ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU — another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` is **omitted from LIST** and logged on serial as `BLE LIST SKIP`; `LIST_END.count` counts only entries actually sent. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count — and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16–18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
 
-Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full or transfer in progress) · 8 storage unavailable · 9 invalid epoch (outside 2020–2100) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (LAN handshake) · 15 Wi-Fi unavailable.
+Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full or transfer in progress) · 8 storage unavailable · 9 invalid epoch (outside 2020–2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (LAN handshake) · 15 Wi-Fi unavailable.
 
 Rules:
 
@@ -213,7 +213,9 @@ Rules:
 - **`OPEN`** runs the finalized-file check (magic `PAR1` head and tail, footer length sane) and computes the CRC-32 (IEEE, same as the serial `crc32=` field) over the whole file before answering. At most one logical file is open per connection; a new `OPEN` implicitly closes that connection's previous one without affecting other connections. Handles start at 1 and are invalid after disconnect.
 - **`READ`** is clipped to `max_read` and to end-of-file. Chunks are delivered in offset order; `next_offset` tells the phone where to continue. Offsets are absolute, so a phone can resume after a disconnect by `OPEN` + `READ` from where it stopped, provided `size` and `crc32` in the new `OPENED` frame match the earlier one (the file is immutable, so they must).
 - A file is **complete** only when the phone has `size` bytes, its own CRC-32 equals `OPENED.crc32`, and the head/tail magic is `PAR1`. Anything else is discarded, never presented as data.
-- `SET_TIME` uses the device's monotonic clock at the moment the write arrived, the same way `parquet time` does. Only rows sampled afterwards get UTC; earlier rows stay in the `unsynced` tree by contract. The phone should send its own clock only when it believes it is correct, and should say so in its UI. On CoreS3 since firmware v6.2 the value is also written through the BM8563 RTC adapter (UTC) and restored at the next boot as `clk == 2`. AQLogger performs optional RTC reads/writes only on its main-loop task; a board with no RTC callback stays unsynchronized after every reboot until SET_TIME. Thus a `SET_TIME` on a device that already reports `utc == 1` is a legitimate *refresh*: it starts a new epoch, and the device logs the skew of the clock it replaced on serial (`PARQUET CLOCK … skew_ms=…`). The `TIME_SET` frame is unchanged; the skew is not returned over the link yet.
+- `SET_TIME` anchors to the device monotonic timestamp captured when the request arrived. The legacy eight-byte body supplies whole UTC seconds and receives the unchanged 17-byte `TIME_SET` frame. A twelve-byte body appends little-endian `subsecond_us` (0–999999), and receives a 21-byte frame with that fraction appended after the unchanged prefix. The upper endpoint 2100-01-01 permits only fraction zero. New phones first try the precise form and may retry the legacy form only on the explicit malformed-request error from old firmware. A timeout does not prove that the command failed. Transport delay and phone clock error remain unmeasured; precision is not an accuracy guarantee.
+- Every accepted external anchor finalizes any pending batch immediately, including its same-boot reconciliation anchor in the footer, then finalizes the first genuine newly timed sample (normally within ten seconds). It never inserts a synthetic sensor row. Earlier raw rows retain null UTC and their original clock epoch; the phone creates corrected UTC day partitions from same-device/station/boot monotonic evidence without modifying the raw archive. The acknowledgement confirms clock acceptance, not SD durability: consult status failures and downloaded files.
+- CoreS3 writes external UTC through its optional BM8563 callback on the main-loop task and can restore it at boot as `clk=2`. Successful Wi-Fi SNTP produces `clk=3`; Wi-Fi association alone is not an anchor. A board without usable RTC starts unanchored on each reboot. Disconnection during an uninterrupted boot retains its current monotonic UTC estimate. A later reboot's anchor must never date a prior unanchored boot.
 - `FLUSH` finalizes the RAM batch — and, on firmware v6, any row groups already in the open file — so the phone can pull everything up to now. Use it deliberately (a "sync now" action); it produces a short file and does not change the rotation interval. The `FLUSHED` row count is RAM rows plus rows that were already on the card in the open file.
 
 ## Device configuration (v2)

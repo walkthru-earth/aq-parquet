@@ -43,8 +43,8 @@ const char *firmware_text_id();
 
 // Snapshot of the device clock for the display. `utc_ns` is the current UTC
 // estimate (0 when no anchor); `source` follows the `clock_status` codes
-// (0 none, 1 host, 2 RTC-restored); `rtc_state` is 0 unread, 1 in use/written,
-// 2 unusable. UTC only: local time is a reader/phone concern.
+// (0 none, 1 host, 2 RTC-restored, 3 SNTP); `rtc_state` is 0 unread, 1 in
+// use/written, 2 unusable. UTC only: local time is a reader/phone concern.
 struct ClockView {
   std::int64_t utc_ns = 0;
   std::int32_t epoch = 0;

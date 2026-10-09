@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
+#include <esp_sntp.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -34,6 +35,19 @@ char host_label[24]{};
 ble::Identity device_identity{};
 ble::RequestHandler request_handler = nullptr;
 Status current;
+TimeAnchor network_anchor;
+bool network_anchor_pending = false;
+portMUX_TYPE time_mutex = portMUX_INITIALIZER_UNLOCKED;
+// ESP-IDF defines this callback with a non-const timeval pointer.
+// cppcheck-suppress constParameterCallback
+void network_time_synced(struct timeval *time) {
+  const auto mono = esp_timer_get_time();
+  portENTER_CRITICAL(&time_mutex);
+  network_anchor = {static_cast<std::int64_t>(time->tv_sec),
+                    static_cast<std::uint32_t>(time->tv_usec), mono};
+  network_anchor_pending = true;
+  portEXIT_CRITICAL(&time_mutex);
+}
 portMUX_TYPE status_mutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t socket_mutex = nullptr;
 
@@ -276,6 +290,7 @@ void stop_server(const char *reason) {
 }
 
 void radio_off(const char *reason) {
+  esp_sntp_stop();
   stop_server(reason);
   if (radio_on) {
     WiFi.disconnect(true, false);
@@ -322,6 +337,10 @@ void poll_radio() {
   const bool up = WiFi.status() == WL_CONNECTED;
   if (up && !connected) {
     connected = true;
+    // Nonblocking SNTP: successful responses alone produce an anchor. DNS or
+    // internet failure leaves monotonic capture running without fake UTC.
+    esp_sntp_set_time_sync_notification_cb(network_time_synced);
+    configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
     set_status("connected", true);
     aqlog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
                                settings.ssid, WiFi.localIP().toString().c_str(),
@@ -329,6 +348,7 @@ void poll_radio() {
     start_server();
   } else if (!up && connected) {
     connected = false;
+    esp_sntp_stop();
     stop_server("wifi-lost");
     aqlog.record_only().println("WIFI LOST");
     radio_connect();
@@ -694,6 +714,17 @@ void lan_task(void *) {
   }
 }
 } // namespace
+
+bool take_time_anchor(TimeAnchor &anchor) {
+  portENTER_CRITICAL(&time_mutex);
+  const bool pending = network_anchor_pending;
+  if (pending) {
+    anchor = network_anchor;
+    network_anchor_pending = false;
+  }
+  portEXIT_CRITICAL(&time_mutex);
+  return pending;
+}
 
 bool begin(const char *host, const ble::Identity &identity,
            ble::RequestHandler handler) {

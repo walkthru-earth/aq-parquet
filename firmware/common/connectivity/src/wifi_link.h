@@ -17,6 +17,14 @@ namespace lan {
 constexpr std::uint16_t kPayloadMax = 1024;
 constexpr std::uint8_t kProtocolVersion = ble::kProtocolVersion;
 
+struct TimeAnchor {
+  std::int64_t seconds = 0;
+  std::uint32_t subsecond_us = 0;
+  std::int64_t monotonic_us = 0;
+};
+// One bounded pending SNTP result, consumed by the logger main loop. No IO.
+bool take_time_anchor(TimeAnchor &anchor);
+
 struct Status {
   const char *state = "off"; // off | connecting | connected | failed
   char ip[16] = "";

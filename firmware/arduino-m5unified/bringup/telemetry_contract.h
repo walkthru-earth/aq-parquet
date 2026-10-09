@@ -78,18 +78,20 @@ inline void prepare_columns(Column *columns, Sample *rows) {
                logical_type(kFields[i])};
 }
 
-// `clock_status` codes. The anchor is always "host UTC seconds paired with a
-// device monotonic instant"; the code says where that pairing came from.
+// `clock_status` codes. The anchor pairs an external UTC estimate with a
+// device monotonic instant; the code says where that pairing came from.
 //   0  no anchor: UTC fields null, rows go to the `unsynced` tree
 //   1  host estimate supplied on this boot (serial `parquet time`, BLE/LAN
 //      SET_TIME); the same value is written to the BM8563 RTC
 //   2  restored at boot from the BM8563 RTC, which only ever holds a value a
-//      host supplied earlier (whole seconds, so up to 1 s coarser, plus RTC
+//      host or SNTP supplied earlier (whole seconds, plus RTC
 //      drift since that sync); a later host sync starts a new epoch
+//   3  successful Wi-Fi SNTP response on this boot, microsecond resolution
 enum ClockSource : std::int32_t {
   kClockNone = aq::utc::None,
   kClockHost = aq::utc::Host,
   kClockRtc = aq::utc::Rtc,
+  kClockNetwork = aq::utc::Network,
 };
 
 // Inputs are a single coherent anchor snapshot taken under the clock mutex.

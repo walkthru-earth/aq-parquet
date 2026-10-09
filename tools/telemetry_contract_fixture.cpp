@@ -80,6 +80,14 @@ int main(int argc, char **argv) {
   assert(restored.data[clock_status] == kClockRtc);
   assert(restored.data[clock_epoch] == 1);
   assert(restored.data[event_time_utc_ns] == 1788889005000000000LL);
+  Sample network{};
+  apply_clock(network, 30000000, 25000000, 1788889000123456000LL, 2,
+              kClockNetwork);
+  assert(network.data[clock_status] == kClockNetwork);
+  assert(network.valid[event_time_utc_ns] &&
+         network.data[event_time_utc_ns] == 1788889005123456000LL);
+  assert(network.valid[clock_anchor_mono_us] &&
+         network.valid[clock_anchor_utc_ns]);
   apply_clock(unanchored, 30000000, 0, 0, 0, kClockRtc);
   assert(unanchored.data[clock_status] == kClockNone);
   assert(!unanchored.valid[event_time_utc_ns]);

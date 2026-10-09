@@ -127,7 +127,7 @@ The clock anchor pair in each row supports auditing the UTC mapping without rely
 | Validity token | Meaning in this implementation |
 | --- | --- |
 | `always` | Populated logger/API status or counter; presence does not establish physical accuracy |
-| `clock_anchored` | An anchor exists for this row's clock epoch (host-supplied this boot, `clock_status = 1`, or RTC-restored from an earlier host sync, `clock_status = 2`); otherwise null |
+| `clock_anchored` | An anchor exists for this row's clock epoch (host-supplied this boot, `clock_status = 1`; RTC-restored from an earlier external sync, `clock_status = 2`; or successful Wi-Fi SNTP on this boot, `clock_status = 3`); otherwise null |
 | `pms_present` | At least one checksum-valid frame received this boot, including stale/error-bearing frames |
 | `pms_valid` | `pms_status=4`: present, beyond boot warm-up, within stale threshold, sensor error zero |
 | `accel_fresh_finite`, `gyro_fresh_finite` | Corresponding M5 IMU fresh bit and finite value |

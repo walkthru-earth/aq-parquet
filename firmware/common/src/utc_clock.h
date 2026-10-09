@@ -6,12 +6,22 @@ namespace aq {
 namespace utc {
 // Codes shared by sync/status consumers. The board supplies any RTC adapter;
 // these helpers neither invent an anchor nor change a captured row's epoch.
-enum Source : std::int32_t { None = 0, Host = 1, Rtc = 2 };
+enum Source : std::int32_t { None = 0, Host = 1, Rtc = 2, Network = 3 };
 constexpr std::int64_t kMinEpochSeconds = 1577836800LL; // 2020-01-01 UTC
 constexpr std::int64_t kMaxEpochSeconds = 4102444800LL; // 2100-01-01 UTC
 
 constexpr bool supported_epoch(std::int64_t seconds) {
   return seconds >= kMinEpochSeconds && seconds <= kMaxEpochSeconds;
+}
+
+// Validate before multiplying; the supported range fits signed nanoseconds.
+constexpr bool supported_anchor(std::int64_t seconds, std::uint32_t micros) {
+  return supported_epoch(seconds) && micros < 1000000 &&
+         (seconds < kMaxEpochSeconds || micros == 0);
+}
+
+constexpr std::int64_t anchor_ns(std::int64_t seconds, std::uint32_t micros) {
+  return seconds * 1000000000LL + static_cast<std::int64_t>(micros) * 1000;
 }
 
 constexpr std::int64_t estimate_ns(std::int64_t now_mono_us,
@@ -21,7 +31,10 @@ constexpr std::int64_t estimate_ns(std::int64_t now_mono_us,
 }
 
 constexpr const char *source_name(std::int32_t source) {
-  return source == Host ? "host" : source == Rtc ? "rtc" : "none";
+  return source == Host      ? "host"
+         : source == Rtc     ? "rtc"
+         : source == Network ? "network"
+                             : "none";
 }
 
 // Days since 1970-01-01 for a valid proleptic Gregorian calendar date.

@@ -109,6 +109,14 @@ bool send_response(const std::uint8_t *, std::size_t,
 } // namespace ble
 
 int main() {
+  lan::TimeAnchor time_anchor;
+  assert(!lan::take_time_anchor(time_anchor));
+  timeval actual_time{1800000000, 123456};
+  lan::network_time_synced(&actual_time);
+  assert(lan::take_time_anchor(time_anchor));
+  assert(time_anchor.seconds == 1800000000 &&
+         time_anchor.subsecond_us == 123456);
+  assert(!lan::take_time_anchor(time_anchor));
   std::signal(SIGPIPE, SIG_IGN);
   const ble::Identity identity{"fixture", "device", "boot", "schema",
                                0,         "",       "test"};
@@ -286,6 +294,26 @@ int main() {
   assert(lan::listen_fd < 0);
   lan::poll_radio();
   assert(lan::connected && lan::listen_fd < 0);
+  assert(fake_ntp_starts > 0 && fake_time_callback != nullptr);
+  // Association without a successful SNTP callback is not time evidence.
+  assert(!lan::take_time_anchor(time_anchor));
+  fake_now_us += 123456;
+  fake_time_callback(&actual_time);
+  assert(lan::take_time_anchor(time_anchor));
+  assert(time_anchor.monotonic_us == fake_now_us &&
+         time_anchor.seconds == actual_time.tv_sec &&
+         time_anchor.subsecond_us == 123456);
+  assert(!lan::take_time_anchor(time_anchor));
+  const auto starts_before_reconnect = fake_ntp_starts;
+  const auto stops_before_disconnect = fake_ntp_stops;
+  WiFi.connection_status = 0;
+  lan::poll_radio();
+  assert(!lan::connected && fake_ntp_stops == stops_before_disconnect + 1);
+  WiFi.connection_status = WL_CONNECTED;
+  lan::poll_radio();
+  assert(lan::connected && fake_ntp_starts == starts_before_reconnect + 1);
+  // Reassociation restarts SNTP but never manufactures a new clock anchor.
+  assert(!lan::take_time_anchor(time_anchor));
   fixture_settings.lan_on = true;
   lan::apply_settings();
   lan::poll_radio();

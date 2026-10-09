@@ -52,7 +52,7 @@ Notifications exceeding negotiated MTU − 3 are omitted after the complete valu
 is cached; use characteristic long reads for complete snapshots.
 Interpret LIVE `t`/`rh` through the board's advertised schema/dictionary. A board
 without an RTC hook has no retained clock anchor; UTC stays null after boot until
-a host SET_TIME and unsynchronized rows remain in the `unsynced` tree.
+automatic host SET_TIME or successful Wi-Fi SNTP. Raw unsynchronized rows remain in the `unsynced` tree; the mobile archive reconciles derived partitions from same-boot anchors.
 
 Physical UART owner commands (`owner-pin`, `wifi-profile`, `config-hex`) bypass
 DebugLog for secret-bearing replies. Use `pixi run owner-pin` and
