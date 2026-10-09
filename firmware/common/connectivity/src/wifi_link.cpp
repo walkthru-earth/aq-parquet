@@ -2,16 +2,18 @@
 #include "debug_log.h"
 #include "device_config.h"
 
-#include <Arduino.h>
-#include <ESPmDNS.h>
-#include <WiFi.h>
-#include <esp_sntp.h>
+#include <esp_event.h>
+#include <esp_mac.h>
+#include <esp_netif.h>
+#include <esp_netif_sntp.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <lwip/inet.h>
 #include <lwip/sockets.h>
+#include <mdns.h>
 
 #include <algorithm>
 #include <atomic>
@@ -48,10 +50,87 @@ void network_time_synced(struct timeval *time) {
   network_anchor_pending = true;
   portEXIT_CRITICAL(&time_mutex);
 }
+esp_netif_t *station_netif = nullptr;
+esp_event_handler_instance_t wifi_events = nullptr, ip_events = nullptr;
+bool wifi_initialized = false;
+std::atomic<bool> station_has_ip{false};
+std::atomic<unsigned> disconnect_reason{0};
+bool sntp_on = false;
+
+// Startup failures must release their ownership so a later begin can retry.
+// The default event loop/netif stack may be shared and remains initialized.
+void release_station() {
+  if (wifi_events) {
+    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                          wifi_events);
+    wifi_events = nullptr;
+  }
+  if (ip_events) {
+    esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID,
+                                          ip_events);
+    ip_events = nullptr;
+  }
+  if (wifi_initialized) {
+    esp_wifi_deinit();
+    wifi_initialized = false;
+  }
+  if (station_netif) {
+    esp_netif_destroy_default_wifi(station_netif);
+    station_netif = nullptr;
+  }
+}
+
+// Event callbacks publish state only. The LAN task owns reconnects, discovery,
+// SNTP and sockets; event-task callbacks never touch those resources.
+void station_event(void *, esp_event_base_t base, std::int32_t id, void *data) {
+  if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    station_has_ip = true;
+  } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    station_has_ip = false;
+    disconnect_reason =
+        static_cast<wifi_event_sta_disconnected_t *>(data)->reason;
+  } else if ((base == WIFI_EVENT && id == WIFI_EVENT_STA_STOP) ||
+             (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP)) {
+    station_has_ip = false;
+  }
+}
+
+int station_rssi() {
+  wifi_ap_record_t ap{};
+  return esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
+}
+
+void station_mac(char *out, std::size_t size) {
+  std::uint8_t mac[6]{};
+  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK)
+    std::snprintf(out, size, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
+                  mac[2], mac[3], mac[4], mac[5]);
+}
+
+void stop_sntp() {
+  if (sntp_on) {
+    esp_netif_sntp_deinit();
+    sntp_on = false;
+  }
+}
+
+void start_sntp() {
+  stop_sntp();
+  esp_sntp_config_t ntp = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+      2, ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
+  ntp.wait_for_sync = false;
+  ntp.sync_cb = network_time_synced;
+  const esp_err_t result = esp_netif_sntp_init(&ntp);
+  sntp_on = result == ESP_OK;
+  if (!sntp_on)
+    aqlog.record_only().printf("WIFI ERROR operation=sntp code=%d\n", result);
+}
+
 portMUX_TYPE status_mutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t socket_mutex = nullptr;
 
 std::atomic<bool> reapply{true}, drop_requested{false};
+std::atomic<bool> lan_ready{false};
 std::atomic<bool> scan_pending{false};
 std::atomic<std::uint8_t> scan_link{0};
 std::atomic<std::uint32_t> scan_generation{0};
@@ -101,10 +180,13 @@ void set_status(const char *state, bool link_up) {
   char mac[18] = "";
   int rssi = 0;
   if (link_up) {
-    std::snprintf(ip, sizeof(ip), "%s", WiFi.localIP().toString().c_str());
-    rssi = WiFi.RSSI();
+    esp_netif_ip_info_t address{};
+    if (station_netif &&
+        esp_netif_get_ip_info(station_netif, &address) == ESP_OK)
+      esp_ip4addr_ntoa(&address.ip, ip, sizeof(ip));
+    rssi = station_rssi();
   }
-  std::snprintf(mac, sizeof(mac), "%s", WiFi.macAddress().c_str());
+  station_mac(mac, sizeof(mac));
   portENTER_CRITICAL(&status_mutex);
   current.state = state;
   std::memcpy(current.ip, ip, sizeof(ip));
@@ -254,16 +336,23 @@ void start_server() {
     listen_fd = -1;
     return;
   }
-  if (MDNS.begin(host_label)) {
-    MDNS.addService("aqsync", "tcp", config::kLanPort);
-    MDNS.addServiceTxt("aqsync", "tcp", "proto", String(kProtocolVersion));
-    MDNS.addServiceTxt("aqsync", "tcp", "station", device_identity.station);
-    MDNS.addServiceTxt("aqsync", "tcp", "dev", device_identity.device);
-    MDNS.addServiceTxt("aqsync", "tcp", "fw", device_identity.firmware);
-    mdns_on = true;
-  } else {
-    aqlog.record_only().println("LAN ERROR operation=mdns");
+  char proto[4];
+  std::snprintf(proto, sizeof(proto), "%u", unsigned(kProtocolVersion));
+  mdns_txt_item_t txt[] = {{"proto", proto},
+                           {"station", device_identity.station},
+                           {"dev", device_identity.device},
+                           {"fw", device_identity.firmware}};
+  if (mdns_init() == ESP_OK) {
+    if (mdns_hostname_set(host_label) == ESP_OK &&
+        mdns_instance_name_set(ble::local_name()) == ESP_OK &&
+        mdns_service_add(nullptr, "_aqsync", "_tcp", config::kLanPort, txt,
+                         sizeof(txt) / sizeof(txt[0])) == ESP_OK)
+      mdns_on = true;
+    else
+      mdns_free();
   }
+  if (!mdns_on)
+    aqlog.record_only().println("LAN ERROR operation=mdns");
   portENTER_CRITICAL(&status_mutex);
   current.mdns = mdns_on;
   portEXIT_CRITICAL(&status_mutex);
@@ -276,7 +365,7 @@ void stop_server(const char *reason) {
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
     close_client(peer, reason);
   if (mdns_on) {
-    MDNS.end();
+    mdns_free();
     mdns_on = false;
   }
   if (listen_fd >= 0) {
@@ -290,11 +379,12 @@ void stop_server(const char *reason) {
 }
 
 void radio_off(const char *reason) {
-  esp_sntp_stop();
+  stop_sntp();
   stop_server(reason);
   if (radio_on) {
-    WiFi.disconnect(true, false);
-    WiFi.mode(WIFI_OFF);
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    station_has_ip = false;
     radio_on = false;
     aqlog.record_only().printf("WIFI OFF reason=%s\n", reason);
   }
@@ -303,18 +393,36 @@ void radio_off(const char *reason) {
 }
 
 void radio_connect() {
-  if (!radio_on) {
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(true); // modem sleep keeps BLE coexistence workable
-    WiFi.setAutoReconnect(false);
-    radio_on = true;
+  // aqcfg is the sole persistent settings owner; the driver uses RAM storage.
+  // Restart on apply so old association/IP cannot keep an old LAN alive.
+  station_has_ip = false;
+  stop_sntp();
+  if (radio_on) {
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    radio_on = false;
   }
-  WiFi.begin(settings.ssid, settings.psk[0] ? settings.psk : nullptr);
+  wifi_config_t station{};
+  std::memcpy(station.sta.ssid, settings.ssid,
+              std::min(sizeof(station.sta.ssid), std::strlen(settings.ssid)));
+  std::memcpy(
+      station.sta.password, settings.psk,
+      std::min(sizeof(station.sta.password), std::strlen(settings.psk)));
+  station.sta.threshold.authmode =
+      settings.psk[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+  esp_err_t result = esp_wifi_set_config(WIFI_IF_STA, &station);
+  if (result == ESP_OK)
+    result = esp_wifi_start();
+  radio_on = result == ESP_OK;
+  if (radio_on) {
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    result = esp_wifi_connect();
+  }
   connect_started_us = esp_timer_get_time();
-  retry_at_us = 0;
-  set_status("connecting", false);
-  aqlog.record_only().printf("WIFI CONNECT ssid=%s\n", settings.ssid);
+  retry_at_us = result == ESP_OK ? 0 : connect_started_us + kRetryUs;
+  set_status(result == ESP_OK ? "connecting" : "failed", false);
+  aqlog.record_only().printf("WIFI CONNECT ssid=%s code=%d\n", settings.ssid,
+                             result);
 }
 
 void poll_radio() {
@@ -322,7 +430,7 @@ void poll_radio() {
   if (reapply.exchange(false)) {
     settings = config::get();
     // Reconcile lan.on and invalidate old sessions even when the station
-    // stays associated through WiFi.begin() with the same network.
+    // stays associated with the same network.
     stop_server("settings");
     connected = false;
     if (!settings.wifi_on || !settings.ssid[0]) {
@@ -332,23 +440,21 @@ void poll_radio() {
     radio_connect();
     return;
   }
-  if (!radio_on)
+  if (!settings.wifi_on || !settings.ssid[0])
     return;
-  const bool up = WiFi.status() == WL_CONNECTED;
+  const bool up = station_has_ip.load();
   if (up && !connected) {
     connected = true;
     // Nonblocking SNTP: successful responses alone produce an anchor. DNS or
     // internet failure leaves monotonic capture running without fake UTC.
-    esp_sntp_set_time_sync_notification_cb(network_time_synced);
-    configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+    start_sntp();
     set_status("connected", true);
     aqlog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
-                               settings.ssid, WiFi.localIP().toString().c_str(),
-                               WiFi.RSSI());
+                               settings.ssid, status().ip, station_rssi());
     start_server();
   } else if (!up && connected) {
     connected = false;
-    esp_sntp_stop();
+    stop_sntp();
     stop_server("wifi-lost");
     aqlog.record_only().println("WIFI LOST");
     radio_connect();
@@ -357,9 +463,10 @@ void poll_radio() {
     set_status("failed", false);
     retry_at_us = now + kRetryUs;
     aqlog.record_only().printf("WIFI FAILED ssid=%s status=%d retry_s=%lld\n",
-                               settings.ssid, int(WiFi.status()),
+                               settings.ssid, int(disconnect_reason.load()),
                                static_cast<long long>(kRetryUs / 1000000));
-    WiFi.disconnect();
+    esp_wifi_disconnect();
+    station_has_ip = false;
   } else if (!up && retry_at_us && now >= retry_at_us) {
     radio_connect();
   } else if (up) {
@@ -368,7 +475,7 @@ void poll_radio() {
     static std::int64_t last_refresh = 0;
     if (now - last_refresh > 10000000LL) {
       last_refresh = now;
-      const int rssi = WiFi.RSSI();
+      const int rssi = station_rssi();
       portENTER_CRITICAL(&status_mutex);
       current.rssi = rssi;
       portEXIT_CRITICAL(&status_mutex);
@@ -411,63 +518,69 @@ void run_scan() {
   const auto link_generation = scan_generation.load();
   const auto peer = scan_peer.load();
   const bool temporary = !radio_on;
-  if (temporary) {
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-  }
-  aqlog.record_only().println("WIFI SCAN BEGIN");
-  const int found = WiFi.scanNetworks(false, false);
-  if (found < 0) {
-    aqlog.record_only().printf("WIFI SCAN FAILED code=%d\n", found);
-    std::uint8_t frame[4];
-    frame[0] = ble::kFrameWifiScanEnd;
-    frame[1] = 0;
-    frame[2] = 0;
-    frame[3] = ble::kErrWifiUnavailable;
-    respond(link, link_generation, peer, frame, sizeof(frame));
-    if (temporary)
-      WiFi.mode(WIFI_OFF);
-    return;
-  }
-  // Report each SSID once with its strongest access point; skip hidden.
-  bool reported[kMaxScanEntries]{};
-  std::uint16_t count = 0;
-  for (int i = 0; i < found && i < int(kMaxScanEntries); ++i) {
-    if (reported[i])
-      continue;
-    const String ssid = WiFi.SSID(i);
-    if (ssid.length() == 0 || ssid.length() > config::kSsidMax)
-      continue;
-    int best = i;
-    for (int j = i + 1; j < found && j < int(kMaxScanEntries); ++j) {
-      if (!reported[j] && WiFi.SSID(j) == ssid) {
-        reported[j] = true;
-        if (WiFi.RSSI(j) > WiFi.RSSI(best))
-          best = j;
-      }
-    }
-    std::uint8_t frame[4 + config::kSsidMax];
-    frame[0] = ble::kFrameWifiAp;
-    frame[1] = static_cast<std::uint8_t>(static_cast<std::int8_t>(
-        WiFi.RSSI(best) < -127 ? -127 : WiFi.RSSI(best)));
-    frame[2] = auth_code(WiFi.encryptionType(best));
-    frame[3] = static_cast<std::uint8_t>(WiFi.channel(best));
-    std::memcpy(frame + 4, ssid.c_str(), ssid.length());
-    if (!respond(link, link_generation, peer, frame, 4 + ssid.length()))
-      break;
-    ++count;
-  }
-  WiFi.scanDelete();
-  std::uint8_t end[4];
-  end[0] = ble::kFrameWifiScanEnd;
-  end[1] = count & 0xff;
-  end[2] = (count >> 8) & 0xff;
-  end[3] = 0;
-  respond(link, link_generation, peer, end, sizeof(end));
-  aqlog.record_only().printf("WIFI SCAN END found=%d reported=%u\n", found,
-                             unsigned(count));
+  esp_err_t result = ESP_OK;
   if (temporary)
-    WiFi.mode(WIFI_OFF);
+    result = esp_wifi_start();
+  aqlog.record_only().println("WIFI SCAN BEGIN");
+  wifi_scan_config_t scan{};
+  scan.show_hidden = false;
+  if (result == ESP_OK)
+    result = esp_wifi_scan_start(&scan, true);
+  std::uint16_t found = kMaxScanEntries;
+  // Task-owned static storage keeps the scan list off the 8 KiB LAN stack.
+  static wifi_ap_record_t records[kMaxScanEntries];
+  std::memset(records, 0, sizeof(records));
+  if (result == ESP_OK)
+    result = esp_wifi_scan_get_ap_records(&found, records);
+  // get_ap_records releases the driver's full list. Release it on errors too.
+  if (result != ESP_OK) {
+    esp_wifi_clear_ap_list();
+    aqlog.record_only().printf("WIFI SCAN FAILED code=%d\n", result);
+    const std::uint8_t frame[] = {ble::kFrameWifiScanEnd, 0, 0,
+                                  ble::kErrWifiUnavailable};
+    respond(link, link_generation, peer, frame, sizeof(frame));
+  } else {
+    // Report each SSID once with its strongest access point; skip hidden.
+    bool reported[kMaxScanEntries]{};
+    std::uint16_t count = 0;
+    for (std::uint16_t i = 0; i < found; ++i) {
+      if (reported[i])
+        continue;
+      const char *ssid = reinterpret_cast<const char *>(records[i].ssid);
+      const auto length = strnlen(ssid, sizeof(records[i].ssid));
+      if (length == 0 || length > config::kSsidMax)
+        continue;
+      std::uint16_t best = i;
+      for (std::uint16_t j = i + 1; j < found; ++j) {
+        if (!reported[j] &&
+            std::memcmp(records[j].ssid, records[i].ssid, length + 1) == 0) {
+          reported[j] = true;
+          if (records[j].rssi > records[best].rssi)
+            best = j;
+        }
+      }
+      std::uint8_t frame[4 + config::kSsidMax];
+      frame[0] = ble::kFrameWifiAp;
+      frame[1] = static_cast<std::uint8_t>(
+          std::max<std::int8_t>(-127, records[best].rssi));
+      frame[2] = auth_code(records[best].authmode);
+      frame[3] = records[best].primary;
+      std::memcpy(frame + 4, ssid, length);
+      if (!respond(link, link_generation, peer, frame, 4 + length))
+        break;
+      ++count;
+    }
+    const std::uint8_t end[] = {
+        ble::kFrameWifiScanEnd, static_cast<std::uint8_t>(count & 0xff),
+        static_cast<std::uint8_t>((count >> 8) & 0xff), 0};
+    respond(link, link_generation, peer, end, sizeof(end));
+    aqlog.record_only().printf("WIFI SCAN END found=%u reported=%u\n",
+                               unsigned(found), unsigned(count));
+  }
+  if (temporary) {
+    esp_wifi_stop();
+    station_has_ip = false;
+  }
 }
 
 bool constant_time_equal(const std::uint8_t *a, const std::uint8_t *b,
@@ -728,22 +841,57 @@ bool take_time_anchor(TimeAnchor &anchor) {
 
 bool begin(const char *host, const ble::Identity &identity,
            ble::RequestHandler handler) {
-  if (!handler)
+  if (!handler || station_netif)
     return false;
   device_identity = identity;
   request_handler = handler;
   std::snprintf(host_label, sizeof(host_label), "%s", host);
-  socket_mutex = xSemaphoreCreateMutex();
-  if (!socket_mutex)
+  esp_err_t result = esp_netif_init();
+  if (result != ESP_OK)
     return false;
+  result = esp_event_loop_create_default();
+  if (result != ESP_OK && result != ESP_ERR_INVALID_STATE)
+    return false;
+  station_netif = esp_netif_create_default_wifi_sta();
+  if (!station_netif)
+    return false;
+  wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+  result = esp_wifi_init(&init);
+  wifi_initialized = result == ESP_OK;
+  if (result == ESP_OK)
+    result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
+  if (result == ESP_OK)
+    result = esp_wifi_set_mode(WIFI_MODE_STA);
+  if (result == ESP_OK)
+    result = esp_netif_set_hostname(station_netif, host_label);
+  if (result == ESP_OK)
+    result = esp_event_handler_instance_register(
+        WIFI_EVENT, ESP_EVENT_ANY_ID, station_event, nullptr, &wifi_events);
+  if (result == ESP_OK)
+    result = esp_event_handler_instance_register(
+        IP_EVENT, ESP_EVENT_ANY_ID, station_event, nullptr, &ip_events);
+  if (result != ESP_OK) {
+    aqlog.record_only().printf("LAN ERROR operation=wifi-init code=%d\n",
+                               result);
+    release_station();
+    return false;
+  }
+  socket_mutex = xSemaphoreCreateMutex();
+  if (!socket_mutex) {
+    release_station();
+    return false;
+  }
   std::snprintf(current.host, sizeof(current.host), "%s", host_label);
-  std::snprintf(current.mac, sizeof(current.mac), "%s",
-                WiFi.macAddress().c_str());
+  station_mac(current.mac, sizeof(current.mac));
   reapply = true;
   if (xTaskCreate(lan_task, "aq-lan", 8192, nullptr, 1, nullptr) != pdPASS) {
     aqlog.record_only().println("LAN ERROR operation=task");
+    vSemaphoreDelete(socket_mutex);
+    socket_mutex = nullptr;
+    release_station();
     return false;
   }
+  lan_ready = true;
   aqlog.record_only().printf("LAN BEGIN host=%s port=%u\n", host_label,
                              unsigned(config::kLanPort));
   return true;
@@ -753,6 +901,8 @@ void apply_settings() { reapply = true; }
 
 bool request_scan(ble::Link link, std::uint32_t link_generation,
                   std::uint8_t peer) {
+  if (!lan_ready.load())
+    return false;
   // Both transport tasks may request a scan. Publish its owner before making
   // it visible to the LAN task, while excluding a second concurrent caller.
   portENTER_CRITICAL(&scan_mutex);

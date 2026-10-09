@@ -1,0 +1,94 @@
+"""Decode native firmware advertising bytes through the shipped BLE client.
+
+Host interoperability checks; no hardware/radio behavior is established.
+Run: pixi run python tools/test_ble_advert.py --sanitize
+"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import subprocess
+import tempfile
+from types import SimpleNamespace
+from uuid import UUID
+
+import ble_sync as client
+
+
+def ad_fields(packet: bytes) -> dict[int, bytes]:
+    """Independent Bluetooth AD parser: length includes type, excludes itself."""
+    fields = {}
+    position = 0
+    while position < len(packet):
+        length = packet[position]
+        assert length and position + length < len(packet)
+        kind = packet[position + 1]
+        assert kind not in fields
+        fields[kind] = packet[position + 2:position + length + 1]
+        position += length + 1
+    assert position == len(packet)
+    return fields
+
+
+def wire_uuid(value: bytes) -> str:
+    assert len(value) == 16
+    return str(UUID(bytes=bytes(reversed(value))))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sanitize", action="store_true")
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory(prefix="aq-ble-advert-") as directory:
+        executable = Path(directory) / "advert"
+        command = [
+            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            "-I", str(root / "firmware/common/runtime/src"),
+            "-I", str(root / "firmware/common/connectivity/src"),
+            str(root / "firmware/common/connectivity/tests/test_ble_advert.cpp"),
+            "-o", str(executable),
+        ]
+        if args.sanitize:
+            command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        subprocess.run(command, check=True)
+        packets = [bytes.fromhex(line) for line in subprocess.check_output(
+            [str(executable)], text=True).splitlines()]
+    assert len(packets) == 16
+    expected = [client.SERVICE, client.INFO, client.STATUS, client.LIVE,
+                client.CONTROL, client.RESPONSE]
+    assert [wire_uuid(value) for value in packets[:6]] == expected
+    for index, packet in enumerate(packets[6:14]):
+        assert len(packet) == 31
+        fields = ad_fields(packet)
+        assert set(fields) == {0x01, 0x21}
+        assert fields[0x01] == b"\x06"
+        service = wire_uuid(fields[0x21][:16])
+        assert service == client.SERVICE
+        payload = fields[0x21][16:]
+        assert len(payload) == 10 and payload[-2:] == b"\0\0"
+        decoded = client.decode_advert(payload)
+        assert decoded is not None
+        if index < 6:
+            assert decoded == {"ver": 1, "flags": [client.ADVERT_FLAGS[index]],
+                               "fin": 0x89abcdef, "boot16": "7654"}
+        else:
+            assert decoded == {"ver": 1, "flags": [],
+                               "fin": 0 if index == 6 else 0xffffffff,
+                               "boot16": "ffff"}
+        # A platform receiving ADV without SCAN_RSP can still discover AQ.
+        assert client.advertises_sync_service(SimpleNamespace(
+            service_uuids=[], service_data={service: payload}))
+    for packet, name in zip(packets[14:], ["AQ-6b40", "12345678901"]):
+        assert len(packet) <= 31
+        fields = ad_fields(packet)
+        assert set(fields) == {0x09, 0x07}
+        assert fields[0x09].decode() == name
+        assert wire_uuid(fields[0x07]) == client.SERVICE
+        assert client.advertises_sync_service(SimpleNamespace(
+            service_uuids=[wire_uuid(fields[0x07])], service_data={}))
+    print("Native BLE UUID/ADV/SCAN_RSP interoperates with the BLE client; bounds passed")
+
+
+if __name__ == "__main__":
+    main()

@@ -13,3 +13,4 @@ inline int xSemaphoreTake(SemaphoreHandle_t mutex, TickType_t ticks) {
   return mutex->try_lock_for(std::chrono::milliseconds(ticks)) ? pdTRUE : 0;
 }
 inline void xSemaphoreGive(SemaphoreHandle_t mutex) { mutex->unlock(); }
+inline void vSemaphoreDelete(SemaphoreHandle_t mutex) { delete mutex; }

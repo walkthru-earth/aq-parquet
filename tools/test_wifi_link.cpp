@@ -9,22 +9,16 @@
 #include <thread>
 #include <vector>
 
-DebugLog aqlog;
-DebugLog::DebugLog() = default;
-std::size_t DebugLog::write(std::uint8_t) { return 1; }
-std::size_t DebugLog::write(const std::uint8_t *, std::size_t length) {
-  return length;
-}
-std::size_t DebugLog::write_record_only(const std::uint8_t *,
-                                        std::size_t length) {
-  return length;
-}
+namespace aq::console {
+std::size_t write(const std::uint8_t *, std::size_t length) { return length; }
+} // namespace aq::console
 
 namespace {
 config::Settings fixture_settings;
 std::vector<ble::ControlRequest> requests;
 bool accept_requests = true;
 std::uint32_t ble_reply_generation = 0;
+std::vector<std::vector<std::uint8_t>> ble_frames;
 bool enqueue(const ble::ControlRequest &request) {
   if (!accept_requests)
     return false;
@@ -100,9 +94,11 @@ namespace config {
 Settings get() { return fixture_settings; }
 } // namespace config
 namespace ble {
+const char *local_name() { return "AQ-fixture"; }
 const char *info_json() { return "{\"station\":\"fixture\"}"; }
-bool send_response(const std::uint8_t *, std::size_t,
+bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint32_t generation) {
+  ble_frames.emplace_back(frame, frame + length);
   ble_reply_generation = generation;
   return true;
 }
@@ -120,11 +116,36 @@ int main() {
   std::signal(SIGPIPE, SIG_IGN);
   const ble::Identity identity{"fixture", "device", "boot", "schema",
                                0,         "",       "test"};
+  fake_init_result = ESP_FAIL;
+  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::station_netif && !lan::wifi_initialized);
+  assert(!lan::request_scan(ble::Link::Ble, 1));
+  fake_init_result = ESP_OK;
+  fake_task_result = 0;
+  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::station_netif && !lan::wifi_initialized && !lan::socket_mutex &&
+         !fake_station_events && !fake_ip_events && fake_wifi_deinits == 1);
+  assert(!lan::request_scan(ble::Link::Ble, 1));
+  fake_task_result = pdPASS;
   assert(lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(fake_wifi_storage == WIFI_STORAGE_RAM);
+  assert(!fake_wifi_started);
   lan::settings = fixture_settings;
   lan::connected = true;
   lan::start_server();
+  if (lan::listen_fd < 0)
+    std::fprintf(stderr, "LAN fixture listener failed: errno=%d (%s)\n", errno,
+                 std::strerror(errno));
   assert(lan::listen_fd >= 0);
+  assert(fake_mdns_started && fake_mdns_host == "aq-fixture" &&
+         fake_mdns_instance == "AQ-fixture" && fake_mdns_service == "_aqsync" &&
+         fake_mdns_transport == "_tcp" && fake_mdns_port == config::kLanPort);
+  assert(fake_mdns_txt ==
+         (std::map<std::string, std::string>{{"proto", "2"},
+                                             {"station", "fixture"},
+                                             {"dev", "device"},
+                                             {"fw", "test"}}));
   int phones[ble::kMaxLanClients];
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
     phones[peer] = connect_phone();
@@ -306,10 +327,12 @@ int main() {
   assert(!lan::take_time_anchor(time_anchor));
   const auto starts_before_reconnect = fake_ntp_starts;
   const auto stops_before_disconnect = fake_ntp_stops;
-  WiFi.connection_status = 0;
+  fake_wifi_autoconnect = false;
+  fake_wifi_lost();
   lan::poll_radio();
   assert(!lan::connected && fake_ntp_stops == stops_before_disconnect + 1);
-  WiFi.connection_status = WL_CONNECTED;
+  fake_wifi_autoconnect = true;
+  fake_wifi_got_ip();
   lan::poll_radio();
   assert(lan::connected && fake_ntp_starts == starts_before_reconnect + 1);
   // Reassociation restarts SNTP but never manufactures a new clock anchor.
@@ -328,6 +351,120 @@ int main() {
   assert(::recv(restored, &byte, 1, 0) == 0);
   ::close(restored);
   lan::stop_server("test-end");
-  delete lan::socket_mutex;
+
+  // Native station events drive link state; failed association keeps the
+  // existing bounded 30 second connect / 30 second retry cadence.
+  fake_wifi_autoconnect = false;
+  lan::apply_settings();
+  lan::poll_radio();
+  assert(std::strcmp(lan::status().state, "connecting") == 0 &&
+         fake_wifi_power_save == WIFI_PS_MIN_MODEM);
+  const auto attempts = fake_wifi_connects;
+  fake_now_us += lan::kConnectTimeoutUs + 1;
+  lan::poll_radio();
+  assert(std::strcmp(lan::status().state, "failed") == 0);
+  fake_now_us += lan::kRetryUs - 1;
+  lan::poll_radio();
+  assert(fake_wifi_connects == attempts);
+  ++fake_now_us;
+  lan::poll_radio();
+  assert(fake_wifi_connects == attempts + 1);
+  assert(!lan::take_time_anchor(time_anchor));
+
+  // A start error must retry as well, even though the radio never started.
+  fake_start_result = ESP_FAIL;
+  lan::apply_settings();
+  lan::poll_radio();
+  assert(!lan::radio_on && std::strcmp(lan::status().state, "failed") == 0);
+  fake_start_result = ESP_OK;
+  fake_now_us += lan::kRetryUs;
+  lan::poll_radio();
+  assert(lan::radio_on && std::strcmp(lan::status().state, "connecting") == 0);
+
+  fixture_settings.wifi_on = false;
+  lan::apply_settings();
+  lan::poll_radio();
+  assert(!fake_wifi_started && !fake_mdns_started &&
+         std::strcmp(lan::status().state, "off") == 0);
+
+  // Off-radio scans start/stop temporarily, deduplicate SSIDs by strongest
+  // RSSI, encode security/channel, preserve 32-byte names and skip hidden APs.
+  auto ap = [](const char *ssid, std::int8_t rssi, wifi_auth_mode_t auth,
+               std::uint8_t channel) {
+    wifi_ap_record_t record{};
+    std::snprintf(reinterpret_cast<char *>(record.ssid), sizeof(record.ssid),
+                  "%s", ssid);
+    record.rssi = rssi;
+    record.authmode = auth;
+    record.primary = channel;
+    return record;
+  };
+  fake_scan_records = {
+      ap("", -20, WIFI_AUTH_OPEN, 1),
+      ap("fixture-ap", -85, WIFI_AUTH_WPA2_PSK, 1),
+      ap("fixture-ap", -35, WIFI_AUTH_WPA3_PSK, 6),
+      ap("12345678901234567890123456789012", -128, WIFI_AUTH_OPEN, 11)};
+  ble_frames.clear();
+  assert(lan::request_scan(ble::Link::Ble, 123));
+  assert(!lan::request_scan(ble::Link::Ble, 456));
+  lan::run_scan();
+  lan::scan_pending = false;
+  assert(ble_reply_generation == 123 && ble_frames.size() == 3);
+  assert(ble_frames[0][0] == ble::kFrameWifiAp &&
+         static_cast<std::int8_t>(ble_frames[0][1]) == -35 &&
+         ble_frames[0][2] == 6 && ble_frames[0][3] == 6);
+  assert(ble_frames[1].size() == 36 &&
+         static_cast<std::int8_t>(ble_frames[1][1]) == -127);
+  assert(ble_frames[2] ==
+         (std::vector<std::uint8_t>{ble::kFrameWifiScanEnd, 2, 0, 0}));
+  assert(fake_scan_records.empty() && !fake_wifi_started && !lan::radio_on);
+
+  // Bounded scans release the complete driver list; failure emits one end
+  // frame and also frees results so repeated scans cannot retain AP memory.
+  for (unsigned i = 0; i < 80; ++i) {
+    const std::string name = "ap" + std::to_string(i);
+    fake_scan_records.push_back(ap(name.c_str(), -60, WIFI_AUTH_WPA2_PSK, 1));
+  }
+  ble_frames.clear();
+  lan::run_scan();
+  assert(ble_frames.size() == lan::kMaxScanEntries + 1 &&
+         ble_frames.back()[1] == lan::kMaxScanEntries &&
+         fake_scan_records.empty());
+  fake_scan_result = ESP_FAIL;
+  fake_scan_records.push_back(ap("unavailable", -50, WIFI_AUTH_OPEN, 1));
+  ble_frames.clear();
+  lan::run_scan();
+  assert(ble_frames ==
+         (std::vector<std::vector<std::uint8_t>>{
+             {ble::kFrameWifiScanEnd, 0, 0, ble::kErrWifiUnavailable}}));
+  assert(fake_scan_records.empty() && fake_scan_clears == 1 &&
+         !fake_wifi_started);
+  fake_scan_result = ESP_OK;
+
+  // The driver sees credentials in RAM only; diagnostics never include PSK.
+  // This is a generated fixture value, never a real owner's network secret.
+  std::memset(fixture_settings.ssid, 's', config::kSsidMax);
+  fixture_settings.ssid[config::kSsidMax] = '\0';
+  std::memset(fixture_settings.psk, 'z', config::kPskMax);
+  fixture_settings.psk[config::kPskMax] = '\0';
+  fixture_settings.wifi_on = true;
+  lan::apply_settings();
+  lan::poll_radio();
+  assert(std::memcmp(fake_wifi_config.sta.ssid, fixture_settings.ssid,
+                     config::kSsidMax) == 0);
+  assert(fake_wifi_config.sta.threshold.authmode == WIFI_AUTH_WPA2_PSK);
+  assert(std::memcmp(fake_wifi_config.sta.password, fixture_settings.psk,
+                     config::kPskMax) == 0 &&
+         fake_wifi_config.sta.password[config::kPskMax] == 0);
+  char log[DebugLog::kRingBytes];
+  std::uint32_t logged;
+  const auto length = aqlog.tail(log, sizeof(log), logged);
+  assert(std::string(log, length).find(fixture_settings.psk) ==
+         std::string::npos);
+  fixture_settings.wifi_on = false;
+  lan::apply_settings();
+  lan::poll_radio();
+  vSemaphoreDelete(lan::socket_mutex);
   lan::socket_mutex = nullptr;
+  lan::release_station();
 }
