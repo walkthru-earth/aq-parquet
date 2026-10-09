@@ -24,7 +24,7 @@ pixi run waveshare-build diagnostic
 
 | Board adapter | Source | Configuration | Hardware scope |
 | --- | --- | --- | --- |
-| [CoreS3](../../firmware/esp-idf-cores3/README.md) | `bringup/main.cpp` and board telemetry adapter | 16 MB flash, Quad PSRAM, USB Serial/JTAG console, native M5 components and SDSPI on existing SPI2 | Native qualification pending; historical Arduino images in the board bench record |
+| [CoreS3](../../firmware/esp-idf-cores3/README.md) | `bringup/main.cpp` and board telemetry adapter | 16 MB flash, Quad PSRAM, USB Serial/JTAG console, native M5 components and SDSPI on existing SPI2 | Short native USB Parquet/SD/network UTC check passed; phone transfers/endurance pending; [image evidence](../boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback) |
 | [Waveshare V2](../../firmware/esp-idf-waveshare-sim7670g/README.md) | `logger/main.cpp` or `diagnostic/main.cpp`, board IO adapter | 16 MB flash, OPI PSRAM for logger, no PSRAM for diagnostic, UART0 console and one-bit SDMMC | Native qualification pending; historical Arduino images in the board bench record |
 
 `tools/idf-dependencies.lock` pins ESP-IDF 6.1 and its exact source commit.
@@ -97,8 +97,9 @@ interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 These results establish native build and host-contract compatibility. They do
 not establish physical USB/UART, PSRAM, display/card arbitration, SD timing,
 radio coexistence, bonded reconnect, phone transfers or power-cut durability.
-No native hardware qualification is claimed; add dated board/image readback
-before extending the historical Arduino results.
+A subsequent [dated CoreS3 native flash/readback](../boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
+qualifies only its short SD/USB/sensor/network-time run. Waveshare native
+hardware remains pending; historical Arduino results keep their original scope.
 
 ## Dependency and shared-code policy
 
@@ -198,6 +199,8 @@ build configuration update.
 
 Source and host checks do not establish router option-42 behavior on a specific
 network, NTP accuracy/authenticity, physical radio coexistence, phone permission
-or location behavior, SD timing or power-cut durability. All native board
-qualification remains pending. Finalized owner archives and old schemas were
+or location behavior, SD timing or power-cut durability. The later CoreS3
+native run observed successful network UTC and a short USB file readback;
+router/local/public transitions and location provisioning remain unqualified.
+Finalized owner archives and old schemas were
 not rewritten.

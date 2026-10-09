@@ -1,8 +1,9 @@
 # CoreS3 microSD and logging
 
 Current source uses native ESP-IDF 6.1 SDSPI on the existing M5GFX SPI2 bus.
-Native builds pass; physical native card/display arbitration and SD durability
-require qualification. Dated measurements below remain historical Arduino
+Native builds pass; a [short native write/USB readback](bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
+passed at 20 MHz. Sustained display/card arbitration and SD durability require
+qualification. Dated measurements below remain historical Arduino
 image evidence. [Current workflow](../../../firmware/esp-idf-cores3/README.md).
 
 [Router](../../README.md) · Read for the **built-in slot**, shared SPI, file logging or data export. Card presence is optional. Snapshot **2026-09-08**; automatic 60-row Parquet batching, short Hive-file readback and normal-restart retention are bench-verified on one card. Power-loss behavior remains untested.

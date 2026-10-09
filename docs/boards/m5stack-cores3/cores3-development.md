@@ -2,7 +2,8 @@
 
 The current application is pure **ESP-IDF 6.1**, with native M5Unified
 **0.2.25** and M5GFX **0.2.31** components. Native board and fixture builds plus
-host gates pass; native physical qualification is pending. Use the
+host gates pass. A [short native SD/USB/network-time run](bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
+also passed; phone transfers and endurance remain pending. Use the
 [current workflow](../../../firmware/esp-idf-cores3/README.md#current-build-and-flash-workflow)
 and [shared development guide](../../shared/development.md).
 

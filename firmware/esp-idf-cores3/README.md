@@ -14,9 +14,11 @@ were checked on **2026-10-09**; LZ4 remains vendored **1.10.0**. The
 [development guide](../../docs/shared/development.md#host-and-toolchain) records
 the temporary M5GFX 0.2.31 qualification exception to latest release 0.2.32.
 
-**Native hardware qualification is pending.** Existing sensor, SD, RTC, display,
-BLE and LAN measurements below belong to their recorded Arduino images. Source
-migration and host tests do not extend those results to the native image.
+**A short native v6.9 run passed on 2026-10-09:** 20 MHz SD mount/write/USB readback,
+RTC/network UTC, valid sensors, retained station/settings/bonds and zero
+logger health errors. See the [dated image and limits](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback).
+Phone transfers, sustained display/card arbitration and power-cut durability
+remain unqualified. Earlier measurements below retain their Arduino identities.
 
 Native build/host gates passed on **2026-10-09**; see the
 [shared validation table](../../docs/shared/development.md#native-migration-validation-2026-10-09).

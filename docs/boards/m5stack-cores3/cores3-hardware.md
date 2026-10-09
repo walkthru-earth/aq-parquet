@@ -2,7 +2,8 @@
 
 Current firmware uses native ESP-IDF 6.1 with M5Unified 0.2.25/M5GFX 0.2.31.
 Pins, power and controller ownership remain board-specific. Native builds pass;
-physical native qualification is pending. Earlier dependency/source snapshots
+the [native bench record](bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
+adds a short SD/USB/sensor/network-time run. Earlier dependency/source snapshots
 and measured results below remain dated historical evidence, not current SDK
 recommendations. [Current application](../../../firmware/esp-idf-cores3/README.md).
 

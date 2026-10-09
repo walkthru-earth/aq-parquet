@@ -14,7 +14,7 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 
 | Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
-| [CoreS3 v6.9](firmware/esp-idf-cores3/README.md) | 81 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
+| [CoreS3 v6.9](firmware/esp-idf-cores3/README.md) | 81 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified; phone transfers/endurance remain unqualified; [bench record](docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback) |
 | [Waveshare logger v2.3](firmware/esp-idf-waveshare-sim7670g/README.md) | 56 columns; native UART PMS5003T, I²C gauge, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
 Both source adapters implement the existing offline archive, configuration, BLE
@@ -38,7 +38,8 @@ Pins were checked on **2026-10-09**. M5GFX 0.2.32 is now available; the
 [development guide](docs/shared/development.md#host-and-toolchain) records why
 this hardware qualification retains 0.2.31. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
 and [development workflow](docs/shared/development.md) describe the native build.
-[Native board/fixture builds and host gates passed on 2026-10-09](docs/shared/development.md#native-migration-validation-2026-10-09); no native hardware qualification is claimed.
+[Native board/fixture builds and host gates passed on 2026-10-09](docs/shared/development.md#native-migration-validation-2026-10-09).
+CoreS3 also passed a [short native hardware readback](docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback); Waveshare remains unqualified on hardware.
 Historical footprint, throughput and durability observations below apply only
 to their recorded Arduino images and do not establish native hardware behavior.
 [Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe

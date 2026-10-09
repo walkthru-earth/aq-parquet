@@ -1,10 +1,11 @@
 # Bench-verified board record
 
 **Framework scope, 2026-10-09:** Current source is native ESP-IDF 6.1 and its
-build/host gates pass. No native hardware run is claimed here. The dated
-physical observations, images, old API/tool commands and performance figures
-below belong to historical Arduino builds; retain those identities when using
-this evidence. Native qualification must add a separately dated image/readback.
+build/host gates pass. The separately dated
+[first native flash/readback](#board-1-first-native-esp-idf-flash-and-readback)
+below qualifies a short CoreS3 run. Earlier physical observations, images,
+old API/tool commands and performance figures belong to historical Arduino
+builds; retain those identities when using this evidence.
 
 
 [Router](../../README.md) · Everything else in `docs/` is source-checked against schematics and vendor code. This file records only what was **measured on real hardware in this project**, with the date and the method. If a claim elsewhere disagrees with this file, this file wins for the board listed here.
@@ -590,3 +591,77 @@ this CoreS3/OnePlus pair. Its RTC was available at boot: complete power loss,
 unknown-UTC recovery, midnight repartition and iOS hardware behavior were not
 physically exercised in this run; those paths retain their separate host and
 simulator evidence.
+
+## Board 1, first native ESP-IDF flash and readback
+
+Verified **2026-10-09, 20:37–20:52 UTC**, CoreS3 MAC
+`44:1b:f6:e2:6b:40`, USB Serial/JTAG `/dev/cu.usbmodem20301`. In order,
+`ports`, `chip`, `flash-id` and read-only `efuse` confirmed ESP32-S3 rev0.2,
+16 MB Quad flash, secure boot and flash encryption disabled. A fresh full
+default-baud backup is retained privately at
+`backup/m5stack-cores3-flash-20261009T203744Z.bin`: **16,777,216 bytes**,
+SHA-256 `b4f4934bb0d3e935b395d116c48ef0349cfeb9f8e035003d3eea82fdd55da9b6`.
+Never publish that image: it contains owner settings and keys.
+
+Final native application is **`idf-cores3-parquet-v6.9`**, schema
+`cores3-telemetry-v4`, dictionary v3, built from the fixes committed as
+`9baf1ca` with ESP-IDF 6.1, M5Unified 0.2.25 and M5GFX 0.2.31. Application size
+**1,517,552 bytes**, SHA-256
+`33bb767839825a247ec6dc9c82a6485d5273e6f8481105e939203172e246f0f9`.
+The manifest-checked flash verified its written hashes; default-baud readback
+of the entire application at `0x10000` matched the retained binary byte for
+byte. Only bootloader, partition table, OTA metadata and app0 were written;
+NVS was not erased and the card was not formatted, repaired or deleted.
+
+The first physical native attempts exposed four defects, corrected before
+leaving the device running:
+
+- ESP-IDF 6.1 rejected the obsolete `idf.py --no-deps` flag before any write.
+  The backup/manifest-gated uploader now consumes checked `flash_args` with
+  pinned Pixi esptool, avoiding an implicit rebuild.
+- At a requested 25 MHz, native SD initialization failed its high-speed CSD
+  reread with `ESP_ERR_INVALID_RESPONSE` (`0x108`). Standard-speed 20 MHz
+  mounted this card. This identifies a working setting, not a proven
+  electrical cause or qualification of other cards/high-speed modes.
+- Native default four-universal-MAC policy changed Bluetooth base+1 to base+2,
+  preventing existing local IRK lookup (rc 27/17). Restoring the earlier
+  two-MAC policy loaded address `44:1b:f6:e2:6b:41` and **two existing bonds**
+  without the IRK warning or any key erasure.
+- FatFs rejects `mkdir` at its mounted root with `EINVAL`; shared archive creation now checks existing
+  directories first. The failed intermediate export was reported as failed;
+  unfinished RAM samples in those attempts were lost on reflash.
+
+Final physical checks:
+
+| Check | Observed result |
+| --- | --- |
+| SD | Mounted, card 31,457,280,000 bytes; capacity error 0; native clock 20,000,000 Hz; SPI2/pins unchanged |
+| Owner state | Same station UUID `53315f5f-cb85-4d8d-b623-d56266084189`; `first_boot=false`, configured PIN/Wi-Fi retained, display enabled |
+| Acquisition | RTC restored an anchor; IMU/light and PMSA003 available, valid PMS frames with zero checksum/length errors |
+| Native network time | Exported rows had `clock_status=3`, epoch 2 and network reconciliation source 3; anchor 20:50:56.150058Z. No host-time command was sent |
+| Parquet export | Three rows, sequences 1–3, all 81 columns, UNCOMPRESSED; PyArrow/DuckDB agree; length/CRC verified |
+| Sampling | Intervals 9,994,079–9,999,090 µs; maximum deviation from 10 s was 5,921 µs in this short file |
+| Health | All exported drop/storage-error/missed-deadline values 0; final STATUS finalized 2, buffered 1, dropped 0, errors 0, failed=false |
+| PSRAM | Writer workspace 190,048 bytes allocated; finalization reported 8,185,472 free PSRAM bytes |
+| Privacy | All four H3 columns null; cell/country unknown; default maximum resolution 5, awaiting explicit provisioning |
+
+Exported file:
+`station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=10/day=09/data_2045_6f40c72a790f8323b18003bda9f0c957_1-3-1.parquet`,
+**12,210 bytes**, CRC32 `191a3eca`, SHA-256
+`c3320ca999d810ddaf731e4d56023bece8b2cbea18727c14aa77cac72a6bb791`.
+The second finalized file reflects the RTC/network-anchor split; it is retained
+on the card. No old finalized archive was rewritten.
+
+Evidence is ignored under
+`firmware/esp-idf-cores3/artifacts/idf-v6.9-flash-20261009/`; `final/` holds
+the production image/ELF/manifest, flash/application-readback logs, bounded
+bench capture, reader summary, file copy and final status. Host gates:
+`fmt-check`, `lint`, `logger-directory-test` (ASan/UBSan), `cores3-build` and
+`waveshare-build` passed. Waveshare was not flashed.
+
+Limits: a short manual-flush USB export, not endurance, automatic full-window
+rotation, power-cut durability or display stress. Existing bonds loaded, but
+bonded phone reconnect/BLE or LAN transfer were not tested on this native
+image. Network time worked, but its selected endpoint, router option 42,
+local/public failure transitions and accuracy were not independently measured.
+H3 mobile provisioning and location changes were not exercised on hardware.

@@ -8,9 +8,10 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
 - Use `pixi run idf-setup`, `pixi run cores3-build` and, after the safety
   sequence, `pixi run cores3-flash <checked-port> <full-backup>`. M5Unified and
   M5GFX are native IDF components; never add Arduino APIs or another SPI owner.
-- Native migration has no real-board evidence yet; retained Arduino image
-  measurements remain historical. Qualify USB console, LCD/SD arbitration,
-  pairing and immutable readback before claiming native hardware behavior.
+- Native v6.9 has a dated short USB Parquet readback in the board bench record:
+  SD at 20 MHz, network UTC, retained identity/settings and zero health errors.
+  Retained Arduino measurements remain historical. Phone reconnect/transfers,
+  display stress, sustained arbitration and power-cut durability remain unqualified.
 - CoreS3 has 16 MB flash and **Quad** PSRAM. Do not copy Waveshare GPIO,
   PSRAM or SDMMC setup. Use `M5.Power` rather than raw expander writes.
 - This adapter owns M5Unified peripherals, sensor acquisition, display and

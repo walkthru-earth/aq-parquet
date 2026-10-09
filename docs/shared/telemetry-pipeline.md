@@ -5,13 +5,14 @@
 > ESP-IDF 6.1 board adapters. CoreS3 uses an 81-column v4 schema; Waveshare
 > V2 uses its 56-column PMS5003T v3 schema. Schema identities and hardware
 > acquisition remain board-owned. Dated SD/throughput results below are historical
-> Arduino image evidence; native hardware qualification is pending.
+> Arduino image evidence. A [short native CoreS3 readback](../boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
+> passed; Waveshare, native endurance and durability remain pending.
 
 [Router](../README.md) · Read for the measurement record, bounded buffer, on-device Parquet, SD durability and later object-storage upload. Hardware-level SD rules remain in [CoreS3 storage](../boards/m5stack-cores3/cores3-storage.md). Native migration snapshot **2026-10-09**; earlier firmware-v6 hardware evidence was recorded on **2026-09-17**; measured runs belong in [bench-verified](../boards/m5stack-cores3/bench-verified.md), separately from planned validation.
 
 ## Current decision
 
-The native ESP-IDF applications implement **real-sensor Parquet on microSD** through the shared C++ writer and storage worker. Native builds and host gates pass; earlier hardware readbacks remain scoped to their historical images. It acquires one row every **10 seconds**, containing available scalar measurements and explicit validity/status fields. Rotation defaults to **900 seconds** and can be set to **600, 1800 or 3600 seconds** for the running session; reboot restores 900 seconds. The logger buffers up to 90 rows in RAM; a completed batch becomes one **row group** of the open file, and the file is finalized at the window boundary (1, 1, 2 or 4 row groups for the four intervals):
+The native ESP-IDF applications implement **real-sensor Parquet on microSD** through the shared C++ writer and storage worker. Native builds and host gates pass, plus a short CoreS3 USB readback; earlier hardware readbacks retain their historical image scope. It acquires one row every **10 seconds**, containing available scalar measurements and explicit validity/status fields. Rotation defaults to **900 seconds** and can be set to **600, 1800 or 3600 seconds** for the running session; reboot restores 900 seconds. The logger buffers up to 90 rows in RAM; a completed batch becomes one **row group** of the open file, and the file is finalized at the window boundary (1, 1, 2 or 4 row groups for the four intervals):
 
 ```text
 10-second rows -> bounded PSRAM batch -> Parquet writer -> finalized SD files
