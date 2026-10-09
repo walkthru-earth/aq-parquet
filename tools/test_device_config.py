@@ -26,6 +26,7 @@ def main() -> None:
             "-I", str(root / "tools/host_fakes/config"), "-I", str(shared),
             str(root / "tools/test_device_config.cpp"),
             str(shared / "device_config.cpp"), str(shared / "debug_log.cpp"),
+            str(root / "tools/host_fakes/config/aq_console.cpp"),
             "-o", str(executable),
         ]
         if args.sanitize:

@@ -14,6 +14,7 @@ def main() -> None:
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-I", str(root / "tools/host_fakes/config"), "-I", str(runtime),
             str(root / "tools/test_debug_log.cpp"), str(runtime / "debug_log.cpp"),
+            str(root / "tools/host_fakes/config/aq_console.cpp"),
             "-o", str(executable),
         ], check=True)
         subprocess.run([str(executable)], check=True)

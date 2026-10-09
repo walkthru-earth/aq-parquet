@@ -27,6 +27,7 @@ def main() -> None:
             "-I", str(common), "-I", str(runtime), "-I", str(connectivity),
             str(root / "tools/test_control_sync.cpp"),
             str(runtime / "device_config.cpp"), str(runtime / "debug_log.cpp"),
+            str(root / "tools/host_fakes/config/aq_console.cpp"),
             str(connectivity / "control_sync.cpp"), "-o", str(executable),
         ]
         if args.sanitize:

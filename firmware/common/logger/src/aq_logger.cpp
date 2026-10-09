@@ -14,16 +14,17 @@
 #include <time_sync.h>
 #include <utc_clock.h>
 
-#include <Arduino.h>
-#include <Preferences.h>
+#include "aq_console.h"
 #include <esp_heap_caps.h>
 #include <esp_mac.h>
+#include <esp_random.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <nvs.h>
 
 #include <array>
 #include <atomic>
@@ -248,12 +249,13 @@ void prepare_columns() {
 }
 
 bool station_identity() {
-  Preferences settings;
-  if (!settings.begin("parquet", false))
+  nvs_handle_t settings;
+  if (nvs_open("parquet", NVS_READWRITE, &settings) != ESP_OK)
     return false;
-  if (settings.isKey("station")) {
-    settings.getString("station", station_text, sizeof(station_text));
-  } else {
+  std::size_t length = sizeof(station_text);
+  const esp_err_t found =
+      nvs_get_str(settings, "station", station_text, &length);
+  if (found == ESP_ERR_NVS_NOT_FOUND) {
     std::uint8_t id[16];
     esp_fill_random(id, sizeof(id));
     id[6] = (id[6] & 0x0f) | 0x40;
@@ -263,12 +265,16 @@ bool station_identity() {
         "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7], id[8], id[9],
         id[10], id[11], id[12], id[13], id[14], id[15]);
-    if (settings.putString("station", station_text) != 36) {
-      settings.end();
+    if (nvs_set_str(settings, "station", station_text) != ESP_OK ||
+        nvs_commit(settings) != ESP_OK) {
+      nvs_close(settings);
       return false;
     }
+  } else if (found != ESP_OK) {
+    nvs_close(settings);
+    return false;
   }
-  settings.end();
+  nvs_close(settings);
   if (std::strlen(station_text) != 36)
     return false;
   for (std::size_t i = 0; i < 36; ++i) {
@@ -593,13 +599,14 @@ bool finalize_file(OutputFile &target) {
       static_cast<unsigned long>(size), static_cast<unsigned long>(crc),
       static_cast<unsigned long>(write_us.load()),
       static_cast<unsigned long long>(target.sync_us),
-      static_cast<unsigned long>(ESP.getFreeHeap()),
-      static_cast<unsigned long>(ESP.getFreePsram()),
+      static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+      static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
       unsigned(uxTaskGetStackHighWaterMark(nullptr)), codec_name(target.codec),
       static_cast<unsigned long long>(target.codec_us),
       static_cast<unsigned long long>(target.writer_us),
       unsigned(sizeof(Lz4Workspace)),
-      static_cast<unsigned long>(ESP.getMinFreeHeap()));
+      static_cast<unsigned long>(
+          heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)));
   return true;
 }
 
@@ -945,7 +952,7 @@ void send_file(const char *name) {
     aqlog.printf("PARQUET DATA offset=%lu hex=%s\n",
                  static_cast<unsigned long>(offset), hex);
     offset += count;
-    delay(1);
+    vTaskDelay(pdMS_TO_TICKS(1) > 0 ? pdMS_TO_TICKS(1) : 1);
   }
   {
     BusLock lock;
@@ -1083,7 +1090,7 @@ std::size_t build_status_json(char *out, std::size_t size) {
   view.storage_ok = storage_ok.load();
   view.total_kib = total_kib.load();
   view.used_kib = used_kib.load();
-  view.heap_free = ESP.getFreeHeap();
+  view.heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   view.partials = partials_seen.load();
   view.quarantined = partials_quarantined.load();
   view.quarantine_bytes = quarantine_bytes.load();
@@ -1238,7 +1245,7 @@ bool respond_error(ble::Op op, ble::Error code, const char *detail) {
                    current_request ? current_request->link_generation : 0);
 }
 // Archive policy stays with the board worker; file-transfer sessions and wire
-// frames are shared across Arduino boards and BLE/LAN transports.
+// frames are shared across boards and BLE/LAN transports.
 aqsync::ArchiveSession archive_session(
     {nullptr,
      [](void *, aqsync::FileEmitter emit, void *context) {
@@ -1390,7 +1397,7 @@ void handle_control_request(const ble::ControlRequest &request,
     aqlog.printf("PARQUET REBOOT source=%s delay_ms=%u\n",
                  request.link == ble::Link::Lan ? "lan" : "ble",
                  unsigned(kDelayMs));
-    Serial.flush();
+    aq::console::flush();
     vTaskDelay(pdMS_TO_TICKS(kDelayMs));
     esp_restart();
     return;
@@ -1509,25 +1516,27 @@ void storage_worker(void *) {
       // reach this command. No PIN is printed at boot.
       const auto settings = ::config::get();
       if (settings.pair == ::config::PairMode::Fixed)
-        Serial.printf("AQ OWNER_PIN %06lu\n",
-                      static_cast<unsigned long>(settings.pin));
+        aq::console::printf("AQ OWNER_PIN %06lu\n",
+                            static_cast<unsigned long>(settings.pin));
       else
-        Serial.printf("AQ OWNER_PIN ERROR mode=%s reason=use-pairing-display\n",
-                      ::config::pair_name(settings.pair));
+        aq::console::printf(
+            "AQ OWNER_PIN ERROR mode=%s reason=use-pairing-display\n",
+            ::config::pair_name(settings.pair));
     } else if (std::strcmp(command.text, "parquet wifi-profile") == 0) {
       // Credential-bearing output never passes through the log ring.
       char profile[256];
       const auto length =
           format_wifi_profile(::config::get(), profile, sizeof(profile));
       if (length)
-        Serial.write(reinterpret_cast<const std::uint8_t *>(profile), length);
+        aq::console::write(reinterpret_cast<const std::uint8_t *>(profile),
+                           length);
       else
         aqlog.println("AQ WIFI_PROFILE ERROR reason=capacity");
     } else if (std::strncmp(command.text, "parquet config-hex ", 19) == 0) {
       const auto result = apply_config_hex(command.text + 19);
       if (result.ok)
-        Serial.printf("AQ CONFIG ok=1 reboot_required=%u\n",
-                      result.reboot_required ? 1U : 0U);
+        aq::console::printf("AQ CONFIG ok=1 reboot_required=%u\n",
+                            result.reboot_required ? 1U : 0U);
       else
         aqlog.printf("AQ CONFIG ok=0 key=%s\n", result.bad_key);
       std::memset(command.text, 0, sizeof(command.text));
@@ -1557,7 +1566,7 @@ void storage_worker(void *) {
                      "validity=%s property=%s\n",
                      field.name, unsigned(field.type), field.procedure,
                      field.unit, field.validity, field.property_uri);
-        delay(1);
+        vTaskDelay(pdMS_TO_TICKS(1) > 0 ? pdMS_TO_TICKS(1) : 1);
       }
       aqlog.println("PARQUET SCHEMA END");
     } else if (std::strcmp(command.text, "parquet codec-test") == 0) {
@@ -1657,9 +1666,10 @@ void collect(std::int64_t now, std::int64_t scheduled) {
     counter(row, "clock_anchor_mono_us", mono_anchor);
     counter(row, "clock_anchor_utc_ns", utc_anchor);
   }
-  counter(row, "heap_free_bytes", ESP.getFreeHeap());
-  counter(row, "heap_min_free_bytes", ESP.getMinFreeHeap());
-  counter(row, "psram_free_bytes", ESP.getFreePsram());
+  counter(row, "heap_free_bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  counter(row, "heap_min_free_bytes",
+          heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+  counter(row, "psram_free_bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   if (mounted) {
     counter(row, "sd_total_bytes", std::int64_t(total_kib.load()) * 1024);
     counter(row, "sd_used_bytes", std::int64_t(used_kib.load()) * 1024);
@@ -1896,8 +1906,10 @@ void poll() {
   static std::size_t length = 0;
   static bool overflow = false;
   input.source = Command::Source::Serial;
-  for (unsigned limit = 0; limit < 128 && Serial.available(); ++limit) {
-    const int byte = Serial.read();
+  for (unsigned limit = 0; limit < 128; ++limit) {
+    const int byte = aq::console::read();
+    if (byte < 0)
+      break;
     if (byte == '\r')
       continue;
     if (byte == '\n') {

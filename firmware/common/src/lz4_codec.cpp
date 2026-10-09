@@ -2,7 +2,7 @@
 // disable their deprecation attributes only in this implementation unit.
 #define LZ4_DISABLE_DEPRECATE_WARNINGS
 #include "lz4_codec.h"
-#ifdef ARDUINO
+#ifdef ESP_PLATFORM
 #include <esp_timer.h>
 #else
 #include <chrono>
@@ -14,7 +14,7 @@
 namespace telemetry {
 namespace {
 uint64_t micros_now() {
-#ifdef ARDUINO
+#ifdef ESP_PLATFORM
   return esp_timer_get_time();
 #else
   return std::chrono::duration_cast<std::chrono::microseconds>(

@@ -5,42 +5,51 @@
 // can hand to a phone, so an advanced user sees the same `PARQUET …`/`BLE …`/
 // `WIFI …` lines a bench log shows, without a cable. Text for humans, not an
 // API. Writers may run on any task; the ring is guarded by a spinlock and the
-// forwarding write to Serial is outside it. Radio/archive hot-path diagnostics
-// use record_only(): they stay in LOG_TAIL without calling the console sink.
-
-#include <Print.h>
+// forwarding write to the console is outside it. Radio/archive hot-path
+// diagnostics use record_only(): they stay in LOG_TAIL without calling the
+// console sink.
 
 #include <cstddef>
 #include <cstdint>
 
-class DebugLog : public Print {
+// Text-only diagnostic writer. This is deliberately independent of Arduino's
+// stream and numeric formatting interfaces.
+class LogOutput {
+public:
+  virtual ~LogOutput() = default;
+  virtual std::size_t write(const std::uint8_t *data, std::size_t size) = 0;
+  std::size_t write(std::uint8_t byte) { return write(&byte, 1); }
+  std::size_t print(const char *text);
+  std::size_t println(const char *text);
+  int printf(const char *format, ...) __attribute__((format(printf, 2, 3)));
+};
+
+class DebugLog : public LogOutput {
 public:
   static constexpr std::size_t kRingBytes = 8192;
 
+  using Sink = std::size_t (*)(void *, const std::uint8_t *, std::size_t);
   DebugLog();
-  // Optional board-selected console. Set once before worker/radio tasks start;
-  // the sink must outlive this log. The default preserves Arduino Serial.
-  void set_output(Print &output) { output_ = &output; }
+  // Set once before tasks start. Context must outlive this log.
+  void set_output(Sink output, void *context) {
+    output_ = output;
+    output_context_ = context;
+  }
 
-  size_t write(uint8_t byte) override;
-  size_t write(const uint8_t *buffer, size_t size) override;
+  using LogOutput::write;
+  std::size_t write(const std::uint8_t *buffer, std::size_t size) override;
 
-  // Diagnostic-only Print facade: retain full bytes in the ring without any
-  // console IO. Do not use for serial protocol/data or owner provisioning
-  // replies.
-  Print &record_only() { return record_only_; }
+  // Diagnostic-only output; never use for protocol or provisioning replies.
+  LogOutput &record_only() { return record_only_; }
 
   // Copies up to `max` of the newest bytes into `out` (not terminated) and
   // returns the copied length; `total` receives bytes logged since boot.
   std::size_t tail(char *out, std::size_t max, std::uint32_t &total) const;
 
 private:
-  class RingOutput : public Print {
+  class RingOutput : public LogOutput {
   public:
     explicit RingOutput(DebugLog &owner) : owner_(owner) {}
-    size_t write(uint8_t byte) override {
-      return owner_.write_record_only(&byte, 1);
-    }
     size_t write(const uint8_t *buffer, size_t size) override {
       return owner_.write_record_only(buffer, size);
     }
@@ -51,7 +60,8 @@ private:
 
   size_t write_record_only(const uint8_t *buffer, size_t size);
   RingOutput record_only_{*this};
-  Print *output_ = nullptr;
+  Sink output_ = nullptr;
+  void *output_context_ = nullptr;
   char ring_[kRingBytes]{};
   std::size_t head_ = 0; // next write position
   std::uint32_t total_ = 0;

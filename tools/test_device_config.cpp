@@ -1,6 +1,6 @@
-#include <Preferences.h>
 #include <debug_log.h>
 #include <device_config.h>
+#include <nvs.h>
 
 #include <cassert>
 #include <cstdio>
@@ -53,6 +53,11 @@ void first_boot(bool display) {
   assert(fake_platform::nvs.numbers.at("pin") == first.pin);
   assert(fake_platform::nvs.blobs.at("token").size() == config::kTokenBytes);
   assert(!config::reboot_required());
+  assert(fake_platform::nvs.types.at("pair") == 1);
+  assert(fake_platform::nvs.types.at("pin") == 4);
+  assert(fake_platform::nvs.types.at("ssid") == 8);
+  assert(fake_platform::nvs.types.at("token") == 9);
+  assert(fake_platform::nvs.commits == 9);
   assert(
       config::load(!display)); // stored capability/pairing defaults are frozen
   assert(same(first, config::get()));
@@ -210,6 +215,10 @@ void persistence_failure() {
     assert(same(before, config::get()));
     fake_platform::nvs.fail_write_key.clear();
   }
+  fake_platform::nvs.fail_commit_key = "token";
+  assert(!config::rotate_token());
+  assert(same(before, config::get()));
+  fake_platform::nvs.fail_commit_key.clear();
   fake_platform::nvs.fail_write_key = "token";
   assert(!config::rotate_token());
   assert(same(before, config::get()));

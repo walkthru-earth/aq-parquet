@@ -1,10 +1,9 @@
 #include "device_config.h"
 #include "debug_log.h"
 
-#include <Arduino.h>
-#include <Preferences.h>
 #include <esp_random.h>
 #include <freertos/FreeRTOS.h>
+#include <nvs.h>
 
 #include <cstdio>
 #include <cstring>
@@ -21,17 +20,34 @@ char hardware_model[16]{};
 
 std::uint32_t random_pin() { return esp_random() % 1000000U; }
 
-bool save_string(Preferences &store, const char *key, const char *value) {
-  const std::size_t length = std::strlen(value);
-  if (store.putString(key, value) != length)
+bool committed(nvs_handle_t store, esp_err_t result) {
+  return result == ESP_OK && nvs_commit(store) == ESP_OK;
+}
+
+bool save_string(nvs_handle_t store, const char *key, const char *value) {
+  if (!committed(store, nvs_set_str(store, key, value)))
     return false;
-  // putString returns zero for both an empty success and a failure. Read the
-  // persisted value back so empty credentials do not mask failed writes.
   char readback[96]{};
-  if (length >= sizeof(readback))
-    return false;
-  return store.getString(key, readback, sizeof(readback)) == length + 1 &&
+  std::size_t length = sizeof(readback);
+  return nvs_get_str(store, key, readback, &length) == ESP_OK &&
          std::strcmp(readback, value) == 0;
+}
+
+std::uint8_t read_u8(nvs_handle_t store, const char *key,
+                     std::uint8_t fallback) {
+  std::uint8_t value;
+  return nvs_get_u8(store, key, &value) == ESP_OK ? value : fallback;
+}
+
+std::uint32_t read_u32(nvs_handle_t store, const char *key,
+                       std::uint32_t fallback) {
+  std::uint32_t value;
+  return nvs_get_u32(store, key, &value) == ESP_OK ? value : fallback;
+}
+
+bool read_string(nvs_handle_t store, const char *key, char *out,
+                 std::size_t size) {
+  return nvs_get_str(store, key, out, &size) == ESP_OK;
 }
 
 bool sensor_serial_chars(const char *value) {
@@ -116,22 +132,30 @@ bool decode_sensor(char *value, Settings &settings) {
 }
 
 bool save_locked(const Settings &settings) {
-  Preferences store;
-  if (!store.begin(kNamespace, false))
+  nvs_handle_t store;
+  if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK)
     return false;
-  bool ok = store.putUChar("pair", static_cast<std::uint8_t>(settings.pair));
-  ok = store.putUInt("pin", settings.pin) && ok;
-  ok = store.putUChar("disp", settings.display ? 1 : 0) && ok;
-  ok = store.putUChar("wifion", settings.wifi_on ? 1 : 0) && ok;
+  // Preserve the existing per-key persistence contract and NVS value types.
+  bool ok =
+      committed(store, nvs_set_u8(store, "pair",
+                                  static_cast<std::uint8_t>(settings.pair)));
+  ok = committed(store, nvs_set_u32(store, "pin", settings.pin)) && ok;
+  ok = committed(store, nvs_set_u8(store, "disp", settings.display ? 1 : 0)) &&
+       ok;
+  ok =
+      committed(store, nvs_set_u8(store, "wifion", settings.wifi_on ? 1 : 0)) &&
+      ok;
   ok = save_string(store, "ssid", settings.ssid) && ok;
   ok = save_string(store, "psk", settings.psk) && ok;
-  ok = store.putUChar("lanon", settings.lan_on ? 1 : 0) && ok;
-  ok =
-      store.putBytes("token", settings.token, kTokenBytes) == kTokenBytes && ok;
+  ok = committed(store, nvs_set_u8(store, "lanon", settings.lan_on ? 1 : 0)) &&
+       ok;
+  ok = committed(store,
+                 nvs_set_blob(store, "token", settings.token, kTokenBytes)) &&
+       ok;
   char sensor[80];
   encode_sensor(sensor, sizeof(sensor), settings);
   ok = ok && save_string(store, "sensor", sensor);
-  store.end();
+  nvs_close(store);
   return ok;
 }
 
@@ -212,8 +236,9 @@ const char *pair_name(PairMode mode) {
 
 bool load(bool display_detected) {
   Settings settings;
-  Preferences store;
-  if (!store.begin(kNamespace, false)) {
+  persistent = false;
+  nvs_handle_t store;
+  if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK) {
     aqlog.println("CONFIG ERROR operation=nvs-open persistent=false");
     settings.display = display_detected;
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
@@ -223,7 +248,9 @@ bool load(bool display_detected) {
     booted = settings;
     return false;
   }
-  const bool first_boot = !store.isKey("pair");
+  std::uint8_t stored_pair;
+  const bool first_boot =
+      nvs_get_u8(store, "pair", &stored_pair) == ESP_ERR_NVS_NOT_FOUND;
   bool migrated_pin = false;
   if (first_boot) {
     settings.display = display_detected;
@@ -231,23 +258,25 @@ bool load(bool display_detected) {
     settings.pin = random_pin();
     esp_fill_random(settings.token, kTokenBytes);
   } else {
-    const auto pair = store.getUChar("pair", 0);
+    const auto pair = read_u8(store, "pair", 0);
     settings.pair = pair > 2 ? PairMode::Random : static_cast<PairMode>(pair);
-    settings.pin = store.getUInt("pin", kLegacyDefaultPin) % 1000000U;
+    settings.pin = read_u32(store, "pin", kLegacyDefaultPin) % 1000000U;
     if (settings.pin == kLegacyDefaultPin) {
       settings.pin = random_pin();
       migrated_pin = true;
       aqlog.println("CONFIG SECURITY legacy_pin_rotated=true");
     }
-    settings.display = store.getUChar("disp", display_detected ? 1 : 0) != 0;
-    settings.wifi_on = store.getUChar("wifion", 0) != 0;
-    store.getString("ssid", settings.ssid, sizeof(settings.ssid));
-    store.getString("psk", settings.psk, sizeof(settings.psk));
-    settings.lan_on = store.getUChar("lanon", 1) != 0;
-    if (store.getBytes("token", settings.token, kTokenBytes) != kTokenBytes)
+    settings.display = read_u8(store, "disp", display_detected ? 1 : 0) != 0;
+    settings.wifi_on = read_u8(store, "wifion", 0) != 0;
+    read_string(store, "ssid", settings.ssid, sizeof(settings.ssid));
+    read_string(store, "psk", settings.psk, sizeof(settings.psk));
+    settings.lan_on = read_u8(store, "lanon", 1) != 0;
+    std::size_t token_size = kTokenBytes;
+    if (nvs_get_blob(store, "token", settings.token, &token_size) != ESP_OK ||
+        token_size != kTokenBytes)
       esp_fill_random(settings.token, kTokenBytes);
     char sensor[80]{};
-    if (store.getString("sensor", sensor, sizeof(sensor)) > 0 &&
+    if (read_string(store, "sensor", sensor, sizeof(sensor)) &&
         !decode_sensor(sensor, settings)) {
       settings.sensor_vendor[0] = '\0';
       settings.sensor_model[0] = '\0';
@@ -256,7 +285,7 @@ bool load(bool display_detected) {
       aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
     }
   }
-  store.end();
+  nvs_close(store);
   persistent = true;
   if ((first_boot || migrated_pin) && !save_locked(settings))
     aqlog.println("CONFIG ERROR operation=nvs-seed-or-migrate");

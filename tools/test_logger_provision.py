@@ -23,6 +23,7 @@ def main() -> None:
                     str(common / "logger/src/aq_logger_provision.cpp"),
                     str(common / "runtime/src/device_config.cpp"),
                     str(common / "runtime/src/debug_log.cpp"),
+                    str(root / "tools/host_fakes/config/aq_console.cpp"),
                     str(common / "connectivity/src/control_sync.cpp"),
                     "-o", str(executable)]
         if args.sanitize:
