@@ -174,6 +174,7 @@ build configuration update.
 | `parquet-test --sanitize`, `archive-sync-test`, `python tools/test_ble_sync.py` | Writer/reader, immutable archive framing and paged host protocol gates pass |
 | `cores3-build`, `waveshare-build`, `waveshare-build diagnostic` | Final native images pass SDK/PSRAM/console/partition/flash-plan checks; no hardware writes |
 | `connectivity-build-test`, `logger-build-test` | Generic native builds include real NTP/H3/settings/logger without M5/Arduino dependencies |
+| Mobile `./gradlew --no-daemon --no-build-cache :core:protocol:clean :app:clean verify` | Android debug APK, lint and unit tests; shared JVM/Android/iOS tests; simulator framework link pass in `../opensensor-space-mobile/`. New location flow is code/test validated, not phone-tested |
 | `fmt-check`, `lint` | Pass |
 
 Source and host checks do not establish router option-42 behavior on a specific

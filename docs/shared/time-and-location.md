@@ -37,6 +37,12 @@ the existing monotonic estimate; the status reports the age of the latest
 network synchronization and when that evidence is stale. A board without a
 usable RTC starts unanchored again after reboot.
 
+The phone still sends its current UTC on each authenticated connection under
+the existing sync contract. That accepted host anchor can change
+`clock_status` back to 1 even after a successful network anchor, until a later
+SNTP cycle succeeds. The network service's last-sync evidence describes that
+service; it does not mean NTP exclusively owns the active logger clock.
+
 The implementation uses ordinary SNTP, which is unauthenticated. Encrypted BLE
 time provisioning remains useful offline; NTP adds automatic availability, and
 does not make an authenticity or precision guarantee. Cloudflare explicitly
