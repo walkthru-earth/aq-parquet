@@ -2,8 +2,8 @@
 
 
 > **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
-> observation/archive semantics. CoreS3 uses its 77-column dictionary and
-> Waveshare V2 its 52-column PMS5003T v2 dictionary. Board acquisition and schema
+> observation/archive semantics. CoreS3 uses its 81-column v4 schema and
+> Waveshare V2 its 56-column PMS5003T v3 schema. Board acquisition and schema
 > identities remain distinct. Native build/host gates pass; dated physical
 > evidence below remains scoped to historical Arduino images.
 
@@ -34,6 +34,33 @@ Solid arrows describe the device design; dashed arrows are unimplemented downstr
 | Measurement dictionary | Property identity, units, procedure, quality and time semantics | Implement a versioned firmware/host contract |
 | SensorThings adapter | Expose observations and linked metadata through a conforming API | Later host/service work, not current compliance |
 | Iceberg | Table membership, snapshots and coordinated metadata commits | Later host/cloud experiment |
+
+## Deployment cell and country (native schemas)
+
+CoreS3 v4 (81 fields, dictionary v3) and Waveshare v3 (56 fields, dictionary v3)
+append four nullable leaves, preserving their former 77/52-field prefixes:
+
+| Field | Physical type | Meaning |
+| --- | --- | --- |
+| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range; hex in config/footer |
+| `h3_resolution` | INT32 | Actual published cell resolution, potentially coarser than the configured maximum |
+| `h3_center_lat_e7` | INT64 | H3 grid-center latitude in 1e-7 degrees |
+| `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
+
+All four remain null while the deployment cell is unset. Firmware derives the
+center from the published cell; no raw GPS is stored. File metadata includes
+`country_iso3166_1_alpha2` (assigned owner-declared code or `unknown`),
+`country_source`, `location_source`, `h3_cell_id`, `h3_resolution`,
+`h3_max_resolution` and `h3_center_units`. Country is not inferred from H3.
+
+Acquisition snapshots cell, maximum precision and country into each queued row.
+The worker splits the RAM batch and open file before appending a different
+snapshot, including country-only/cap-only changes. The footer uses the file's
+captured snapshot. Old finalized files retain their original content and
+identity. Changing location does not rewrite earlier samples or archives.
+The mobile app requests an OS location fix only on an explicit action, computes
+H3 locally at selected precision, previews its derived center and sends only
+the cell through authenticated SET_CONFIG. See [time and location](time-and-location.md).
 
 ## Static Iceberg is feasible, not a simpler compression format
 
@@ -150,6 +177,6 @@ The `unit` strings are project labels, not a claim of universal UCUM validity. I
 
 ### Validation status
 
-The 90-row/77-column synthetic contract fixtures pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the v3 TIMESTAMP types and `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, and explicit unknown context. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
+The current 90-row/81-column CoreS3 and 56-column Waveshare synthetic contract fixtures pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the retained TIMESTAMP types and current `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, explicit unknown context, nullable/coarsened H3 centers and country metadata. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
 
 The revision was then flashed with hash verification on **2026-09-08**. Real SD readbacks passed for three unsynchronized UNCOMPRESSED rows and four host-anchored LZ4 rows. Column/dictionary metadata, null anchors before synchronization, exact UTC mapping after synchronization, receipt/start/completion order and zero stored health errors were checked. `parquet schema` completed on the board. The logger was left at 15-minute rotation with LZ4 and host UTC restored. These are smoke tests, not full-window endurance, calibrated time accuracy or SensorThings/Iceberg compliance. [Artifact identities, timings and measured scope](../boards/m5stack-cores3/bench-verified.md#board-1-schema-v2-provenance-and-timing)

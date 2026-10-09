@@ -11,8 +11,9 @@ file in `docs/README.md` after this one.
 | CoreS3 pins, build, current bench evidence | `firmware/esp-idf-cores3/AGENTS.md`, `docs/boards/m5stack-cores3/README.md` |
 | Waveshare V2 pins, build, current bench evidence | `firmware/esp-idf-waveshare-sim7670g/AGENTS.md`, `docs/boards/waveshare-esp32-s3-sim7670g/README.md` |
 | Shared drivers, writer, settings, radio, logger | `firmware/common/AGENTS.md`, then its scoped `AGENTS.md` |
-| BLE/LAN and Android compatibility | `docs/shared/ble-sync-protocol.md`, `../opensensor-space-android/AGENTS.md` |
+| BLE/LAN and mobile compatibility | `docs/shared/ble-sync-protocol.md`, `../opensensor-space-mobile/AGENTS.md` |
 | Telemetry schema, Parquet, UTC, archive paths | `docs/shared/telemetry-pipeline.md`, `docs/shared/table-and-observation-model.md` |
+| Router/local NTP, H3 and country/privacy configuration | `docs/shared/time-and-location.md`, `firmware/common/location/AGENTS.md` |
 | Host scripts and gates | `tools/AGENTS.md`, `docs/shared/development.md` |
 
 ## Code boundaries
@@ -30,12 +31,17 @@ file in `docs/README.md` after this one.
 - The card is the origin; local phone or laptop archive is the first copy.
   BLE/LAN sync works without internet. Cloud upload is optional future work.
 - Keep device PIN, Wi-Fi PSK and LAN bearer token out of logs, radio responses,
-  captured artifacts and docs. Contract changes require firmware and Android
+  captured artifacts and docs. Contract changes require firmware and mobile
   consumers to agree; `docs/shared/ble-sync-protocol.md` owns wire behavior.
 - ESP-IDF source/toolchain is pinned by `tools/idf-dependencies.lock`; managed
   components use exact manifest pins. Use `pixi run idf-setup`, `cores3-build`
   and `waveshare-build [logger|diagnostic]`. Never erase NVS during migration;
   retain station/config namespaces, keys, types and flash partition offsets.
+- Prefer DHCP/router and configured local NTP before permitted public fallback.
+  Never infer internet availability or UTC from Wi-Fi association. Preserve RTC
+  and authenticated host anchors offline. Location starts unset; persist only
+  the privacy-coarsened H3 cell and owner-declared country. Snapshot location per
+  sample/file and split on changes; never relabel finalized files.
 - Bench claims require dated board evidence with image identity and limits.
   Host tests do not prove SD, radio coexistence or power-cut durability.
 

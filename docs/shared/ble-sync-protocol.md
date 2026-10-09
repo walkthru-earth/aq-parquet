@@ -108,7 +108,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":2,"fw":"cores3-parquet-v6","schema":"cores3-telemetry-v3","cols":77,
+{"proto":2,"fw":"idf-cores3-parquet-v6.9","schema":"cores3-telemetry-v4","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
@@ -183,7 +183,7 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `0x05` | `SET_TIME` | `epoch_s` i64, optionally `subsecond_us` u32 | `TIME_SET` or `ERROR` 9; `status` notify |
 | `0x06` | `FLUSH` | — | `FLUSHED` or `ERROR` 10; `status` notify |
 | `0x07` | `STATUS` | — | `status` cache/notify only; **no `response` frame**, so the phone must not wait on `response` for it. If the value exceeds MTU − 3 the notification is omitted and the phone reads the cached characteristic. Over LAN this produces a `STATUS` push frame, so it doubles as a keep-alive ping. |
-| `0x08` | `GET_CONFIG` | — | `CONFIG` or BLE `CONFIG_CHUNK` sequence |
+| `0x08` | `GET_CONFIG` | empty or one page byte `0..4` | `CONFIG` or BLE `CONFIG_CHUNK` sequence |
 | `0x09` | `SET_CONFIG` | `key=value` lines, utf8, `\n`-separated (see [configuration](#device-configuration-v2)) | `CONFIG` or BLE `CONFIG_CHUNK` sequence; `ERROR` 12 with the offending key as `detail` |
 | `0x0A` | `WIFI_SCAN` | — | `WIFI_AP` × n, then `WIFI_SCAN_END`; `ERROR` 15 if the radio cannot scan |
 | `0x0B` | `REBOOT` | — | `REBOOTING`, then the device finalizes any RAM batch and restarts |
@@ -232,7 +232,7 @@ Rules:
 
 ## Device configuration (v2)
 
-`GET_CONFIG` returns, and `SET_CONFIG` accepts, the keys below. `SET_CONFIG` is **partial**: only the keys present change. Values are validated as a whole before anything is stored; one bad key rejects the request with `ERROR` 12 and nothing changes. Keys marked *action* are not stored, they do something once. NVS persistence is checked per key, not a transaction; a persistence failure can leave a partial saved configuration even though the live snapshot is not published. No whole-record power-cut atomicity is claimed. Secrets are write-only: `wifi.psk` is never echoed, `GET_CONFIG` reports `psk_set` instead; the fixed BLE PIN is also not echoed and is represented by `pin_set`.
+`GET_CONFIG` page 0 (empty body or byte 0) returns the legacy snapshot below. Pages 1–4 return additive location/time configuration using the same CONFIG or CONFIG_CHUNK envelope. `SET_CONFIG` accepts the keys below and always acknowledges with the legacy page-0 snapshot. `SET_CONFIG` is **partial**: only the keys present change. Values are validated as a whole before anything is stored; one bad key rejects the request with `ERROR` 12 and nothing changes. Keys marked *action* are not stored, they do something once. NVS persistence is checked per key, not a transaction; a persistence failure can leave a partial saved configuration even though the live snapshot is not published. No whole-record power-cut atomicity is claimed. Secrets are write-only: `wifi.psk` is never echoed, `GET_CONFIG` reports `psk_set` instead; the fixed BLE PIN is also not echoed and is represented by `pin_set`.
 
 | Key | Value | Applied | Meaning |
 | --- | --- | --- | --- |
@@ -244,6 +244,14 @@ Rules:
 | `wifi.psk` | ≤ 63 bytes, empty for an open network | immediately | passphrase, stored in NVS in clear (flash encryption is not used on this board by rule) |
 | `lan.on` | `0` \| `1` | immediately | TCP sync server + mDNS while Wi-Fi is connected (on by default) |
 | `lan.rotate_token` | `1` | *action* | new LAN token; every LAN session is dropped, phones must fetch the token again over BLE |
+| `ntp.on` | `0` \| `1` (default 1) | immediately | enable automatic native SNTP when Wi-Fi has an IP lease |
+| `ntp.dhcp` | `0` \| `1` (default 1) | immediately; new DHCP options at next lease | prefer router-provided DHCP option 42 servers |
+| `ntp.public_fallback` | `0` \| `1` (default 1) | immediately | allow `time.cloudflare.com` only after router/configured servers fail |
+| `ntp.interval_s` | `60..86400`, default 3600 | immediately | wait between successful synchronization cycles |
+| `ntp.server1`, `ntp.server2` | DNS name or literal IP, ≤253 bytes; empty clears | immediately | configured local/approved endpoints, tried in order after DHCP servers; no URLs or ports |
+| `location.cell` | canonical 15-digit H3 cell hex; empty clears | next sample | persist only the cell coarsened to the configured privacy cap |
+| `location.resolution` | `0..15`, default 5 | next sample | maximum disclosure precision; increasing alone never restores finer coordinates |
+| `location.country` | assigned uppercase ISO 3166-1 alpha-2; empty clears | next sample | optional owner-declared country, not inferred from the cell |
 | `sensor.vendor` | `Plantower` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified vendor; must match the board's declared physical sensor |
 | `sensor.model` | `PMS5003T` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified model; does not change the hardcoded UART parser |
 | `sensor.serial` | `PMS5003T-` + valid `YYYYMMDD` + 1–9 unit digits, or empty | immediately | scanned or manually entered module sticker, echoed in CONFIG; an empty value clears it. Impossible calendar dates and mismatched model prefixes are rejected |
@@ -255,6 +263,42 @@ Rules:
  "lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0},
  "sensor":{"vendor":"Plantower","model":"PMS5003T", "serial":"PMS5003T-202604081332","batch_candidate":0}}
 ```
+
+### Additional configuration pages
+
+Request bytes are the `GET_CONFIG` opcode followed by the optional page byte.
+An invalid page or more than one body byte returns malformed ERROR. Clients
+serialize requests because CONFIG has no request/page identifier. Legacy
+firmware may ignore a page byte and answer its ordinary snapshot; absence of
+the requested object means unsupported, not an unset location.
+
+| Page | Response JSON |
+| --- | --- |
+| 0 or empty | Legacy `ble`, `wifi`, `lan`, `sensor` snapshot |
+| 1 | `{"location":{"cell":"","resolution":5,"cell_resolution":null,"lat":null,"lon":null,"country":""}}`; populated cells return their actual resolution and derived center in degrees |
+| 2 | `ntp` policy (`on`, `dhcp`, `public_fallback`, `interval_s`) plus `state`, `running`, `anchored`, `age_s` (null before sync), `stale`, `source`, `last_public`, `sync_count`, `error` |
+| 3 | `{"ntp":{"server1":""}}` |
+| 4 | `{"ntp":{"server2":""}}` |
+
+`last_public` describes the last successful network anchor endpoint, not current
+internet connectivity. The runtime status preserves previous anchor evidence
+while offline/disabled. Configuration page 2 never claims NTS authentication.
+
+Each page remains within the 480-byte JSON limit. NTP policy changes alone do
+not reconnect Wi-Fi or close LAN. Router DHCP option 42 is tried first, then
+configured hosts, then allowed public fallback; association alone never
+establishes UTC. Location normalization happens after the complete patch, so
+cell/resolution key order has no effect. Separate single NVS records hold the
+coherent NTP and location policies; legacy keys keep their existing types.
+Missing records receive defaults; corrupt location becomes unset and corrupt
+NTP becomes disabled. A failed save does not publish the live snapshot; the
+whole legacy multi-key save is still not transactional.
+
+Location is the monitoring device/station deployment, explicitly configured
+from the mobile app. The app sends only a cell; firmware derives its center and
+splits files when cell, cap or country changes. See [time and location](time-and-location.md)
+for country restrictions, offline time and privacy limitations. Host readback:
+`pixi run ble-sync config --page 1` (or pages 2–4).
 
 `wifi.state` is one of `off`, `connecting`, `connected`, `failed` (wrong passphrase or no such network; the device keeps retrying every 30 s while `wifi.on`). `pin_set` says a fixed PIN exists without disclosing it. `pin_default` remains for backward-compatible clients and is 0 after automatic migration away from the legacy universal PIN. `display` reports what the device detected at boot.
 

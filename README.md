@@ -2,7 +2,7 @@
 
 ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have a native ESP-IDF application and separate hardware documentation. Application source uses no Arduino APIs or Arduino component. Both applications implement writing real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
 
-Each board owns its pins, peripherals, schema and acquisition callbacks. Four opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), and the sampling/storage worker (**AQLogger**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
+Each board owns its pins, peripherals, schema and acquisition callbacks. Five opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), the sampling/storage worker (**AQLogger**), and official H3 geometry (**AQLocation**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
@@ -14,19 +14,26 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Four op
 
 | Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
-| [CoreS3 v6.8](firmware/esp-idf-cores3/README.md) | 77 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
-| [Waveshare logger v2.2](firmware/esp-idf-waveshare-sim7670g/README.md) | 52 columns; native UART PMS5003T, I²C gauge, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
+| [CoreS3 v6.9](firmware/esp-idf-cores3/README.md) | 81 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
+| [Waveshare logger v2.3](firmware/esp-idf-waveshare-sim7670g/README.md) | 56 columns; native UART PMS5003T, I²C gauge, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
 Both source adapters implement the existing offline archive, configuration, BLE
-and authenticated local TCP/mDNS contract. Native migration retains measurement
-dictionaries, persistent station/config NVS keys and types, and flash partition
+and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields; new schemas
+append four nullable H3 location fields. It retains persistent station/config NVS keys and types, and flash partition
 offsets. Existing BLE bond compatibility is not guaranteed; native bonded
 reconnect or re-pairing needs a hardware check. Cellular/GNSS/camera integration
 remains future board work. See the [component map](firmware/common/README.md).
 
+Automatic time tries router DHCP option 42, configured local NTP hosts, then
+permitted public fallback. RTC and phone anchors remain available offline.
+Location is unset until explicit provisioning: the mobile app sends an H3 cell
+at a configurable precision (default maximum resolution 5), firmware derives
+its center, and optional owner-declared country is included in Parquet metadata.
+Location changes split immutable files. See [time and location](docs/shared/time-and-location.md).
+
 The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.25** and
 **M5GFX 0.2.31** for CoreS3, **mDNS 1.14.0** for connectivity, and **led_strip
-3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0. These are the latest stable
+3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0 and H3 is pinned to 4.5.0. These are the latest stable
 releases observed on **2026-10-09**, pinned for reproducibility rather than
 updated implicitly. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
 and [development workflow](docs/shared/development.md) describe the native build.

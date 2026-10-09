@@ -2,8 +2,8 @@
 
 
 > **Board scope:** AQCommon/AQLogger implement the shared pipeline for both native
-> ESP-IDF 6.1 board adapters. CoreS3 retains its 77-column dictionary; Waveshare
-> V2 uses its 52-column PMS5003T v2 dictionary. Schema identities and hardware
+> ESP-IDF 6.1 board adapters. CoreS3 uses an 81-column v4 schema; Waveshare
+> V2 uses its 56-column PMS5003T v3 schema. Schema identities and hardware
 > acquisition remain board-owned. Dated SD/throughput results below are historical
 > Arduino image evidence; native hardware qualification is pending.
 
@@ -49,7 +49,7 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 
 | Field | Requirement |
 | --- | --- |
-| `schema_version` | Current CoreS3 source (native v6.8, historical v6 schema): INT32 version 3, file metadata `cores3-telemetry-v3`, 77 columns, `dictionary_version` `cores3-telemetry-v2`. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
+| `schema_version` | Current CoreS3 source (native v6.9): INT32 version 4, file metadata `cores3-telemetry-v4`, 81 columns, `dictionary_version` `cores3-telemetry-v3`. Native v6.8 retained historical schema v3/77 columns. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
 | `station_id` | UUID generated once and persisted in NVS (`parquet` namespace, `station` key); carried in file metadata and the Hive directory, not repeated as a numeric row column. Erasing NVS creates a new station identity. |
 | `device_id` | INT64 containing the board's 48-bit Wi-Fi station MAC; a hardware identifier, not an anonymized UUID. |
 | `boot_id_hi`, `boot_id_lo` | Two INT64 fields carrying a random 128-bit identifier generated once per boot. |
@@ -71,6 +71,33 @@ The anchor uses the command's monotonic receipt time, not the later time at whic
 **Time zones.** Nothing on the device knows a time zone: rows, Hive paths, file names, the `status`/`live` documents and the Device-health screen are UTC (the screen shows `Clock: 2026-09-18 09:42:35Z host e1`, source and epoch included). Local time is a reader's job — DuckDB `AT TIME ZONE`, PyArrow `tz` conversion, the phone's `ZoneId.systemDefault()` — and any "today" grouping done locally must say which day boundary it used.
 
 Schema versions: **v1** 73 columns; **v2** 77 columns (`cores3-telemetry-v2`, firmware v3–v5); **v3** (`arduino-cores3-parquet-v6`, flashed 2026-09-17) keeps the 77 v2 leaves and their dictionary (`dictionary_version` stays `cores3-telemetry-v2`, same `telemetry_fields.inc` SHA-256) but changes what a reader sees: TIMESTAMP annotations on the two UTC fields, min/max statistics on every column chunk, several row groups per file, `created_by` with the firmware build, and `row_groups`/`row_group_rows_max` metadata. v2 and v3 files union cleanly on names/types. Both v2 and v3 have **77 numeric columns**, appending four timing fields to the earlier 73-column codec image. PMS fields include atmospheric and CF=1 PM1.0/PM2.5/PM10, six cumulative particle-count channels, sensor error and framing/checksum counters. Onboard fields cover IMU readings, raw magnetic counts, raw LTR-553 light/proximity counts, power, RTC calendar, touch and memory/storage health. Unsupported battery current and ambient temperature/humidity remain null; camera frames and microphone audio are outside this scalar schema. Availability and conflicts are documented in [hardware](../boards/m5stack-cores3/cores3-hardware.md) and the relevant accessory references. Carry source age/status when a row snapshots a sensor whose acquisition cadence differs from 10 seconds; these snapshots are not interval averages. The new contract passes host tests and short real SD readbacks; see [schema-v2 measured scope](../boards/m5stack-cores3/bench-verified.md#board-1-schema-v2-provenance-and-timing).
+
+## Deployment cell and country (native schemas)
+
+CoreS3 v4 (81 fields, dictionary v3) and Waveshare v3 (56 fields, dictionary v3)
+append four nullable leaves, preserving their former 77/52-field prefixes:
+
+| Field | Physical type | Meaning |
+| --- | --- | --- |
+| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range; hex in config/footer |
+| `h3_resolution` | INT32 | Actual published cell resolution, potentially coarser than the configured maximum |
+| `h3_center_lat_e7` | INT64 | H3 grid-center latitude in 1e-7 degrees |
+| `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
+
+All four remain null while the deployment cell is unset. Firmware derives the
+center from the published cell; no raw GPS is stored. File metadata includes
+`country_iso3166_1_alpha2` (assigned owner-declared code or `unknown`),
+`country_source`, `location_source`, `h3_cell_id`, `h3_resolution`,
+`h3_max_resolution` and `h3_center_units`. Country is not inferred from H3.
+
+Acquisition snapshots cell, maximum precision and country into each queued row.
+The worker splits the RAM batch and open file before appending a different
+snapshot, including country-only/cap-only changes. The footer uses the file's
+captured snapshot. Old finalized files retain their original content and
+identity. Changing location does not rewrite earlier samples or archives.
+The mobile app requests an OS location fix only on an explicit action, computes
+H3 locally at selected precision, previews its derived center and sends only
+the cell through authenticated SET_CONFIG. See [time and location](time-and-location.md).
 
 ## Parquet file lifecycle and optional recovery spool
 
@@ -147,11 +174,11 @@ For later deployment, OpenTelemetry belongs at the gateway and ingestion service
 
 ## Offline capacity and reconnection
 
-Internet is not required for acquisition or SD finalization. With continuous power and working storage, the current firmware keeps collecting offline; configured Wi-Fi obtains UTC through SNTP when an internet time service responds. Without Wi-Fi, an authenticated phone supplies UTC over Bluetooth or LAN. The most recent UTC anchor continues from the monotonic clock during an uninterrupted boot, including disconnections, with unmeasured drift. After reboot, a usable RTC is restored when available; otherwise UTC is null and files use the unsynced tree until a new time anchor arrives. The station UUID remains persistent. Power loss can discard the unfinished RAM batch; this is independent of available card space.
+Internet is not required for acquisition or SD finalization. With continuous power and working storage, the current firmware keeps collecting offline; configured Wi-Fi tries router DHCP42 and local servers before permitted public fallback; successful local NTP can anchor time without internet. Without Wi-Fi, an authenticated phone supplies UTC over Bluetooth or LAN. The most recent UTC anchor continues from the monotonic clock during an uninterrupted boot, including disconnections, with unmeasured drift. After reboot, a usable RTC is restored when available; otherwise UTC is null and files use the unsynced tree until a new time anchor arrives. The station UUID remains persistent. Power loss can discard the unfinished RAM batch; this is independent of available card space.
 
 **Capacity estimate, not lifetime qualification.** The tested nominal 32 GB card reports a 31,441,764,352-byte filesystem. At one row every ten seconds, there are 8,640 rows/day. Assuming future file sizes resemble the measured files and reserving 20% of the filesystem:
 
-The following file sizes are from the **73-column hardware baseline**. The new 77-column source adds timing data and footer metadata; measure its real compressed files before reusing these rates for deployment planning.
+The following file sizes are from the **73-column hardware baseline**. Current 81-column source adds timing, location and footer metadata; measure its real compressed files before reusing these rates for deployment planning.
 
 | Measured file basis | Rotation assumed | File bytes/day, excluding FAT allocation overhead | Decimal GB/year | Capacity-only years with 20% reserve |
 | --- | --- | ---: | ---: | ---: |

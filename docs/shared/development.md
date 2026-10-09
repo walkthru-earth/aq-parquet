@@ -3,7 +3,7 @@
 This repository targets ESP32-S3 with native **ESP-IDF 6.1**. Application source
 uses no Arduino APIs or Arduino component. Board pins, PSRAM mode, power
 sequencing, storage mounting and hardware evidence belong to the board adapter;
-the four opt-in components (AQCommon, AQRuntime, AQConnectivity and AQLogger)
+the five opt-in components (AQCommon, AQRuntime, AQConnectivity, AQLogger and AQLocation)
 belong to [`firmware/common`](../../firmware/common/README.md).
 
 ## Host and toolchain
@@ -29,7 +29,8 @@ pixi run waveshare-build diagnostic
 
 `tools/idf-dependencies.lock` pins ESP-IDF 6.1 and its exact source commit.
 Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.31**, mDNS **1.14.0**
-and Waveshare led_strip **3.1.0~1**; these were the latest stable releases
+and Waveshare led_strip **3.1.0~1**; official H3 **4.5.0** is vendored with exact
+source/license hashes in `firmware/common/location/vendor/h3/manifest.json`; these were the latest stable releases
 observed on **2026-10-09**. LZ4 remains vendored **1.10.0** with checked hashes; the
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
@@ -78,7 +79,7 @@ interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 | `waveshare-build` and `waveshare-build diagnostic` | Both passed | Logger OPI PSRAM and diagnostic no-PSRAM configurations; no native hardware run |
 | `connectivity-build-test`, `logger-build-test`, `waveshare-psram-build` | Passed | Generic native shared components and PSRAM probe compilation; fixtures not flashed |
 | `fmt-check`, `lint` | Passed | Project formatting and static diagnostics |
-| `common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `debug-log-test`, `logger-status-test`, `logger-provision-test`, `logger-work-queue-test`, `ble-advert-test` | Passed with applicable sanitizer tasks | Real shared implementation logic, native platform fakes and wire/queue/log bounds |
+| `common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `network-time-test`, `location-test`, `debug-log-test`, `logger-status-test`, `logger-provision-test`, `logger-work-queue-test`, `ble-advert-test` | Passed with applicable sanitizer tasks | Real shared implementation logic, native platform fakes and wire/queue/log bounds |
 | `pms-frame-test`, `parquet-test --sanitize`, `telemetry-contract-test --sanitize`, `waveshare-contract-test --sanitize` | Passed | Sensor/writer/schema contracts and independent host reader checks |
 
 These results establish native build and host-contract compatibility. They do
@@ -95,7 +96,7 @@ identity and generated dependency resolution; document any older compatibility
 choice with evidence. Do not silently track floating `latest`/`master` or add
 Arduino APIs/components. SDK and host-tool environments remain separate.
 
-AQCommon, AQRuntime, AQConnectivity and AQLogger stay board-neutral and reusable.
+AQCommon, AQRuntime, AQConnectivity, AQLogger and AQLocation stay board-neutral and reusable.
 Each board owns pin maps, controller initialization, power/display/sensor/RTC
 capabilities, filesystem mounting and its measurement/provenance dictionary.
 Reuse board-neutral interfaces with borrowed IO callbacks rather than copying
@@ -105,7 +106,8 @@ a sibling's GPIO, PSRAM or mount policy.
 
 1. Create `docs/boards/<board>/README.md`, hardware/pin ownership notes, sensor notes and a `bench-verified.md`. Record the exact PCB revision and upstream sources; keep measured and source-checked claims separate.
 2. Create one justified, self-contained native `firmware/esp-idf-<board>/` adapter with README, pinned dependencies, setup/build/flash scripts, partition table and build settings. Do not include a sibling's sources. Add explicit root Pixi tasks and lint inputs.
-3. Register common component directories in CMake `EXTRA_COMPONENT_DIRS` and declare `REQUIRES common` for AQCommon; opt into AQRuntime (`firmware/common/runtime`) for settings/logging, AQConnectivity (`firmware/common/connectivity`) for BLE/Wi-Fi/control/file sync, and AQLogger (`firmware/common/logger`) for the sampling deadline, single worker and archive lifecycle. Select the Plantower model explicitly. Keep board services and measurement definitions in the trial; pass a board-specific `created_by` when using the shared writer.
+3. Register common component directories in CMake `EXTRA_COMPONENT_DIRS` and declare `REQUIRES common` for AQCommon; opt into AQRuntime (`firmware/common/runtime`) for settings/logging and AQLocation (`firmware/common/location`) for geometry
+(required by location configuration), AQConnectivity (`firmware/common/connectivity`) for BLE/Wi-Fi/control/file sync, and AQLogger (`firmware/common/logger`) for the sampling deadline, single worker and archive lifecycle. Select the Plantower model explicitly. Keep board services and measurement definitions in the trial; pass a board-specific `created_by` when using the shared writer.
 4. Audit GPIO/controller ownership, strapping pins, flash size, PSRAM mode, console transport and recovery before enabling peripherals. The common ESP32-S3 chip does not imply common board wiring.
 5. Follow the [identification and full-backup sequence](../../AGENTS.md#before-any-physical-flash-write) on the checked port. Extend the backup/restore scripts deliberately for another flash capacity; the current helpers accept only the two 16 MiB targets.
 6. Verify a small diagnostic, then the sensor byte contract and storage on a checked card. Add a versioned measurement schema before logging; unavailable measurements stay null. Use AQLogger with static schema/provenance descriptors, a board acquisition callback and already mounted storage capacity callbacks. Supply paired bus callbacks when borrowing a board mutex, and optional RTC callbacks on the main-loop task. AQLogger owns the nonblocking request queue, shared ArchiveSession, clock/flush/reboot/status and storage lifecycle; the board owns peripheral setup and actual measurement/RTC IO. Sharing the implementation does not prove it has run on another board.
@@ -117,7 +119,7 @@ Run `pixi run fmt-check` and `pixi run lint` for project C/C++ changes. The form
 
 Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer changes require `pixi run parquet-test --sanitize`; measurement-contract changes require `pixi run telemetry-contract-test --sanitize`. Build every affected native board and relevant diagnostic. Host tests establish parser/format behavior; board-specific storage, timing and power-loss claims require real hardware evidence.
 
-The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `connectivity-build-test`, `logger-build-test`, `logger-work-queue-test`, `debug-log-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
+The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `network-time-test`, `location-test`, `connectivity-build-test`, `logger-build-test`, `logger-work-queue-test`, `debug-log-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
 
 The LAN task waits for socket readiness with a 100 ms housekeeping timeout; it
 no longer sleeps after every request. The archive worker checks one sample and
@@ -146,3 +148,36 @@ DebugLog for secret-bearing replies. Use `pixi run owner-pin` and
 credential profiles in memory and exclude them from captures and artifacts.
 They add no radio opcode or secret CONFIG JSON field. The real SET_CONFIG
 validator/actions remain the single provisioning implementation.
+
+## Local time and deployment location
+
+The [time/location contract](time-and-location.md) describes default DHCP/router,
+configured local and permitted public NTP order, offline RTC/host anchoring and
+explicit mobile H3 provisioning. Use `pixi run network-time-test`, `location-test`,
+`config-test` and `control-sync-test` for these changes, plus both schema reader
+gates and affected board builds for logger location changes. These sanitizer
+fixtures compile the official H3 core and real service/settings code. Existing
+generated sdkconfig values override defaults: regenerate or explicitly update
+`CONFIG_LWIP_SNTP_MAX_SERVERS=3` and
+`CONFIG_LWIP_DHCP_GET_NTP_SRV=y` in disposable build configurations when moving
+from the earlier native image. Do not modify owner NVS or physical flash for a
+build configuration update.
+
+### Time/location validation — 2026-10-09
+
+| Gate | Result and scope |
+| --- | --- |
+| `config-test`, `control-sync-test`, `logger-provision-test` | ASan/UBSan pass for policy persistence/reload/errors, published-cell-only coarsening, additive pages and legacy secrecy/actions |
+| `network-time-test`, `wifi-link-test` | ASan/UBSan pass for DHCP/local/public priority, disabled fallback, stale DNS, bounded retry/context allocation, successful provenance and offline retention; LAN sockets use host fakes |
+| `location-test` | Official pinned H3 passes independent indexing/parent/center fixtures, malformed/pentagon cells, coordinate boundaries, ISO validation and sample/footer snapshot tests |
+| `telemetry-contract-test --sanitize`, `waveshare-contract-test --sanitize` | Eight fixtures per board, 81/56 columns, anchored/unanchored and located/unset in both codecs, exact PyArrow/DuckDB readback including H3 centers/country metadata |
+| `parquet-test --sanitize`, `archive-sync-test`, `python tools/test_ble_sync.py` | Writer/reader, immutable archive framing and paged host protocol gates pass |
+| `cores3-build`, `waveshare-build`, `waveshare-build diagnostic` | Final native images pass SDK/PSRAM/console/partition/flash-plan checks; no hardware writes |
+| `connectivity-build-test`, `logger-build-test` | Generic native builds include real NTP/H3/settings/logger without M5/Arduino dependencies |
+| `fmt-check`, `lint` | Pass |
+
+Source and host checks do not establish router option-42 behavior on a specific
+network, NTP accuracy/authenticity, physical radio coexistence, phone permission
+or location behavior, SD timing or power-cut durability. All native board
+qualification remains pending. Finalized owner archives and old schemas were
+not rewritten.
