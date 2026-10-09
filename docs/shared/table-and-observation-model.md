@@ -1,7 +1,12 @@
 # Table publication and observation semantics
 
 
-> **Board scope:** The contract and design intent here can be reused across board trials. The implemented firmware, fixed `cores3-*` schema IDs and dated measurements below are CoreS3-specific. The Waveshare V2 trial currently has only a PMS5003T UART diagnostic; it must version its own measurement contract before producing Parquet or advertising this sync service.
+> **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
+> observation/archive semantics. CoreS3 uses its 77-column dictionary and
+> Waveshare V2 its 52-column PMS5003T v2 dictionary. Board acquisition and schema
+> identities remain distinct. Native build/host gates pass; dated physical
+> evidence below remains scoped to historical Arduino images.
+
 [Router](../README.md) · Design/source review **2026-09-08**. This note is not an Iceberg or SensorThings hardware benchmark. The [telemetry pipeline](telemetry-pipeline.md) owns acquisition, SD durability and upload; the [bench record](../boards/m5stack-cores3/bench-verified.md) owns measured claims.
 
 ## Decision: complementary layers
@@ -89,14 +94,14 @@ Validate the exact dictionary/schema with host fixtures in both codecs and both 
 
 Firmware `arduino-cores3-parquet-v3` through `-v5` identify themselves as schema `cores3-telemetry-v2` (numeric row value 2), with **77 columns**; the first 73 names/types/order are retained and four nullable INT64 columns are appended. Firmware `-v6` (2026-09-17) writes schema `cores3-telemetry-v3` (row value 3) with the **same 77 leaves and the same dictionary** (`dictionary_version` stays `cores3-telemetry-v2`): the change is file-level — TIMESTAMP annotations on `event_time_utc_ns`/`clock_anchor_utc_ns`, per-chunk statistics, several row groups per file, `created_by` with the build. The schema is not SensorThings version 2: these are independent version namespaces. No existing SD file is rewritten.
 
-The single-source [field dictionary](../../firmware/arduino-m5unified/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/arduino-m5unified/bringup/telemetry_contract.h). Its exact source bytes have SHA-256 `20f850852413abb1165f3f7ca95b4831a0e90a34ae7c7fcb41c44b108d3513c3`; both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior.
+The single-source [field dictionary](../../firmware/esp-idf-cores3/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h). Its exact source bytes have SHA-256 `20f850852413abb1165f3f7ca95b4831a0e90a34ae7c7fcb41c44b108d3513c3`; both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior.
 
 Each new file carries `dictionary_version`, `dictionary_uri`, `dictionary_sha256`, `acquisition_config_id`, `acquisition_config`, `deployment_id`, `calibration_id`, `time_semantics` and `rotation_interval_s`, alongside existing identity/codec metadata. The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
 ```sh
 pixi run telemetry-contract-test --sanitize
 # Optional JSON export; parent must exist, destination must not already exist.
-pixi run telemetry-contract-test --dictionary-out firmware/arduino-m5unified/artifacts/dictionary-v2.json
+pixi run telemetry-contract-test --dictionary-out firmware/esp-idf-cores3/artifacts/dictionary-v2.json
 # Read the flashed schema-v2 firmware; does not reset or flush.
 pixi run parquet-device command --port <checked-port> 'parquet schema'
 ```

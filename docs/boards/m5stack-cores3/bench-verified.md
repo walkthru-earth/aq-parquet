@@ -1,5 +1,12 @@
 # Bench-verified board record
 
+**Framework scope, 2026-10-09:** Current source is native ESP-IDF 6.1 and its
+build/host gates pass. No native hardware run is claimed here. The dated
+physical observations, images, old API/tool commands and performance figures
+below belong to historical Arduino builds; retain those identities when using
+this evidence. Native qualification must add a separately dated image/readback.
+
+
 [Router](../../README.md) · Everything else in `docs/` is source-checked against schematics and vendor code. This file records only what was **measured on real hardware in this project**, with the date and the method. If a claim elsewhere disagrees with this file, this file wins for the board listed here.
 
 ## Board 1, first unit
@@ -250,7 +257,7 @@ Not measured: retention across a **full power-off** (battery out / long unplugge
 
 ## Board 1, advertising payload wakes the phone (firmware v6.3, protocol 2.1)
 
-2026-09-18 11:01–11:08Z (14:01–14:08 local, UTC+3), board `AQ-6b40` on `/dev/cu.usbmodem20301`, same backup and eFuse state as above. Before flashing, the running v6.2 read `buffered=7 … finalized=17`; `parquet flush` over serial finalised them first (`data_1100_1d3590e1…_1406-1413-17.parquet`, 8 rows), so the reflash lost no rows. Firmware image SHA-256 `74d4a172059d12a8…`, retained at `firmware/arduino-m5unified/artifacts/firmware/cores3-parquet-v6.3-74d4a172.bin` (1,417,339 program bytes / 86,868 static RAM). Phone: **OnePlus 7 Pro (GM1911), Android 16 / API 36**, app commit `678c1c0` (docs `e0af5e4`), debug APK SHA-256 `3c454c7416ab073b…`, installed over Wi-Fi adb (`192.168.100.173:40091`). Evidence: `artifacts/adv-v6.3/{boot,wifi,wake}-serial.log`, phone logcat quoted here. Design: [background-sync-triggers](../../shared/background-sync-triggers.md); contract: [advertising payload](../../shared/ble-sync-protocol.md#advertising-payload-v21).
+2026-09-18 11:01–11:08Z (14:01–14:08 local, UTC+3), board `AQ-6b40` on `/dev/cu.usbmodem20301`, same backup and eFuse state as above. Before flashing, the running v6.2 read `buffered=7 … finalized=17`; `parquet flush` over serial finalised them first (`data_1100_1d3590e1…_1406-1413-17.parquet`, 8 rows), so the reflash lost no rows. Firmware image SHA-256 `74d4a172059d12a8…`, retained at `firmware/esp-idf-cores3/artifacts/firmware/cores3-parquet-v6.3-74d4a172.bin` (1,417,339 program bytes / 86,868 static RAM). Phone: **OnePlus 7 Pro (GM1911), Android 16 / API 36**, app commit `678c1c0` (docs `e0af5e4`), debug APK SHA-256 `3c454c7416ab073b…`, installed over Wi-Fi adb (`192.168.100.173:40091`). Evidence: `artifacts/adv-v6.3/{boot,wifi,wake}-serial.log`, phone logcat quoted here. Design: [background-sync-triggers](../../shared/background-sync-triggers.md); contract: [advertising payload](../../shared/ble-sync-protocol.md#advertising-payload-v21).
 
 | Check | Result |
 | --- | --- |
@@ -286,7 +293,7 @@ Not measured: the Companion Device Manager path (association dialog, `EVENT_BLE_
 - **Do not scan reserved I2C addresses on ESP32-S3.** Probing `0x01` stopped the first diagnostic. Restricting the scan to `0x08` through `0x77`, as M5Unified itself does, completed and found all nine expected devices.
 - **A blank core-dump partition logs one checksum error.** The first boot after flashing reported an expected stored checksum of `0xffffffff` from the unused partition; the application then completed normally. Keep crash diagnostics, but distinguish an empty partition from a new panic in log ingestion.
 - **`PIN_POWER_SELECTION` reads `VDD3P3_CPU`.** That is the expected setting for GPIO33 to GPIO37 on a Quad-memory board, and it is consistent with those pins being available to the onboard LCD and microSD circuits rather than consumed by Octal PSRAM.
-- **A first SDK bootstrap costs tens of minutes.** About 1.3 GB downloaded in roughly 20 minutes without either an Arduino or an ESP-IDF toolchain finishing. Run one bootstrap at a time, and do not move the cache mid-download, which restarts transfers already in flight. Sizes are recorded in `firmware/arduino-m5unified/README.md`.
+- **A first SDK bootstrap costs tens of minutes.** About 1.3 GB downloaded in roughly 20 minutes without either an Arduino or an ESP-IDF toolchain finishing. Run one bootstrap at a time, and do not move the cache mid-download, which restarts transfers already in flight. Sizes are recorded in `firmware/esp-idf-cores3/README.md`.
 
 ## PSRAM eFuse and runtime results
 
@@ -350,7 +357,7 @@ Move a line out of this list only after a dated measurement records the method a
 - Boot `f4067bfc4d2381394ae5d3f61bee812b` preserved station `53315f5f-cb85-4d8d-b623-d56266084189`, pairing bonds, Wi-Fi/LAN settings and token. RTC readback restored the earlier host estimate (`clk=2`, `rtc=1`). PMSA003, IMU, LTR553 and SD initialization succeeded. Legacy listings and the two existing quarantined partials remained available. No display visual inspection or new power-cut claim is made.
 - A manual flush produced `station=53315f5f-cb85-4d8d-b623-d56266084189/year=2026/month=09/day=28/data_0015_f4067bfc4d2381394ae5d3f61bee812b_0-6-0.parquet`: seven rows, one row group, 77 columns, 13,139 bytes, CRC32 `d9817653`, SHA-256 `0b0e97188e336a81a3d04ac089e9ad12761682cf6f5a5cf2b963c4cbb08a8503`. USB, encrypted BLE (Mac's existing bond) and authenticated LAN copies matched exactly; PyArrow and DuckDB agreed. Stored light status was 3 and PMS status 4 in all rows; unavailable ambient temperature/RH stayed null.
 - Stored jitter was 921–19,915 µs; acquisition intervals deviated from ten seconds by at most 18,993 µs. STATUS reported zero drop/error/missed deadlines. The short file and transfer checks are not a new endurance or full-window benchmark. Wi-Fi initially retried before reconnecting; previous credentials were retained.
-- Evidence is retained outside `build/` in `firmware/arduino-m5unified/artifacts/shared-v6.5/` (`postflash-serial.log`, `usb.log`, `usb.json`, `ble-info.json`, `ble-fetch.json`, `lan-info.json`, `lan-fetch.json` and their readback trees). The BLE small-file transfer took 6.958 seconds; it is not a sustained throughput result.
+- Evidence is retained outside `build/` in `firmware/esp-idf-cores3/artifacts/shared-v6.5/` (`postflash-serial.log`, `usb.log`, `usb.json`, `ble-info.json`, `ble-fetch.json`, `lan-info.json`, `lan-fetch.json` and their readback trees). The BLE small-file transfer took 6.958 seconds; it is not a sustained throughput result.
 
 The fixed-PIN callback and small-MTU JSON guard were subsequently compiled into the final v6.5 image. Both preserve authentication/encryption settings; oversized STATUS/LIVE values remain readable in full but are not notified. Final image identities and post-flash checks follow below.
 
@@ -407,7 +414,7 @@ ELF SHA-256 is
 The pinned build reported 1,431,459 program bytes and 92,324 static RAM bytes.
 Upload verified the written flash hash. Binaries, filtered secret-free logger
 status, result summary and Parquet readback are retained in ignored
-`firmware/arduino-m5unified/artifacts/lan-multi-v6.6/`.
+`firmware/esp-idf-cores3/artifacts/lan-multi-v6.6/`.
 The flashed working tree also included the owner's pending CONFIG_CHUNK/configuration
 changes; commit `ae12c85` records only this task's concurrency changes.
 
@@ -504,7 +511,7 @@ fetch of the same file also passed both readers, CRC and identical SHA-256,
 confirming the serial DATA path still works. The original file's acquisition
 interval statistics describe its original boot, not this new-image sampling run.
 Retained binaries, secret-free reports, upload log and readbacks live in ignored
-`firmware/arduino-m5unified/artifacts/lan-performance-20261008/`.
+`firmware/esp-idf-cores3/artifacts/lan-performance-20261008/`.
 
 The sensor remains on v6.7. Android/iPhone throughput after the upgrade, BLE,
 background/coexistence/endurance and other boards still need their own dated
@@ -574,7 +581,7 @@ were zero. Final status: six finalized files, zero drops/errors,
 65.1 KiB**, all synced and checked; its older archive was retained.
 
 Private ignored artifacts are under
-`firmware/arduino-m5unified/artifacts/utc-fresh-20261009/`: the exact production
+`firmware/esp-idf-cores3/artifacts/utc-fresh-20261009/`: the exact production
 application, sanitized runtime/cleanup logs, upload log, six readbacks,
 `readback-report.json`, `utc-validation.json` and `final-status.txt`. The
 isolated maintenance source/binary is in adjacent `sd-cleanup-20261009/`.

@@ -1,12 +1,17 @@
 # CoreS3 microSD and logging
 
+Current source uses native ESP-IDF 6.1 SDSPI on the existing M5GFX SPI2 bus.
+Native builds pass; physical native card/display arbitration and SD durability
+require qualification. Dated measurements below remain historical Arduino
+image evidence. [Current workflow](../../../firmware/esp-idf-cores3/README.md).
+
 [Router](../../README.md) · Read for the **built-in slot**, shared SPI, file logging or data export. Card presence is optional. Snapshot **2026-09-08**; automatic 60-row Parquet batching, short Hive-file readback and normal-restart retention are bench-verified on one card. Power-loss behavior remains untested.
 
 ## Wiring and ownership
 
 | Resource | CoreS3-specific requirement |
 | --- | --- |
-| Slot interface | **SPI**: SCK36, MISO35, MOSI37, CS4. Use Arduino `SD` or IDF SDSPI; the slot is not wired for native 4-bit `SD_MMC`. [M5 example][m5-sd] |
+| Slot interface | **SPI**: SCK36, MISO35, MOSI37, CS4. Use native IDF SDSPI; the slot is not wired for native 4-bit `SD_MMC`. [M5 example][m5-sd] |
 | Display sharing | LCD CS3; SCK36/MOSI37 shared. **GPIO35 is LCD DC while CS3 is low, and SD MISO while CS3 is high**. M5GFX switches its direction; a generic always-output LCD DC driver causes contention. [CoreS3 panel implementation][gfx] |
 | SPI host | M5GFX's CoreS3 configuration uses `SPI2_HOST`; do not drive the same wires through another host or independently reinitialize its peripheral state. [Tagged configuration][gfx] |
 | Power / detect | AXP2101 **ALDO4 = 3.3 V** powers the card; `TF_SW` is AW9523 **P0_4**, not an ESP GPIO. Board power/expander setup is required; see [hardware](cores3-hardware.md). [Power setup][power] |
@@ -14,9 +19,9 @@
 
 ## Bring-up paths
 
-- Arduino with M5Unified: follow [M5's current SD example][m5-sd]. Essential sequence: `M5.begin()` → `SPI.begin(36, 35, 37, 4)` → `SD.begin(4, SPI, 25000000, "/sd", 5, false)`; check every result. Last argument keeps automatic formatting off. This is a sequential bring-up recipe, not a multitasking example. [Arduino implementation][arduino-sd]
+- Native startup initializes M5Unified/M5GFX once, completes display DMA/transactions, and attaches the SDSPI card to the existing SPI2 bus. Use the application display/SD mutex for complete transactions; do not call `spi_bus_initialize` or free the board driver’s controller. Mount with `format_if_mount_failed=false` and check every result. The historical Arduino/M5 SD example remains a wiring/startup reference only. [Shared-bus startup][sharing]
 - M5GFX's CoreS3 initialization calls `_set_sd_spimode(..., GPIO_NUM_4)` before display traffic. Preserve that behavior when modifying startup. If replacing the board driver: initialize power/bus, idle other CS lines high, put the card into SPI mode, then communicate with other SPI devices. A card still in SD mode may respond to unrelated traffic despite its CS being high. [M5GFX][gfx], [IDF shared-bus startup][sharing]
-- Native C/IDF: `SDSPI_HOST_DEFAULT`, `sdspi_device_config_t`, `esp_vfs_fat_sdspi_mount`; attach to the existing SPI2 bus when the board driver owns it. Preserve M5GFX bus locking; coordinate lifecycle/multi-call operations at application level too. Do not independently initialize/free the display's bus. [SDSPI guide][sdspi], [M5GFX bus backend](https://github.com/m5stack/M5GFX/blob/0.2.28/src/lgfx/v1/platforms/esp32/common.cpp)
+- Native C/IDF: `SDSPI_HOST_DEFAULT`, `sdspi_device_config_t`, `esp_vfs_fat_sdspi_mount`; attach to the existing SPI2 bus when the board driver owns it. Preserve M5GFX bus locking; coordinate lifecycle/multi-call operations at application level too. Do not independently initialize/free the display's bus. [SDSPI guide][sdspi], [M5GFX bus backend](https://github.com/m5stack/M5GFX/blob/0.2.31/src/lgfx/v1/platforms/esp32/common.cpp)
 - Use a known FAT32 card first. exFAT is not enabled by default in IDF; a large factory-formatted card can fail to mount despite working electrically. Set `format_if_mount_failed=false`; report mount failure distinctly from a missing card. [FatFs][fatfs]
 - The M5 example requests 25 MHz; this is not a guaranteed throughput or a universal maximum. Reduce the transfer clock when debugging integrity, and inspect rail stability, CS timing and bus loading before increasing it. Protocol probing starts slowly. [M5 example][m5-sd], [signal loading][sharing]
 
@@ -26,17 +31,17 @@ The record, Parquet lifecycle, optional recovery spool and later upload decision
 
 - Give storage one worker and a bounded queue. Serialize display/SD bus access with a common application mutex; complete display DMA and end any held display transaction before SD access. Keep each bus hold short; release before waiting for network or sensor work. A task per core does not make shared wires concurrent.
 - Start with batched sequential writes, e.g. 4–16 KiB in 512-byte multiples, then measure worst-case write/sync latency. Keep DMA staging internal/aligned; PSRAM can hold backlog if the driver copies safely. Size the queue from measured stalls and record dropped samples. FatFs sector-aligned multi-sector I/O reduces overhead. [FatFs performance notes][appnote]
-- Use `FILE_APPEND` for Arduino append; `FILE_WRITE` is truncating write mode. Check returned byte counts and errors. For C use explicit append/create semantics and handle short writes. [Arduino FS definitions][fs]
-- Set a durability interval in time/bytes: C `fflush(FILE*)` **then** `fsync(fileno(FILE*))`, Arduino `File.flush()`, or raw FatFs `f_sync`. Check the APIs that return status. Flushing reduces the loss window; it does not make FAT transactional or guarantee survival of the card controller's own power loss. [FatFs synchronization][sync], [Arduino flush implementation][vfs]
+- Create new archive files with explicit POSIX exclusive-create flags (`O_CREAT | O_EXCL`) and use the native stdio sink. Retry positive short writes; treat zero/error writes as failures. Never truncate, append to or replace finalized Parquet.
+- Set a durability interval in time/bytes: `fflush(FILE*)` **then** `fsync(fileno(FILE*))` through the native stdio/VFS sink, or raw FatFs `f_sync`. Check the APIs that return status. Flushing reduces the loss window; it does not make FAT transactional or guarantee survival of the card controller's own power loss. [FatFs synchronization][sync]
 - Implemented application format: one scalar measurement row every 10 seconds, a bounded PSRAM batch and an eight-row producer queue. A small C++ writer emits UNCOMPRESSED or opt-in LZ4_RAW Parquet without Arrow, with default 900-second rotation configurable to 600, 1800 or 3600 seconds for the running session (firmware v6). With a supplied UTC estimate, files split at aligned windows and clock-epoch changes; each completed batch of at most 90 rows is one `fsync`ed row group of the open file, so a 3600-second file holds up to four. Publish after footer, `fflush`, `fsync`, close and structural readback checks; PyArrow/DuckDB supply full host conformance validation. Startup moves interrupted `.partial` files out of active station/benchmark trees into `/output/quarantine/` without deleting or repairing them; recovery remains host-only. The unfinished RAM batch is lost on reset; a recovery spool remains future work. See the [telemetry lifecycle](../../shared/telemetry-pipeline.md#parquet-file-lifecycle-and-optional-recovery-spool) and [bench record](bench-verified.md) for the exact tested scope. Avoid rewriting the dataset per sample and stay below FAT32's **4 GiB − 1 byte** limit. [FAT limits/power interruption][appnote]
-- Eject/shutdown: stop producers → drain queue → sync/close → unmount (`SD.end()` / `esp_vfs_fat_sdcard_unmount`) → remove card/power. Unexpected removal becomes unavailable storage; never autoformat to recover. **Insertion/power cycling requires a quiesced display/bus and a fresh SPI-mode handshake before display traffic resumes**; startup-only `_set_sd_spimode` does not establish hotplug support. [Startup restrictions][sharing]
+- Eject/shutdown: stop producers → drain queue → sync/close → unmount (`esp_vfs_fat_sdcard_unmount`) → remove card/power. Unexpected removal becomes unavailable storage; never autoformat to recover. **Insertion/power cycling requires a quiesced display/bus and a fresh SPI-mode handshake before display traffic resumes**; startup-only `_set_sd_spimode` does not establish hotplug support. [Startup restrictions][sharing]
 - ALDO4-off alone does not isolate an inserted card: shared SPI lines/pull-ups can back-power it. Quiesce or electrically isolate the relevant signals before power-gating, then measure the rail. [Schematic p5](https://m5stack-doc.oss-cn-shenzhen.aliyuncs.com/490/Sch_M5_CoreS3_v1.0.pdf). For USB MSC export, give the host or firmware exclusive filesystem ownership.
 
 ## File layout and time
 
 Card files use `output/station=<UUID>/year=YYYY/month=MM/day=DD/data_HHMM_<boot>_<first>-<last>-<attempt>.parquet`. The UUID persists in NVS; the date and window-start `HHMM` are UTC. The suffix distinguishes shortened batches, reboot sessions and clock corrections without overwriting existing files. Firmware accesses the card through `/sd`, so its absolute path begins `/sd/output/`. See [the telemetry layout](../../shared/telemetry-pipeline.md#upload-and-cloud-layout) for time/identity semantics.
 
-UTC is supplied explicitly with `pixi run parquet-device sync-time --port <port>` or the bench helper's `--sync-time`; it is a host estimate, not a validated NTP clock. Until then, files remain under `output/station=<UUID>/unsynced/boot=<boot>/`, with null UTC columns. Since firmware v6.2 that estimate is also written to the BM8563 RTC and restored at the next boot (rows carry `clock_status = 2`), so `unsynced/` only fills on a board whose RTC was never set or lost power (see [telemetry pipeline](../../shared/telemetry-pipeline.md)). Subsequent clock updates create a new clock epoch and split the batch without changing previous rows. Object-storage upload, cloud compaction and Iceberg are later work; finalized SD files are retained locally.
+UTC can come from a successful native SNTP callback or be supplied explicitly with `pixi run parquet-device sync-time --port <port>` or the bench helper's `--sync-time`; neither source has a measured synchronization accuracy guarantee. Until then, files remain under `output/station=<UUID>/unsynced/boot=<boot>/`, with null UTC columns. Since firmware v6.2 that estimate is also written to the BM8563 RTC and restored at the next boot (rows carry `clock_status = 2`), so `unsynced/` only fills on a board whose RTC was never set or lost power (see [telemetry pipeline](../../shared/telemetry-pipeline.md)). Subsequent clock updates create a new clock epoch and split the batch without changing previous rows. Object-storage upload, cloud compaction and Iceberg are later work; finalized SD files are retained locally.
 
 The [provenance/time update](../../shared/table-and-observation-model.md) preserves this lifecycle and path layout, appends four row fields and references a versioned dictionary in each footer. It is flashed and passed short unsynced/UTC SD readbacks in both codecs. Existing files stayed present; larger full-window samples are still needed before updating capacity estimates. [Measured scope](bench-verified.md#board-1-schema-v2-provenance-and-timing)
 
@@ -48,7 +53,7 @@ The [provenance/time update](../../shared/table-and-observation-model.md) preser
 - The stdio sink retries positive short writes until the requested buffer is complete and treats a zero/error return as failure; `fflush`, `fsync`, close, structural readback, size and rename are checked separately. A failed write retains its batch in RAM; subsequent samples can be dropped and counted until a successful explicit retry. At the next boot, old `.partial` files are conservatively moved to `/output/quarantine/` and reported; status exposes the bounded total quarantine file count and bytes, including files from earlier boots. No footer reconstruction, deletion or overwrite is attempted. Neither repair nor graceful eject is implemented as a user command; `parquet flush` alone does not stop producers or unmount the card. Do not remove it while the logger runs.
 - Finalized-file retention and unfinished-row durability are different: an accidental host-induced reset already demonstrated RAM loss. The proposed recovery spool is not present, and the card was not power-cut, removed or filled during these tests. Preserve earlier files and avoid autoformatting while diagnosing a failure.
 
-The current readback protocol also exposes the older `/sd/parquet/` folder as `legacy-parquet/<name>`. Diagnostic codec comparisons live under `output/benchmarks/` and contain duplicate rows, not additional telemetry. Export into the trial's git-ignored `artifacts/`, outside the disposable Arduino `build/` directory; see [compression and artifact lessons](compression-benchmark.md).
+The current readback protocol also exposes the older `/sd/parquet/` folder as `legacy-parquet/<name>`. Diagnostic codec comparisons live under `output/benchmarks/` and contain duplicate rows, not additional telemetry. Export into the trial's git-ignored `artifacts/`, outside the rebuildable native `build/` directory; see [compression and artifact lessons](compression-benchmark.md).
 
 The measured LZ4 comparison cut file bytes by 50.7% and median finalization by 21.4% for identical rows; this supports local compressed Parquet feasibility, not proportional allocated FAT-space savings or a worst-case latency bound. The 32 GB card's multi-year capacity projections, unknown cluster-size overhead and still-unimplemented reconnect/upload policy are in [offline capacity and synchronization](../../shared/telemetry-pipeline.md#offline-capacity-and-reconnection). No card-lifetime or battery-runtime guarantee follows from file-size arithmetic.
 
@@ -62,14 +67,11 @@ The measured LZ4 comparison cut file bytes by 50.7% and median finalization by 2
 | Acceptance | Write/read/CRC check across rotations; full-card, removal/reinsert and power interruption during write/sync; verify previous files survive and queue overflow is observable. Record card model/capacity/filesystem and SDK versions. |
 
 [m5-sd]: https://docs.m5stack.com/en/arduino/m5cores3/sdcard
-[gfx]: https://github.com/m5stack/M5GFX/blob/0.2.28/src/M5GFX.cpp
-[power]: https://github.com/m5stack/M5Unified/blob/0.2.21/src/utility/Power_Class.cpp
+[gfx]: https://github.com/m5stack/M5GFX/blob/0.2.31/src/M5GFX.cpp
+[power]: https://github.com/m5stack/M5Unified/blob/0.2.25/src/utility/Power_Class.cpp
 [board]: https://docs.m5stack.com/en/core/CoreS3
-[arduino-sd]: https://github.com/espressif/arduino-esp32/blob/3.3.11/libraries/SD/src/SD.cpp
 [sharing]: https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/peripherals/sdspi_share.html
 [sdspi]: https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/peripherals/sdspi_host.html
 [fatfs]: https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/storage/fatfs.html
 [appnote]: https://elm-chan.org/fsw/ff/doc/appnote.html
 [sync]: https://elm-chan.org/fsw/ff/doc/sync.html
-[fs]: https://github.com/espressif/arduino-esp32/blob/3.3.11/libraries/FS/src/FS.h
-[vfs]: https://github.com/espressif/arduino-esp32/blob/3.3.11/libraries/FS/src/vfs_api.cpp

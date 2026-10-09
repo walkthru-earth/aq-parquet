@@ -1,8 +1,8 @@
 # aq-parquet
 
-ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have an active Arduino firmware and separate hardware documentation. Both write real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
+ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have a native ESP-IDF application and separate hardware documentation. Application source uses no Arduino APIs or Arduino component. Both applications implement writing real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
 
-Each board owns its pins, peripherals, schema and acquisition callbacks. Four opt-in libraries under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), and the sampling/storage worker (**AQLogger**). Both logger adapters consume these libraries. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
+Each board owns its pins, peripherals, schema and acquisition callbacks. Four opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), and the sampling/storage worker (**AQLogger**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
@@ -12,14 +12,29 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Four op
 
 ## Current status
 
-| Firmware | Measurements and board adapter | Current hardware evidence |
+| Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
-| [CoreS3 v6.5](firmware/arduino-m5unified/README.md) | 77 columns; M5Unified sensors, RTC, display and SPI card arbitration | Shared engine sampling, unattended startup and identical USB/BLE/LAN Parquet readback; [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
-| [Waveshare logger v1](firmware/arduino-waveshare-sim7670g/README.md) | 49 columns; PMS5003T UART, one-bit SDMMC, OPI PSRAM, headless pairing | Real SD readback, warm-up/null handling, reset retention, host UTC transition and compression; [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
+| [CoreS3 v6.8](firmware/esp-idf-cores3/README.md) | 77 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/m5stack-cores3/bench-verified.md) |
+| [Waveshare logger v2.2](firmware/esp-idf-waveshare-sim7670g/README.md) | 52 columns; native UART PMS5003T, I²C gauge, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
-Both implement the same offline archive, configuration, BLE and authenticated local TCP/mDNS services. Waveshare first encrypted macOS pairing and Wi-Fi/LAN transfer still need completion; advertising discovery is verified. It runs on USB power with battery fields null, and has no external RTC anchor. Cellular/GNSS/camera integration remains separate future board work. See the [module map](firmware/common/README.md) and [official Waveshare resource audit](docs/boards/waveshare-esp32-s3-sim7670g/software-resources.md).
+Both source adapters implement the existing offline archive, configuration, BLE
+and authenticated local TCP/mDNS contract. Native migration retains measurement
+dictionaries, persistent station/config NVS keys and types, and flash partition
+offsets. Existing BLE bond compatibility is not guaranteed; native bonded
+reconnect or re-pairing needs a hardware check. Cellular/GNSS/camera integration
+remains future board work. See the [component map](firmware/common/README.md).
 
-The CoreS3 dependencies include Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28. The Waveshare trial pins its own Arduino/NimBLE dependencies and has no M5 library dependency. Earlier CoreS3 full-window/compression numbers below remain tied to their recorded images. [Iceberg/OGC decisions and contract usage](docs/shared/table-and-observation-model.md) describe later host/cloud work; the dictionaries do not claim SensorThings API compliance.
+The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.25** and
+**M5GFX 0.2.31** for CoreS3, **mDNS 1.14.0** for connectivity, and **led_strip
+3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0. These are the latest stable
+releases observed on **2026-10-09**, pinned for reproducibility rather than
+updated implicitly. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
+and [development workflow](docs/shared/development.md) describe the native build.
+[Native board/fixture builds and host gates passed on 2026-10-09](docs/shared/development.md#native-migration-validation-2026-10-09); no native hardware qualification is claimed.
+Historical footprint, throughput and durability observations below apply only
+to their recorded Arduino images and do not establish native hardware behavior.
+[Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe
+later host/cloud work; dictionaries do not claim SensorThings API compliance.
 
 An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **UNCOMPRESSED** and opt-in **LZ4_RAW** codecs, per-column min/max statistics and `TIMESTAMP(NANOS, UTC)` on the UTC fields. Reboot restores uncompressed output. Persistent station identity and UTC-aligned Hive partitions use:
 
@@ -34,44 +49,62 @@ Measured on one board/card: a full automatic 60-row batch was **28,059 bytes** a
 
 Offline logging needs no internet. The measured 60-row LZ4 rate projects to about **2.03 MB/day / 0.74 GB/year before filesystem overhead** at ten-minute rotation. A 32 GB card therefore offers multi-year storage capacity in principle, not a guaranteed card or battery lifetime. [Capacity assumptions and future synchronization](docs/shared/telemetry-pipeline.md#offline-capacity-and-reconnection) explain allocation-unit overhead, power, clock drift and the uploader that still needs to be built.
 
-**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC is a host-supplied estimate. CoreS3 can restore its earlier estimate from its RTC; Waveshare needs a new host anchor after reboot. Until an anchor exists, files use `unsynced/boot=<boot>/` with null UTC. Unsupported measurements remain null; the Waveshare PMS5003T supplies ambient temperature/humidity. Camera/audio streams are outside these scalar loggers.
+**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC comes from an explicit host anchor, successful native SNTP callback, or CoreS3 RTC restore, without a measured accuracy guarantee. CoreS3 can restore its earlier estimate from its RTC; Waveshare needs a new host or network anchor after reboot. Until an anchor exists, files use `unsynced/boot=<boot>/` with null UTC. Unsupported measurements remain null; the Waveshare PMS5003T supplies ambient temperature/humidity. Camera/audio streams are outside these scalar loggers.
 
 ## Getting started
 
-Choose the [CoreS3 board](docs/boards/m5stack-cores3/README.md) or [Waveshare V2 board](docs/boards/waveshare-esp32-s3-sim7670g/README.md). The shared safety readback precedes any firmware write. The Waveshare [trial README](firmware/arduino-waveshare-sim7670g/README.md) covers its logger, headless pairing and retained diagnostic. Commands below after the safety sequence show the CoreS3 logger; the same serial readback helper accepts either checked ESP32 port.
+Choose the [CoreS3](firmware/esp-idf-cores3/README.md) or
+[Waveshare V2](firmware/esp-idf-waveshare-sim7670g/README.md) adapter. Build through
+Pixi and ESP-IDF from the command line:
 
 ```sh
 pixi install
-pixi run ports     # find the board
-pixi run chip --port <checked-port>      # confirm ESP32-S3; may reset the running app
-pixi run flash-id --port <checked-port>  # confirm flash size
-pixi run efuse --port <checked-port>     # read-only security and flash-type check
-pixi run backup --board <board> --port <checked-port>  # full flash image before the first write
-ls -l backup/     # confirm the image is exactly 16777216 bytes
+pixi run idf-setup
+pixi run cores3-build
+pixi run waveshare-build              # logger
+pixi run waveshare-build diagnostic   # retained UART/read-only TF fixture
 ```
 
-Read the "Do not brick the board" section of `AGENTS.md` before flashing anything.
-
-Build the active firmware with `pixi run arduino-setup` and `pixi run arduino-build`. Flash only after the safety sequence, using an explicit checked port:
+Before any physical flash write, follow [AGENTS.md](AGENTS.md#before-any-physical-flash-write)
+on the exact board and checked serial port, in this order:
 
 ```sh
-pixi run arduino-flash /dev/cu.usbmodem101
+pixi run ports
+pixi run chip --port <checked-port>
+pixi run flash-id --port <checked-port>
+pixi run efuse --port <checked-port>
+pixi run backup --board <board> --port <checked-port>
+ls -l backup/   # confirm the full backup is exactly 16777216 bytes
 ```
 
-Then supply time and inspect the logger, using the checked port and only one serial process at a time:
+Use `m5stack-cores3` or `waveshare-sim7670g-v2` for `<board>`. The chip command
+can reset a running app. Flash tasks require both the checked port and the
+matching full backup; they flash the verified build without erasing NVS:
 
 ```sh
-pixi run parquet-device sync-time --port /dev/cu.usbmodem101
-pixi run parquet-device command --port /dev/cu.usbmodem101 'parquet status'
-pixi run parquet-device command --port /dev/cu.usbmodem101 'parquet list'
+pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
+pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin
+```
+
+After native flashing, qualify serial startup, sensor/null behavior, SD writes,
+clock transition and immutable USB/BLE/LAN readback on each board before
+claiming native hardware behavior. Host tools retain their protocol:
+
+```sh
+pixi run parquet-device sync-time --port <checked-port>
+pixi run parquet-device command --port <checked-port> 'parquet status'
+pixi run parquet-device command --port <checked-port> 'parquet list'
 pixi run parquet-test --sanitize
 ```
 
-The [trial README](firmware/arduino-m5unified/README.md#inspect-the-live-logger) has bounded capture, flush, fetch and DuckDB query commands. Prefer its Parquet serial helper during logging: serial control-line settings caused unwanted resets in the initial host implementation and were corrected for this macOS/CoreS3 pair. Do not reset merely to read data.
+Only one host process owns a serial port at a time. Keep retained binaries,
+captures and fetched files in the selected trial's ignored `artifacts/`, outside
+the rebuildable `build/`; full-card owner copies belong in ignored `exports/`.
 
-Keep exports and captures in the trial's git-ignored **`artifacts/`**, never `build/`: Arduino rebuilds can clean their build directory. `pixi run python tools/export_parquet.py --port <port> --out firmware/arduino-m5unified/artifacts/exports/<new-name>` retrieves every listed finalized file, including legacy files on the current firmware, without deleting or flushing device data.
-
-Firmware SDKs are not conda packages, so the project fetches them itself at pinned versions. A clean machine needs `pixi install` and then the setup task for whichever trial you are building, with no manual SDK installation. SDKs land in `$AQ_TOOLCHAIN_ROOT`, default `~/.cache/m5stack-aq-parquet/toolchains` (the existing shared cache path; `M5_TOOLCHAIN_ROOT` remains accepted), deliberately outside the repo so git worktrees share one copy. See the [shared development and board-extension guide](docs/shared/development.md).
+The SDK installer uses `$AQ_TOOLCHAIN_ROOT`, default
+`~/.cache/m5stack-aq-parquet/toolchains`; `$M5_TOOLCHAIN_ROOT` remains accepted
+for the existing shared cache. The firmware wrapper isolates ESP-IDF Python and
+compiler tools from pinned Pixi host validators. See the [development guide](docs/shared/development.md).
 
 ## Hardware
 

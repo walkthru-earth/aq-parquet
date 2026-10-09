@@ -1,7 +1,11 @@
 # Background sync triggers: letting the device wake the phone
 
 
-> **Board scope:** The contract and design intent here can be reused across board trials. The implemented firmware, fixed `cores3-*` schema IDs and dated measurements below are CoreS3-specific. The Waveshare V2 trial currently has only a PMS5003T UART diagnostic; it must version its own measurement contract before producing Parquet or advertising this sync service.
+> **Board scope:** Native ESP-IDF 6.1 CoreS3 and Waveshare logger adapters share
+> advertising/sync behavior while retaining separate schemas and board capabilities.
+> The dated OnePlus/CoreS3 wake measurements below belong to their historical
+> Arduino images; they do not establish native radio or Waveshare wake behavior.
+
 Design note, source-checked 2026-09-18 and implemented the same day in firmware `-v6.3` (advertising payload) and the Android app (companion presence, advertising-flag scan, Wi-Fi arrival). **Measured once** ([bench](../boards/m5stack-cores3/bench-verified.md#board-1-advertising-payload-wakes-the-phone-firmware-v63-protocol-21)): the advertising flag woke the phone's dead app process and the new file was on the phone 28 s after it closed. The companion-presence and Wi-Fi-arrival paths are still unverified. Load when working on Auto-sync in the Android app (`../../../opensensor-space-android`, `docs/background-sync.md`) or on the firmware's BLE advertising. The GATT/LAN contract, including the advertising bytes, is in [ble-sync-protocol](ble-sync-protocol.md#advertising-payload-v21); this page is the reasoning for *when* a sync starts, not *how* files move.
 
 ## The problem this solves
@@ -76,7 +80,18 @@ Payload, little-endian, all fields present from byte 0 so a mask can address the
 
 Rules: `new_files` is set when a window closes or a `FLUSH` finalizes, cleared when a `LIST` has been answered on any link (the phone that listed now knows; a phone that then fails its download is covered by the periodic floor). `no_utc` is `status.utc == 0`. v1/v2 phones ignore service data, so this is backward compatible; the change is that they must accept the UUID list arriving in the scan response. Android merges ADV and SCAN_RSP into one `ScanRecord` for software matching, `tools/ble_sync.py` (bleak) sees the same merged record, and the offloaded path is per frame: Android's APCF HCI spec says *"every advertisement and related scan response will have to go through all the filters"* ([HCI requirements](https://source.android.com/docs/core/connect/bluetooth/hci_requirements)), so a UUID filter matches the scan-response frame and a service-data filter the ADV frame. **Still verify on the phone** that the interactive scan finds the device and that the OnePlus 7 Pro's controller matches a service-data mask (`isOffloadedFilteringSupported()` true is expected, not measured).
 
-NimBLE-Arduino 2.5.1: `NimBLEAdvertisementData::setServiceData` *appends* an AD, so the payload is rebuilt from scratch (`setFlags` + `setServiceData`) and pushed with `NimBLEAdvertising::setAdvertisementData`, which issues `ble_gap_adv_set_data` — legal while legacy advertising is active and while connected (the data is used at the restart on disconnect), so no stop/start cycle and no host-task hop. `ble::publish_advert()` packs flags + counter into one atomic word and only issues the HCI command when it changed; `telemetry::publish_status()` calls it every sample tick and `ble_list()` after clearing `new_files`.
+Current native `ble::publish_advert()` packs flags/counter into an atomic word
+and posts a coalescing event to the NimBLE host task. That task builds the exact
+31-byte legacy ADV and calls `ble_gap_adv_set_data` only when content changes;
+intervals are explicitly 30–60 ms. Board sampling and archive LIST handling
+publish snapshots without issuing host commands from their own tasks. UUID/name
+scan response and service-data bytes retain the existing wire contract.
+
+**Historical implementation:** NimBLE-Arduino 2.5.1 rebuilt the payload through
+`NimBLEAdvertisementData` and `NimBLEAdvertising::setAdvertisementData` because
+`setServiceData` appended fields. The no-host-task-hop detail of that wrapper
+belongs to the historical source; native submissions run on the host task.
+
 
 ### Advertising interval
 

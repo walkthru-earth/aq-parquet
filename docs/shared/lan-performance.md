@@ -1,5 +1,12 @@
 # LAN transfer scheduling and qualification
 
+The current applications are pure ESP-IDF 6.1 and retain the shared socket,
+worker-queue and diagnostic-ring policies described here. Native board and
+fixture builds and host contracts pass; native throughput and console/radio
+behavior require physical qualification. See [native validation](development.md#native-migration-validation-2026-10-09).
+Dated 2026-10-08 checks and throughput observations below are historical
+Arduino-image evidence; their commands/identities remain for interpretation.
+
 The 2026-10-08 change removes fixed scheduling delays from the shared firmware
 used by both phone apps. In [wifi_link.cpp](../../firmware/common/connectivity/src/wifi_link.cpp),
 the server waits for socket readiness instead of polling and then sleeping
@@ -25,7 +32,7 @@ remain immutable and downloads require size, CRC-32 and `PAR1` checks. No
 credentials are added to diagnostics. The change removes avoidable waits;
 it does not establish that they explain every observed slow transfer.
 
-## Validation on 2026-10-08
+## Historical Arduino validation on 2026-10-08
 
 The pinned [Pixi tasks](../../pixi.toml) passed: `wifi-link-test`,
 `logger-work-queue-test`, `archive-sync-test`, `control-sync-test`, `common-test`,
@@ -35,10 +42,10 @@ waiting, authentication and session isolation, plus deterministic worker
 queue-check/wait races, pre-start signals, coalescing and saturation.
 
 Both `arduino-build` (CoreS3) and `waveshare-build`, and the generic
-`logger-build-test`, compile successfully. These builds use the current working
+`logger-build-test`, compile successfully. Those historical builds used the working
 copy, which also contains unrelated Waveshare configuration/schema work; their
 binary hashes must not be described as isolated scheduling-only images.
-`waveshare-contract-test --sanitize` currently fails at
+`waveshare-contract-test --sanitize` failed at that historical checkout at
 [its firmware identity assertion](../../tools/test_waveshare_contract.py): it
 expects `arduino-waveshare-parquet-v2`, while the pre-existing working-copy
 identity differs. The scheduling change does not alter that identity.
@@ -85,9 +92,9 @@ settings, flush, delete or rewrite sensor archives for a speed comparison.
    `docs/status.md`. Report the measured improvement or remaining bottleneck;
    do not infer an on-board speed gain from the host scheduling regression.
 
-## Radio diagnostics and console backpressure
+## Shared diagnostic policy and historical Arduino backpressure
 
-The CoreS3 build identity for this follow-up is `arduino-cores3-parquet-v6.7`;
+The historical CoreS3 build identity for that follow-up was `arduino-cores3-parquet-v6.7`;
 its measurement schema and dictionary remain unchanged, and older finalized
 files retain their original provenance. The Waveshare working-copy identity
 belongs to unrelated configuration/schema work and is unchanged by this fix.
@@ -115,13 +122,13 @@ limited to the radio/archive request hot paths.
 
 The follow-up passes `debug-log-test`, `wifi-link-test`, `config-test`,
 `control-sync-test`, `logger-provision-test`, `telemetry-contract-test --sanitize`,
-`fmt-check` and `lint`, and both board builds. The prior Waveshare contract
-identity assertion remains a separate working-copy limitation. Build/test
+`fmt-check` and `lint`, and both board builds. The Waveshare identity assertion was a separate historical working-copy
+limitation; the native migration now passes the updated contract gate. Build/test
 results alone do not establish a post-deployment throughput gain. Record actual
 old/new-image measurements separately in the selected board's bench record.
 
 
-## Subsequent real-board result
+## Historical subsequent real-board result
 
 The owner subsequently authorized the CoreS3 v6.7 deployment. The same 87,654-byte
 file transferred without a USB reader in 0.925–1.045 seconds across three short

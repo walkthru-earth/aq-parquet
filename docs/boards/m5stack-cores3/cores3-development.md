@@ -1,67 +1,78 @@
 # CoreS3 C/C++ development
 
-[Router](../../README.md) · Read for toolchain, dependency, driver, or runtime changes. Snapshot **2026-09-08**. The pinned Arduino-ESP32 3.3.11, M5Unified 0.2.21 and M5GFX 0.2.28 combination is built and bench-verified; other combinations remain source-checked only.
+The current application is pure **ESP-IDF 6.1**, with native M5Unified
+**0.2.25** and M5GFX **0.2.31** components. Native board and fixture builds plus
+host gates pass; native physical qualification is pending. Use the
+[current workflow](../../../firmware/esp-idf-cores3/README.md#current-build-and-flash-workflow)
+and [shared development guide](../../shared/development.md).
 
-## Release snapshot
+## Current exact pins and documentation
 
-| Layer | Latest stable observed | Use / compatibility evidence |
+| Layer | Pin observed 2026-10-09 | Integration |
 | --- | --- | --- |
-| ESP-IDF | [v6.1](https://github.com/espressif/esp-idf/releases/tag/v6.1) | Native C/C++; explicit target `esp32s3`. [Refresh](https://github.com/espressif/esp-idf/releases/latest). |
-| Arduino-ESP32 | [3.3.11](https://github.com/espressif/arduino-esp32/releases/tag/3.3.11) | Packaged core built on IDF **5.5.5**; [component manifest](https://github.com/espressif/arduino-esp32/blob/3.3.11/idf_component.yml) permits `>=5.3,<6.2`. Component builds need their own validation. [Refresh](https://github.com/espressif/arduino-esp32/releases/latest). |
-| M5Unified | [0.2.21](https://github.com/m5stack/M5Unified/releases/tag/0.2.21) | Board services, power, inputs, audio, sensors; [requires M5GFX >=0.2.28](https://github.com/m5stack/M5Unified/blob/0.2.21/idf_component.yml). [Refresh](https://github.com/m5stack/M5Unified/releases/latest). |
-| M5GFX | [0.2.28](https://github.com/m5stack/M5GFX/releases/tag/0.2.28) | CoreS3 panel/bus handling; fixes S3 SPI clock calculation and I²C clock stretching. [Refresh](https://github.com/m5stack/M5GFX/releases/latest). |
-| NimBLE-Arduino, **in use** | [2.5.1](https://github.com/h2zero/NimBLE-Arduino/releases/tag/2.5.1) | Arduino BLE host for the [sync service](../../shared/ble-sync-protocol.md); pinned in the trial lockfile since 2026-09-16. Native IDF can use its bundled NimBLE. [Refresh](https://github.com/h2zero/NimBLE-Arduino/releases/latest). |
-| esp32-camera, optional | [2.1.7](https://components.espressif.com/components/espressif/esp32-camera/versions/2.1.7/readme) | GC0308 capture; use CoreS3's actual pin/pixel-format configuration. [Refresh](https://components.espressif.com/components/espressif/esp32-camera). |
-| LVGL, optional | [9.5.0](https://github.com/lvgl/lvgl/releases/tag/v9.5.0) | GUI above the panel driver; avoid v8 integration snippets. [Refresh](https://github.com/lvgl/lvgl/releases/latest). |
+| ESP-IDF | [6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html) | Native ESP32-S3 C/C++, Kconfig, FreeRTOS, drivers, NimBLE, Wi-Fi/netif/SNTP |
+| M5Unified | [0.2.25](https://github.com/m5stack/M5Unified/releases/tag/0.2.25) | Native component owns board services and power; [manifest](../../../firmware/esp-idf-cores3/components/aq_cores3/idf_component.yml) |
+| M5GFX | [0.2.31](https://github.com/m5stack/M5GFX/releases/tag/0.2.31) | Native display and SPI2 bus owner; SD borrows that controller |
+| mDNS | [1.14.0](https://components.espressif.com/components/espressif/mdns/versions/1.14.0) | Managed component used by shared LAN transport |
+| LZ4 | [1.10.0](https://github.com/lz4/lz4/releases/tag/v1.10.0) | Vendored bytes and license remain hash-checked |
 
-## Select and pin a coherent stack
+Before adding/changing dependencies, check the latest stable upstream release
+and current official documentation; pin exact source/version identities and
+record compatibility exceptions with evidence. Do not add Arduino APIs or
+components. Common driver, writer, logger and radio components remain reusable
+across boards; pins, controller initialization and actual hardware capability
+belong to each board adapter.
 
-- **Native IDF** for direct C APIs, Kconfig and resource control; add M5Unified/M5GFX as C++ components for board services. Their [CMake](https://github.com/m5stack/M5Unified/blob/0.2.21/CMakeLists.txt) supports component use; C modules can call a narrow `extern "C"` board wrapper. Pure C requires implementing the PMIC/expander/display setup in [hardware](cores3-hardware.md).
-- **Arduino** for M5 examples and Arduino libraries; pin the board package and libraries. An Arduino-as-IDF-component build uses the selected IDF, whereas the packaged Arduino core has a bundled IDF; these are different dependency configurations. Keep the board definition, PSRAM/flash settings, USB mode and partition table explicit.
-- Commit exact direct dependencies, `dependencies.lock` for IDF, `sdkconfig.defaults`, partition CSV, and toolchain identity. Re-resolve intentionally; never use `master`, `latest`, or an unbounded range as a reproducibility strategy. [Component Manager](https://docs.espressif.com/projects/idf-component-manager/en/latest/reference/dependencies_lock.html).
-- PlatformIO lookup only if chosen: inspect the resolved framework version and board JSON; the platform package version is not the Arduino/IDF version. [Official platform](https://github.com/platformio/platform-espressif32), [pioarduino alternative](https://github.com/pioarduino/platform-espressif32). Do not transplant old `esp32-dev`/Core2 build flags.
+## Native build and operational notes
 
-## Local host tools versus firmware dependencies
+- Host tools come from pinned Pixi. `pixi run idf-setup` installs the exact SDK
+  source and its SDK-selected Python/compiler tools. `pixi run cores3-build`
+  compiles and verifies dictionary/vendor hashes, custom partitions, 16 MB QIO
+  flash, Quad PSRAM and USB Serial/JTAG console.
+- SDK source defaults to `$AQ_TOOLCHAIN_ROOT`, otherwise
+  `~/.cache/m5stack-aq-parquet/toolchains`; legacy `$M5_TOOLCHAIN_ROOT` remains
+  accepted. Compiler/Python tools default to official shared `~/.espressif`;
+  `$AQ_IDF_TOOLS_PATH` overrides that directory. The wrapper keeps the SDK
+  Python/compiler environment separate from Pixi host validators.
+- C++ `app_main` has C linkage. Use native FreeRTOS tasks, `esp_timer`, UART,
+  NVS and VFS APIs. Board components request at least C++20 and common components
+  C++17; ESP-IDF 6.1's default dialect may be newer. Exceptions/RTTI remain off.
+  [C++ constraints](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-guides/cplusplus.html).
+- Initialize M5 board services once. Disable unused services through `M5.config()`
+  before `M5.begin(cfg)`. M5Unified owns internal I²C; never create another
+  driver on the same controller. Shared register drivers borrow board callbacks.
+  [M5 source](https://github.com/m5stack/M5Unified/blob/0.2.25/src/M5Unified.hpp).
+- M5GFX owns SPI2. Native SDSPI attaches the card without independently
+  initializing/freeing that controller. Finish display DMA/transactions and
+  guard complete display/card operations with the application mutex.
+  [Current SD ownership](cores3-storage.md).
+- AQLogger owns the 10-second monotonic deadline, bounded queues and single
+  archive worker. Board acquisition and RTC callbacks run on the main task;
+  radio callbacks copy requests and never access sensors, display or SD.
+- Native NimBLE GAP/GATT notifications, advertising updates and bond clearing
+  run on the host task. Keep public addressing, secure characteristic flags,
+  UUIDs, long reads, MTU bounds and ordered response semantics. Successful SNTP
+  callbacks alone publish network time. Existing Arduino-era bonds need native
+  reconnect/re-pairing qualification without erasing station/config NVS.
+- Native DebugLog uses `LogOutput` and a function/context sink; radio hot-path
+  `record_only()` writes stay in the ring without console IO. Pairing logs show
+  mode only. Physical owner/provisioning replies use the console directly.
+- Retain the exact BIN/ELF and hashes under ignored `artifacts/` before a
+  physical run. `build/bringup/` is rebuildable. Decode native crash addresses
+  using the pinned SDK's `xtensa-esp32s3-elf-addr2line -pfiaC -e <retained-native.elf>
+  <addresses>`, or its IDF monitor with the matching build. Never decode a
+  historical image with a newly compiled ELF.
 
-- [Pixi manifest](../../../pixi.toml)/[lock](../../../pixi.lock) own the macOS ARM64 host tools. `clang-tools` includes clang-format, clangd and clang-tidy; pip supports SDK environment bootstrap. Use `pixi run <tool>`; declare Python dependencies through Pixi instead of manually pip-installing into its managed environment.
-- **This project does not install SDKs by hand.** Each trial ships a pinned `setup.sh` driven by a root pixi task, and downloads into `$AQ_TOOLCHAIN_ROOT` (legacy `M5_TOOLCHAIN_ROOT` accepted; default `~/.cache/m5stack-aq-parquet/toolchains`), outside the repo so worktrees share it. conda-forge carries no `esp-idf`, `arduino-cli` or `espflash` package, which is why bootstrap is a task rather than a dependency. It does carry `platformio` if a trial ever wants that route.
-- **Budget the SDK download before promising a build.** Measured on 2026-09-06, roughly 1.3 GB landed in the cache in about 20 minutes and neither an Arduino nor an ESP-IDF bootstrap had finished. The resumed Arduino installation completed on 2026-09-08 and occupies 7.5 GB because the board package installs libraries and tools for all supported ESP32 targets; Arduino CLI adds 34 MB. Treat a first bootstrap as tens of minutes and several gigabytes, run exactly one at a time, and never relocate the cache midway, which restarts transfers already in flight.
-- If installing an IDF manually instead, use the [Espressif Installation Manager](https://docs.espressif.com/projects/idf-im-ui/en/latest/); let its [versioned tool manifest](https://github.com/espressif/esp-idf/blob/v6.1/tools/tools.json) select Xtensa compiler, debugger, target-aware `esp-clangd` and SDK Python dependencies. Generic host Clang is not the ESP32-S3 compiler; firmware libraries belong in IDF/Arduino dependency management.
-- Current [installer prerequisites](https://docs.espressif.com/projects/idf-im-ui/en/latest/prerequisites.html) support Python 3.14. Run SDK builds in the exported IDF environment so Pixi does not shadow SDK-selected tools. EIM/Arduino CLI and macOS DFU/QEMU prerequisites are separate setup when that workflow is selected; adding host packages alone does not install a firmware SDK.
+## Historical resource and debugging evidence
 
-## Runtime decisions worth retaining
+Arduino-ESP32 3.3.11 with M5Unified 0.2.21/M5GFX 0.2.28 and NimBLE-Arduino
+2.5.1 supplied the earlier bench images. The September bootstrap measured
+7.5 GB for the completed Arduino SDK cache plus 34 MB for Arduino CLI; this is
+not a native SDK size or setup-time estimate. The old commands/API shapes and
+image-specific heap/jitter observations below are retained for interpreting
+historical evidence, not the current build or radio implementation.
 
-- Set the C++ standard explicitly for application components; IDF 6.1 currently defaults to `gnu++26`. Choose features supported by every selected toolchain (e.g. C++23); do not infer Arduino's dialect from standalone IDF. Exceptions/RTTI default off; use RAII plus explicit error results. C++ `app_main` needs C linkage; zero-initialize SDK structs and assign fields to avoid C/C++ designated-initializer differences. [C++ constraints](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-guides/cplusplus.html).
-- Initialize board services once; disable unused M5 services in `M5.config()` before `M5.begin(cfg)`. One owner per peripheral/controller: do not separately initialize M5Unified I²C, Arduino `Wire`, and IDF I²C on the same controller. A mutex cannot reconcile independent driver state. [M5 configuration/source](https://github.com/m5stack/M5Unified/blob/0.2.21/src/M5Unified.hpp), [bus/device API](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/peripherals/i2c.html).
-- New native drivers: `driver/i2c_master.h`, `driver/i2s_std.h`, `esp_adc/adc_oneshot.h`, `esp_adc/adc_continuous.h`, `driver/rmt_tx.h`, `driver/gptimer.h`; declare `esp_driver_*` dependencies (ADC: `esp_adc`). IDF 6 removes several legacy drivers; legacy I²C is EOL, with removal scheduled for 7.0. Do not mix old/new driver families. [6.0 migration](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/migration-guides/release-6.x/6.0/peripherals.html).
-- Keep DMA descriptors and latency-critical buffers in internal RAM; use PSRAM for large frame/sample buffers only when the consuming driver supports it. `MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA`, `MALLOC_CAP_SPIRAM`, cache synchronization/alignment; PSRAM can become inaccessible during flash operations, subject to the configured XiP mode. [S3 RAM restrictions](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-guides/external-ram.html).
-- Use bounded queues between capture, UI, storage and networking; define overflow/drop policy. Keep callbacks short and serialize M5 updates/UI calls. Measure before pinning work to cores; ESP-IDF FreeRTOS stack sizes are **bytes**. [SMP specifics](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/system/freertos_idf.html).
-- Upgrade traps: M5Unified 0.2.21 changes IO-expander pull/direction method signatures; IDF 6 uses managed `espressif/mqtt` ([migration](https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32s3/migration-guides/release-6.x/6.0/protocols.html#esp-mqtt)). Follow migration notes instead of suppressing compile errors.
-
-## Active logger implementation lessons, 2026-09-08
-
-The subsequent provenance/time revision uses schema v2 with 77 columns, versus the 73-column codec baseline described below. Its [single-source dictionary and shared contract](../../shared/table-and-observation-model.md#source-implementation-and-usage) are exercised by `pixi run telemetry-contract-test --sanitize`; build-time SHA-256 checking prevents stale dictionary references. The pinned build passes at 589,887 program bytes / 26,996 static RAM bytes. It is flashed and passed short SD readbacks; startup reported a 73,512-byte PSRAM writer allocation and the LZ4 smoke finalization reported 5,352 bytes of free task stack. These are bounded observations, not worst-case margins. [Measured scope](bench-verified.md#board-1-schema-v2-provenance-and-timing)
-
-- A bounded Parquet writer is feasible in the existing Arduino trial; neither the full Arrow runtime nor a speculative second framework was needed. The custom writer supports at most 96 flat numeric columns, 65,536 rows per row group and 8 row groups per file; the **application** deliberately limits batches to 90 rows (73 columns in the codec bench image, 77 in current source) and writes one row group per batch. Firmware v6 measures 1,412,899 program bytes / 86,828 static RAM and a 172,880-byte PSRAM writer allocation (two open-file workspaces with footer records for 8 × 96 chunks). Host format capacity is not a device workload qualification. [Writer contract](../../../firmware/common/src/parquet_writer.h)
-- The pre-codec Hive image used 63,560 bytes for sample/batch/descriptors/workspace in PSRAM. The codec-capable format workspace is now 2,816 bytes, with additional caller-owned LZ4 state/page buffers; no page-codec heap allocation is used. The storage worker retains its 16 KiB stack and 4 KiB stdio staging. FreeRTOS owns the eight-row queue allocation, not explicitly in PSRAM. Free heap is not peak-memory consumption; retain minimum/largest-block and stack evidence when increasing workloads. [Codec budget and scope](compression-benchmark.md)
-- Acquisition/M5 sensor reads stay in the Arduino loop; the separate `xTaskCreate` storage worker is not explicitly core-pinned. The SPI mutex and completed display DMA remain necessary regardless of core assignment. The measured workload did not establish a dual-core speedup or justify pinning. Profile again before adding a codec or radios.
-- PyArrow 25.0.0 and DuckDB 1.5.5 are **host-only** validators resolved in the Pixi lock, not firmware dependencies. `pixi run parquet-test --sanitize` exercises empty, one-row, wide, maximum-row, four-group and eight-group fixtures with ASan/UBSan, both readers and a field-level footer decode (`tools/parquet_footer.py`); it does not exercise the filesystem worker or physical SD failures. `tools/inspect_parquet.py` summarises a fetched device file the same way.
-- Keep firmware builds inside the pinned SDK environment and tests inside Pixi. The formatting tasks enumerate tracked files; explicitly format/check new untracked C/C++ files. Record application binary hashes and the actual column schema: older feasibility images share version-1 labels, while the new 77-column contract deliberately advances to schema v2.
-- USB control-line handling is part of the experiment: repeatedly opening the first host helper reset the board and discarded RAM rows. The corrected Parquet helper preserved boot identity on the tested host. Prefer a single-connection `bench` run and use `parquet status` rather than an esptool identity/reset cycle during acquisition. [Commands and caveats](../../../firmware/arduino-m5unified/README.md#inspect-the-live-logger)
-- Arduino may clean the entire build directory when its configuration changes. Put durable local exports/logs in `artifacts/`, not `build/`; the original build-local copies were removed and Parquet files had to be restored from SD. The vendored codec uses trial-relative includes so Arduino dependency discovery and compilation see the same source; an extra compiler `-I` alone did not resolve the first dependency scan.
-- [LZ4 1.10.0](../../../firmware/common/vendor/lz4/README.md) is pinned locally with hashes and BSD notices. The adapter compiles upstream C as C++ with `LZ4_MEMORY_USAGE=12`, using external state rather than the default large stack/heap paths. Vendor code is excluded from formatting/lint diagnostics, but the actual adapter and codec run in sanitizer/reader tests.
-
-## Lookup only when needed
-
-| Need | Keywords / primary entry |
-| --- | --- |
-| Diagnose concurrency/memory | `heap_caps_get_largest_free_block`, stack high-water mark, task watchdog, heap poisoning, core dumps; [IDF diagnostics](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-guides/fatal-errors.html) |
-| Recover/ship firmware | USB Serial/JTAG, ROM download, `esp_https_ota`, A/B partitions, rollback self-test, NVS encryption; [OTA](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/system/ota.html) |
-| Camera/audio/UI | GC0308 RGB/YUV support, `fb_count`, PSRAM DMA, I²S ownership; [camera driver](https://github.com/espressif/esp32-camera), [M5 examples](https://github.com/m5stack/M5Unified/tree/0.2.21/examples), [LVGL threading](https://docs.lvgl.io/9.5/integration/overview.html#operating-systems-and-threads) |
-
-Before accepting a firmware dependency upgrade: clean build + target-board smoke test for used peripherals; for concurrency changes, stress display/SD/radios together and record queue drops, watchdog resets and minimum internal heap. Validation applies only to the pinned image and measured workload in the bench record, not all combinations in the release snapshot.
-
-## NimBLE-Arduino 2.5.1 integration notes (observed 2026-09-16)
+## Historical NimBLE-Arduino 2.5.1 integration notes (observed 2026-09-16)
 
 What the [BLE sync service](../../shared/ble-sync-protocol.md) needed from the library, recorded so the next radio feature does not rediscover it.
 
@@ -77,4 +88,4 @@ What the [BLE sync service](../../shared/ble-sync-protocol.md) needed from the l
 ## Debugging a wedged task (observed 2026-09-16)
 
 - The storage worker stamps a heartbeat; when it stops moving for 5 s the main loop prints `PARQUET ERROR operation=worker-stall seconds=N state=… stack_free=…`. That line is the symptom to look for when a worker-side command goes unanswered while `PARQUET ROW … dropped=` climbs. `eTaskGetState` called from the other core reports a spinning task as `ready`, not `running`, so do not read `state=ready` as "idle".
-- The task watchdog names the culprit per CPU (`Tasks currently running: CPU 0: parquet-sd`) and prints a `Backtrace:` line. Decode it with `xtensa-esp-elf-addr2line -pfiaC -e firmware/arduino-m5unified/build/bringup.ino.elf <addresses>`; the tool lives under `~/.cache/m5stack-aq-parquet/toolchains/arduino/data/packages/esp32/tools/esp-x32/*/bin/` (not on `PATH`, not in Pixi). The ELF must be the one that was flashed: Arduino rebuilds wipe `build/`, so keep the ELF with the retained binary in `artifacts/` when a session is worth debugging later. [Fatal errors / backtraces](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32s3/api-guides/fatal-errors.html), [task watchdog](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32s3/api-reference/system/wdts.html)
+- The task watchdog names the culprit per CPU (`Tasks currently running: CPU 0: parquet-sd`) and prints a `Backtrace:` line. Decode it with `xtensa-esp-elf-addr2line -pfiaC -e firmware/esp-idf-cores3/build/bringup.ino.elf <addresses>`; the tool lives under `~/.cache/m5stack-aq-parquet/toolchains/arduino/data/packages/esp32/tools/esp-x32/*/bin/` (not on `PATH`, not in Pixi). The ELF must be the one that was flashed: Arduino rebuilds wipe `build/`, so keep the ELF with the retained binary in `artifacts/` when a session is worth debugging later. [Fatal errors / backtraces](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32s3/api-guides/fatal-errors.html), [task watchdog](https://docs.espressif.com/projects/esp-idf/en/v5.5.5/esp32s3/api-reference/system/wdts.html)

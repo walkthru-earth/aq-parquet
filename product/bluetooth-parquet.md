@@ -40,7 +40,7 @@ sequenceDiagram
     Q->>Q: Decode Parquet and execute SQL
 ```
 
-All steps are proposed. Bluetooth needs an application file protocol; it does not automatically expose the SD card as a filesystem.
+The custom URI/DuckDB filesystem adapter is proposed. The current native firmware already supplies immutable LIST/OPEN/READ/CLOSE byte transfers through the [shared BLE/LAN protocol](../docs/shared/ble-sync-protocol.md); that protocol does not automatically expose SD as a DuckDB filesystem.
 
 ## Start simple, then measure
 
@@ -50,7 +50,7 @@ All steps are proposed. Bluetooth needs an application file protocol; it does no
 | URI with whole-file cache | First open fetches the file; DuckDB reads cached bytes | Same convenient URI without repeated Bluetooth seeks |
 | URI with range reads | Fetch footer and requested column ranges; coalesce/cache reads | May transfer fewer bytes, but extra round trips can cost more |
 
-**Prototype whole-file caching first.** Current files are small; selective reads may not beat one transfer. Compare cold/warm query latency, bytes, round trips, memory, energy and sampling drops on both mobile platforms. Current writer lacks min/max statistics, limiting data-page skipping; column projection can still be useful.
+**Prototype whole-file caching first.** Current files are small; selective reads may not beat one transfer. Compare cold/warm query latency, bytes, round trips, memory, energy and sampling drops on both mobile platforms. The current writer includes row-group column min/max/null statistics and TIMESTAMP annotations; older pre-v6 files can lack them. Its single-page-per-column chunks do not provide a separate page index. Measure row-group pruning and projection before adopting range reads.
 
 ## Required contracts
 

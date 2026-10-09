@@ -1,5 +1,11 @@
 # CoreS3 hardware: pins, ownership, power
 
+Current firmware uses native ESP-IDF 6.1 with M5Unified 0.2.25/M5GFX 0.2.31.
+Pins, power and controller ownership remain board-specific. Native builds pass;
+physical native qualification is pending. Earlier dependency/source snapshots
+and measured results below remain dated historical evidence, not current SDK
+recommendations. [Current application](../../../firmware/esp-idf-cores3/README.md).
+
 Read when wiring, allocating peripherals, debugging boot, or changing power/sleep. Retrieval snapshot: **2026-09-06**; schematic v1.0, M5Unified 0.2.21, M5GFX 0.2.28. Source inspection unless stated otherwise. Facts confirmed on a real board, including chip revision, flash size and flash mode, live in [bench-verified](bench-verified.md), which overrides this file where they disagree.
 
 ## Identify the board first
@@ -102,7 +108,7 @@ Serialize complete read-modify-write operations: an unrelated whole-port write c
 - **Candidate expansion pins:** 5/6/7/10 first; 1/2,8/9,17/18 only when their ports are unused. GPIO1–10 are ADC1; 11–20 ADC2. Recheck physical stack occupancy before assigning LEDC/RMT/UART/SPI by GPIO matrix. `gpio_dump_io_configuration` exposes accidental ownership changes. [GPIO reference][gpio]
 - **Boot/debug:** straps **0,3,45,46** already have board functions; do not add pulls/drivers that change reset levels. Camera occupies external JTAG pins39–42; USB Serial/JTAG uses19/20. Native USB-OTG and Serial/JTAG share the internal PHY: inspect the USB-mode configuration before expecting both simultaneously. [SoC datasheet][soc]
 - **eFuse says nothing about PSRAM here:** `PSRAM_CAP`, `PSRAM_VENDOR` and the derived `PSRAM_CAPACITY` all read zero on a measured CoreS3, because those fuses describe in-package PSRAM and this board carries its 8 MB Quad PSRAM as a separate part. A zero reading is not an absent-PSRAM finding. Confirm size at runtime instead, and treat a runtime zero as a Quad-versus-Octal build error. [Measured](bench-verified.md)
-- **Recovery:** hold RST ~3 s until green LED, then release for download mode. Avoid unbounded `while (!Serial)` in unattended firmware. [Board recovery][board]
+- **Recovery:** hold RST ~3 s until green LED, then release for download mode. Never wait indefinitely for a USB reader in unattended native firmware. [Board recovery][board]
 - **Reading live data need not reset the board.** On the measured macOS native-USB connection, the first Parquet helper's DTR/RTS settings caused resets on open. Its corrected settings preserved the boot and RAM batch across separate reads; use that bounded helper rather than assuming every serial client is non-resetting. Esptool's read-only chip query also resets the application on exit in the current workflow. [Host lesson](bench-verified.md#measured-facts-that-changed-how-we-work)
 - **A board in ROM download mode prints nothing.** Measured, a CoreS3 held in download mode enumerates as USB Serial/JTAG and answers `esptool` normally, yet emits not one byte on the CDC port and ignores a REPL interrupt, because no application is running. Silence there is the expected state, not a dead board. `esptool chip-id` succeeding while the port stays quiet is the quickest way to tell the two apart. [Measured](bench-verified.md)
 

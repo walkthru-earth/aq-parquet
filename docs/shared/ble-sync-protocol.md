@@ -23,6 +23,14 @@ flash and readback.
 
 Version 2 adds, on top of the v1 file sync: **device configuration and control** (`GET_CONFIG`/`SET_CONFIG`, Wi-Fi scan and provisioning, reboot, log tail), **pairing modes** for devices without a screen, and a **LAN transport** — the same frames over one TCP socket, discovered with mDNS, authenticated with a token the phone can only obtain over the bonded BLE link. BLE introduces, LAN accelerates. Revision 2.1 adds a way for the device to tell a phone that is *not* connected that something changed; why and how a phone uses it is in [background-sync-triggers](background-sync-triggers.md).
 
+The current source uses pure **ESP-IDF 6.1** native NimBLE GATT/GAP and native
+Wi-Fi/netif/SNTP with managed mDNS. Native board and generic builds plus host
+contracts pass as of **2026-10-09**; physical native pairing, bonded reconnect,
+radio coexistence and immutable readback remain unqualified. Wire UUIDs,
+frames, archive semantics and board dictionaries are preserved. Arduino-era
+bond-store compatibility is not guaranteed; qualify reconnect/re-pairing while
+retaining station/config NVS. [Migration validation](development.md#native-migration-validation-2026-10-09).
+
 ## Purpose and non-goals
 
 The system is **offline-first**: the card is the data origin, and a local archive on a phone, laptop or hub is its first copy. Logging and local sync work with no internet. Any link between device and phone — BLE today, Wi-Fi or LoRa device-to-device later — is a sync transport, and if the device or the phone happens to have Wi-Fi or a SIM, that is welcome but never required. Cloud upload, when it exists, is a separate opt-in step that runs *after* local sync and is off by default. This document covers the BLE transport. A phone within Bluetooth range must be able to, without internet or any server:
@@ -50,17 +58,21 @@ The device **never** deletes, rewrites or renames a finalized file because of th
 
 | `ble.pair` | Passkey | Default when | Notes |
 | --- | --- | --- | --- |
-| `random` | fresh 6 digits per attempt, shown on the display and printed on serial (`BLE PAIR passkey=`) | a display is detected at first boot | Physical ownership is proven by reading the screen. This is the v1 behaviour and stays the CoreS3 default. |
+| `random` | fresh 6 digits per attempt, shown on the pairing display; diagnostics record only `passkey=random` | a display is detected at first boot | Physical ownership is proven by reading the screen. This is the v1 behaviour and stays the CoreS3 default. |
 | `fixed` | `ble.pin`, random **per-device** 6-digit value at first boot | no display is detected at first boot (bare ESP32-S3 PCB) | Same phone UX (Android asks for six digits). The owner obtains it with physical serial `parquet owner-pin` (or an attached pairing display), or configures another value before deployment. This owner reply is excluded from LOG_TAIL and is not printed at boot. Firmware does not ship a universal PIN. Existing installations that still stored legacy `123456` rotate it once at boot. |
 | `none` | Just Works | never by default | Encrypted, unauthenticated, no prompt. For lab benches only; must be enabled deliberately. Characteristics drop the `AUTHEN` requirement in this mode so reads succeed. |
 
 The mode and PIN are stored in NVS (`aqcfg` namespace) and are **applied at the next boot**, because the NimBLE security parameters are fixed at stack start; `SET_CONFIG` answers with `reboot_required` set and the phone offers `REBOOT`. The first-boot auto-detection result is stored, so removing the display later does not silently change the mode (again like Meshtastic — change the mode before removing the screen). A lost phone is handled by re-pairing or by `ble.clear_bonds=1`.
 
-The pinned NimBLE 2.5.1 server supplies both pairing modes through
-`onPassKeyDisplay`: fixed mode returns the stored per-device PIN and logs only
-`passkey=fixed`; random mode generates its per-attempt value. Do not install a
-nondefault static `setSecurityPasskey`, which bypasses this callback and its
-pairing/UI state. The stack's default value acts only as a callback sentinel.
+The native server handles `BLE_GAP_EVENT_PASSKEY_ACTION` and supplies display
+passkeys with `ble_sm_inject_io`: random mode generates per-attempt digits,
+fixed mode uses the stored per-device PIN. Pairing UI state is updated in that
+callback. Diagnostics log only the mode and never the numeric PIN. The native
+host also owns submissions, bond clearing and cached snapshot notifications.
+
+The historical NimBLE-Arduino 2.5.1 wrapper used `onPassKeyDisplay`; its
+nondefault static `setSecurityPasskey` bypassed that callback. This explains
+older fixed-PIN bench/debug notes and is not a current API requirement.
 
 ### Advertising payload (v2.1)
 
@@ -74,7 +86,7 @@ Service data AD (type `0x21`) under the service UUID `c0a5e9f0-0001-…`, in the
 | 6–7 | `boot16` u16 | the last four hex digits of `info.boot`, so a phone notices a reboot (`fin` restarts at 0) |
 | 8–9 | reserved | 0. **Never an IP address or port**: advertisements are unauthenticated, and a forged one would send the phone's LAN token to an attacker's socket. Discovery stays mDNS |
 
-Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. The interval stays NimBLE's default fast connectable interval (30–60 ms), which sets a low-power scanner's detection latency; if it is ever slowed, keep it ≤ 200 ms for a minute after a flag flips. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
+Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. The native interval is explicitly configured to the existing fast connectable range (30–60 ms), which sets a low-power scanner's detection latency; if it is ever slowed, keep it ≤ 200 ms for a minute after a flag flips. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
 
 **Address stability.** Both the Android Companion Device Manager and per-device scan filters key on the advertised address. NimBLE uses the public address derived from the factory MAC; do not enable NimBLE privacy / resolvable private addresses on this device — every presence mechanism would silently stop matching.
 

@@ -1,12 +1,17 @@
 # Sensor telemetry, Parquet and cloud pipeline
 
 
-> **Board scope:** The contract and design intent here can be reused across board trials. The implemented firmware, fixed `cores3-*` schema IDs and dated measurements below are CoreS3-specific. The Waveshare V2 trial currently has only a PMS5003T UART diagnostic; it must version its own measurement contract before producing Parquet or advertising this sync service.
-[Router](../README.md) · Read for the measurement record, bounded buffer, on-device Parquet, SD durability and later object-storage upload. Hardware-level SD rules remain in [CoreS3 storage](../boards/m5stack-cores3/cores3-storage.md). Implementation snapshot **2026-09-17** (firmware v6 flashed the same day); measured runs belong in [bench-verified](../boards/m5stack-cores3/bench-verified.md), separately from planned validation.
+> **Board scope:** AQCommon/AQLogger implement the shared pipeline for both native
+> ESP-IDF 6.1 board adapters. CoreS3 retains its 77-column dictionary; Waveshare
+> V2 uses its 52-column PMS5003T v2 dictionary. Schema identities and hardware
+> acquisition remain board-owned. Dated SD/throughput results below are historical
+> Arduino image evidence; native hardware qualification is pending.
+
+[Router](../README.md) · Read for the measurement record, bounded buffer, on-device Parquet, SD durability and later object-storage upload. Hardware-level SD rules remain in [CoreS3 storage](../boards/m5stack-cores3/cores3-storage.md). Native migration snapshot **2026-10-09**; earlier firmware-v6 hardware evidence was recorded on **2026-09-17**; measured runs belong in [bench-verified](../boards/m5stack-cores3/bench-verified.md), separately from planned validation.
 
 ## Current decision
 
-The active Arduino/C++ trial now **generates Parquet on the CoreS3 and stores it on SD**. It acquires one row every **10 seconds**, containing available scalar measurements and explicit validity/status fields. Rotation defaults to **900 seconds** and can be set to **600, 1800 or 3600 seconds** for the running session; reboot restores 900 seconds. The logger buffers up to 90 rows in RAM; a completed batch becomes one **row group** of the open file, and the file is finalized at the window boundary (1, 1, 2 or 4 row groups for the four intervals):
+The native ESP-IDF applications implement **real-sensor Parquet on microSD** through the shared C++ writer and storage worker. Native builds and host gates pass; earlier hardware readbacks remain scoped to their historical images. It acquires one row every **10 seconds**, containing available scalar measurements and explicit validity/status fields. Rotation defaults to **900 seconds** and can be set to **600, 1800 or 3600 seconds** for the running session; reboot restores 900 seconds. The logger buffers up to 90 rows in RAM; a completed batch becomes one **row group** of the open file, and the file is finalized at the window boundary (1, 1, 2 or 4 row groups for the four intervals):
 
 ```text
 10-second rows -> bounded PSRAM batch -> Parquet writer -> finalized SD files
@@ -30,7 +35,13 @@ The [table and observation model](table-and-observation-model.md) records the st
 
 The tested conclusion is now affirmative: this CoreS3 can create interoperable Parquet directly from real ten-second rows on SD, with a full 90-row uncompressed window verified. In three identical-60-row comparisons, LZ4_RAW reduced whole-file bytes by 50.7% and median finalization time by 21.4% versus the same writer uncompressed. That is evidence for this design/workload, not a benchmark against CBOR/JSON, an energy result, a claim about allocated FAT space, or proof of production durability. [Measurements and limits](../boards/m5stack-cores3/compression-benchmark.md#hardware-result-lz4-passed)
 
-The active Arduino trial stays active. [ESP-IDF 6.1](https://github.com/espressif/esp-idf/releases/tag/v6.1) is newer than the ESP-IDF 5.5.5 base inside Arduino-ESP32 3.3.11, but that alone does not justify a second trial. Start an IDF trial only after this implementation produces a measured driver, latency, memory or component limitation and record that finding in the trial README.
+The active board applications now use pure [ESP-IDF 6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html),
+with native M5 components on CoreS3 and native peripheral drivers on Waveshare.
+The migration preserves dictionaries, NVS identity/config types, immutable
+archives and the phone wire contract. Use the [current development workflow](development.md)
+and qualify each native image on hardware before extending historical bench
+claims. Common components remain reusable and board-neutral; peripheral pins,
+controller ownership and mount policy stay in each adapter.
 
 ## Measurement contract
 
@@ -38,7 +49,7 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 
 | Field | Requirement |
 | --- | --- |
-| `schema_version` | Current source (firmware v6): INT32 version 3, file metadata `cores3-telemetry-v3`, 77 columns, `dictionary_version` `cores3-telemetry-v2`. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
+| `schema_version` | Current CoreS3 source (native v6.8, historical v6 schema): INT32 version 3, file metadata `cores3-telemetry-v3`, 77 columns, `dictionary_version` `cores3-telemetry-v2`. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
 | `station_id` | UUID generated once and persisted in NVS (`parquet` namespace, `station` key); carried in file metadata and the Hive directory, not repeated as a numeric row column. Erasing NVS creates a new station identity. |
 | `device_id` | INT64 containing the board's 48-bit Wi-Fi station MAC; a hardware identifier, not an anonymized UUID. |
 | `boot_id_hi`, `boot_id_lo` | Two INT64 fields carrying a random 128-bit identifier generated once per boot. |
@@ -53,7 +64,7 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 
 Use `pixi run parquet-device sync-time --port <port>` to explicitly supply this host's current UTC estimate, or `--sync-time` with `parquet-device bench`. The serial `parquet time <epoch-seconds>` command anchors that value to the device monotonic clock and reports the anchor. This is not NTP; command/transport latency and host error are not measured. The mobile apps send UTC automatically on connection, including a microsecond fraction when supported; Wi-Fi SNTP also establishes UTC without a phone. Previously buffered rows retain their original timestamps and epoch. An accepted anchor finalizes the pending batch with `reconciliation_anchor_mono_us`, `reconciliation_anchor_utc_ns` and `reconciliation_anchor_source` footer keys. These are evidence for this file's device/station/boot only. Finalizing the first genuine timed sample makes its row anchor available without waiting for the normal rotation window. No synthetic measurement is created. A separate uncertainty-bearing anchor journal is not implemented.
 
-The anchor uses the command's monotonic receipt time, not the later time at which the storage worker handles it. This avoids adding worker-queue delay to the clock mapping, but host integer-second truncation and USB latency remain. Station UUID persists across normal resets; the runtime interval choice does not. Source: [current logger](../../firmware/arduino-m5unified/bringup/telemetry_logger.cpp).
+The anchor uses the command's monotonic receipt time, not the later time at which the storage worker handles it. This avoids adding worker-queue delay to the clock mapping, but host integer-second truncation and USB latency remain. Station UUID persists across normal resets; the runtime interval choice does not. Source: [current logger](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp).
 
 **RTC hand-off (firmware v6.2).** Every host or network sync is also copied into the onboard BM8563 RTC in UTC: the main task (the only I2C user after startup) waits for the anchor's next whole-second boundary (≤ 60 ms late on the 20 ms loop, forced after 5 s) and logs `PARQUET RTC write=ok utc=… late_ms=…` after a read-back. At the next boot, `begin_logger` reads the RTC before the first sample; if the chip reports no voltage-low event and the calendar decodes to 2020–2100, it becomes anchor epoch 1 with `clock_status = 2` (`PARQUET TIME … source=rtc`), so a power-cycled logger dates its rows from the first sample instead of filling `unsynced/`. Otherwise it logs `PARQUET RTC state=unusable reason=voltage-low|invalid-calendar|out-of-range` and behaves as before. A later host sync starts a new epoch and logs the measured error of the clock it replaced (`PARQUET CLOCK transport=… previous=rtc|host skew_ms=…`, new host time minus the device's previous estimate of the same monotonic instant) — this is the only clock-accuracy evidence the device produces; collect it in `bench-verified.md` before trusting RTC-restored time to better than seconds. The RTC never holds local time. Whether the CoreS3 RTC keeps running with the main battery removed is **not verified**; see [hardware](../boards/m5stack-cores3/cores3-hardware.md).
 
@@ -234,7 +245,7 @@ Do not use Parquet's deprecated `LZ4` enum, LZ4 Frame payloads, dictionaries, ne
 
 ## Implementation order
 
-1. **Implemented:** live 10-second measurement collection, bounded C++ Parquet writer, SD finalization and host conformance/readback tooling in the active Arduino trial.
+1. **Implemented:** live 10-second measurement collection, bounded C++ Parquet writer, SD finalization and host conformance/readback tooling in the shared native ESP-IDF applications; historical Arduino images supplied the recorded physical evidence.
 2. **Hardware readback verified:** automatic 60/90-row uncompressed files, three identical-row LZ4 comparison pairs and a normal compressed Hive smoke file open in both readers; exact scope and measured timings are in [bench-verified](../boards/m5stack-cores3/bench-verified.md).
 3. **Implemented, partly bench-verified:** persistent station UUID, UTC Hive layout, clock epochs and configurable 600/900/1800/3600-second windows with one row group per completed batch. Station persistence, normal-reset file retention, UTC partition agreement, a quarter-hour boundary split, a full 90-row uncompressed window and (v6) two-row-group half-hour files with statistics passed readback; still test midnight, arbitrary clock corrections, four-group LZ4 files and a reset between row groups.
 4. Measure actual memory, bytes/row, encoding time, SD latency and sampling jitter across longer runs and failure cases.

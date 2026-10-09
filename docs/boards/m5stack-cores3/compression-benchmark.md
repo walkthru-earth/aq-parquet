@@ -1,5 +1,12 @@
 # Parquet compression experiment
 
+**Framework scope, 2026-10-09:** Current source is native ESP-IDF 6.1 and its
+build/host gates pass. No native hardware run is claimed here. The dated
+physical observations, images, old API/tool commands and performance figures
+below belong to historical Arduino builds; retain those identities when using
+this evidence. Native qualification must add a separately dated image/readback.
+
+
 [Router](../../README.md) · Implementation, host screening and device comparison verified **2026-09-08**. Exact device evidence lives in [bench-verified](bench-verified.md). This stays in the existing Arduino trial; no second framework or radio/upload implementation is introduced.
 
 ## Design and scope
@@ -46,7 +53,7 @@ LZ4 reduced total bytes by **50.7%** and median observed finalization by **21.4%
 
 Final comparison status: 60 normal rows still buffered, six diagnostic files finalized, zero drops/errors, queue high-water 1. The original rows remained available for normal telemetry. All three copies for each codec were byte-identical. [Exact hashes, cadence and image](bench-verified.md#board-1-lz4-compression).
 
-Evidence is retained in `firmware/arduino-m5unified/artifacts/compression-20260908/`: `report.json`, `device.log` and all six files. Current normal logging can use LZ4, while reboot retains the conservative UNCOMPRESSED default. Compression does not change the RAM-loss or SD power-loss limitations.
+Evidence is retained in `firmware/esp-idf-cores3/artifacts/compression-20260908/`: `report.json`, `device.log` and all six files. Current normal logging can use LZ4, while reboot retains the conservative UNCOMPRESSED default. Compression does not change the RAM-loss or SD power-loss limitations.
 
 The follow-up normal 64-row file retained the original 60 rows unchanged, plus contiguous post-comparison sequences 60–63, with no recorded drops/deadline misses/storage errors. A subsequent three-row **normal LZ4 Hive file** passed both readers and UTC partition checks after host time was restored. Both codec configuration commands acknowledged successfully; the device was left at 900 seconds with LZ4 selected.
 
@@ -59,7 +66,7 @@ Run from the repository root, with only one process owning the serial port:
 ```sh
 pixi run parquet-test --sanitize
 pixi run compression-bench <exported-file.parquet> --repeats 10
-pixi run python tools/benchmark_device_compression.py --port /dev/cu.usbmodem101 --out firmware/arduino-m5unified/artifacts/compression-new --min-rows 60 --seconds 700 --repeats 3
+pixi run python tools/benchmark_device_compression.py --port /dev/cu.usbmodem101 --out firmware/esp-idf-cores3/artifacts/compression-new --min-rows 60 --seconds 700 --repeats 3
 pixi run parquet-device command --port /dev/cu.usbmodem101 'parquet codec lz4'
 pixi run parquet-device command --port /dev/cu.usbmodem101 'parquet codec none'
 ```
@@ -68,6 +75,6 @@ The device helper does not reset, change the clock or alter the normal interval/
 
 Interpret `codec_us` as time inside LZ4 calls only; `writer_us` includes serialization and sink calls; `write_us` includes complete finalization/readback/CRC/rename, and `sync_us` is the flush/sync/close subset. Since firmware v6 a file can hold several row groups: `codec_us`, `writer_us` and `sync_us` on the `READY` line are sums over all groups plus the footer, each `PARQUET GROUP` line carries that group's own `writer_us`/`codec_us`, and `write_us` runs from file creation (first group) to finalization, so for a multi-group file it includes the minutes spent waiting for later batches and is not an encoding time. Benchmark copies from `codec-test` are always one row group, so the paired comparison is unaffected. Compare complete-file bytes and all relevant timings, not codec CPU alone. Three repetitions are not p99 or endurance qualification. Record sampling jitter/drops across writes and free/minimum heap, PSRAM and stack reports alongside the explicit workspace bound.
 
-**Artifact lesson:** Arduino cleaned the previous `build/` contents during a changed-configuration rebuild. All 13 saved Parquet files were restored from the card and revalidated under `firmware/arduino-m5unified/artifacts/exports/restored-20260908/`, including legacy files. Earlier build-local serial logs were not recovered. Use git-ignored `artifacts/` for exports, logs, reports and retained binaries; `build/` is disposable. Current firmware exposes old `/sd/parquet/` files through the read-only `legacy-parquet/` prefix. `tools/export_parquet.py` retrieves every listed finalized file without flushing or deleting device data.
+**Artifact lesson:** Arduino cleaned the previous `build/` contents during a changed-configuration rebuild. All 13 saved Parquet files were restored from the card and revalidated under `firmware/esp-idf-cores3/artifacts/exports/restored-20260908/`, including legacy files. Earlier build-local serial logs were not recovered. Use git-ignored `artifacts/` for exports, logs, reports and retained binaries; `build/` is disposable. Current firmware exposes old `/sd/parquet/` files through the read-only `legacy-parquet/` prefix. `tools/export_parquet.py` retrieves every listed finalized file without flushing or deleting device data.
 
 Power-cut recovery, card faults, compressed full-window endurance, radio/display stress and on-device Snappy/Zstd comparisons remain separate qualification work.

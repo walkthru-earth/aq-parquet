@@ -1,9 +1,15 @@
 # CoreS3 wireless: constraints and tuning
 
+The current application uses native ESP-IDF 6.1 NimBLE, Wi-Fi events/netif/SNTP
+and managed mDNS 1.14.0. See [native source and qualification](../../../firmware/esp-idf-cores3/README.md#native-board-ownership-and-qualification)
+and the [shared wire contract](../../shared/ble-sync-protocol.md). Native radio
+hardware qualification is pending. Arduino APIs, performance and phone behavior
+below describe historical images and are not native bench evidence.
+
 Load for Wi-Fi/BLE/ESP-NOW design or debugging. Source-checked 2026-09-06; implementation scope updated 2026-09-17; target **ESP32-S3**. Only short BLE sync sessions and one Wi-Fi scan have been bench-verified in this project; no Wi-Fi association or coexistence load has.
 SDK/library pins: [development](cores3-development.md). Linked `stable` guides currently describe IDF 6.1; select the installed SDK version before copying APIs/Kconfig.
 
-The current trial logs Parquet to SD without ESP-NOW, NTP or object-storage upload; since 2026-09-16 it runs a BLE GATT sync service ([contract](../../shared/ble-sync-protocol.md), [measurements](bench-verified.md#board-1-bluetooth-le-sync)) and since protocol v2 an optional Wi-Fi station with a LAN sync server ([below](#wi-fi-station-and-lan-sync-in-the-arduino-trial)). Its UTC comes from an explicit USB host or phone command, not a network clock. Separate acquisition/storage tasks and available internal heap do not establish headroom under TLS/radio traffic or a dual-core speedup. When upload is added, preserve immutable file identities, read SD in bounded chunks, release the display/SD mutex before network waits, and remeasure jitter, drops and memory under reconnect/coexistence load. The acknowledgement/retention design is still planned in the [telemetry pipeline](../../shared/telemetry-pipeline.md#upload-and-cloud-layout).
+The historical Arduino trial logged Parquet to SD without ESP-NOW, NTP or object-storage upload; since 2026-09-16 it runs a BLE GATT sync service ([contract](../../shared/ble-sync-protocol.md), [measurements](bench-verified.md#board-1-bluetooth-le-sync)) and since protocol v2 an optional Wi-Fi station with a LAN sync server ([below](#wi-fi-station-and-lan-sync-in-the-arduino-trial)). Its UTC comes from an explicit USB host or phone command, not a network clock. Separate acquisition/storage tasks and available internal heap do not establish headroom under TLS/radio traffic or a dual-core speedup. When upload is added, preserve immutable file identities, read SD in bounded chunks, release the display/SD mutex before network waits, and remeasure jitter, drops and memory under reconnect/coexistence load. The acknowledgement/retention design is still planned in the [telemetry pipeline](../../shared/telemetry-pipeline.md#upload-and-cloud-layout).
 
 ## Radio and channel model
 
@@ -29,7 +35,7 @@ The LZ4 SD benchmark establishes local feasibility and smaller payloads, not net
 
 ## Wi-Fi station and LAN sync in the Arduino trial
 
-Source-checked 2026-09-17 against `firmware/arduino-m5unified/bringup/wifi_link.cpp` (protocol v2, [contract](../../shared/ble-sync-protocol.md#lan-transport-v2)). Measured scope (2026-09-17): scan, STA join and rejoin, mDNS, TCP sync from a Mac and an Android phone, session takeover, BLE+Wi-Fi coexistence cost; see [bench-verified](bench-verified.md#board-1-protocol-v2-configuration-wi-fi-lan-sync-phone).
+Source-checked 2026-09-17 against the historical board-local Wi-Fi implementation (current native replacement: [shared wifi_link.cpp](../../../firmware/common/connectivity/src/wifi_link.cpp)) (protocol v2, [contract](../../shared/ble-sync-protocol.md#lan-transport-v2)). Measured scope (2026-09-17): scan, STA join and rejoin, mDNS, TCP sync from a Mac and an Android phone, session takeover, BLE+Wi-Fi coexistence cost; see [bench-verified](bench-verified.md#board-1-protocol-v2-configuration-wi-fi-lan-sync-phone).
 
 - **Off by default.** The STA radio comes up at runtime only when `wifi.on=1` and an SSID are stored in NVS (`aqcfg`, via `SET_CONFIG`); otherwise it stays `WIFI_OFF` and `GET_CONFIG` reports an all-zero MAC. Start sequence: `WiFi.persistent(false)` (NVS holds the credentials, not the driver), `WiFi.mode(WIFI_STA)`, `WiFi.setSleep(true)` (modem sleep, deliberately kept **on** for BLE coexistence), `WiFi.setAutoReconnect(false)`, then `WiFi.begin(ssid, psk)`. [Arduino WiFi API][arduino-wifi], [WiFi library 3.3.11][arduino-wifi-src]
 - **Own reconnect state machine** on the `aq-lan` task (100 ms tick), not the driver's auto-reconnect: 30 s connect timeout → `failed`, 30 s retry while `wifi.on`; a lost link stops the server and reconnects immediately. Serial/`LOG_TAIL` lines: `WIFI CONNECT ssid=`, `WIFI CONNECTED ssid= ip= rssi=`, `WIFI LOST`, `WIFI FAILED ssid= status= retry_s=`, `WIFI OFF reason=`. `wifi.state` in `CONFIG` mirrors these.
