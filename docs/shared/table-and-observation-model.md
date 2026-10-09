@@ -110,7 +110,7 @@ Implementation scope for this revision:
 
 - A single field dictionary drives column names/types and records procedure group, project-local property URI, unit and validity rule. These URIs are local vocabulary identifiers, not claims of an OGC-controlled vocabulary or hosted resolver.
 - Files reference the dictionary by version, source URI and SHA-256, and include a versioned acquisition configuration. Descriptions are not repeated in every row or as a large JSON object in every tiny file.
-- Deployment and calibration references remain explicitly unknown. No coordinates, physical sensor serials, battery presence or calibration certification are invented. Provisioning and time-effective deployment history remain future work.
+- Deployment and calibration identifiers remain explicitly unknown. Owner-declared sensor identity and H3 location can now be provisioned; centers are derived from the retained cell. External deployment history and calibration certification remain future work. Hardware presence and physical coordinates are not invented.
 - Append timing columns with a new schema version: snapshot collection completion, most recent valid PMS frame receipt on the device monotonic clock, and the UTC/monotonic anchor used for each row. Unknown anchors and absent PMS frames remain null.
 - Snapshot start is not simultaneous physical acquisition across all instruments. PMS receipt is host-side frame availability, not the sensor's internal phenomenon time. Upload/ingestion time must be assigned separately by ingestion, never substituted for measurement time.
 - Preserve 10-second monotonic deadlines, validity/nulls, 600/900/1800/3600-second rotation (one 90-row row group per completed batch), runtime codec selection, one filesystem owner and immutable finalized files. No new radios, catalog client or OGC HTTP server.
@@ -121,15 +121,15 @@ Validate the exact dictionary/schema with host fixtures in both codecs and both 
 
 Firmware `arduino-cores3-parquet-v3` through `-v5` identify themselves as schema `cores3-telemetry-v2` (numeric row value 2), with **77 columns**; the first 73 names/types/order are retained and four nullable INT64 columns are appended. Firmware `-v6` (2026-09-17) writes schema `cores3-telemetry-v3` (row value 3) with the **same 77 leaves and the same dictionary** (`dictionary_version` stays `cores3-telemetry-v2`): the change is file-level — TIMESTAMP annotations on `event_time_utc_ns`/`clock_anchor_utc_ns`, per-chunk statistics, several row groups per file, `created_by` with the build. The schema is not SensorThings version 2: these are independent version namespaces. No existing SD file is rewritten.
 
-The single-source [field dictionary](../../firmware/esp-idf-cores3/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h). Its exact source bytes have SHA-256 `20f850852413abb1165f3f7ca95b4831a0e90a34ae7c7fcb41c44b108d3513c3`; both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior.
+The single-source [field dictionary](../../firmware/esp-idf-cores3/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h). Its exact source bytes have SHA-256 `f35d73981ca65d9de587a4ec7988ccea19e71dce988c69eb4bb99713f2352bb3`; both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior.
 
 Each new file carries `dictionary_version`, `dictionary_uri`, `dictionary_sha256`, `acquisition_config_id`, `acquisition_config`, `deployment_id`, `calibration_id`, `time_semantics` and `rotation_interval_s`, alongside existing identity/codec metadata. The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
 ```sh
 pixi run telemetry-contract-test --sanitize
 # Optional JSON export; parent must exist, destination must not already exist.
-pixi run telemetry-contract-test --dictionary-out firmware/esp-idf-cores3/artifacts/dictionary-v2.json
-# Read the flashed schema-v2 firmware; does not reset or flush.
+pixi run telemetry-contract-test --dictionary-out firmware/esp-idf-cores3/artifacts/dictionary-v3.json
+# Read the connected firmware's actual schema; does not reset or flush.
 pixi run parquet-device command --port <checked-port> 'parquet schema'
 ```
 
