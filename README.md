@@ -33,9 +33,10 @@ Location changes split immutable files. See [time and location](docs/shared/time
 
 The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.25** and
 **M5GFX 0.2.31** for CoreS3, **mDNS 1.14.0** for connectivity, and **led_strip
-3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0 and H3 is pinned to 4.5.0. These are the latest stable
-releases observed on **2026-10-09**, pinned for reproducibility rather than
-updated implicitly. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
+3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0 and H3 is pinned to 4.5.0.
+Pins were checked on **2026-10-09**. M5GFX 0.2.32 is now available; the
+[development guide](docs/shared/development.md#host-and-toolchain) records why
+this hardware qualification retains 0.2.31. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
 and [development workflow](docs/shared/development.md) describe the native build.
 [Native board/fixture builds and host gates passed on 2026-10-09](docs/shared/development.md#native-migration-validation-2026-10-09); no native hardware qualification is claimed.
 Historical footprint, throughput and durability observations below apply only

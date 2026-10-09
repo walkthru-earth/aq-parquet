@@ -12,6 +12,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Router/local/public NTP order and H3 privacy geometry | `network-time-test`, `location-test`, `config-test`, `control-sync-test` |
 | Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
 | Full-flash backup publication (offline fake esptool) | `backup-test` |
+| Native FAT mount root and archive directory creation | `logger-directory-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 

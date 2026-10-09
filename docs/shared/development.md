@@ -30,8 +30,13 @@ pixi run waveshare-build diagnostic
 `tools/idf-dependencies.lock` pins ESP-IDF 6.1 and its exact source commit.
 Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.31**, mDNS **1.14.0**
 and Waveshare led_strip **3.1.0~1**; official H3 **4.5.0** is vendored with exact
-source/license hashes in `firmware/common/location/vendor/h3/manifest.json`; these were the latest stable releases
-observed on **2026-10-09**. LZ4 remains vendored **1.10.0** with checked hashes; the
+source/license hashes in `firmware/common/location/vendor/h3/manifest.json`.
+Rechecking on **2026-10-09** found M5GFX **0.2.32** as the latest stable
+[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). Keep 0.2.31 for
+this first native hardware qualification so its SD and identity corrections
+are measured against the already built dependency; 0.2.32 requires a separate
+upgrade/build/board check. The other listed pins were the latest stable releases
+observed on that date. LZ4 remains vendored **1.10.0** with checked hashes; the
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
 Commit each board’s generated `dependencies.lock` to pin transitive component
@@ -54,7 +59,10 @@ PSRAM and partition configuration. Build output is ephemeral under
 `firmware/<board>/build/<variant>/`; retain reviewable binaries and image hashes
 in `artifacts/` before a real hardware run. The backup-gated flash wrappers
 require the checked character-device port and matching 16,777,216-byte backup,
-and flash the verified image without an implicit rebuild or erase:
+and flash the verified image without an implicit rebuild or erase. They use
+Pixi's pinned esptool with the validated generated `flash_args` response file;
+ESP-IDF 6.1 has no `idf.py --no-deps` option. Only bootloader, partition table,
+OTA metadata and app0 regions are written; NVS is outside this plan:
 
 ```sh
 pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
@@ -65,7 +73,11 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 Follow [the full identification/backup sequence](../../AGENTS.md#before-any-physical-flash-write)
 first. Never erase station/config NVS or format the card. The migration retains
 NVS namespaces, keys and value types and existing flash partition offsets;
-Arduino-era BLE bond compatibility still needs native hardware qualification.
+The logger configuration retains the earlier two-universal-MAC policy
+(`CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y`), preserving Bluetooth base+1.
+IDF's four-MAC default would shift Bluetooth to base+2 and fail to load the
+existing singleton local IRK. Bonded client reconnect still needs qualification;
+never erase keys to work around an identity mismatch.
 
 If the checkout or managed environment moved and a tool reports an old
 interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
@@ -121,6 +133,11 @@ Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer 
 
 The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `network-time-test`, `location-test`, `connectivity-build-test`, `logger-build-test`, `logger-work-queue-test`, `debug-log-test`, `logger-status-test` and `logger-provision-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
 
+`pixi run logger-directory-test` checks the native FAT mount-root behavior and
+directory creation errors/races with ASan/UBSan. Shared archive path creation
+must recognize an existing mounted root via `stat`; FatFs returns `EINVAL`
+from `mkdir` at that root. Only the storage worker calls these helpers.
+
 The LAN task waits for socket readiness with a 100 ms housekeeping timeout; it
 no longer sleeps after every request. The archive worker checks one sample and
 one command per pass, and waits on a binary wakeup only when idle. All sample,
@@ -160,7 +177,9 @@ fixtures compile the official H3 core and real service/settings code. Existing
 generated sdkconfig values override defaults: regenerate or explicitly update
 `CONFIG_LWIP_SNTP_MAX_SERVERS=3` and
 `CONFIG_LWIP_DHCP_GET_NTP_SRV=y` in disposable build configurations when moving
-from the earlier native image. Do not modify owner NVS or physical flash for a
+from the earlier native image. Also regenerate the logger configuration to select
+`CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y`; the target checker rejects FOUR.
+Do not modify owner NVS or physical flash for a
 build configuration update.
 
 ### Time/location validation — 2026-10-09

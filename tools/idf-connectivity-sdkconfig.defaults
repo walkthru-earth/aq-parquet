@@ -1,6 +1,10 @@
 # Opt-in shared AQConnectivity settings. Include before board/fixture defaults.
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
+# Preserve the Arduino ESP32-S3 factory-derived Bluetooth identity (base + 1).
+# IDF's default FOUR shifts it to base + 2, orphaning persisted local IRK and
+# phone bonds/Companion Device Manager associations without changing NVS.
+CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

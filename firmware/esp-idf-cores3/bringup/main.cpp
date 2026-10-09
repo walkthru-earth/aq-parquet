@@ -308,7 +308,10 @@ bool report_sd() {
   M5.Display.endWrite();
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
   host.slot = SPI2_HOST;
-  host.max_freq_khz = 25000;
+  // IDF treats any request above 20 MHz as a card high-speed mode switch.
+  // This shared LCD bus/card failed the subsequent CSD check at 25 MHz on
+  // the first native flash; retain default-speed mode until qualified.
+  host.max_freq_khz = SDMMC_FREQ_DEFAULT;
   sdspi_device_config_t device = SDSPI_DEVICE_CONFIG_DEFAULT();
   device.host_id = SPI2_HOST;
   device.gpio_cs = static_cast<gpio_num_t>(kSdCs);
@@ -327,13 +330,13 @@ bool report_sd() {
   const esp_err_t capacity = esp_vfs_fat_info("/sd", &total, &free);
   aqlog.printf(
       "DIAG sd mounted=true card_bytes=%llu total_bytes=%llu "
-      "used_bytes=%llu capacity_error=%d clock_hz=25000000 "
+      "used_bytes=%llu capacity_error=%d clock_hz=%d "
       "spi_host=SPI2 sck=%d miso=%d mosi=%d cs=%d\n",
       static_cast<unsigned long long>(sd_card->csd.capacity) *
           sd_card->csd.sector_size,
       static_cast<unsigned long long>(total),
       static_cast<unsigned long long>(total >= free ? total - free : 0),
-      capacity, kSdSck, kSdMiso, kSdMosi, kSdCs);
+      capacity, sd_card->real_freq_khz * 1000, kSdSck, kSdMiso, kSdMosi, kSdCs);
   return true;
 }
 

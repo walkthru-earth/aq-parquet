@@ -1,4 +1,5 @@
 #include "aq_logger.h"
+#include "aq_logger_directory.h"
 #include "aq_logger_location.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_status.h"
@@ -304,7 +305,7 @@ bool make_directories(const char *path) {
     bool ok;
     {
       BusLock lock;
-      ok = ::mkdir(copy, 0700) == 0 || errno == EEXIST;
+      ok = aq::logger::detail::ensure_directory(copy);
     }
     *part = saved;
     if (!ok)
@@ -843,7 +844,7 @@ unsigned quarantine_partials() {
   std::snprintf(directory, sizeof(directory), "%s/quarantine", kDirectory);
   if (!make_directories(directory)) {
     ++errors;
-    aqlog.println("PARQUET ERROR operation=quarantine-mkdir");
+    aqlog.printf("PARQUET ERROR operation=quarantine-mkdir errno=%d\n", errno);
     return 0;
   }
   unsigned quarantined = 0;
@@ -1419,8 +1420,7 @@ void storage_worker(void *) {
   bool storage_ready;
   {
     BusLock lock;
-    storage_ready =
-        mounted && (::mkdir(kDirectory, 0700) == 0 || errno == EEXIST);
+    storage_ready = mounted && aq::logger::detail::ensure_directory(kDirectory);
   }
   storage_ok = storage_ready;
   if (storage_ready) {

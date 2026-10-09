@@ -94,6 +94,8 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
                      "CONFIG_BT_ENABLED=y", "CONFIG_BT_NIMBLE_ENABLED=y",
                      "CONFIG_BT_NIMBLE_SECURITY_ENABLE=y", "CONFIG_BT_NIMBLE_SM_SC=y",
                      "CONFIG_BT_NIMBLE_SM_SC_ONLY=1", "CONFIG_BT_NIMBLE_NVS_PERSIST=y",
+                     "CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y",
+                     "CONFIG_ESP_MAC_UNIVERSAL_MAC_ADDRESSES=2",
                      "# CONFIG_BT_NIMBLE_SM_LEGACY is not set",
                      "# CONFIG_BT_NIMBLE_SM_SC_DEBUG_KEYS is not set"]
     required += (["CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y"] if board == "cores3" else

@@ -58,6 +58,7 @@ debug-log-test = "python tools/test_debug_log.py"
 owner-pin = "python tools/owner_pin.py"
 provision-usb = "python tools/provision_usb.py"
 logger-status-test = "python tools/test_logger_status.py --sanitize"
+logger-directory-test = "python tools/test_logger_directory.py --sanitize"
 logger-provision-test = "python tools/test_logger_provision.py --sanitize"
 # Destructive: requires the checked port and exact full-backup file.
 waveshare-flash = "firmware/esp-idf-waveshare-sim7670g/flash.sh"

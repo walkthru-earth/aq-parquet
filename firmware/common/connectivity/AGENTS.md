@@ -15,6 +15,10 @@ remains tied to each board image and is historical until native readback.
   UUIDs, MTU bounds, long reads and ordered responses. Existing Arduino-era
   bonds are not assumed compatible; qualify bonded reconnect or re-pairing on
   hardware without erasing station/config NVS.
+- Preserve the ESP32-S3 `TWO` universal-MAC policy from both prior board images:
+  Bluetooth uses the factory base + 1. IDF's `FOUR` default changes it to base +
+  2, preventing the stored local IRK lookup and breaking phone identity matches.
+  Do not change this policy or clear keys to silence migration warnings.
 - Native Wi-Fi uses RAM driver storage; `aqcfg` alone persists credentials.
   Event callbacks publish state only; the LAN task owns reconnects, scans,
   mDNS and sockets. Use `esp_netif_sntp` for safe TCP/IP marshaling and publish

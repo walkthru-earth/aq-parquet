@@ -29,4 +29,9 @@ if [[ ! -f "${build_dir}/aq-build-target.txt" ]] || [[ "$(cat "${build_dir}/aq-b
 fi
 python "${repo_root}/tools/check_idf_target.py" "${build_dir}" --board "${board}" --variant "${variant}" --verify-manifest --backup "${backup}"
 # flash the reviewed build without silently rebuilding it; never erase NVS.
-"${repo_root}/tools/idf.sh" -C "${trial_dir}" -B "${build_dir}" -p "${port}" -b 115200 --no-deps flash
+# ESP-IDF 6.1 has no --no-deps option. Its normal flash action depends on a
+# build, so consume the checked generated response file with pinned Pixi
+# esptool directly. Only the manifest-verified four regions are written.
+cd "${build_dir}"
+exec python -m esptool --chip esp32s3 --port "${port}" --baud 115200 \
+  --before default-reset --after hard-reset write-flash "@flash_args"

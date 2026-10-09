@@ -10,7 +10,9 @@ UART; `bringup/telemetry_logger.cpp` supplies the AQLogger adapter. M5Unified
 APIs or Arduino component in the application. Location uses the optional shared
 component with official H3 **4.5.0**. Shared connectivity uses native
 NimBLE/Wi-Fi/netif/SNTP and managed mDNS **1.14.0**. These stable release pins
-were checked on **2026-10-09**; LZ4 remains vendored **1.10.0**.
+were checked on **2026-10-09**; LZ4 remains vendored **1.10.0**. The
+[development guide](../../docs/shared/development.md#host-and-toolchain) records
+the temporary M5GFX 0.2.31 qualification exception to latest release 0.2.32.
 
 **Native hardware qualification is pending.** Existing sensor, SD, RTC, display,
 BLE and LAN measurements below belong to their recorded Arduino images. Source
@@ -44,7 +46,8 @@ Confirm the matching full backup is **16,777,216 bytes**, then use:
 pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
 ```
 
-This flashes the verified build without an implicit rebuild or NVS erase. Keep
+This uses pinned Pixi esptool and the validated `flash_args` to flash the
+verified build without an implicit rebuild or NVS erase. Keep
 station/config namespaces, keys and types and existing partition offsets. BLE
 bond compatibility across the migration needs qualification; phone re-pairing
 may be necessary. Do not erase station identity, credentials or owner data to
