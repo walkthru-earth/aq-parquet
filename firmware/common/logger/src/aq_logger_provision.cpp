@@ -16,10 +16,32 @@ int nibble(char value) {
   return -1;
 }
 void safe_error(ProvisionResult &result, const char *key) {
-  constexpr const char *keys[] = {
-      "ble.pair",  "ble.pin",       "ble.clear_bonds", "wifi.on",
-      "wifi.ssid", "wifi.psk",      "lan.on",          "lan.rotate_token",
-      "malformed", "line-too-long", "empty",           "nvs"};
+  constexpr const char *keys[] = {"ble.pair",
+                                  "ble.pin",
+                                  "ble.clear_bonds",
+                                  "wifi.on",
+                                  "wifi.ssid",
+                                  "wifi.psk",
+                                  "lan.on",
+                                  "lan.rotate_token",
+                                  "ntp.on",
+                                  "ntp.dhcp",
+                                  "ntp.public_fallback",
+                                  "ntp.interval_s",
+                                  "ntp.server1",
+                                  "ntp.server2",
+                                  "location.cell",
+                                  "location.resolution",
+                                  "location.country",
+                                  "sensor.vendor",
+                                  "sensor.model",
+                                  "sensor.serial",
+                                  "sensor.identity",
+                                  "sensor.batch_candidate",
+                                  "malformed",
+                                  "line-too-long",
+                                  "empty",
+                                  "nvs"};
   const char *safe = "invalid-key";
   for (const auto *candidate : keys)
     if (key && std::strcmp(key, candidate) == 0)

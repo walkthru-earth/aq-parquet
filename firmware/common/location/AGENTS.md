@@ -1,0 +1,18 @@
+# Optional native H3 location component
+
+`src/aq_location.*` is board-neutral, stateless C++ wrapping the official H3 C
+library. It does not initialize controllers, read GPS, perform network lookups,
+write NVS or infer country. Missing location remains missing.
+
+- Preserve the exact H3 version/tag/commit and all vendored bytes, license and
+  notice under `vendor/h3/`; CMake and host tests verify `manifest.json` hashes.
+- Privacy coarsening calls H3 `cellToParent`, never invents bit arithmetic or a
+  geographic replacement. Increasing maximum resolution cannot upsample an
+  already coarsened cell; fresh owner provisioning is required for finer data.
+- Persist only the published/coarsened cell. Center values come from that same
+  cell and are approximate deployment geometry, not retained GPS coordinates.
+- Country is optional, owner-declared ISO 3166-1 alpha-2; validate assigned codes
+  using the documented snapshot and never claim H3 provides country boundaries.
+- Host gates compile actual C++ helpers and exact official C sources through
+  pinned Pixi. They prove indexing/validation/privacy logic, not board GPS,
+  persistent storage or hardware behavior.

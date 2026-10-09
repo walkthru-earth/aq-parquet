@@ -80,7 +80,12 @@ class FakeClient:
         elif op == ble.OP_STATUS:
             self.emit(bytes([ble.F_STATUS]) + STATUS)
         elif op == ble.OP_GET_CONFIG:
-            self.emit(bytes([ble.F_CONFIG, 0]) + CONFIG)
+            assert len(data) in (1, 2)
+            page = data[1] if len(data) == 2 else 0
+            if page == 1:
+                self.emit(bytes([ble.F_CONFIG, 0]) + b'{"location":{"cell":"","resolution":5,"cell_resolution":null,"lat":null,"lon":null,"country":""}}')
+            else:
+                self.emit(bytes([ble.F_CONFIG, 0]) + CONFIG)
         elif op == ble.OP_SET_CONFIG:
             lines = data[1:].decode().split("\n")
             if any(line.startswith("ble.pin=") and len(line) != len("ble.pin=") + 6 for line in lines):
@@ -143,6 +148,14 @@ async def run():
     # v2: configuration, scan, token, log, reboot.
     config = await session.get_config()
     assert config["ble"]["pair"] == "random" and config["reboot_required"] is False, config
+    location = await session.get_config(1)
+    assert location["location"]["cell"] == "" and location["location"]["lat"] is None
+    try:
+        await session.get_config(5)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Invalid configuration page must fail before transmission")
     changed = await session.set_config(["ble.pair=fixed", "ble.pin=654321"])
     assert changed["ble"]["pair"] == "fixed" and changed["reboot_required"] is True, changed
     try:

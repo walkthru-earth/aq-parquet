@@ -14,6 +14,8 @@ import re
 import subprocess
 import tempfile
 
+from test_location import compile_h3
+
 import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -24,7 +26,7 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -> None:
+def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, located: bool) -> None:
     parquet = pq.ParquetFile(path)
     table = parquet.read()
     fields = dictionary["fields"]
@@ -37,8 +39,15 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
         expected = pa.timestamp("ns", tz="UTC") if field.name in utc_fields else types[definition["type"]]
         require(field.type == expected and field.nullable, f"schema: {field.name}")
     metadata = parquet.metadata.metadata
+    require(metadata[b"country_iso3166_1_alpha2"] == (b"US" if located else b"unknown"), "declared country")
+    require(metadata[b"country_source"] == b"owner-declared", "country provenance")
+    require(metadata[b"location_source"] == b"owner-provisioned-h3-grid-center", "center provenance")
+    require(metadata[b"h3_cell_id"] == (b"85283473fffffff" if located else b"unknown"), "published cell metadata")
+    require(metadata[b"h3_resolution"] == (b"5" if located else b"unknown") and
+            metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
+    require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] ==
-            "waveshare-sim7670g-telemetry-v2", "schema identity")
+            "waveshare-sim7670g-telemetry-v3", "schema identity")
     require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"], "dictionary identity")
     require(metadata[b"dictionary_uri"].decode() == dictionary["uri"], "dictionary URI")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
@@ -71,8 +80,11 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
     table = pa.table({name: column.cast(pa.int64()) if name in utc_fields else column
                       for name, column in zip(table.column_names, table.columns, strict=True)})
     for i, row in enumerate(table.to_pylist()):
+        for name, value in (("h3_cell_id", 0x85283473fffffff), ("h3_resolution", 5),
+                            ("h3_center_lat_e7", 373457934), ("h3_center_lon_e7", -1219763760)):
+            require(row[name] == (value if located else None), f"nullable published location: {name}")
         now = 10000000 + i * 10000000
-        require(row["schema_version"] == 2 and row["sequence"] == i, "row identity")
+        require(row["schema_version"] == 3 and row["sequence"] == i, "row identity")
         require(row["monotonic_us"] == now and row["scheduled_us"] == now - 123 and
                 row["sample_jitter_us"] == 123, "synthetic cadence")
         require(row["collection_completed_mono_us"] == now + 1234, "collection completion")
@@ -125,11 +137,14 @@ def main() -> None:
         directory = Path(temporary)
         executable = directory / "fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
-        for include in ("src", "logger/src", "connectivity/src", "runtime/src"):
+        for include in ("src", "logger/src", "connectivity/src", "runtime/src", "location/src"):
             command += ["-I", str(common / include)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
-        command += [str(root / "tools/test_waveshare_contract.cpp"),
+        command += ["-I", str(directory / "h3"),
+                    *compile_h3(root, directory, args.sanitize),
+                    str(common / "location/src/aq_location.cpp"),
+                    str(root / "tools/test_waveshare_contract.cpp"),
                     str(common / "src/parquet_writer.cpp"), str(common / "src/lz4_codec.cpp"),
                     str(common / "src/pms_frame.cpp"), "-o", str(executable)]
         subprocess.run(command, check=True)
@@ -138,12 +153,16 @@ def main() -> None:
                 "stale compiled dictionary digest")
         fields = dictionary["fields"]
         names = {field["name"] for field in fields}
-        require(len(fields) == len(names) == 52, "unique versioned fields")
+        require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:52]],
+                                         separators=(",", ":")).encode()).hexdigest()
+                == "e16aa3c0e0927c2751757ce3fd4075cc84ac196d5fb89d24ce238b1ec99bf0e6",
+                "original 52-column prefix changed")
+        require(len(fields) == len(names) == 56, "unique versioned fields")
         require(len({field["property"] for field in fields}) == len(fields), "property identifiers")
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.2", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.3", "firmware identity")
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")
@@ -151,11 +170,13 @@ def main() -> None:
                     "local vocabulary")
         for anchored in (False, True):
             for compressed in (False, True):
-                path = directory / f"{anchored}-{compressed}.parquet"
-                subprocess.run([str(executable), str(path), "lz4" if compressed else "none",
-                                "anchored" if anchored else "unsynced"], check=True)
-                check_file(path, dictionary, anchored, compressed)
-                print(f"PASS Waveshare 90 x 52: anchored={anchored} lz4={compressed}; both readers", flush=True)
+                for located in (False, True):
+                    path = directory / f"{anchored}-{compressed}-{located}.parquet"
+                    subprocess.run([str(executable), str(path), "lz4" if compressed else "none",
+                                    "anchored" if anchored else "unsynced",
+                                    "located" if located else "unset"], check=True)
+                    check_file(path, dictionary, anchored, compressed, located)
+                    print(f"PASS Waveshare 90 x 56: anchored={anchored} lz4={compressed} location={located}; both readers", flush=True)
         if args.dictionary_out:
             with args.dictionary_out.open("x") as output:
                 json.dump(dictionary, output, indent=2)

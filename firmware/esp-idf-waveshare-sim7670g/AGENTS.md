@@ -26,8 +26,12 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
 - The owner subsequently installed an 18650 and verified battery-only boot.
   `kBatteryInstalled` is the explicit board configuration; a MAX17048 response
   still cannot prove battery presence. Read failures leave battery fields null.
-  Charger state has no verified ESP32 signal. No external RTC: UTC remains null until host synchronization,
+  Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
+- Current firmware is `idf-waveshare-parquet-v2.3`, schema v3/dictionary v3
+  with 56 fields. Preserve the original 52-field prefix. Shared H3 helpers
+  publish only the owner-configured coarsened station cell and its center;
+  country is optional and owner-declared. Do not turn on modem GNSS for this.
 - Fixed pairing PIN is random per device. Retrieve it only through the
   explicit physical-serial owner command; never put PIN/PSK/token values in
   logs, artifacts or docs. Preserve network-side encryption/authentication.

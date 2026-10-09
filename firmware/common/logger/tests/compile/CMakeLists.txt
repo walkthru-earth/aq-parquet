@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 set(IDF_TARGET esp32s3)
 set(AQ_REPO "${CMAKE_CURRENT_LIST_DIR}/../../../../..")
-set(EXTRA_COMPONENT_DIRS "${AQ_REPO}/firmware/common" "${AQ_REPO}/firmware/common/runtime" "${AQ_REPO}/firmware/common/connectivity" "${AQ_REPO}/firmware/common/logger" "${CMAKE_CURRENT_LIST_DIR}/component")
+set(EXTRA_COMPONENT_DIRS "${AQ_REPO}/firmware/common" "${AQ_REPO}/firmware/common/runtime" "${AQ_REPO}/firmware/common/connectivity" "${AQ_REPO}/firmware/common/logger" "${AQ_REPO}/firmware/common/location" "${CMAKE_CURRENT_LIST_DIR}/component")
 set(COMPONENTS component)
 set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
 set(SDKCONFIG_DEFAULTS "${AQ_REPO}/tools/idf-sdkconfig.defaults;${AQ_REPO}/tools/idf-connectivity-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")

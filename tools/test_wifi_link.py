@@ -19,9 +19,11 @@ def main() -> None:
             "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
             "-I", str(root / "tools/wifi_host_fakes"),
             "-I", str(root / "firmware/common/runtime/src"),
+            "-I", str(root / "firmware/common/src"),
             "-I", str(root / "firmware/common/connectivity/src"),
             str(root / "tools/test_wifi_link.cpp"),
             str(root / "firmware/common/runtime/src/debug_log.cpp"),
+            str(root / "firmware/common/connectivity/src/network_time.cpp"),
             "-o", str(executable),
         ]
         if args.sanitize:

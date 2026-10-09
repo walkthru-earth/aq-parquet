@@ -32,6 +32,7 @@ Status status() {
   return value;
 }
 void drop_session() { ++dropped; }
+void apply_time_settings() {}
 void apply_settings() { ++reapplied; }
 } // namespace lan
 int main() {
@@ -98,3 +99,7 @@ int main() {
   assert(std::strstr(logs, "000001") == nullptr);
   assert(std::strstr(logs, "AQ WIFI_PROFILE") == nullptr);
 }
+
+namespace aq::network_time {
+Status status() { return Status{}; }
+} // namespace aq::network_time

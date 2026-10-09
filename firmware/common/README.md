@@ -1,7 +1,7 @@
 # Reusable firmware modules
 
-The common tree contains four opt-in native ESP-IDF components: **AQCommon**,
-**AQRuntime**, **AQConnectivity** and **AQLogger**. The target is ESP32-S3 with
+The common tree contains five opt-in native ESP-IDF components: **AQCommon**,
+**AQRuntime**, **AQConnectivity**, **AQLogger** and **AQLocation**. The target is ESP32-S3 with
 ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
 math plus the actual status/provisioning helpers remain host-testable. Boards
 own peripheral initialization and consume only the required components.
@@ -14,10 +14,12 @@ own peripheral initialization and consume only the required components.
 | `src/utc_clock.h` | UTC anchor arithmetic, source codes, calendar conversion and supported bounds | Coherent anchor locking, host sync and optional RTC adapter |
 | `src/parquet_writer.*`, `lz4_codec.*` | Bounded Parquet encoding and pinned LZ4 | Columns, provenance, memory, file sink and rotation policy |
 | `src/sync_codec.h` | Little-endian frames, CRC32, safe relative names, structural file completion | Checked buffers, mount roots and reader conformance checks |
-| `runtime/src/device_config.*` | NVS pairing/Wi-Fi/LAN settings, tokens and CONFIG JSON | First-boot display capability; command execution and owner access to pairing PIN |
+| `runtime/src/device_config.*` | NVS pairing/Wi-Fi/LAN/NTP/H3 settings, tokens and paged CONFIG JSON | First-boot display capability; command execution and owner access to pairing PIN |
 | `runtime/src/debug_log.*` | Bounded diagnostic ring and console forwarding | Optional console function/context sink, configured before tasks start |
 | `connectivity/src/ble_sync.*` | Secure GATT pairing, advertising, framing and notifications | Stable identity, nonblocking request-queue handler, status/live snapshots |
 | `connectivity/src/wifi_link.*` | Wi-Fi station/provisioning, scans, mDNS, token-authenticated TCP | Stable identity, same request handler and configuration |
+| `connectivity/src/network_time.*` | Router DHCP42, configured local NTP, permitted public fallback, age/provenance and bounded anchor handoff | One network owner drives lease/reconnect/poll; deployment-approved policy |
+| `location/src/aq_location.*` | Official H3 validation, parent coarsening, grid centers and assigned country-code validation | Explicit owner-provisioned cell/privacy cap; no retained GPS or inferred country |
 | `connectivity/src/control_sync.*` | Configuration, BLE-only token and bounded log-tail commands | Worker-side response adapters |
 | `connectivity/src/sync_service.*` | Configuration and transport startup | Storage queue ready, identity and display capability |
 | `connectivity/src/archive_sync.*` | Immutable file LIST/OPEN/READ/CLOSE sessions, offsets and link generations | Archive enumeration/path/finalization callbacks, worker bus lock and response adapters |
@@ -37,6 +39,8 @@ flowchart TD
   Logger -->|control responses and snapshots| Radio
   Radio --> Base
   Radio --> Runtime
+  Runtime --> Location[AQLocation: official H3 validation and geometry]
+  Logger --> Location
   Phone[Phone or host: local archive and shared sync protocol] <--> Radio
 ```
 
@@ -83,8 +87,8 @@ row group is fsynced, but unfinished RAM rows can be lost and power-cut durabili
 requires board measurements.
 
 Both current board logger adapters consume AQLogger. CoreS3 retains M5Unified,
-its 77-column dictionary, SPI/display arbitration and optional BM8563 hooks.
-Waveshare supplies its 52-column PMS5003T v2 dictionary and one-bit SDMMC adapter,
+its 81-column v4 dictionary, SPI/display arbitration and optional BM8563 hooks.
+Waveshare supplies its 56-column PMS5003T v3 dictionary and one-bit SDMMC adapter,
 with no RTC hook in this image. Its retained diagnostic consumes common/runtime for the parser and physical
 console, without starting the logger or radio services. Source integration does not transfer hardware measurements between
 boards; use each board's bench record for the deployed image and tested scope.
@@ -96,14 +100,22 @@ use characteristic long reads for complete cached snapshots. The host STATUS
 boundary test retains every key at 398 bytes even with the widest numeric values.
 LIVE `t` is board-specific (CoreS3 IMU temperature or Waveshare PMS5003T ambient
 temperature); `rh` is Waveshare ambient RH. Absent keys are null. Without an RTC,
-`rtc=2`, `clk=0` and UTC stays null until host SET_TIME, including after reboot.
+`rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.
+
+AQLocation vendors unmodified official H3 4.5.0 with verified hashes. AQRuntime
+stores one coherent location record containing only the coarsened cell, cap and
+optional owner-declared ISO country. AQLogger captures it at acquisition and
+splits batches/files when it changes. Four nullable fields carry the cell,
+actual resolution and derived center in 1e-7 degrees; metadata records country
+and policy. The [time/location contract](../../docs/shared/time-and-location.md)
+describes mobile provisioning and NTP restrictions.
 
 Physical serial owner/provisioning commands are documented in [AQLogger](logger/README.md).
 Their PIN/profile replies bypass the log ring and radio interfaces; host tooling
 must consume credentials in memory and exclude them from retained captures.
 
 Verification commands: `pixi run common-test`, `ltr553-test`, `config-test`,
-`control-sync-test`, `archive-sync-test`, `pms-frame-test`, `parquet-test --sanitize`,
+`control-sync-test`, `location-test`, `network-time-test`, `archive-sync-test`, `pms-frame-test`, `parquet-test --sanitize`,
 `telemetry-contract-test --sanitize`, `waveshare-contract-test --sanitize`,
 `connectivity-build-test`, `logger-build-test`, `logger-status-test`,
 `logger-provision-test`, and affected board builds. Generic compile fixtures

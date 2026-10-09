@@ -23,6 +23,11 @@ initialization and each board's schema/provenance remain in its own trial.
   Explicit serial `parquet list` still emits entries and its END marker.
 - Board metadata must describe its hardware honestly. PMS5003T has four particle
   bins and ambient temperature/humidity; do not synthesize CoreS3-only bins.
+- Copy the coarsened location settings at acquisition into the queued sample.
+  Split batches/files when cell, maximum resolution or declared country changes.
+  File metadata comes from the file's first sample, never current settings at
+  finalization. Preserve nullable location fields before explicit provisioning;
+  raw GPS and a discarded finer H3 cell must never enter storage or logs.
 - `parquet owner-pin` is physical serial-only and bypasses DebugLog. Never
   expose its response through BLE/LAN, CONFIG JSON, LOG_TAIL, boot output or
   retained host captures. `parquet wifi-profile` likewise writes only directly

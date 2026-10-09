@@ -21,6 +21,21 @@ constexpr std::size_t kTokenBytes = 32;
 constexpr std::size_t kSsidMax = 32;
 constexpr std::size_t kPskMax = 63;
 constexpr std::size_t kSensorSerialMax = 32;
+constexpr std::size_t kNtpServerMax = 253;
+constexpr std::size_t kNtpServerCount = 2;
+
+struct NtpSettings {
+  bool enabled = true;
+  bool dhcp = true;
+  bool public_fallback = true;
+  std::uint32_t interval_s = 3600;
+  char servers[kNtpServerCount][kNtpServerMax + 1]{};
+};
+struct LocationSettings {
+  std::uint64_t cell = 0; // Only the published cell is retained, zero = unset.
+  std::uint8_t resolution = 5; // Maximum permitted precision, not an upsample.
+  char country[3]{};           // Optional owner-declared ISO 3166-1 alpha-2.
+};
 
 struct Settings {
   PairMode pair = PairMode::Random;
@@ -35,6 +50,8 @@ struct Settings {
   char sensor_model[16]{};
   char sensor_serial[kSensorSerialMax + 1]{};
   bool sensor_batch_candidate = false;
+  NtpSettings ntp;
+  LocationSettings location;
 };
 
 // One-shot actions requested through SET_CONFIG; not stored.
@@ -43,6 +60,8 @@ struct Actions {
   bool rotate_token = false;
   bool wifi_changed = false; // ssid/psk/on changed: LAN task must reapply
   bool ble_changed = false;  // pair/pin changed: takes effect at next boot
+  bool ntp_changed = false;
+  bool location_changed = false;
 };
 
 // Loads settings, seeding defaults on first boot from `display_detected`
@@ -80,6 +99,10 @@ struct WifiView {
 };
 // Builds the CONFIG JSON (<= 480 bytes). Never includes the PSK or token.
 std::size_t build_json(char *out, std::size_t size, const WifiView &wifi);
+// Optional GET_CONFIG pages keep the legacy document and 480-byte cap intact.
+// 1 = location; 2 = NTP policy; 3/4 = one configured NTP server.
+std::size_t build_page(char *out, std::size_t size, std::uint8_t page);
+bool same_location(const LocationSettings &, const LocationSettings &);
 
 const char *pair_name(PairMode mode);
 } // namespace config

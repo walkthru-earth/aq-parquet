@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 set(IDF_TARGET esp32s3)
-set(EXTRA_COMPONENT_DIRS "../common" "../common/runtime" "../common/connectivity" "../common/logger")
+set(EXTRA_COMPONENT_DIRS "../common" "../common/runtime" "../common/connectivity" "../common/logger" "../common/location")
 set(AQ_VARIANT logger CACHE STRING "Firmware variant: logger or diagnostic")
 if(NOT AQ_VARIANT MATCHES "^(logger|diagnostic)$")
     message(FATAL_ERROR "AQ_VARIANT must be logger or diagnostic")

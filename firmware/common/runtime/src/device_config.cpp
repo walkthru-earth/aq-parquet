@@ -1,10 +1,17 @@
 #include "device_config.h"
+#include "aq_location.h"
 #include "debug_log.h"
 
+#ifdef ESP_PLATFORM
+#include <lwip/sockets.h>
+#else
+#include <arpa/inet.h>
+#endif
 #include <esp_random.h>
 #include <freertos/FreeRTOS.h>
 #include <nvs.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -27,7 +34,7 @@ bool committed(nvs_handle_t store, esp_err_t result) {
 bool save_string(nvs_handle_t store, const char *key, const char *value) {
   if (!committed(store, nvs_set_str(store, key, value)))
     return false;
-  char readback[96]{};
+  char readback[560]{};
   std::size_t length = sizeof(readback);
   return nvs_get_str(store, key, readback, &length) == ESP_OK &&
          std::strcmp(readback, value) == 0;
@@ -131,6 +138,132 @@ bool decode_sensor(char *value, Settings &settings) {
   return true;
 }
 
+bool parse_uint(const char *value, std::uint32_t minimum, std::uint32_t maximum,
+                std::uint32_t &out) {
+  if (!*value)
+    return false;
+  std::uint32_t number = 0;
+  for (const char *p = value; *p; ++p) {
+    if (*p < '0' || *p > '9')
+      return false;
+    const auto digit = static_cast<std::uint32_t>(*p - '0');
+    if (number > maximum / 10 ||
+        (number == maximum / 10 && digit > maximum % 10))
+      return false;
+    number = number * 10 + digit;
+  }
+  if (number < minimum)
+    return false;
+  out = number;
+  return true;
+}
+
+bool valid_server(const char *value) {
+  const auto length = std::strlen(value);
+  if (length > kNtpServerMax)
+    return false;
+  if (!length)
+    return true;
+  unsigned char address[16]{};
+  if (inet_pton(AF_INET, value, address) == 1)
+    return address[0] || address[1] || address[2] || address[3];
+  if (inet_pton(AF_INET6, value, address) == 1)
+    return std::any_of(address, address + sizeof(address),
+                       [](unsigned char byte) { return byte != 0; });
+  // DNS names only: reject URLs, ports, record delimiters and invalid labels.
+  unsigned label_length = 0;
+  for (std::size_t i = 0; i < length; ++i) {
+    const char c = value[i];
+    if (c == '.') {
+      if (!label_length || value[i - 1] == '-')
+        return false;
+      label_length = 0;
+    } else {
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || (c == '-' && label_length)))
+        return false;
+      if (++label_length > 63)
+        return false;
+    }
+  }
+  return value[length - 1] != '-';
+}
+
+bool split_record(char *value, char **fields, std::size_t count) {
+  fields[0] = value;
+  for (std::size_t i = 1; i < count; ++i) {
+    char *separator = std::strchr(fields[i - 1], '|');
+    if (!separator)
+      return false;
+    *separator = '\0';
+    fields[i] = separator + 1;
+  }
+  return std::strchr(fields[count - 1], '|') == nullptr;
+}
+
+void encode_location(char *out, std::size_t size,
+                     const LocationSettings &location) {
+  char cell[aq::location::kCellTextBytes]{};
+  if (location.cell)
+    aq::location::format_cell(location.cell, cell, sizeof(cell));
+  std::snprintf(out, size, "%s|%u|%s", cell, unsigned(location.resolution),
+                location.country);
+}
+
+bool decode_location(char *record, LocationSettings &location) {
+  char *fields[3];
+  std::uint32_t resolution;
+  LocationSettings decoded;
+  if (!split_record(record, fields, 3) ||
+      !parse_uint(fields[1], 0, 15, resolution) ||
+      (*fields[0] && !aq::location::parse_cell(fields[0], decoded.cell)) ||
+      (*fields[2] && !aq::location::valid_country(fields[2])))
+    return false;
+  decoded.resolution = static_cast<std::uint8_t>(resolution);
+  if (decoded.cell &&
+      !aq::location::coarsen(decoded.cell, resolution, decoded.cell))
+    return false;
+  std::snprintf(decoded.country, sizeof(decoded.country), "%s", fields[2]);
+  location = decoded;
+  return true;
+}
+
+void encode_ntp(char *out, std::size_t size, const NtpSettings &ntp) {
+  std::snprintf(out, size, "%u|%u|%u|%lu|%s|%s", ntp.enabled ? 1U : 0U,
+                ntp.dhcp ? 1U : 0U, ntp.public_fallback ? 1U : 0U,
+                static_cast<unsigned long>(ntp.interval_s), ntp.servers[0],
+                ntp.servers[1]);
+}
+
+bool decode_ntp(char *record, NtpSettings &ntp) {
+  char *fields[6];
+  NtpSettings decoded;
+  std::uint32_t enabled, dhcp, fallback;
+  if (!split_record(record, fields, 6) ||
+      !parse_uint(fields[0], 0, 1, enabled) ||
+      !parse_uint(fields[1], 0, 1, dhcp) ||
+      !parse_uint(fields[2], 0, 1, fallback) ||
+      !parse_uint(fields[3], 60, 86400, decoded.interval_s) ||
+      !valid_server(fields[4]) || !valid_server(fields[5]))
+    return false;
+  decoded.enabled = enabled != 0;
+  decoded.dhcp = dhcp != 0;
+  decoded.public_fallback = fallback != 0;
+  for (std::size_t i = 0; i < kNtpServerCount; ++i)
+    std::snprintf(decoded.servers[i], sizeof(decoded.servers[i]), "%s",
+                  fields[4 + i]);
+  ntp = decoded;
+  return true;
+}
+
+bool same_ntp(const NtpSettings &a, const NtpSettings &b) {
+  return a.enabled == b.enabled && a.dhcp == b.dhcp &&
+         a.public_fallback == b.public_fallback &&
+         a.interval_s == b.interval_s &&
+         std::strcmp(a.servers[0], b.servers[0]) == 0 &&
+         std::strcmp(a.servers[1], b.servers[1]) == 0;
+}
+
 bool save_locked(const Settings &settings) {
   nvs_handle_t store;
   if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK)
@@ -155,6 +288,13 @@ bool save_locked(const Settings &settings) {
   char sensor[80];
   encode_sensor(sensor, sizeof(sensor), settings);
   ok = ok && save_string(store, "sensor", sensor);
+  // Each new policy is one coherent NVS record, including the privacy cap.
+  char location[40];
+  encode_location(location, sizeof(location), settings.location);
+  ok = ok && save_string(store, "location", location);
+  char ntp[560];
+  encode_ntp(ntp, sizeof(ntp), settings.ntp);
+  ok = ok && save_string(store, "ntp", ntp);
   nvs_close(store);
   return ok;
 }
@@ -285,6 +425,30 @@ bool load(bool display_detected) {
       aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
     }
   }
+  // Missing records on a legacy image receive defaults. Invalid records are
+  // disabled/unset rather than silently enabling external traffic or location.
+  if (!first_boot) {
+    char location[40]{};
+    std::size_t location_size = sizeof(location);
+    const auto location_result =
+        nvs_get_str(store, "location", location, &location_size);
+    if (location_result != ESP_ERR_NVS_NOT_FOUND &&
+        (location_result != ESP_OK ||
+         !decode_location(location, settings.location))) {
+      settings.location = LocationSettings{};
+      aqlog.println("CONFIG LOCATION invalid-stored-profile=true");
+    }
+    char ntp[560]{};
+    std::size_t ntp_size = sizeof(ntp);
+    const auto ntp_result = nvs_get_str(store, "ntp", ntp, &ntp_size);
+    if (ntp_result != ESP_ERR_NVS_NOT_FOUND &&
+        (ntp_result != ESP_OK || !decode_ntp(ntp, settings.ntp))) {
+      settings.ntp = NtpSettings{};
+      settings.ntp.enabled = false;
+      settings.ntp.public_fallback = false;
+      aqlog.println("CONFIG NTP invalid-stored-profile=true");
+    }
+  }
   nvs_close(store);
   persistent = true;
   if ((first_boot || migrated_pin) && !save_locked(settings))
@@ -317,7 +481,8 @@ bool reboot_required() {
 
 bool apply_lines(const char *text, std::size_t length, char *bad_key,
                  std::size_t bad_key_size, Actions &actions) {
-  Settings next = get();
+  const Settings previous = get();
+  Settings next = previous;
   Actions pending;
   bad_key[0] = '\0';
   std::size_t position = 0;
@@ -340,7 +505,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
       std::snprintf(bad_key, bad_key_size, "malformed");
       return false;
     }
-    char line[128];
+    char line[kNtpServerMax + 32];
     if (line_length >= sizeof(line)) {
       std::snprintf(bad_key, bad_key_size, "line-too-long");
       return false;
@@ -415,6 +580,39 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
       if (!parse_bool(value, flag))
         return reject();
       pending.rotate_token = flag;
+    } else if (std::strcmp(key, "ntp.on") == 0) {
+      if (!parse_bool(value, next.ntp.enabled))
+        return reject();
+    } else if (std::strcmp(key, "ntp.dhcp") == 0) {
+      if (!parse_bool(value, next.ntp.dhcp))
+        return reject();
+    } else if (std::strcmp(key, "ntp.public_fallback") == 0) {
+      if (!parse_bool(value, next.ntp.public_fallback))
+        return reject();
+    } else if (std::strcmp(key, "ntp.interval_s") == 0) {
+      if (!parse_uint(value, 60, 86400, next.ntp.interval_s))
+        return reject();
+    } else if (std::strcmp(key, "ntp.server1") == 0 ||
+               std::strcmp(key, "ntp.server2") == 0) {
+      if (!valid_server(value))
+        return reject();
+      const std::size_t index = std::strcmp(key, "ntp.server1") == 0 ? 0 : 1;
+      std::snprintf(next.ntp.servers[index], sizeof(next.ntp.servers[index]),
+                    "%s", value);
+    } else if (std::strcmp(key, "location.cell") == 0) {
+      next.location.cell = 0;
+      if (*value && !aq::location::parse_cell(value, next.location.cell))
+        return reject();
+    } else if (std::strcmp(key, "location.resolution") == 0) {
+      std::uint32_t resolution;
+      if (!parse_uint(value, 0, 15, resolution))
+        return reject();
+      next.location.resolution = static_cast<std::uint8_t>(resolution);
+    } else if (std::strcmp(key, "location.country") == 0) {
+      if (*value && !aq::location::valid_country(value))
+        return reject();
+      std::snprintf(next.location.country, sizeof(next.location.country), "%s",
+                    value);
     } else if (std::strcmp(key, "sensor.vendor") == 0) {
       if (std::strlen(value) >= sizeof(next.sensor_vendor) ||
           (value[0] && std::strcmp(value, hardware_vendor) != 0))
@@ -470,6 +668,14 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
     std::snprintf(bad_key, bad_key_size, "sensor.batch_candidate");
     return false;
   }
+  if (next.location.cell &&
+      !aq::location::coarsen(next.location.cell, next.location.resolution,
+                             next.location.cell)) {
+    std::snprintf(bad_key, bad_key_size, "location.cell");
+    return false;
+  }
+  pending.ntp_changed = !same_ntp(previous.ntp, next.ntp);
+  pending.location_changed = !same_location(previous.location, next.location);
   if (pending.rotate_token)
     esp_fill_random(next.token, kTokenBytes);
   if (persistent && !save_locked(next)) {
@@ -519,5 +725,49 @@ std::size_t build_json(char *out, std::size_t size, const WifiView &wifi) {
       settings.sensor_vendor, settings.sensor_model, settings.sensor_serial,
       settings.sensor_batch_candidate ? 1U : 0U);
   return written > 0 && std::size_t(written) < size ? std::size_t(written) : 0;
+}
+bool same_location(const LocationSettings &a, const LocationSettings &b) {
+  return a.cell == b.cell && a.resolution == b.resolution &&
+         std::strcmp(a.country, b.country) == 0;
+}
+
+std::size_t build_page(char *out, std::size_t size, std::uint8_t page) {
+  const Settings settings = get();
+  int written = -1;
+  if (page == 1) {
+    char cell[aq::location::kCellTextBytes]{};
+    char center[128] = "\"cell_resolution\":null,\"lat\":null,\"lon\":null";
+    double latitude, longitude;
+    if (settings.location.cell &&
+        aq::location::format_cell(settings.location.cell, cell, sizeof(cell)) &&
+        aq::location::center_degrees(settings.location.cell, latitude,
+                                     longitude))
+      std::snprintf(center, sizeof(center),
+                    "\"cell_resolution\":%d,\"lat\":%.7f,\"lon\":%.7f",
+                    aq::location::resolution(settings.location.cell), latitude,
+                    longitude);
+    written = std::snprintf(out, size,
+                            "{\"location\":{\"cell\":\"%s\",\"resolution\":%u,%"
+                            "s,\"country\":\"%s\"}}",
+                            cell, unsigned(settings.location.resolution),
+                            center, settings.location.country);
+  } else if (page == 2) {
+    written = std::snprintf(
+        out, size,
+        "{\"ntp\":{\"on\":%u,\"dhcp\":%u,\"public_fallback\":%u,\"interval_s\":"
+        "%lu}}",
+        settings.ntp.enabled ? 1U : 0U, settings.ntp.dhcp ? 1U : 0U,
+        settings.ntp.public_fallback ? 1U : 0U,
+        static_cast<unsigned long>(settings.ntp.interval_s));
+  } else if (page == 3 || page == 4) {
+    written = std::snprintf(out, size, "{\"ntp\":{\"server%u\":\"%s\"}}",
+                            unsigned(page - 2), settings.ntp.servers[page - 3]);
+  }
+  if (written <= 0 || static_cast<std::size_t>(written) >= size) {
+    if (size)
+      out[0] = '\0';
+    return 0;
+  }
+  return static_cast<std::size_t>(written);
 }
 } // namespace config

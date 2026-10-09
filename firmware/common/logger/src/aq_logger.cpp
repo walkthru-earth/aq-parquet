@@ -1,4 +1,5 @@
 #include "aq_logger.h"
+#include "aq_logger_location.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_status.h"
 #include "aq_logger_work_queue.h"
@@ -26,6 +27,7 @@
 #include <freertos/task.h>
 #include <nvs.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -44,7 +46,7 @@
 namespace aqlogger {
 namespace {
 using namespace telemetry;
-using Sample = Row;
+using Sample = LocationSample<Row>;
 Config config;
 Hooks hooks;
 std::size_t field_count = 0;
@@ -80,6 +82,7 @@ struct OutputFile {
   bool benchmark = false;
   bool dated = false; // false: unsynced tree
   Codec codec = Codec::Uncompressed;
+  config::LocationSettings location{};
   std::int32_t epoch = 0;
   std::int64_t window = 0; // UTC seconds / rotation, when dated
   std::int64_t first = 0, last = 0;
@@ -398,6 +401,7 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
   }
   target.benchmark = benchmark;
   target.codec = codec;
+  target.location = first_row.location;
   target.epoch = static_cast<std::int32_t>(first_row.data[clock_epoch]);
   target.first = target.last = first_row.data[sequence];
   target.rows = 0;
@@ -505,6 +509,7 @@ bool finalize_file(OutputFile &target) {
                 static_cast<unsigned long>(rotation_seconds.load()));
   std::snprintf(groups_text, sizeof(groups_text), "%u",
                 unsigned(target.writer.row_groups()));
+  const LocationMetadata location_metadata(target.location);
   KeyValue metadata[64] = {
       {"schema_version", config.schema_name},
       {"device_id", device_text},
@@ -534,6 +539,8 @@ bool finalize_file(OutputFile &target) {
        "RAM batch; unfinished rows lost on reset; each row group "
        "fsynced; footer at finalization; completed files retained"}};
   std::size_t metadata_count = 22;
+  for (const auto &entry : location_metadata.entries)
+    metadata[metadata_count++] = entry;
   // Evidence belongs to this file's boot, regardless of the rows' original
   // clock status. Hosts may derive corrected partitions without editing raw
   // UTC or treating a later reboot's clock as an anchor for this boot.
@@ -1454,13 +1461,16 @@ void storage_worker(void *) {
         const OutputFile &open = writer_state->telemetry;
         bool fits = true;
         if (open.open())
-          fits = same_window(row, open.epoch, open.dated, open.window);
+          fits = same_window(row, open.epoch, open.dated, open.window) &&
+                 config::same_location(row.location, open.location);
         else if (count) {
           const auto &previous = writer_state->rows[0];
-          fits = same_window(
-              row, previous.data[clock_epoch],
-              previous.valid[event_time_utc_ns] != 0,
-              previous.valid[event_time_utc_ns] ? window_index(previous) : 0);
+          fits = same_window(row, previous.data[clock_epoch],
+                             previous.valid[event_time_utc_ns] != 0,
+                             previous.valid[event_time_utc_ns]
+                                 ? window_index(previous)
+                                 : 0) &&
+                 config::same_location(row.location, previous.location);
         }
         if (!fits && !write_batch(count)) {
           failed = true;
@@ -1640,8 +1650,15 @@ void storage_worker(void *) {
 
 void collect(std::int64_t now, std::int64_t scheduled) {
   Sample row{};
+  row.location = ::config::get().location;
   if (hooks.collect)
     hooks.collect(row, now, scheduled, hooks.context);
+  const std::array<std::size_t, 4> location_fields = {
+      field_index("h3_cell_id"), field_index("h3_resolution"),
+      field_index("h3_center_lat_e7"), field_index("h3_center_lon_e7")};
+  if (std::all_of(location_fields.begin(), location_fields.end(),
+                  [](std::size_t index) { return index < field_count; }))
+    apply_location(row, row.location, location_fields);
   integer(row, "schema_version", config.schema_version);
   counter(row, "device_id", device);
   counter(row, "boot_id_hi", boot_hi);

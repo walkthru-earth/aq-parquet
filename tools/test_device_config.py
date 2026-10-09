@@ -12,6 +12,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from test_location import compile_h3
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -31,11 +33,16 @@ def main() -> None:
         ]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        location = root / "firmware/common/location/src"
+        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "aq_location.cpp"),
+                    *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         for scenario in ("headless", "screen", "migration", "validation",
-                         "credentials", "sensor", "nvs", "unavailable"):
-            result = subprocess.run([str(executable), scenario], check=True,
+                         "credentials", "sensor", "nvs", "unavailable", "time-location"):
+            result = subprocess.run([str(executable), scenario],
                                     capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError(f"{scenario}: {result.stderr}")
             if scenario == "credentials":
                 document = json.loads(result.stdout)
                 assert document["wifi"]["ssid"] == 'fixture"\\name'

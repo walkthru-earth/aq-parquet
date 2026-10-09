@@ -329,8 +329,10 @@ class Session:
         rows, finalized = struct.unpack_from("<HI", data, 1)
         return {"rows": rows, "files_finalized": finalized}
 
-    async def get_config(self) -> dict:
-        await self.request(bytes([OP_GET_CONFIG]))
+    async def get_config(self, page: int = 0) -> dict:
+        if not 0 <= page <= 4:
+            raise ValueError("Configuration page must be 0..4")
+        await self.request(bytes([OP_GET_CONFIG]) + (bytes([page]) if page else b""))
         return self._config_frame(await self.frame())
 
     async def set_config(self, pairs: list[str]) -> dict:
@@ -602,7 +604,7 @@ async def cmd_flush(args):
 async def cmd_config(args):
     client, session = await connect(args)
     try:
-        print(json.dumps(await session.get_config(), indent=2))
+        print(json.dumps(await session.get_config(args.page), indent=2))
     finally:
         await client.disconnect()
 
@@ -690,7 +692,10 @@ def main():
     sync.set_defaults(run=cmd_sync)
     sub.add_parser("time", help="send host UTC to the device (explicit write)").set_defaults(run=cmd_time)
     sub.add_parser("flush", help="finalize buffered rows on the device (explicit write)").set_defaults(run=cmd_flush)
-    sub.add_parser("config", help="GET_CONFIG").set_defaults(run=cmd_config)
+    config_parser = sub.add_parser("config", help="GET_CONFIG")
+    config_parser.add_argument("--page", type=int, choices=range(5), default=0,
+                               help="0 legacy, 1 location, 2 NTP policy, 3/4 NTP server")
+    config_parser.set_defaults(run=cmd_config)
     setter = sub.add_parser("set", help="SET_CONFIG key=value ... (explicit write)")
     setter.add_argument("pairs", nargs="+", metavar="key=value")
     setter.set_defaults(run=cmd_set)

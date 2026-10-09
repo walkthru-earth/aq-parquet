@@ -9,6 +9,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Parquet footer/writer and reader compatibility | `parquet-test --sanitize`, `inspect_parquet.py` |
 | Telemetry dictionary, units and validity | `telemetry-contract-test --sanitize` |
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
+| Router/local/public NTP order and H3 privacy geometry | `network-time-test`, `location-test`, `config-test`, `control-sync-test` |
 | Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
 | Full-flash backup publication (offline fake esptool) | `backup-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |

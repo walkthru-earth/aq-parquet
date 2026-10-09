@@ -9,6 +9,7 @@
 // the worker.
 
 #include "ble_sync.h"
+#include "network_time.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,11 +18,7 @@ namespace lan {
 constexpr std::uint16_t kPayloadMax = 1024;
 constexpr std::uint8_t kProtocolVersion = ble::kProtocolVersion;
 
-struct TimeAnchor {
-  std::int64_t seconds = 0;
-  std::uint32_t subsecond_us = 0;
-  std::int64_t monotonic_us = 0;
-};
+using TimeAnchor = aq::network_time::Anchor;
 // One bounded pending SNTP result, consumed by the logger main loop. No IO.
 bool take_time_anchor(TimeAnchor &anchor);
 
@@ -47,6 +44,8 @@ bool begin(const char *host, const ble::Identity &identity,
            ble::RequestHandler handler);
 // Ask the task to re-read config::get() (after SET_CONFIG changed wifi/lan).
 void apply_settings();
+// Refresh NTP policy without reassociation or closing LAN sessions.
+void apply_time_settings();
 // Ask the task to run a Wi-Fi scan and answer on `link` (WIFI_AP frames then
 // WIFI_SCAN_END). At most one scan is pending; a second request is refused.
 bool request_scan(ble::Link link, std::uint32_t link_generation,

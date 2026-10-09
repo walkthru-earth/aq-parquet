@@ -8,10 +8,10 @@
 
 namespace telemetry {
 namespace contract {
-constexpr std::int32_t kSchemaVersion = 2;
-constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v2";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v2";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.2";
+constexpr std::int32_t kSchemaVersion = 3;
+constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v3";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v3";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.3";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -51,7 +51,7 @@ constexpr Definition kFields[] = {
 #include "telemetry_fields.inc"
 #undef FIELD
 };
-static_assert(field_count == 52, "Version the schema when changing fields");
+static_assert(field_count == 56, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 using Sample = aqlogger::Row;
 
@@ -61,12 +61,13 @@ inline LogicalType logical_type(const Definition &field) {
              ? LogicalType::TimestampNanosUtc
              : LogicalType::None;
 }
-inline void prepare_columns(Column *columns, Sample *rows) {
+template <typename Row>
+inline void prepare_columns(Column *columns, Row *rows) {
   for (std::size_t i = 0; i < field_count; ++i)
-    columns[i] =
-        Column{kFields[i].name,         kFields[i].type,   &rows[0].data[i],
-               sizeof(Sample),          &rows[0].valid[i], sizeof(Sample),
-               logical_type(kFields[i])};
+    columns[i] = Column{kFields[i].name,         kFields[i].type,
+                        &rows[0].data[i],        sizeof(Row),
+                        &rows[0].valid[i],       sizeof(Row),
+                        logical_type(kFields[i])};
 }
 
 enum ClockSource : std::int32_t {

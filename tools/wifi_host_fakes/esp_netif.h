@@ -24,3 +24,9 @@ inline esp_err_t esp_netif_set_hostname(esp_netif_t *, const char *) {
   return ESP_OK;
 }
 inline void esp_netif_destroy_default_wifi(esp_netif_t *) {}
+
+inline esp_err_t fake_tcpip_result = ESP_OK;
+inline esp_err_t esp_netif_tcpip_exec(esp_err_t (*callback)(void *),
+                                      void *argument) {
+  return fake_tcpip_result == ESP_OK ? callback(argument) : fake_tcpip_result;
+}

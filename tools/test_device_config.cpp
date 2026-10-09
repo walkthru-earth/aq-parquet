@@ -1,3 +1,4 @@
+#include <aq_location.h>
 #include <debug_log.h>
 #include <device_config.h>
 #include <nvs.h>
@@ -16,6 +17,12 @@ bool same(const config::Settings &a, const config::Settings &b) {
          std::strcmp(a.sensor_model, b.sensor_model) == 0 &&
          std::strcmp(a.sensor_serial, b.sensor_serial) == 0 &&
          a.sensor_batch_candidate == b.sensor_batch_candidate &&
+         config::same_location(a.location, b.location) &&
+         a.ntp.enabled == b.ntp.enabled && a.ntp.dhcp == b.ntp.dhcp &&
+         a.ntp.public_fallback == b.ntp.public_fallback &&
+         a.ntp.interval_s == b.ntp.interval_s &&
+         std::strcmp(a.ntp.servers[0], b.ntp.servers[0]) == 0 &&
+         std::strcmp(a.ntp.servers[1], b.ntp.servers[1]) == 0 &&
          std::memcmp(a.token, b.token, config::kTokenBytes) == 0;
 }
 
@@ -57,7 +64,7 @@ void first_boot(bool display) {
   assert(fake_platform::nvs.types.at("pin") == 4);
   assert(fake_platform::nvs.types.at("ssid") == 8);
   assert(fake_platform::nvs.types.at("token") == 9);
-  assert(fake_platform::nvs.commits == 9);
+  assert(fake_platform::nvs.commits == 11);
   assert(
       config::load(!display)); // stored capability/pairing defaults are frozen
   assert(same(first, config::get()));
@@ -92,7 +99,7 @@ void validation() {
   reject("ble.pin=01234x", "ble.pin");
   reject("ble.pair=invalid", "ble.pair");
   reject("\r\n\n", "empty");
-  reject(std::string(128, 'x'), "line-too-long");
+  reject(std::string(config::kNtpServerMax + 32, 'x'), "line-too-long");
   reject("missing-equals", "missing-equals");
   std::string nul = "wifi.ssid=visible";
   nul.push_back('\0');
@@ -235,6 +242,103 @@ void persistence_failure() {
   assert(same(rotated, config::get()));
 }
 
+void time_and_location() {
+  assert(config::load(false));
+  assert(config::get().ntp.enabled && config::get().ntp.dhcp &&
+         config::get().ntp.public_fallback);
+  assert(config::get().location.cell == 0 &&
+         config::get().location.resolution == 5);
+  char json[480];
+  assert(config::build_page(json, sizeof(json), 1));
+  assert(std::strstr(json, "\"lat\":null"));
+  reject("location.cell=fffffffffffffff", "location.cell");
+  reject("location.resolution=16", "location.resolution");
+  reject("location.country=ZZ", "location.country");
+  reject("location.country=eg", "location.country");
+  reject("ntp.interval_s=59", "ntp.interval_s");
+  reject("ntp.interval_s=42949672960", "ntp.interval_s");
+  reject("ntp.server1=https://time.cloudflare.com", "ntp.server1");
+  reject("ntp.server1=host|injection", "ntp.server1");
+  reject("ntp.server1=host:123", "ntp.server1");
+  reject("ntp.server1=0.0.0.0", "ntp.server1");
+  reject("ntp.server1=" + std::string(64, 'a'), "ntp.server1");
+  accept("ntp.server2=2001:db8::1");
+  reject("ntp.server1=" + std::string(254, 'a'), "ntp.server1");
+  config::Actions actions;
+  char bad_key[64];
+  assert(apply("location.cell=8928308280fffff\nlocation.resolution=5\nlocation."
+               "country=EG",
+               actions, bad_key));
+  assert(actions.location_changed && !actions.ntp_changed &&
+         !actions.wifi_changed);
+  const auto coarse = config::get().location.cell;
+  auto country_change = config::get().location;
+  country_change.country[0] = 'U';
+  country_change.country[1] = 'S';
+  assert(!config::same_location(country_change, config::get().location));
+  auto cap_change = config::get().location;
+  cap_change.resolution = 6;
+  assert(!config::same_location(cap_change, config::get().location));
+  assert(aq::location::resolution(coarse) == 5 &&
+         coarse != 0x8928308280fffffULL);
+  assert(fake_platform::nvs.strings.at("location").find("8928308280fffff") ==
+         std::string::npos);
+  assert(config::build_page(json, sizeof(json), 1));
+  assert(std::strstr(json, "\"country\":\"EG\""));
+  assert(config::load(false));
+  assert(config::get().location.cell == coarse);
+  accept("location.resolution=9");
+  assert(config::get().location.cell == coarse); // finer cannot reconstruct GPS
+  accept("location.resolution=5\nlocation.cell=8928308280fffff");
+  assert(config::get().location.cell ==
+         coarse); // patch order does not leak finer cell
+  assert(apply("ntp.dhcp=0\nntp.public_fallback=0\nntp.server1=ntp.local\nntp."
+               "server2=192.168.1.1\nntp.interval_s=7200",
+               actions, bad_key));
+  assert(actions.ntp_changed && !actions.wifi_changed);
+  assert(config::load(false));
+  const auto ntp = config::get().ntp;
+  assert(!ntp.dhcp && !ntp.public_fallback && ntp.interval_s == 7200);
+  assert(std::strcmp(ntp.servers[0], "ntp.local") == 0);
+  assert(config::build_page(json, sizeof(json), 2));
+  assert(config::build_page(json, sizeof(json), 3));
+  assert(std::strstr(json, "ntp.local"));
+  // Maximum supported DNS name remains readable within the wire JSON limit.
+  accept("ntp.server1=" + std::string(63, 'a') + "." + std::string(63, 'b') +
+         "." + std::string(63, 'c') + "." + std::string(61, 'd'));
+  assert(config::build_page(json, sizeof(json), 3));
+  assert(config::load(false));
+  assert(std::strlen(config::get().ntp.servers[0]) == 253);
+  assert(!config::build_page(json, 8, 1) && json[0] == '\0');
+  assert(!config::build_page(json, sizeof(json), 5));
+  const auto before_failure = config::get();
+  fake_platform::nvs.fail_write_key = "location";
+  assert(!apply("location.country=US", actions, bad_key));
+  assert(std::strcmp(bad_key, "nvs") == 0);
+  assert(same(before_failure, config::get()));
+  fake_platform::nvs.fail_write_key.clear();
+  fake_platform::nvs.fail_commit_key = "ntp";
+  assert(!apply("ntp.public_fallback=1", actions, bad_key));
+  assert(std::strcmp(bad_key, "nvs") == 0);
+  assert(same(before_failure, config::get()));
+  fake_platform::nvs.fail_commit_key.clear();
+  assert(config::load(false));
+  assert(same(before_failure, config::get()));
+  fake_platform::nvs.strings["location"] = "broken|15|EG";
+  fake_platform::nvs.strings["ntp"] = "broken";
+  assert(config::load(false));
+  assert(config::get().location.cell == 0);
+  assert(!config::get().ntp.enabled && !config::get().ntp.public_fallback);
+  fake_platform::nvs.strings.erase("location");
+  fake_platform::nvs.types.erase("location");
+  fake_platform::nvs.strings.erase("ntp");
+  fake_platform::nvs.types.erase("ntp");
+  assert(config::load(false)); // legacy migration
+  assert(config::get().ntp.dhcp && config::get().ntp.public_fallback);
+  accept("location.cell=\nlocation.country=");
+  assert(config::get().location.cell == 0);
+}
+
 void unavailable() {
   fake_platform::nvs.fail_open = true;
   assert(!config::load(false));
@@ -263,6 +367,8 @@ int main(int argc, char **argv) {
     sensor_identity();
   else if (test == "nvs")
     persistence_failure();
+  else if (test == "time-location")
+    time_and_location();
   else if (test == "unavailable")
     unavailable();
   else

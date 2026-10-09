@@ -4,6 +4,7 @@
 #include "wifi_link.h"
 #include <sync_codec.h>
 
+#include <cstdio>
 #include <cstring>
 
 namespace aqsync {
@@ -11,13 +12,38 @@ namespace {
 using namespace aq::sync;
 constexpr std::size_t kPayloadCapacity = 1024;
 
-void send_config(ble::Link link, ble::Op op, const ControlReplies &replies) {
+void send_config(ble::Link link, ble::Op op, const ControlReplies &replies,
+                 std::uint8_t page = 0) {
   const lan::Status wifi = lan::status();
   config::WifiView view{wifi.state,   wifi.ip,   wifi.rssi,        wifi.mac,
                         wifi.clients, wifi.host, ble::link().bonds};
   std::uint8_t frame[2 + ble::kMaxJson];
-  const std::size_t length = config::build_json(
-      reinterpret_cast<char *>(frame + 2), ble::kMaxJson, view);
+  std::size_t length =
+      page ? config::build_page(reinterpret_cast<char *>(frame + 2),
+                                ble::kMaxJson, page)
+           : config::build_json(reinterpret_cast<char *>(frame + 2),
+                                ble::kMaxJson, view);
+  if (page == 2 && length >= 2) {
+    const auto time = aq::network_time::status();
+    char age[24] = "null";
+    if (time.has_anchor)
+      std::snprintf(age, sizeof(age), "%llu",
+                    static_cast<unsigned long long>(time.age_s));
+    const auto prefix = length - 2; // append inside the existing ntp object
+    const int added = std::snprintf(
+        reinterpret_cast<char *>(frame + 2) + prefix, ble::kMaxJson - prefix,
+        ",\"state\":\"%s\",\"running\":%u,\"anchored\":%u,\"age_s\":%s,"
+        "\"stale\":%u,\"source\":%ld,\"last_public\":%u,\"sync_count\":%lu,"
+        "\"error\":%d}}",
+        time.state, time.running ? 1U : 0U, time.has_anchor ? 1U : 0U, age,
+        time.stale ? 1U : 0U, static_cast<long>(time.source),
+        time.public_active ? 1U : 0U,
+        static_cast<unsigned long>(time.sync_count), time.error);
+    length =
+        added > 0 && static_cast<std::size_t>(added) < ble::kMaxJson - prefix
+            ? prefix + static_cast<std::size_t>(added)
+            : 0;
+  }
   if (!length) {
     replies.error(replies.context, link, op, ble::kErrMalformed, "json");
     return;
@@ -94,7 +120,12 @@ bool handle_common_control(const ble::ControlRequest &request,
   const std::size_t length = request.length - 1;
   switch (request.bytes[0]) {
   case ble::kOpGetConfig:
-    send_config(request.link, ble::kOpGetConfig, replies);
+    if (length > 1 || (length == 1 && body[0] > 4))
+      replies.error(replies.context, request.link, ble::kOpGetConfig,
+                    ble::kErrMalformed, "page");
+    else
+      send_config(request.link, ble::kOpGetConfig, replies,
+                  length ? body[0] : 0);
     return true;
   case ble::kOpSetConfig: {
     char bad_key[48];
@@ -111,6 +142,8 @@ bool handle_common_control(const ble::ControlRequest &request,
       lan::drop_session();
     if (actions.wifi_changed)
       lan::apply_settings();
+    else if (actions.ntp_changed)
+      lan::apply_time_settings();
     send_config(request.link, ble::kOpSetConfig, replies);
     return true;
   }

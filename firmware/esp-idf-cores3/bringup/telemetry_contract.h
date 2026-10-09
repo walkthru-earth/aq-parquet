@@ -9,14 +9,13 @@
 
 namespace telemetry {
 namespace contract {
-// File schema v3: the unchanged v2 dictionary (77 leaves) plus TIMESTAMP(NANOS,
-// UTC) annotations on the UTC fields, per-chunk min/max statistics and up to
-// kMaxRowGroups row groups per file. The dictionary version tracks the bytes
-// of telemetry_fields.inc; the schema version tracks what a reader sees.
-constexpr std::int32_t kSchemaVersion = 3;
-constexpr const char *kSchemaName = "cores3-telemetry-v3";
-constexpr const char *kDictionaryVersion = "cores3-telemetry-v2";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.8";
+// File schema v4 appends four nullable H3 location fields to the unchanged
+// original 77 leaves. UTC annotations/statistics and bounded row groups remain.
+// Dictionary v3 tracks the field bytes; schema v4 tracks the reader contract.
+constexpr std::int32_t kSchemaVersion = 4;
+constexpr const char *kSchemaName = "cores3-telemetry-v4";
+constexpr const char *kDictionaryVersion = "cores3-telemetry-v3";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.9";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -56,7 +55,7 @@ constexpr Definition kFields[] = {
 #include "telemetry_fields.inc"
 #undef FIELD
 };
-static_assert(field_count == 77, "Version the schema when changing fields");
+static_assert(field_count == 81, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 
 using Sample = aq::NumericSample<field_count>;
@@ -71,12 +70,13 @@ inline LogicalType logical_type(const Definition &field) {
              : LogicalType::None;
 }
 
-inline void prepare_columns(Column *columns, Sample *rows) {
+template <typename Row>
+inline void prepare_columns(Column *columns, Row *rows) {
   for (std::size_t i = 0; i < field_count; ++i)
-    columns[i] =
-        Column{kFields[i].name,         kFields[i].type,   &rows[0].data[i],
-               sizeof(Sample),          &rows[0].valid[i], sizeof(Sample),
-               logical_type(kFields[i])};
+    columns[i] = Column{kFields[i].name,         kFields[i].type,
+                        &rows[0].data[i],        sizeof(Row),
+                        &rows[0].valid[i],       sizeof(Row),
+                        logical_type(kFields[i])};
 }
 
 // `clock_status` codes. The anchor pairs an external UTC estimate with a

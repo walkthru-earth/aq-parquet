@@ -16,6 +16,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+
+from test_location import compile_h3
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -30,7 +32,7 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -> None:
+def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, located: bool) -> None:
     parquet = pq.ParquetFile(path)
     table = parquet.read()
     fields = dictionary["fields"]
@@ -43,9 +45,16 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
         expected = pa.timestamp("ns", tz="UTC") if field.name in utc_fields else types[definition["type"]]
         require(field.type == expected and field.nullable, f"schema: {field.name}")
     metadata = parquet.metadata.metadata
-    require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v3", "schema version")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v2",
-            "dictionary version tracks the unchanged field list")
+    require(metadata[b"country_iso3166_1_alpha2"] == (b"US" if located else b"unknown"), "declared country")
+    require(metadata[b"country_source"] == b"owner-declared", "country provenance")
+    require(metadata[b"location_source"] == b"owner-provisioned-h3-grid-center", "center provenance")
+    require(metadata[b"h3_cell_id"] == (b"85283473fffffff" if located else b"unknown"), "published cell metadata")
+    require(metadata[b"h3_resolution"] == (b"5" if located else b"unknown") and
+            metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
+    require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
+    require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v4", "schema version")
+    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v3",
+            "dictionary version includes appended H3 fields")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
             "firmware identity in created_by")
@@ -73,12 +82,15 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool) -
     config = json.loads(metadata[b"acquisition_config"])
     require(config["sample_interval_ms"] == 10000 and config["pms_stale_after_ms"] == 5000,
             "configuration contract")
-    for i in range(77):
+    for i in range(len(fields)):
         require(parquet.metadata.row_group(0).column(i).compression ==
                 ("LZ4" if compressed else "UNCOMPRESSED"), "column codec")
     for i, row in enumerate(table.to_pylist()):
+        for name, value in (("h3_cell_id", 0x85283473fffffff), ("h3_resolution", 5),
+                            ("h3_center_lat_e7", 373457934), ("h3_center_lon_e7", -1219763760)):
+            require(row[name] == (value if located else None), f"nullable published location: {name}")
         now = 20000000 + i * 10000000
-        require(row["schema_version"] == dictionary["schema_version"] == 3 and row["sequence"] == i, "identity")
+        require(row["schema_version"] == dictionary["schema_version"] == 4 and row["sequence"] == i, "identity")
         require(row["collection_completed_mono_us"] == now + 1234, "completion time")
         require(row["pms_received_mono_us"] == (now - 250000 if i else None), "PMS receipt")
         require(row["clock_anchor_mono_us"] == (15000000 if anchored else None), "anchor mono")
@@ -120,10 +132,15 @@ def main() -> None:
         directory = Path(temporary)
         executable = directory / "fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
-        command += ["-I", str(common)]
+        for include in (common, root / "firmware/common/logger/src",
+                        root / "firmware/common/runtime/src", root / "firmware/common/location/src",
+                        directory / "h3"):
+            command += ["-I", str(include)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
-        command += [str(root / "tools/telemetry_contract_fixture.cpp"),
+        command += [*compile_h3(root, directory, args.sanitize),
+                    str(root / "firmware/common/location/src/aq_location.cpp"),
+                    str(root / "tools/telemetry_contract_fixture.cpp"),
                     str(common / "parquet_writer.cpp"), str(common / "lz4_codec.cpp"),
                     "-o", str(executable)]
         subprocess.run(command, check=True)
@@ -136,19 +153,25 @@ def main() -> None:
         require(hashlib.sha256(json.dumps(baseline, separators=(",", ":")).encode()).hexdigest()
                 == "55506b55208628afffbba8d7ef0f82df7469b62969e130263a3cf1cdb38aff16",
                 "original 73-column schema changed")
-        require(len(fields) == len({f["name"] for f in fields}) == 77, "unique dictionary fields")
-        require(len({f["property"] for f in fields}) == 77, "unique property identifiers")
+        require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:77]],
+                                         separators=(",", ":")).encode()).hexdigest()
+                == "be30fc5e84fcd266957831ede8fad352f5fd04d7ddebc0cabc56d812cf44a357",
+                "original 77-column prefix changed")
+        require(len(fields) == len({f["name"] for f in fields}) == 81, "unique dictionary fields")
+        require(len({f["property"] for f in fields}) == 81, "unique property identifiers")
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field token")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")
             require(field["property"] == "urn:walkthru-earth:cores3:property:" + field["name"], "local vocabulary")
         for anchored in (False, True):
             for compressed in (False, True):
-                path = directory / f"{anchored}-{compressed}.parquet"
-                subprocess.run([str(executable), str(path), "lz4" if compressed else "none",
-                                "anchored" if anchored else "unsynced"], check=True)
-                check_file(path, dictionary, anchored, compressed)
-                print(f"PASS 90 x 77 contract: anchored={anchored} lz4={compressed}; both readers", flush=True)
+                for located in (False, True):
+                    path = directory / f"{anchored}-{compressed}-{located}.parquet"
+                    subprocess.run([str(executable), str(path), "lz4" if compressed else "none",
+                                    "anchored" if anchored else "unsynced",
+                                    "located" if located else "unset"], check=True)
+                    check_file(path, dictionary, anchored, compressed, located)
+                    print(f"PASS 90 x 81 contract: anchored={anchored} lz4={compressed} location={located}; both readers", flush=True)
         if args.dictionary_out:
             with args.dictionary_out.open("x") as output:
                 json.dump(dictionary, output, indent=2)

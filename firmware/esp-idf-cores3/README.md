@@ -1,11 +1,14 @@
 # CoreS3 native ESP-IDF logger
 
 The current source is a pure **ESP-IDF 6.1** application, firmware identity
-**`idf-cores3-parquet-v6.8`**, with the existing 77-column CoreS3 dictionary and
-Parquet schema. `bringup/main.cpp` owns board setup, sensors, display and native
+**`idf-cores3-parquet-v6.9`**, with an **81-column** CoreS3 schema
+`cores3-telemetry-v4` and dictionary `cores3-telemetry-v3`. The original 77
+columns retain their names, types and order; four nullable H3 location fields
+are appended. `bringup/main.cpp` owns board setup, sensors, display and native
 UART; `bringup/telemetry_logger.cpp` supplies the AQLogger adapter. M5Unified
 **0.2.25** and M5GFX **0.2.31** are native IDF components; there are no Arduino
-APIs or Arduino component in the application. Shared connectivity uses native
+APIs or Arduino component in the application. Location uses the optional shared
+component with official H3 **4.5.0**. Shared connectivity uses native
 NimBLE/Wi-Fi/netif/SNTP and managed mDNS **1.14.0**. These stable release pins
 were checked on **2026-10-09**; LZ4 remains vendored **1.10.0**.
 
@@ -58,6 +61,21 @@ IMU/light/touch acquisition and BM8563 RTC callbacks. AQLogger owns the
 10-second monotonic deadline and the sole archive worker after startup.
 Missing measurements and unknown UTC remain null; finalized Parquet remains
 immutable and interrupted `.partial` files remain retained.
+
+Location starts unset. Owner provisioning supplies a cell, configurable maximum
+resolution (default **5**) and optional declared ISO country code. Only the
+coarsened cell is persisted; its center supplies `h3_center_lat_e7` and
+`h3_center_lon_e7`, alongside `h3_cell_id` and actual `h3_resolution`. Country
+and precision provenance are file metadata. Each queued sample owns its location
+snapshot, and location/country changes finalize the old file before writing
+new-location rows. Existing files retain their original schema and metadata.
+See [time and location policy](../../docs/shared/time-and-location.md).
+
+Wi-Fi time synchronization prefers router DHCP option 42 and configured local
+servers, with public fallback enabled by default. CoreS3 can still restore its
+offline RTC anchor or accept authenticated host time; no successful anchor means
+null UTC. Hardware qualification must cover router/local/public transitions and
+location changes as well as RTC behavior.
 
 Qualify USB startup with no connected reader, display/card arbitration, optional
 sensor and RTC behavior, secure BLE pairing/long reads, mDNS/LAN transfers and

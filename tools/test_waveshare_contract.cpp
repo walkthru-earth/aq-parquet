@@ -1,6 +1,7 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include <lz4_codec.h>
 
+#include <aq_logger_location.h>
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -148,18 +149,26 @@ int main(int argc, char **argv) {
     std::puts("]}");
     return 0;
   }
-  if (argc != 4)
+  if (argc != 4 && argc != 5)
     return 2;
   assert_gates();
+  const bool located = argc == 5 && std::strcmp(argv[4], "located") == 0;
   const bool compressed = std::strcmp(argv[2], "lz4") == 0;
   const bool anchored = std::strcmp(argv[3], "anchored") == 0;
-  Sample rows[90]{};
+  aqlogger::LocationSample<Sample> rows[90]{};
+  const config::LocationSettings location =
+      located ? config::LocationSettings{0x85283473fffffffULL, 5, "US"}
+              : config::LocationSettings{};
   Column columns[field_count]{};
   Workspace workspace{};
   Lz4Workspace lz4{};
   const auto compression = lz4.configuration();
   for (std::size_t i = 0; i < 90; ++i) {
     auto &row = rows[i];
+    row.location = location;
+    aqlogger::apply_location(
+        row, row.location,
+        {h3_cell_id, h3_resolution, h3_center_lat_e7, h3_center_lon_e7});
     const auto now = std::int64_t(10000000 + i * 10000000);
     row.integer(schema_version, kSchemaVersion);
     row.counter(device_id, 123);
@@ -192,17 +201,20 @@ int main(int argc, char **argv) {
       apply_gauge(row, decode_max17048(0xc800, 0x4b80));
   }
   prepare_columns(columns, rows);
-  const KeyValue metadata[] = {{"schema_version", kSchemaName},
-                               {"firmware", kFirmware},
-                               {"dictionary_version", kDictionaryVersion},
-                               {"dictionary_uri", kDictionaryUri},
-                               {"dictionary_sha256", kDictionarySha256},
-                               {"acquisition_config_id", kConfigurationId},
-                               {"acquisition_config", kConfiguration},
-                               {"deployment_id", kUnknown},
-                               {"calibration_id", kUnknown},
-                               {"time_semantics", kTimeSemantics},
-                               {"purpose", "synthetic-contract-test"}};
+  const aqlogger::LocationMetadata location_metadata(location);
+  KeyValue metadata[18] = {{"schema_version", kSchemaName},
+                           {"firmware", kFirmware},
+                           {"dictionary_version", kDictionaryVersion},
+                           {"dictionary_uri", kDictionaryUri},
+                           {"dictionary_sha256", kDictionarySha256},
+                           {"acquisition_config_id", kConfigurationId},
+                           {"acquisition_config", kConfiguration},
+                           {"deployment_id", kUnknown},
+                           {"calibration_id", kUnknown},
+                           {"time_semantics", kTimeSemantics},
+                           {"purpose", "synthetic-contract-test"}};
+  for (std::size_t i = 0; i < location_metadata.entries.size(); ++i)
+    metadata[11 + i] = location_metadata.entries[i];
   FILE *file = std::fopen(argv[1], "wb");
   if (!file)
     return 3;

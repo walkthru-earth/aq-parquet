@@ -78,3 +78,9 @@ FIELD(collection_completed_mono_us, Int64, clock, "us", always)
 FIELD(pms_received_mono_us, Int64, pmsa003, "us", pms_present)
 FIELD(clock_anchor_mono_us, Int64, clock, "us", clock_anchored)
 FIELD(clock_anchor_utc_ns, Int64, clock, "ns_since_unix_epoch", clock_anchored)
+
+// Optional owner-provisioned H3 cell; all centers derive from this published cell.
+FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_configured)
+FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_configured)
+FIELD(h3_center_lat_e7, Int64, h3_grid_center, "1e-7_degree_latitude", location_configured)
+FIELD(h3_center_lon_e7, Int64, h3_grid_center, "1e-7_degree_longitude", location_configured)

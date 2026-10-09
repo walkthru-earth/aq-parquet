@@ -2,7 +2,7 @@
 
 Opt-in native ESP-IDF logger engine shared by ESP32-S3 board adapters. Add the
 common component directories to the board CMake project and declare
-`REQUIRES common runtime connectivity logger`. ESP-IDF and managed dependency
+`REQUIRES common runtime connectivity logger location`. ESP-IDF and managed dependency
 versions are pinned by the shared toolchain lock and component manifests.
 
 ## Adapter contract
@@ -31,7 +31,7 @@ to `/sd/output`; `legacy_directory` is opt-in for previous archives.
 Optional RTC callbacks run only in `begin()` and `poll()` on the calling main
 task. Read returns UTC seconds only after rejecting invalid/unset/voltage-low
 state; write must verify readback. With no RTC, state is 2 (unusable/absent), UTC
-stays null until host synchronization, and no RTC write occurs. A host sync only
+stays null until a real host or network anchor, and no RTC write occurs. A host sync only
 sets an atomic pending request on the worker. The main loop writes near the next
 whole-second boundary, with a bounded late fallback.
 
@@ -52,12 +52,24 @@ CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.
 
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never
-mix; unknown UTC uses the `unsynced` Hive tree. Finalization writes/syncs the
+mix; station location snapshots never mix either. Unknown UTC uses the `unsynced`
+Hive tree. Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
 `.partial` files are retained under quarantine. No recovery, deletion, retention,
 cloud upload or formatting is performed. RAM batches can be lost on reset;
 footerless completed row groups need explicit host recovery. fsync is not proof
 of power-cut durability.
+
+The optional [location component](../location/README.md) supplies validated H3
+cells and their grid centers. AQLogger snapshots cell, maximum resolution and
+optional declared country at acquisition, copies them through the queue and
+uses the first row's snapshot for file metadata. Changing any of those settings
+closes the previous file before adding new-location rows, including while a RAM
+batch is waiting. Four nullable fields are mapped only when the board dictionary
+contains all four: `h3_cell_id` (INT64), `h3_resolution` (INT32),
+`h3_center_lat_e7` and `h3_center_lon_e7` (INT64, 10⁻⁷ degrees). Raw GPS never
+enters the logger. Country and source/precision metadata describe the whole file.
+See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,
 `interval` (600/900/1800/3600), `codec none`, `codec lz4`, and `codec-test`. Codec
@@ -111,3 +123,10 @@ UTF-8/hex round trips, malformed inputs, action dispatch and log-ring secrecy.
 
 Writer/codec/measurement changes still require their sanitizer and contract gates,
 and board readback evidence remains in that board's bench record.
+
+`pixi run location-test`, `telemetry-contract-test --sanitize` and
+`waveshare-contract-test --sanitize` compile the pinned official H3 sources and
+exercise published vectors, privacy coarsening, captured settings, invalid/null
+mapping and file metadata. PyArrow and DuckDB agree on located/unset, anchored/
+unanchored and uncompressed/LZ4 fixtures for both current board schemas. These
+host results do not establish hardware NTP reachability or SD durability.

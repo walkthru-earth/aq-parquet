@@ -2,6 +2,7 @@
 // task creation are faked; framing, authentication, routing and sockets are
 // not.
 #include "../firmware/common/connectivity/src/wifi_link.cpp"
+#include <esp_netif_sntp.h>
 
 #include <cassert>
 #include <chrono>
@@ -108,11 +109,6 @@ int main() {
   lan::TimeAnchor time_anchor;
   assert(!lan::take_time_anchor(time_anchor));
   timeval actual_time{1800000000, 123456};
-  lan::network_time_synced(&actual_time);
-  assert(lan::take_time_anchor(time_anchor));
-  assert(time_anchor.seconds == 1800000000 &&
-         time_anchor.subsecond_us == 123456);
-  assert(!lan::take_time_anchor(time_anchor));
   std::signal(SIGPIPE, SIG_IGN);
   const ble::Identity identity{"fixture", "device", "boot", "schema",
                                0,         "",       "test"};
@@ -315,6 +311,7 @@ int main() {
   assert(lan::listen_fd < 0);
   lan::poll_radio();
   assert(lan::connected && lan::listen_fd < 0);
+  lan::poll_radio(); // asynchronous DNS result consumed on the next tick
   assert(fake_ntp_starts > 0 && fake_time_callback != nullptr);
   // Association without a successful SNTP callback is not time evidence.
   assert(!lan::take_time_anchor(time_anchor));
@@ -334,9 +331,27 @@ int main() {
   fake_wifi_autoconnect = true;
   fake_wifi_got_ip();
   lan::poll_radio();
+  lan::poll_radio();
   assert(lan::connected && fake_ntp_starts == starts_before_reconnect + 1);
   // Reassociation restarts SNTP but never manufactures a new clock anchor.
   assert(!lan::take_time_anchor(time_anchor));
+  // Updating only the time policy does not reconnect Wi-Fi or discard an
+  // existing successful anchor; owner tasks reconcile it independently.
+  const auto connects_before_time_settings = fake_wifi_connects;
+  fixture_settings.ntp.enabled = false;
+  lan::apply_time_settings();
+  lan::poll_radio();
+  assert(lan::connected &&
+         fake_wifi_connects == connects_before_time_settings &&
+         !fake_time_callback && aq::network_time::status().has_anchor &&
+         std::strcmp(aq::network_time::status().state, "disabled") == 0);
+  fixture_settings.ntp.enabled = true;
+  lan::apply_time_settings();
+  lan::poll_radio();
+  lan::poll_radio();
+  assert(lan::connected &&
+         fake_wifi_connects == connects_before_time_settings &&
+         fake_time_callback && !lan::take_time_anchor(time_anchor));
   fixture_settings.lan_on = true;
   lan::apply_settings();
   lan::poll_radio();

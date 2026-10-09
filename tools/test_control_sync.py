@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from test_location import compile_h3
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -32,6 +34,9 @@ def main() -> None:
         ]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+        location = root / "firmware/common/location/src"
+        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "aq_location.cpp"),
+                    *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
     print("Shared control: configuration secrecy/actions, BLE-only token and log limits passed")

@@ -1,15 +1,18 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.2`**, using the existing **52-column**
-`waveshare-sim7670g-telemetry-v2` dictionary. The board has two native variants:
+**`idf-waveshare-parquet-v2.3`**, with **56-column** schema
+`waveshare-sim7670g-telemetry-v3` and dictionary `waveshare-sim7670g-telemetry-v3`.
+The original 52 columns retain their names, types and order, with four nullable
+H3 location fields appended. The board has two native variants:
 `logger/main.cpp` for the full application and `diagnostic/main.cpp` for the
 retained UART/read-only TF fixture. `board_io.*` owns native UART, I²C, SDMMC
 and indicator adapters. There are no Arduino APIs or Arduino component.
 Shared radio code uses native NimBLE/Wi-Fi/netif/SNTP and managed mDNS
 **1.14.0**; the RGB adapter uses led_strip **3.1.0~1**. These stable versions
 were checked on **2026-10-09**. LZ4 remains vendored **1.10.0**, and this board
-has no M5Unified/M5GFX dependency.
+has no M5Unified/M5GFX dependency. The optional shared location component uses
+official H3 **4.5.0**.
 
 **Native hardware qualification is pending.** Arduino-era SD, sensor, battery
 and pairing observations below stay tied to their recorded images. Host tests
@@ -62,6 +65,20 @@ no verified ESP32 signal. Modem, GNSS and camera remain outside this logger.
 AQLogger owns the 10-second monotonic sampling and sole archive worker;
 there is no external RTC anchor. Raw PM/temperature/RH and optional sensor
 identity/batch candidate semantics retain the existing dictionary contract.
+
+Location starts unset. Owner provisioning supplies a cell, configurable maximum
+resolution (default **5**) and optional declared ISO country code. Only the
+coarsened cell is persisted; its center supplies `h3_center_lat_e7` and
+`h3_center_lon_e7`, alongside `h3_cell_id` and actual `h3_resolution`. Country
+and precision provenance are file metadata. Each queued sample owns its location
+snapshot; cell, maximum resolution and country changes split RAM batches and
+files, preserving older file metadata. See
+[time and location policy](../../docs/shared/time-and-location.md).
+
+Wi-Fi time synchronization prefers router DHCP option 42 and configured local
+servers, with public fallback enabled by default. Authenticated host time still
+works offline. This board has no external RTC: every boot starts with null UTC
+until a real host or network anchor is accepted.
 
 Qualify console startup, physical OPI PSRAM, TF read/write, sensor warm/stale
 nulls, gauge readings, indicator behavior, secure pairing, Wi-Fi provisioning,

@@ -5,7 +5,6 @@
 #include <esp_event.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
-#include <esp_netif_sntp.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
@@ -37,25 +36,13 @@ char host_label[24]{};
 ble::Identity device_identity{};
 ble::RequestHandler request_handler = nullptr;
 Status current;
-TimeAnchor network_anchor;
-bool network_anchor_pending = false;
-portMUX_TYPE time_mutex = portMUX_INITIALIZER_UNLOCKED;
-// ESP-IDF defines this callback with a non-const timeval pointer.
-// cppcheck-suppress constParameterCallback
-void network_time_synced(struct timeval *time) {
-  const auto mono = esp_timer_get_time();
-  portENTER_CRITICAL(&time_mutex);
-  network_anchor = {static_cast<std::int64_t>(time->tv_sec),
-                    static_cast<std::uint32_t>(time->tv_usec), mono};
-  network_anchor_pending = true;
-  portEXIT_CRITICAL(&time_mutex);
-}
 esp_netif_t *station_netif = nullptr;
 esp_event_handler_instance_t wifi_events = nullptr, ip_events = nullptr;
 bool wifi_initialized = false;
 std::atomic<bool> station_has_ip{false};
 std::atomic<unsigned> disconnect_reason{0};
-bool sntp_on = false;
+std::atomic<std::uint32_t> station_ip_generation{0};
+std::uint32_t handled_ip_generation = 0;
 
 // Startup failures must release their ownership so a later begin can retry.
 // The default event loop/netif stack may be shared and remains initialized.
@@ -85,6 +72,7 @@ void release_station() {
 void station_event(void *, esp_event_base_t base, std::int32_t id, void *data) {
   if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     station_has_ip = true;
+    ++station_ip_generation;
   } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
     station_has_ip = false;
     disconnect_reason =
@@ -107,29 +95,10 @@ void station_mac(char *out, std::size_t size) {
                   mac[2], mac[3], mac[4], mac[5]);
 }
 
-void stop_sntp() {
-  if (sntp_on) {
-    esp_netif_sntp_deinit();
-    sntp_on = false;
-  }
-}
-
-void start_sntp() {
-  stop_sntp();
-  esp_sntp_config_t ntp = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
-      2, ESP_SNTP_SERVER_LIST("pool.ntp.org", "time.cloudflare.com"));
-  ntp.wait_for_sync = false;
-  ntp.sync_cb = network_time_synced;
-  const esp_err_t result = esp_netif_sntp_init(&ntp);
-  sntp_on = result == ESP_OK;
-  if (!sntp_on)
-    aqlog.record_only().printf("WIFI ERROR operation=sntp code=%d\n", result);
-}
-
 portMUX_TYPE status_mutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t socket_mutex = nullptr;
 
-std::atomic<bool> reapply{true}, drop_requested{false};
+std::atomic<bool> reapply{true}, time_reapply{false}, drop_requested{false};
 std::atomic<bool> lan_ready{false};
 std::atomic<bool> scan_pending{false};
 std::atomic<std::uint8_t> scan_link{0};
@@ -379,7 +348,7 @@ void stop_server(const char *reason) {
 }
 
 void radio_off(const char *reason) {
-  stop_sntp();
+  aq::network_time::set_network_available(false);
   stop_server(reason);
   if (radio_on) {
     esp_wifi_disconnect();
@@ -396,7 +365,7 @@ void radio_connect() {
   // aqcfg is the sole persistent settings owner; the driver uses RAM storage.
   // Restart on apply so old association/IP cannot keep an old LAN alive.
   station_has_ip = false;
-  stop_sntp();
+  aq::network_time::prepare_network();
   if (radio_on) {
     esp_wifi_disconnect();
     esp_wifi_stop();
@@ -425,10 +394,26 @@ void radio_connect() {
                              result);
 }
 
+void apply_time_policy(const config::NtpSettings &policy) {
+  aq::network_time::Policy time_policy;
+  time_policy.enabled = policy.enabled;
+  time_policy.dhcp = policy.dhcp;
+  time_policy.public_fallback = policy.public_fallback;
+  time_policy.interval_s = policy.interval_s;
+  static_assert(sizeof(time_policy.servers) == sizeof(policy.servers));
+  std::memcpy(time_policy.servers, policy.servers, sizeof(time_policy.servers));
+  aq::network_time::configure(time_policy);
+}
+
 void poll_radio() {
   const std::int64_t now = esp_timer_get_time();
+  if (time_reapply.exchange(false)) {
+    settings.ntp = config::get().ntp;
+    apply_time_policy(settings.ntp);
+  }
   if (reapply.exchange(false)) {
     settings = config::get();
+    apply_time_policy(settings.ntp);
     // Reconcile lan.on and invalidate old sessions even when the station
     // stays associated with the same network.
     stop_server("settings");
@@ -443,18 +428,23 @@ void poll_radio() {
   if (!settings.wifi_on || !settings.ssid[0])
     return;
   const bool up = station_has_ip.load();
+  const auto ip_generation = station_ip_generation.load();
+  if (up && ip_generation != handled_ip_generation) {
+    handled_ip_generation = ip_generation;
+    aq::network_time::ip_changed();
+  }
   if (up && !connected) {
     connected = true;
     // Nonblocking SNTP: successful responses alone produce an anchor. DNS or
     // internet failure leaves monotonic capture running without fake UTC.
-    start_sntp();
+    aq::network_time::set_network_available(true);
     set_status("connected", true);
     aqlog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
                                settings.ssid, status().ip, station_rssi());
     start_server();
   } else if (!up && connected) {
     connected = false;
-    stop_sntp();
+    aq::network_time::set_network_available(false);
     stop_server("wifi-lost");
     aqlog.record_only().println("WIFI LOST");
     radio_connect();
@@ -481,6 +471,7 @@ void poll_radio() {
       portEXIT_CRITICAL(&status_mutex);
     }
   }
+  aq::network_time::poll();
 }
 
 std::uint8_t auth_code(wifi_auth_mode_t mode) {
@@ -829,14 +820,7 @@ void lan_task(void *) {
 } // namespace
 
 bool take_time_anchor(TimeAnchor &anchor) {
-  portENTER_CRITICAL(&time_mutex);
-  const bool pending = network_anchor_pending;
-  if (pending) {
-    anchor = network_anchor;
-    network_anchor_pending = false;
-  }
-  portEXIT_CRITICAL(&time_mutex);
-  return pending;
+  return aq::network_time::take_anchor(anchor);
 }
 
 bool begin(const char *host, const ble::Identity &identity,
@@ -898,6 +882,7 @@ bool begin(const char *host, const ble::Identity &identity,
 }
 
 void apply_settings() { reapply = true; }
+void apply_time_settings() { time_reapply = true; }
 
 bool request_scan(ble::Link link, std::uint32_t link_generation,
                   std::uint8_t peer) {

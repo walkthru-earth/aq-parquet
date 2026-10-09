@@ -11,7 +11,8 @@
 #include <vector>
 
 namespace {
-unsigned bonds_cleared = 0, sessions_dropped = 0, wifi_reapplied = 0;
+unsigned bonds_cleared = 0, sessions_dropped = 0, wifi_reapplied = 0,
+         time_reapplied = 0;
 struct Reply {
   ble::Link link;
   std::vector<std::uint8_t> bytes;
@@ -61,6 +62,39 @@ ble::ControlRequest request(ble::Op op, ble::Link link = ble::Link::Ble,
 }
 void handle(const ble::ControlRequest &request, Peer &peer) {
   assert(aqsync::handle_common_control(request, peer.callbacks()));
+}
+
+void paged_configuration() {
+  for (std::uint8_t page = 0; page <= 4; ++page) {
+    Peer peer;
+    handle(
+        request(ble::kOpGetConfig, ble::Link::Lan, std::string(1, char(page))),
+        peer);
+    assert(peer.errors.empty() && peer.successful.size() == 1);
+    const auto &frame = peer.successful[0].bytes;
+    assert(frame[0] == ble::kFrameConfig && frame.size() < 482);
+    const std::string json(frame.begin() + 2, frame.end());
+    assert(json.find(page == 0   ? "\"ble\""
+                     : page == 1 ? "\"location\""
+                                 : "\"ntp\"") != std::string::npos);
+  }
+  for (const auto &body : {std::string(1, char(5)), std::string(2, char(0))}) {
+    Peer peer;
+    handle(request(ble::kOpGetConfig, ble::Link::Ble, body), peer);
+    assert(peer.successful.empty() && peer.errors.size() == 1);
+    assert(peer.errors[0].code == ble::kErrMalformed);
+  }
+  const unsigned previous_wifi = wifi_reapplied, previous_time = time_reapplied;
+  Peer peer;
+  handle(request(ble::kOpSetConfig, ble::Link::Lan, "ntp.interval_s=7200"),
+         peer);
+  assert(peer.errors.empty() && time_reapplied == previous_time + 1);
+  assert(wifi_reapplied == previous_wifi);
+  peer = Peer{};
+  handle(request(ble::kOpSetConfig, ble::Link::Lan, "location.country=EG"),
+         peer);
+  assert(peer.errors.empty() && time_reapplied == previous_time + 1);
+  assert(wifi_reapplied == previous_wifi);
 }
 
 void configuration() {
@@ -250,13 +284,19 @@ Status status() {
   return value;
 }
 void drop_session() { ++sessions_dropped; }
+void apply_time_settings() { ++time_reapplied; }
 void apply_settings() { ++wifi_reapplied; }
 } // namespace lan
 
 int main() {
   configuration();
+  paged_configuration();
   config_chunks();
   token_guard();
   logs();
   dispatch();
 }
+
+namespace aq::network_time {
+Status status() { return Status{}; }
+} // namespace aq::network_time

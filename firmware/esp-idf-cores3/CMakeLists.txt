@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 set(IDF_TARGET esp32s3)
-set(EXTRA_COMPONENT_DIRS "../common" "../common/runtime" "../common/connectivity" "../common/logger")
+set(EXTRA_COMPONENT_DIRS "../common" "../common/runtime" "../common/connectivity" "../common/logger" "../common/location")
 set(AQ_VARIANT bringup)
 set(COMPONENTS aq_cores3)
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components/aq_cores3")
