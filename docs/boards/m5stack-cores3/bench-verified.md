@@ -510,3 +510,76 @@ The sensor remains on v6.7. Android/iPhone throughput after the upgrade, BLE,
 background/coexistence/endurance and other boards still need their own dated
 qualification. The mobile app was separately rebuilt/installed and now shows
 measured average KiB/s; a host result is not a phone observation.
+
+
+## Board 1, automatic Bluetooth UTC and owner-authorized fresh SD start
+
+Verified **2026-10-09** on CoreS3 MAC `44:1b:f6:e2:6b:40`, native USB
+`/dev/cu.usbmodem101`, with firmware source commit `01e6468` and Android mobile
+commit `5d5db51`. Repeated ports, chip, flash-ID and read-only eFuse checks in
+order: ESP32-S3 rev0.2, 16 MB Quad flash, secure boot/encryption disabled. A new
+full backup `backup/m5stack-cores3-flash-20261009T103351Z.bin` was verified at
+16,777,216 bytes, SHA-256
+`4f55308171dbb27a8dba932d92c223f894ef92d91156dc35daa74e71257a147f`,
+before any write. Backups are private ignored artifacts, not repository content.
+
+The owner explicitly requested deletion of old SD Parquet recordings. An
+isolated maintenance image, guarded by this exact board MAC and an explicit
+serial token, removed only regular `.parquet` files under `/output` and
+`/parquet`. It used the production M5Unified/SPI2 initialization and matching
+partition table, with logging/radios off and formatting disabled. It enumerated
+before deletion, closed directory handles before each bounded removal batch,
+then verified counts and unmounted SD. Result: **1,267 files / 52,315,296 bytes
+removed, zero Parquet remaining, zero errors**. Two quarantined `.partial`
+files totaling 17,291 bytes were retained unchanged by count/size. Other roots,
+NVS, owner settings and the phone archive were not cleared. The maintenance
+image was immediately replaced with production firmware; no permanent delete
+API was added.
+
+Production application SHA-256:
+`03ce045f2edf3abbb7ae2151fddf16a1ae43e0da977c12c83ec082beb03424cf`.
+Normal separate-component Arduino upload verified all written hashes and
+preserved NVS. Runtime station remained
+`53315f5f-cb85-4d8d-b623-d56266084189`, boot
+`95c96aca68fe09d683a7df86669bc33f`; startup scanned zero finalized files and the
+two retained partials. Initial status reported zero drops/errors and
+`failed=false`.
+
+The updated OnePlus 7 Pro (GM1911, Android 16) connected over BLE without a
+manual time action. Serial recorded `source=host`, epoch `1791542381`, monotonic
+`55205803` microseconds, `transport=ble previous=rtc skew_ms=854`, followed by
+`RTC write=ok`. The initial RTC batch (sequences 0–2) finalized automatically,
+then the first genuine phone-timed measurement (sequence 3) finalized without
+waiting for the quarter-hour rotation. Both paths used `2026/10/09/data_1030`.
+No USB time-setting command was used.
+
+Network SNTP subsequently supplied source 3 at monotonic `82289782` µs with
+UTC anchor `1791542410190961000` ns, and the RTC write succeeded. On reconnect,
+the phone selected authenticated Wi-Fi LAN and automatically supplied another
+host anchor (`1791542442235000000` ns at `115493452` µs); serial recorded
+`transport=lan previous=network skew_ms=-1159` and another successful RTC write.
+These offsets describe different clocks; subsecond storage precision does not
+establish equivalent absolute UTC accuracy.
+
+All six new files were fetched unchanged over USB with transfer length/CRC
+validation. **PyArrow 25.0.0 and DuckDB 1.5.5 matched every value/null across ten
+rows (sequences 0–9)**. Exact row UTC equaled the stored anchor plus monotonic
+delta in every row, and all UTC dates/quarter-hour windows agreed with their
+paths. Sources included RTC (2), phone (1) and network (3). The BLE anchor
+retained the phone's fractional milliseconds (`1791542381919000000` ns);
+monotonic deltas and the SNTP anchor retained microseconds. Every file carried
+reconciliation footer anchors. Drop, missed-deadline and storage-error fields
+were zero. Final status: six finalized files, zero drops/errors,
+`failed=false`. Android's Files screen reported the new day's **6/6 files,
+65.1 KiB**, all synced and checked; its older archive was retained.
+
+Private ignored artifacts are under
+`firmware/arduino-m5unified/artifacts/utc-fresh-20261009/`: the exact production
+application, sanitized runtime/cleanup logs, upload log, six readbacks,
+`readback-report.json`, `utc-validation.json` and `final-status.txt`. The
+isolated maintenance source/binary is in adjacent `sd-cleanup-20261009/`.
+This run establishes real automatic BLE/LAN/SNTP UTC and fresh collection on
+this CoreS3/OnePlus pair. Its RTC was available at boot: complete power loss,
+unknown-UTC recovery, midnight repartition and iOS hardware behavior were not
+physically exercised in this run; those paths retain their separate host and
+simulator evidence.
