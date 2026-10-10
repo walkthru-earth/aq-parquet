@@ -18,6 +18,7 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_vfs_fat.h>
+#include <fat_volume.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
@@ -308,16 +309,10 @@ void report_rtc_imu_touch() {
                static_cast<unsigned>(M5.Touch.getCount()));
 }
 
-bool report_sd() {
-  if (sd_card)
-    return true;
-  const auto board = M5.getBoard();
-  if (board != m5::board_t::board_M5StackCoreS3 &&
-      board != m5::board_t::board_M5StackCoreS3SE) {
-    aqlog.println("DIAG sd mounted=false status=unexpected_board "
-                  "format_attempted=false");
-    return false;
-  }
+// SDSPI attach and FAT mount on the M5GFX-owned bus. Never formats. A
+// remount keeps the DMA buffer: once radios run, internal DMA memory may be
+// too fragmented to reserve it again.
+esp_err_t mount_sd(bool keep_buffer) {
   // M5GFX owns SPI2 initialization, power and the startup SPI-mode handshake.
   // GPIO35 is shared LCD DC/SD MISO; finish display DMA/transactions before
   // attaching SDSPI. Never independently initialize or free the shared bus.
@@ -332,11 +327,8 @@ bool report_sd() {
   // FatFs metadata/file buffers may live in PSRAM. Reserve the DMA bounce
   // buffer now, before Wi-Fi/TCP bursts compete for internal RAM. The SDK's
   // ALLOC_ALIGNED_BUF flag only allocates automatically for non-SPI hosts.
-  if (!sd_transfer_buffer.reserve()) {
-    aqlog.println("DIAG sd mounted=false status=dma_buffer_unavailable "
-                  "format_attempted=false");
-    return false;
-  }
+  if (!sd_transfer_buffer.reserve())
+    return ESP_ERR_NO_MEM;
   host.dma_aligned_buffer = sd_transfer_buffer.data();
   host.unaligned_multi_block_rw_max_chunk_size =
       aq::storage::SdTransferBuffer::kSectors;
@@ -348,8 +340,28 @@ bool report_sd() {
   mount.max_files = 5;
   const esp_err_t result =
       esp_vfs_fat_sdspi_mount("/sd", &host, &device, &mount, &sd_card);
-  if (result != ESP_OK) {
+  if (result != ESP_OK && !keep_buffer)
     sd_transfer_buffer.release();
+  return result;
+}
+
+bool report_sd() {
+  if (sd_card)
+    return true;
+  const auto board = M5.getBoard();
+  if (board != m5::board_t::board_M5StackCoreS3 &&
+      board != m5::board_t::board_M5StackCoreS3SE) {
+    aqlog.println("DIAG sd mounted=false status=unexpected_board "
+                  "format_attempted=false");
+    return false;
+  }
+  if (!sd_transfer_buffer.reserve()) {
+    aqlog.println("DIAG sd mounted=false status=dma_buffer_unavailable "
+                  "format_attempted=false");
+    return false;
+  }
+  const esp_err_t result = mount_sd(false);
+  if (result != ESP_OK) {
     aqlog.printf("DIAG sd mounted=false status=missing_or_mount_failed "
                  "error=%d format_attempted=false\n",
                  result);
@@ -359,13 +371,15 @@ bool report_sd() {
   const esp_err_t capacity = esp_vfs_fat_info("/sd", &total, &free);
   aqlog.printf(
       "DIAG sd mounted=true card_bytes=%llu total_bytes=%llu "
-      "used_bytes=%llu capacity_error=%d clock_hz=%d "
+      "used_bytes=%llu capacity_error=%d cluster_bytes=%lu clock_hz=%d "
       "spi_host=SPI2 sck=%d miso=%d mosi=%d cs=%d dma_buffer_bytes=%u\n",
       static_cast<unsigned long long>(sd_card->csd.capacity) *
           sd_card->csd.sector_size,
       static_cast<unsigned long long>(total),
       static_cast<unsigned long long>(total >= free ? total - free : 0),
-      capacity, sd_card->real_freq_khz * 1000, kSdSck, kSdMiso, kSdMosi, kSdCs,
+      capacity,
+      static_cast<unsigned long>(aq::storage::fat_cluster_bytes(sd_card)),
+      sd_card->real_freq_khz * 1000, kSdSck, kSdMiso, kSdMosi, kSdCs,
       static_cast<unsigned>(aq::storage::SdTransferBuffer::kBytes));
   return true;
 }
@@ -833,6 +847,20 @@ void handle_touch_navigation() {
 }
 
 } // namespace
+
+// Storage worker only, with the shared display/storage lock held.
+bool telemetry::remount_sd() {
+  if (sd_card && esp_vfs_fat_sdcard_unmount("/sd", sd_card) != ESP_OK)
+    return false;
+  sd_card = nullptr;
+  return mount_sd(true) == ESP_OK;
+}
+std::uint32_t telemetry::sd_cluster_bytes() {
+  return aq::storage::fat_cluster_bytes(sd_card);
+}
+bool telemetry::sd_free_bytes(std::uint64_t &free_bytes) {
+  return sd_card && aq::storage::fat_free_bytes("/sd", free_bytes);
+}
 
 static void board_begin() {
   auto config = M5.config();

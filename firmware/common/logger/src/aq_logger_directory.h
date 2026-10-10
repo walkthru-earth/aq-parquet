@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
 
@@ -96,6 +98,171 @@ bool walk_directory(IO &io, const char *base, const char *relative,
   if (failure)
     errno = failure;
   return complete;
+}
+
+inline bool has_suffix(const char *name, const char *suffix) {
+  const std::size_t length = std::strlen(name), tail = std::strlen(suffix);
+  return length > tail && std::strcmp(name + length - tail, suffix) == 0;
+}
+
+// Quarantine keeps provenance. A ".partial" at `relative` below `root` moves
+// to "<root>/quarantine/<station>/<partition>/<name>-<boot>-<counter>.partial"
+// where <station> is the "station=..." segment (or "no-station") and the
+// other directory segments are joined with '_' (or "root" when none). Both
+// outputs are length checked; nothing is truncated.
+inline bool quarantine_target(const char *root, const char *relative,
+                              const char *boot, std::uint32_t counter,
+                              char *directory, std::size_t directory_size,
+                              char *path, std::size_t path_size) {
+  if (!root || !relative || !boot || !directory || !path ||
+      !has_suffix(relative, ".partial") || relative[0] == '/') {
+    errno = EINVAL;
+    return false;
+  }
+  const char *base = std::strrchr(relative, '/');
+  base = base ? base + 1 : relative;
+  char station[96] = "no-station";
+  char partition[192] = "";
+  std::size_t used = 0;
+  for (const char *segment = relative; segment < base;) {
+    const char *end = std::strchr(segment, '/');
+    const std::size_t length = static_cast<std::size_t>(end - segment);
+    if (length == 0 || (length == 1 && segment[0] == '.') ||
+        (length == 2 && segment[0] == '.' && segment[1] == '.')) {
+      errno = EINVAL;
+      return false;
+    }
+    if (std::strncmp(segment, "station=", 8) == 0 &&
+        std::strcmp(station, "no-station") == 0) {
+      if (length >= sizeof(station)) {
+        errno = ENAMETOOLONG;
+        return false;
+      }
+      std::memcpy(station, segment, length);
+      station[length] = '\0';
+    } else {
+      const std::size_t needed = used + (used ? 1 : 0) + length;
+      if (needed >= sizeof(partition)) {
+        errno = ENAMETOOLONG;
+        return false;
+      }
+      if (used)
+        partition[used++] = '_';
+      std::memcpy(partition + used, segment, length);
+      used += length;
+      partition[used] = '\0';
+    }
+    segment = end + 1;
+  }
+  const int stem = static_cast<int>(std::strlen(base) - 8); // drop .partial
+  int length = std::snprintf(directory, directory_size, "%s/quarantine/%s/%s",
+                             root, station, used ? partition : "root");
+  if (length < 0 || static_cast<std::size_t>(length) >= directory_size) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  length = std::snprintf(path, path_size, "%s/%.*s-%s-%08lx.partial", directory,
+                         stem, base, boot, static_cast<unsigned long>(counter));
+  if (length < 0 || static_cast<std::size_t>(length) >= path_size) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  return true;
+}
+
+// The writer names "<P>-<attempt>.partial" and renames it to
+// "<P>-<last>-<attempt>.parquet". A power cut inside the FAT rename can leave
+// both entries sharing clusters, so such a pair is a crosslink suspect.
+inline bool crosslink_pair(const char *partial, const char *parquet) {
+  if (!has_suffix(partial, ".partial") || !has_suffix(parquet, ".parquet"))
+    return false;
+  const std::size_t partial_length = std::strlen(partial) - 8;
+  const char *dash = nullptr;
+  for (std::size_t i = partial_length; i-- > 0;)
+    if (partial[i] == '-') {
+      dash = partial + i;
+      break;
+    }
+  if (!dash || dash == partial)
+    return false;
+  const std::size_t prefix = static_cast<std::size_t>(dash - partial);
+  const char *attempt = dash + 1;
+  const std::size_t attempt_length = partial_length - prefix - 1;
+  if (attempt_length == 0)
+    return false;
+  for (std::size_t i = 0; i < attempt_length; ++i)
+    if (attempt[i] < '0' || attempt[i] > '9')
+      return false;
+  // parquet = <prefix>-<last>-<attempt>.parquet
+  if (std::strncmp(parquet, partial, prefix) != 0 || parquet[prefix] != '-')
+    return false;
+  const char *last = parquet + prefix + 1;
+  const std::size_t rest = std::strlen(last) - 8; // drop .parquet
+  if (rest < attempt_length + 2)
+    return false;
+  const char *tail = last + rest - attempt_length;
+  if (std::strncmp(tail, attempt, attempt_length) != 0 || tail[-1] != '-')
+    return false;
+  const char *digit = last;
+  if (*digit == '-')
+    ++digit;
+  if (digit >= tail - 1)
+    return false;
+  for (; digit < tail - 1; ++digit)
+    if (*digit < '0' || *digit > '9')
+      return false;
+  return true;
+}
+
+// True when `directory` holds the finalized sibling of `partial`, or when the
+// directory cannot be read completely. Callers leave suspects untouched.
+template <class IO>
+bool crosslink_suspect(IO &io, const char *directory, const char *partial) {
+  auto *handle = io.open(directory);
+  if (!handle)
+    return true;
+  bool suspect = false;
+  for (;;) {
+    errno = 0;
+    const auto *entry = io.read(handle);
+    if (!entry) {
+      suspect = errno != 0;
+      break;
+    }
+    if (crosslink_pair(partial, entry->d_name)) {
+      suspect = true;
+      break;
+    }
+  }
+  if (io.close(handle) != 0)
+    suspect = true;
+  return suspect;
+}
+
+// Moves one ".partial" into its provenance quarantine directory. IO supplies
+// make_directories(path), exists(path) and rename(from, to) with any bus
+// locking. An existing destination is never replaced. Nothing is deleted.
+template <class IO>
+bool quarantine_partial(IO &io, const char *root, const char *relative,
+                        const char *boot, std::uint32_t counter,
+                        char *destination, std::size_t destination_size) {
+  char directory[416], source[416];
+  if (!quarantine_target(root, relative, boot, counter, directory,
+                         sizeof(directory), destination, destination_size))
+    return false;
+  const int length =
+      std::snprintf(source, sizeof(source), "%s/%s", root, relative);
+  if (length < 0 || static_cast<std::size_t>(length) >= sizeof(source)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  if (!io.make_directories(directory))
+    return false;
+  if (io.exists(destination)) {
+    errno = EEXIST;
+    return false;
+  }
+  return io.rename(source, destination) == 0;
 }
 
 } // namespace aq::logger::detail

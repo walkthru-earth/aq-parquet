@@ -3,7 +3,10 @@
 #include <cassert>
 #include <cstring>
 #include <dirent.h>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -170,6 +173,177 @@ void check_archive_walk() {
   assert(!walk_directory(io, long_base.c_str(), "", 0, visit));
   assert(errno == ENAMETOOLONG);
 }
+void check_quarantine_names() {
+  using aq::logger::detail::quarantine_target;
+  char directory[416], path[416];
+  assert(quarantine_target(
+      "/sd/output",
+      "station=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial", "b2",
+      7, directory, sizeof(directory), path, sizeof(path)));
+  assert(std::strcmp(directory, "/sd/output/quarantine/station=abc/"
+                                "year=2026_month=10_day=11") == 0);
+  assert(std::strcmp(path, "/sd/output/quarantine/station=abc/"
+                           "year=2026_month=10_day=11/"
+                           "data_1200_b1_42-3-b2-00000007.partial") == 0);
+  assert(quarantine_target("/sd/output",
+                           "station=abc/unsynced/boot=b1/data_unsynced_b1_0-0."
+                           "partial",
+                           "b1", 0, directory, sizeof(directory), path,
+                           sizeof(path)));
+  assert(std::strcmp(path, "/sd/output/quarantine/station=abc/unsynced_boot=b1/"
+                           "data_unsynced_b1_0-0-b1-00000000.partial") == 0);
+  assert(quarantine_target("/sd/output",
+                           "benchmarks/boot=b1/lz4_raw_b1_0-1."
+                           "partial",
+                           "b1", 1, directory, sizeof(directory), path,
+                           sizeof(path)));
+  assert(std::strcmp(directory,
+                     "/sd/output/quarantine/no-station/benchmarks_boot=b1") ==
+         0);
+  assert(quarantine_target("/sd/output", "stray-0.partial", "b1", 2, directory,
+                           sizeof(directory), path, sizeof(path)));
+  assert(std::strcmp(path, "/sd/output/quarantine/no-station/root/"
+                           "stray-0-b1-00000002.partial") == 0);
+  // Rejections: not a partial, unsafe segments, absolute or too long.
+  for (const char *bad :
+       {"station=a/x.parquet", "station=a/../x.partial", "station=a//x.partial",
+        "/abs/x.partial", "./x.partial", ".partial"}) {
+    errno = 0;
+    assert(!quarantine_target("/sd/output", bad, "b1", 0, directory,
+                              sizeof(directory), path, sizeof(path)));
+  }
+  assert(!quarantine_target("/sd/output", "station=a/x-0.partial", "b1", 0,
+                            directory, 24, path, sizeof(path)));
+  assert(errno == ENAMETOOLONG);
+  assert(!quarantine_target("/sd/output", "station=a/x-0.partial", "b1", 0,
+                            directory, sizeof(directory), path, 40));
+  assert(errno == ENAMETOOLONG);
+  const std::string long_station =
+      "station=" + std::string(120, 's') + "/x-0.partial";
+  assert(!quarantine_target("/sd/output", long_station.c_str(), "b1", 0,
+                            directory, sizeof(directory), path, sizeof(path)));
+  assert(errno == ENAMETOOLONG);
+}
+
+struct PosixQuarantineIO {
+  bool make_directories(const char *path) {
+    std::error_code error;
+    std::filesystem::create_directories(path, error);
+    return !error;
+  }
+  bool exists(const char *path) { return ::access(path, F_OK) == 0; }
+  int rename(const char *from, const char *to) { return ::rename(from, to); }
+};
+
+// A write failure quarantines its own .partial in the same boot, with
+// provenance, and never replaces an existing quarantined fragment.
+void check_same_boot_quarantine() {
+  namespace fs = std::filesystem;
+  char temporary[] = "/tmp/aq-quarantine-XXXXXX";
+  assert(::mkdtemp(temporary));
+  const fs::path root = fs::path(temporary) / "output";
+  const char *relative =
+      "station=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial";
+  fs::create_directories((root / relative).parent_path());
+  {
+    std::ofstream(root / relative) << "partial bytes";
+  }
+  PosixQuarantineIO io;
+  char moved[416];
+  assert(aq::logger::detail::quarantine_partial(io, root.c_str(), relative,
+                                                "b1", 0, moved, sizeof(moved)));
+  assert(!fs::exists(root / relative));
+  assert(fs::exists(root / "station=abc/year=2026/month=10/day=11"));
+  const fs::path expected = root / "quarantine/station=abc/"
+                                   "year=2026_month=10_day=11/"
+                                   "data_1200_b1_42-3-b1-00000000.partial";
+  assert(moved == expected.string() && fs::file_size(expected) == 13);
+  // Same counter again must refuse to overwrite the earlier fragment.
+  {
+    std::ofstream(root / relative) << "second";
+  }
+  assert(!aq::logger::detail::quarantine_partial(
+      io, root.c_str(), relative, "b1", 0, moved, sizeof(moved)));
+  assert(errno == EEXIST && fs::exists(root / relative));
+  assert(fs::file_size(expected) == 13);
+  assert(aq::logger::detail::quarantine_partial(io, root.c_str(), relative,
+                                                "b1", 1, moved, sizeof(moved)));
+  assert(!fs::exists(root / relative));
+  // A missing source fails and creates nothing beyond the directory.
+  assert(!aq::logger::detail::quarantine_partial(
+      io, root.c_str(), relative, "b1", 2, moved, sizeof(moved)));
+  fs::remove_all(temporary);
+}
+
+struct FakeListing {
+  std::vector<std::string> names;
+  bool fail_open = false, fail_read = false, fail_close = false;
+  unsigned index = 0;
+  bool opened = false;
+  struct dirent entry{};
+  FakeListing *open(const char *) {
+    if (fail_open) {
+      errno = EIO;
+      return nullptr;
+    }
+    opened = true;
+    index = 0;
+    return this;
+  }
+  const struct dirent *read(FakeListing *) {
+    if (index == names.size()) {
+      if (fail_read)
+        errno = EIO;
+      return nullptr;
+    }
+    std::snprintf(entry.d_name, sizeof(entry.d_name), "%s",
+                  names[index++].c_str());
+    return &entry;
+  }
+  int close(FakeListing *) {
+    opened = false;
+    return fail_close ? -1 : 0;
+  }
+};
+
+void check_crosslink_guard() {
+  using aq::logger::detail::crosslink_pair;
+  using aq::logger::detail::crosslink_suspect;
+  assert(crosslink_pair("data_1200_b1_42-3.partial",
+                        "data_1200_b1_42-131-3.parquet"));
+  assert(crosslink_pair("data_unsynced_b1_0-12.partial",
+                        "data_unsynced_b1_0-5-12.parquet"));
+  // Different attempt, different stem, missing last or not a number.
+  assert(!crosslink_pair("data_1200_b1_42-3.partial",
+                         "data_1200_b1_42-131-4.parquet"));
+  assert(!crosslink_pair("data_1200_b1_42-3.partial",
+                         "data_1200_b1_43-131-3.parquet"));
+  assert(!crosslink_pair("data_1200_b1_42-3.partial",
+                         "data_1200_b1_42--3.parquet"));
+  assert(!crosslink_pair("data_1200_b1_42-3.partial",
+                         "data_1200_b1_42-x1-3.parquet"));
+  assert(!crosslink_pair("data_1200_b1_42-3.partial",
+                         "data_1200_b1_42-131-13.parquet"));
+  assert(!crosslink_pair("data_1200_b1_42-3.partial", "other.parquet"));
+  assert(!crosslink_pair("nodash.partial", "nodash-1-2.parquet"));
+  assert(!crosslink_pair("x-.partial", "x-1-.parquet"));
+
+  FakeListing listing;
+  listing.names = {"data_1200_b1_42-131-3.parquet", "data_1200_b1_42-3.partial",
+                   "data_1215_b1_132-4.partial"};
+  assert(crosslink_suspect(listing, "/sd/day", "data_1200_b1_42-3.partial"));
+  assert(!listing.opened);
+  assert(!crosslink_suspect(listing, "/sd/day", "data_1215_b1_132-4.partial"));
+  // An unreadable directory is treated as suspect so nothing moves.
+  listing.fail_read = true;
+  assert(crosslink_suspect(listing, "/sd/day", "data_1215_b1_132-4.partial"));
+  listing.fail_read = false;
+  listing.fail_open = true;
+  assert(crosslink_suspect(listing, "/sd/day", "data_1215_b1_132-4.partial"));
+  listing.fail_open = false;
+  listing.fail_close = true;
+  assert(crosslink_suspect(listing, "/sd/day", "data_1215_b1_132-4.partial"));
+}
 } // namespace
 
 int main() {
@@ -186,4 +360,7 @@ int main() {
   assert(!check(Scenario::RaceFile));
   assert(errno == ENOTDIR && inspections == 2 && creations == 1);
   check_archive_walk();
+  check_quarantine_names();
+  check_same_boot_quarantine();
+  check_crosslink_guard();
 }

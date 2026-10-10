@@ -7,8 +7,109 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace {
+
+// Pinned `cfg` blob contract. A layout change must bump the version.
+constexpr std::size_t kHeaderBytes = 12;
+constexpr std::size_t kPayloadBytes = 817;
+constexpr std::size_t kPairAt = 0, kPinAt = 1, kDisplayAt = 5, kWifiAt = 6,
+                      kLanAt = 7, kSsidAt = 8, kPskAt = 41, kTokenAt = 105,
+                      kSensorAt = 137, kLocationAt = 217, kNtpAt = 257;
+
+std::uint32_t crc32(const std::uint8_t *data, std::size_t size) {
+  std::uint32_t crc = 0xffffffffU;
+  for (std::size_t i = 0; i < size; ++i) {
+    crc ^= data[i];
+    for (int bit = 0; bit < 8; ++bit)
+      crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+  }
+  return ~crc;
+}
+std::uint32_t le32(const std::uint8_t *p) {
+  return std::uint32_t(p[0]) | std::uint32_t(p[1]) << 8 |
+         std::uint32_t(p[2]) << 16 | std::uint32_t(p[3]) << 24;
+}
+void put_le32(std::uint8_t *p, std::uint32_t value) {
+  for (int i = 0; i < 4; ++i)
+    p[i] = static_cast<std::uint8_t>(value >> (8 * i));
+}
+std::vector<std::uint8_t> &cfg() { return fake_platform::nvs.blobs.at("cfg"); }
+std::uint8_t *payload() { return cfg().data() + kHeaderBytes; }
+char *field(std::size_t offset) {
+  return reinterpret_cast<char *>(payload() + offset);
+}
+void set_field(std::size_t offset, std::size_t size, const char *text) {
+  std::memset(field(offset), 0, size);
+  std::memcpy(field(offset), text, std::strlen(text));
+}
+void reseal() {
+  put_le32(cfg().data() + 8, crc32(payload(), cfg().size() - kHeaderBytes));
+}
+bool has_legacy_key() {
+  for (const auto *key : {"pair", "pin", "disp", "wifion", "ssid", "psk",
+                          "lanon", "token", "sensor", "location", "ntp"})
+    if (fake_platform::nvs.types.count(key))
+      return true;
+  return false;
+}
+void check_blob_header() {
+  const auto &blob = cfg();
+  assert(fake_platform::nvs.types.at("cfg") == 9);
+  assert(blob.size() == kHeaderBytes + kPayloadBytes);
+  assert(std::memcmp(blob.data(), "AQCF", 4) == 0);
+  assert(blob[4] == 1 && blob[5] == 0);
+  assert(blob[6] == (kPayloadBytes & 0xff) && blob[7] == (kPayloadBytes >> 8));
+  assert(le32(blob.data() + 8) ==
+         crc32(blob.data() + kHeaderBytes, kPayloadBytes));
+}
+std::string log_text() {
+  static char logs[DebugLog::kRingBytes + 1];
+  std::uint32_t total = 0;
+  const auto count = aqlog.tail(logs, sizeof(logs) - 1, total);
+  logs[count] = '\0';
+  return logs;
+}
+
+// A pre-blob image: every setting in its own typed key, as older firmware
+// committed them.
+void seed_legacy(bool with_policy_records) {
+  auto &nvs = fake_platform::nvs;
+  nvs = {};
+  const auto number = [&](const char *key, std::uint32_t value, unsigned type) {
+    nvs.numbers[key] = value;
+    nvs.types[key] = type;
+  };
+  const auto string = [&](const char *key, const char *value) {
+    nvs.strings[key] = value;
+    nvs.types[key] = 8;
+  };
+  number("pair", 1, 1);
+  number("pin", 654321, 4);
+  number("disp", 0, 1);
+  number("wifion", 1, 1);
+  string("ssid", "legacy-net");
+  string("psk", "legacy-password");
+  number("lanon", 0, 1);
+  nvs.blobs["token"] = std::vector<std::uint8_t>(config::kTokenBytes, 0x5a);
+  nvs.types["token"] = 9;
+  string("sensor", "Plantower|PMS5003T|PMS5003T-202604081332|1");
+  if (with_policy_records) {
+    string("location", "|5|EG");
+    string("ntp", "1|0|0|7200|ntp.local|");
+  }
+}
+void check_legacy_values(const config::Settings &settings) {
+  assert(settings.pair == config::PairMode::Fixed && settings.pin == 654321);
+  assert(!settings.display && settings.wifi_on && !settings.lan_on);
+  assert(std::strcmp(settings.ssid, "legacy-net") == 0);
+  assert(std::strcmp(settings.psk, "legacy-password") == 0);
+  for (const auto byte : settings.token)
+    assert(byte == 0x5a);
+  assert(std::strcmp(settings.sensor_serial, "PMS5003T-202604081332") == 0);
+  assert(settings.sensor_batch_candidate);
+}
 bool same(const config::Settings &a, const config::Settings &b) {
   return a.pair == b.pair && a.pin == b.pin && a.display == b.display &&
          a.wifi_on == b.wifi_on && std::strcmp(a.ssid, b.ssid) == 0 &&
@@ -57,14 +158,14 @@ void first_boot(bool display) {
          (display ? config::PairMode::Random : config::PairMode::Fixed));
   assert(first.pin < 1000000 && first.pin != config::kLegacyDefaultPin);
   assert(!first.wifi_on && first.lan_on && !first.ssid[0] && !first.psk[0]);
-  assert(fake_platform::nvs.numbers.at("pin") == first.pin);
-  assert(fake_platform::nvs.blobs.at("token").size() == config::kTokenBytes);
   assert(!config::reboot_required());
-  assert(fake_platform::nvs.types.at("pair") == 1);
-  assert(fake_platform::nvs.types.at("pin") == 4);
-  assert(fake_platform::nvs.types.at("ssid") == 8);
-  assert(fake_platform::nvs.types.at("token") == 9);
-  assert(fake_platform::nvs.commits == 11);
+  // A fresh device seeds one CRC-protected record with one write and commit.
+  check_blob_header();
+  assert(le32(payload() + kPinAt) == first.pin);
+  assert(std::memcmp(payload() + kTokenAt, first.token, config::kTokenBytes) ==
+         0);
+  assert(!has_legacy_key());
+  assert(fake_platform::nvs.writes == 1 && fake_platform::nvs.commits == 1);
   assert(
       config::load(!display)); // stored capability/pairing defaults are frozen
   assert(same(first, config::get()));
@@ -78,15 +179,28 @@ void first_boot(bool display) {
 void migration() {
   assert(config::load(false));
   const auto original = config::get();
-  fake_platform::nvs.numbers["pin"] = config::kLegacyDefaultPin;
+  put_le32(payload() + kPinAt, config::kLegacyDefaultPin);
+  reseal();
   assert(config::load(false));
   const auto migrated = config::get();
   assert(migrated.pin != config::kLegacyDefaultPin && migrated.pin < 1000000);
   assert(migrated.pair == config::PairMode::Fixed);
   assert(std::memcmp(migrated.token, original.token, config::kTokenBytes) == 0);
-  assert(fake_platform::nvs.numbers.at("pin") == migrated.pin);
+  check_blob_header();
+  assert(le32(payload() + kPinAt) == migrated.pin);
   assert(config::load(false));
   assert(same(migrated, config::get()));
+  // Legacy per-key universal PIN still rotates, while the old key is retained.
+  seed_legacy(true);
+  fake_platform::nvs.numbers["pin"] = config::kLegacyDefaultPin;
+  assert(config::load(false));
+  const auto rotated = config::get();
+  assert(rotated.pin != config::kLegacyDefaultPin && rotated.pin < 1000000);
+  check_blob_header();
+  assert(le32(payload() + kPinAt) == rotated.pin);
+  assert(fake_platform::nvs.numbers.at("pin") == config::kLegacyDefaultPin);
+  assert(config::load(false));
+  assert(same(rotated, config::get()));
 }
 
 void validation() {
@@ -195,7 +309,7 @@ void sensor_identity() {
   accept("sensor.serial=PMS5003T-202402291");
   accept("sensor.serial=");
   assert(!config::get().sensor_serial[0]);
-  fake_platform::nvs.fail_write_key = "sensor";
+  fake_platform::nvs.fail_write_key = "cfg";
   const auto before = config::get();
   config::Actions actions;
   char bad_key[64];
@@ -208,25 +322,33 @@ void persistence_failure() {
   assert(config::load(false));
   accept("wifi.ssid=fixture-network\nwifi.psk=fixture-password");
   const auto before = config::get();
-  for (const auto *key : {"ssid", "psk", "pin", "token"}) {
-    fake_platform::nvs.fail_write_key = key;
-    config::Actions actions;
-    char bad_key[64];
-    const std::string change = std::strcmp(key, "ssid") == 0  ? "wifi.ssid="
-                               : std::strcmp(key, "psk") == 0 ? "wifi.psk="
-                               : std::strcmp(key, "pin") == 0
-                                   ? "ble.pin=000001"
-                                   : "lan.rotate_token=1";
-    assert(!apply(change, actions, bad_key));
-    assert(std::strcmp(bad_key, "nvs") == 0);
-    assert(same(before, config::get()));
-    fake_platform::nvs.fail_write_key.clear();
+  const auto stored = cfg();
+  // Every setting shares one record, so one failed blob write or commit
+  // rejects the whole save and the previous record stays readable.
+  for (const auto *change :
+       {"wifi.ssid=", "wifi.psk=", "ble.pin=000001", "lan.rotate_token=1"}) {
+    for (const bool commit_fails : {false, true}) {
+      (commit_fails ? fake_platform::nvs.fail_commit_key
+                    : fake_platform::nvs.fail_write_key) = "cfg";
+      const auto writes = fake_platform::nvs.writes;
+      config::Actions actions;
+      char bad_key[64];
+      assert(!apply(change, actions, bad_key));
+      assert(std::strcmp(bad_key, "nvs") == 0);
+      assert(same(before, config::get()));
+      assert(fake_platform::nvs.writes == writes + 1);
+      assert(cfg() == stored);
+      fake_platform::nvs.fail_write_key.clear();
+      fake_platform::nvs.fail_commit_key.clear();
+    }
   }
-  fake_platform::nvs.fail_commit_key = "token";
+  assert(config::load(false));
+  assert(same(before, config::get()));
+  fake_platform::nvs.fail_commit_key = "cfg";
   assert(!config::rotate_token());
   assert(same(before, config::get()));
   fake_platform::nvs.fail_commit_key.clear();
-  fake_platform::nvs.fail_write_key = "token";
+  fake_platform::nvs.fail_write_key = "cfg";
   assert(!config::rotate_token());
   assert(same(before, config::get()));
   fake_platform::nvs.fail_write_key.clear();
@@ -281,7 +403,7 @@ void time_and_location() {
   assert(!config::same_location(cap_change, config::get().location));
   assert(aq::location::resolution(coarse) == 5 &&
          coarse != 0x8928308280fffffULL);
-  assert(fake_platform::nvs.strings.at("location").find("8928308280fffff") ==
+  assert(std::string(field(kLocationAt)).find("8928308280fffff") ==
          std::string::npos);
   assert(config::build_page(json, sizeof(json), 1));
   assert(std::strstr(json, "\"country\":\"EG\""));
@@ -312,31 +434,171 @@ void time_and_location() {
   assert(!config::build_page(json, 8, 1) && json[0] == '\0');
   assert(!config::build_page(json, sizeof(json), 5));
   const auto before_failure = config::get();
-  fake_platform::nvs.fail_write_key = "location";
+  fake_platform::nvs.fail_write_key = "cfg";
   assert(!apply("location.country=US", actions, bad_key));
   assert(std::strcmp(bad_key, "nvs") == 0);
   assert(same(before_failure, config::get()));
   fake_platform::nvs.fail_write_key.clear();
-  fake_platform::nvs.fail_commit_key = "ntp";
+  fake_platform::nvs.fail_commit_key = "cfg";
   assert(!apply("ntp.public_fallback=1", actions, bad_key));
   assert(std::strcmp(bad_key, "nvs") == 0);
   assert(same(before_failure, config::get()));
   fake_platform::nvs.fail_commit_key.clear();
   assert(config::load(false));
   assert(same(before_failure, config::get()));
-  fake_platform::nvs.strings["location"] = "broken|15|EG";
-  fake_platform::nvs.strings["ntp"] = "broken";
+  // A sealed record still passes the same validation as per-key values.
+  set_field(kLocationAt, 40, "broken|15|EG");
+  set_field(kNtpAt, 560, "broken");
+  reseal();
   assert(config::load(false));
   assert(config::get().location.cell == 0);
   assert(!config::get().ntp.enabled && !config::get().ntp.public_fallback);
-  fake_platform::nvs.strings.erase("location");
-  fake_platform::nvs.types.erase("location");
-  fake_platform::nvs.strings.erase("ntp");
-  fake_platform::nvs.types.erase("ntp");
-  assert(config::load(false)); // legacy migration
-  assert(config::get().ntp.dhcp && config::get().ntp.public_fallback);
   accept("location.cell=\nlocation.country=");
   assert(config::get().location.cell == 0);
+}
+
+void blob_round_trip() {
+  config::set_sensor_hardware("Plantower", "PMS5003T");
+  assert(config::load(false));
+  const auto writes = fake_platform::nvs.writes;
+  const auto commits = fake_platform::nvs.commits;
+  accept("wifi.ssid=round-trip\nwifi.psk=round-trip-password\nwifi.on=1\n"
+         "ble.pair=none\nble.pin=024680\nlan.on=0\n"
+         "sensor.vendor=Plantower\nsensor.model=PMS5003T\n"
+         "sensor.serial=PMS5003T-202604081332\nsensor.batch_candidate=1\n"
+         "location.cell=8928308280fffff\nlocation.resolution=7\n"
+         "location.country=EG\nntp.dhcp=0\nntp.server1=ntp.local\n"
+         "ntp.server2=192.168.1.1\nntp.interval_s=900");
+  // One complete SET_CONFIG is one blob write and one commit.
+  assert(fake_platform::nvs.writes == writes + 1);
+  assert(fake_platform::nvs.commits == commits + 1);
+  check_blob_header();
+  assert(!has_legacy_key());
+  const auto saved = config::get();
+  assert(std::strcmp(field(kPskAt), "round-trip-password") == 0);
+  assert(payload()[kPairAt] == 2 && payload()[kWifiAt] == 1 &&
+         payload()[kLanAt] == 0 && payload()[kDisplayAt] == 0);
+  assert(config::load(false));
+  assert(same(saved, config::get()));
+  assert(config::get().pair == config::PairMode::None &&
+         config::get().pin == 24680);
+  assert(config::get().location.cell && config::get().location.resolution == 7);
+  assert(config::get().ntp.interval_s == 900 && !config::get().ntp.dhcp);
+  const auto logs = log_text();
+  assert(logs.find("round-trip-password") == std::string::npos);
+  assert(logs.find("024680") == std::string::npos);
+  assert(logs.find("CONFIG BLOB") == std::string::npos);
+}
+
+void legacy_migration() {
+  config::set_sensor_hardware("Plantower", "PMS5003T");
+  seed_legacy(true);
+  const fake_platform::Values legacy = fake_platform::nvs;
+  assert(config::load(true));
+  const auto loaded = config::get();
+  check_legacy_values(loaded);
+  assert(std::strcmp(loaded.location.country, "EG") == 0);
+  assert(loaded.ntp.enabled && !loaded.ntp.dhcp &&
+         !loaded.ntp.public_fallback && loaded.ntp.interval_s == 7200 &&
+         std::strcmp(loaded.ntp.servers[0], "ntp.local") == 0);
+  // Reading the legacy layout alone writes nothing.
+  assert(fake_platform::nvs.writes == 0 &&
+         !fake_platform::nvs.types.count("cfg"));
+  accept("wifi.on=0");
+  check_blob_header();
+  // Legacy keys stay exactly as older firmware left them.
+  auto &nvs = fake_platform::nvs;
+  assert(nvs.numbers == legacy.numbers && nvs.strings == legacy.strings);
+  for (const auto &entry : legacy.blobs)
+    assert(nvs.blobs.at(entry.first) == entry.second);
+  for (const auto &entry : legacy.types)
+    assert(nvs.types.at(entry.first) == entry.second);
+  assert(nvs.blobs.size() == legacy.blobs.size() + 1);
+  const auto migrated = config::get();
+  assert(!migrated.wifi_on);
+  assert(config::load(true));
+  assert(same(migrated, config::get()));
+  // Missing policy records on a legacy image receive defaults.
+  seed_legacy(false);
+  assert(config::load(false));
+  check_legacy_values(config::get());
+  assert(config::get().ntp.enabled && config::get().ntp.dhcp &&
+         config::get().ntp.public_fallback);
+  assert(config::get().location.cell == 0 &&
+         !config::get().location.country[0]);
+  // Malformed legacy records become unset location and disabled NTP.
+  seed_legacy(true);
+  fake_platform::nvs.strings["location"] = "broken|15|EG";
+  fake_platform::nvs.strings["ntp"] = "broken";
+  assert(config::load(false));
+  assert(config::get().location.cell == 0 &&
+         !config::get().location.country[0]);
+  assert(!config::get().ntp.enabled && !config::get().ntp.public_fallback);
+}
+
+void torn_blob() {
+  config::set_sensor_hardware("Plantower", "PMS5003T");
+  seed_legacy(true);
+  assert(config::load(false));
+  accept("wifi.ssid=blob-net\nwifi.psk=blob-password");
+  const auto good = cfg();
+  const auto blob_settings = config::get();
+  using Damage = void (*)(std::vector<std::uint8_t> &);
+  const Damage damages[] = {
+      [](std::vector<std::uint8_t> &b) { b[kHeaderBytes + kSsidAt] ^= 1; },
+      [](std::vector<std::uint8_t> &b) { b[8] ^= 0x80; },
+      [](std::vector<std::uint8_t> &b) { b.pop_back(); },
+      [](std::vector<std::uint8_t> &b) { b.resize(kHeaderBytes); },
+      [](std::vector<std::uint8_t> &b) { b.resize(3); },
+      [](std::vector<std::uint8_t> &b) { b.push_back(0); },
+      [](std::vector<std::uint8_t> &b) { b[0] = 'X'; },
+      [](std::vector<std::uint8_t> &b) { b[4] = 2; },
+      [](std::vector<std::uint8_t> &b) { b[6] = 0x30; },
+      [](std::vector<std::uint8_t> &b) {
+        // A sealed record whose fixed text field lost its terminator.
+        std::memset(b.data() + kHeaderBytes + kSsidAt, 's',
+                    config::kSsidMax + 1);
+      },
+  };
+  unsigned index = 0;
+  for (const auto damage : damages) {
+    cfg() = good;
+    damage(cfg());
+    if (index == 9) // reseal so the terminator check is reached on its own
+      reseal();
+    const auto writes = fake_platform::nvs.writes;
+    assert(config::load(false));
+    check_legacy_values(config::get());
+    assert(fake_platform::nvs.writes == writes); // no silent rewrite
+    assert(log_text().find("CONFIG BLOB invalid=true fallback=legacy") !=
+           std::string::npos);
+    cfg() = good;
+    assert(config::load(false));
+    assert(same(blob_settings, config::get()));
+    ++index;
+  }
+  // A type mismatch on `cfg` is also a torn record.
+  fake_platform::nvs.blobs.erase("cfg");
+  fake_platform::nvs.strings["cfg"] = "not-a-blob";
+  fake_platform::nvs.types["cfg"] = 8;
+  assert(config::load(false));
+  check_legacy_values(config::get());
+  // A damaged record with no legacy keys seeds a first-boot profile again.
+  fake_platform::nvs = {};
+  assert(config::load(false));
+  cfg()[kHeaderBytes] ^= 1;
+  assert(config::load(false));
+  assert(config::get().pair == config::PairMode::Fixed);
+  check_blob_header();
+  assert(!has_legacy_key());
+  // Invalid sensor text inside a sealed record clears only the sensor profile.
+  cfg() = good;
+  set_field(kSensorAt, 80, "Other|PMS5003T|PMS5003T-202604081332|1");
+  reseal();
+  assert(config::load(false));
+  assert(!config::get().sensor_vendor[0] &&
+         !config::get().sensor_batch_candidate);
+  assert(std::strcmp(config::get().ssid, "blob-net") == 0);
 }
 
 void unavailable() {
@@ -369,6 +631,12 @@ int main(int argc, char **argv) {
     persistence_failure();
   else if (test == "time-location")
     time_and_location();
+  else if (test == "blob")
+    blob_round_trip();
+  else if (test == "legacy")
+    legacy_migration();
+  else if (test == "torn")
+    torn_blob();
   else if (test == "unavailable")
     unavailable();
   else

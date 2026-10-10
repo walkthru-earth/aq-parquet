@@ -31,15 +31,6 @@ bool committed(nvs_handle_t store, esp_err_t result) {
   return result == ESP_OK && nvs_commit(store) == ESP_OK;
 }
 
-bool save_string(nvs_handle_t store, const char *key, const char *value) {
-  if (!committed(store, nvs_set_str(store, key, value)))
-    return false;
-  char readback[560]{};
-  std::size_t length = sizeof(readback);
-  return nvs_get_str(store, key, readback, &length) == ESP_OK &&
-         std::strcmp(readback, value) == 0;
-}
-
 std::uint8_t read_u8(nvs_handle_t store, const char *key,
                      std::uint8_t fallback) {
   std::uint8_t value;
@@ -264,39 +255,228 @@ bool same_ntp(const NtpSettings &a, const NtpSettings &b) {
          std::strcmp(a.servers[1], b.servers[1]) == 0;
 }
 
+// The complete configuration is one NVS blob under `cfg`. A single
+// nvs_set_blob replaces the whole record or leaves the previous one, and the
+// CRC rejects anything else. Older images stored one typed key per setting
+// (pair, pin, disp, wifion, ssid, psk, lanon, token, sensor, location, ntp).
+// Those keys are read when `cfg` is missing or damaged and are never erased.
+// Text records reuse the per-key encoders so both layouts share validation.
+constexpr const char *kBlobKey = "cfg";
+constexpr std::uint8_t kBlobMagic[4] = {'A', 'Q', 'C', 'F'};
+constexpr std::uint16_t kBlobVersion = 1;
+constexpr std::size_t kSensorRecordBytes = 80;
+constexpr std::size_t kLocationRecordBytes = 40;
+constexpr std::size_t kNtpRecordBytes = 560;
+
+// Byte arrays only, so the layout has no padding and no host byte order.
+struct BlobPayload {
+  std::uint8_t pair;
+  std::uint8_t pin[4];
+  std::uint8_t display;
+  std::uint8_t wifi_on;
+  std::uint8_t lan_on;
+  char ssid[kSsidMax + 1];
+  char psk[kPskMax + 1];
+  std::uint8_t token[kTokenBytes];
+  char sensor[kSensorRecordBytes];
+  char location[kLocationRecordBytes];
+  char ntp[kNtpRecordBytes];
+};
+struct BlobHeader {
+  std::uint8_t magic[4];
+  std::uint8_t version[2];
+  std::uint8_t length[2];
+  std::uint8_t crc32[4]; // IEEE CRC-32 over the payload bytes
+};
+struct Blob {
+  BlobHeader header;
+  BlobPayload payload;
+};
+static_assert(alignof(Blob) == 1, "blob layout must not contain padding");
+static_assert(sizeof(BlobHeader) == 12, "blob header is pinned");
+static_assert(sizeof(BlobPayload) == 817, "blob version 1 payload is pinned");
+static_assert(sizeof(Blob) == sizeof(BlobHeader) + sizeof(BlobPayload),
+              "blob header and payload are contiguous");
+static_assert(sizeof(BlobPayload) <= 0xffff, "payload length fits u16");
+static_assert(sizeof(BlobPayload::ssid) == sizeof(Settings::ssid) &&
+                  sizeof(BlobPayload::psk) == sizeof(Settings::psk) &&
+                  sizeof(BlobPayload::token) == sizeof(Settings::token),
+              "blob credentials mirror the settings fields");
+static_assert(sizeof(Settings::sensor_vendor) + sizeof(Settings::sensor_model) +
+                      sizeof(Settings::sensor_serial) + 2 <=
+                  kSensorRecordBytes,
+              "sensor record fits its field");
+static_assert(aq::location::kCellTextBytes + 3 + 1 + 3 <= kLocationRecordBytes,
+              "location record fits its field");
+static_assert(kNtpServerCount * (kNtpServerMax + 1) + 16 <= kNtpRecordBytes,
+              "NTP record fits its field");
+
+// Only the command worker saves after startup and load runs before it, so
+// the staged record and its readback can share static storage.
+Blob staged_blob;
+Blob readback_blob;
+
+std::uint32_t crc32(const std::uint8_t *data, std::size_t size) {
+  std::uint32_t crc = 0xffffffffU;
+  for (std::size_t i = 0; i < size; ++i) {
+    crc ^= data[i];
+    for (int bit = 0; bit < 8; ++bit)
+      crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+  }
+  return ~crc;
+}
+
+void put_le(std::uint8_t *out, std::uint32_t value, std::size_t bytes) {
+  for (std::size_t i = 0; i < bytes; ++i)
+    out[i] = static_cast<std::uint8_t>(value >> (8 * i));
+}
+
+std::uint32_t get_le(const std::uint8_t *in, std::size_t bytes) {
+  std::uint32_t value = 0;
+  for (std::size_t i = 0; i < bytes; ++i)
+    value |= static_cast<std::uint32_t>(in[i]) << (8 * i);
+  return value;
+}
+
+template <std::size_t N> bool terminated(const char (&field)[N]) {
+  return std::memchr(field, '\0', N) != nullptr;
+}
+
+void encode_blob(Blob &blob, const Settings &settings) {
+  std::memset(&blob, 0, sizeof(blob));
+  BlobPayload &payload = blob.payload;
+  payload.pair = static_cast<std::uint8_t>(settings.pair);
+  put_le(payload.pin, settings.pin, sizeof(payload.pin));
+  payload.display = settings.display ? 1 : 0;
+  payload.wifi_on = settings.wifi_on ? 1 : 0;
+  payload.lan_on = settings.lan_on ? 1 : 0;
+  std::memcpy(payload.ssid, settings.ssid, sizeof(payload.ssid));
+  std::memcpy(payload.psk, settings.psk, sizeof(payload.psk));
+  std::memcpy(payload.token, settings.token, sizeof(payload.token));
+  encode_sensor(payload.sensor, sizeof(payload.sensor), settings);
+  // Each policy stays one coherent record, including the privacy cap.
+  encode_location(payload.location, sizeof(payload.location),
+                  settings.location);
+  encode_ntp(payload.ntp, sizeof(payload.ntp), settings.ntp);
+  std::memcpy(blob.header.magic, kBlobMagic, sizeof(kBlobMagic));
+  put_le(blob.header.version, kBlobVersion, sizeof(blob.header.version));
+  put_le(blob.header.length, sizeof(BlobPayload), sizeof(blob.header.length));
+  put_le(
+      blob.header.crc32,
+      crc32(reinterpret_cast<const std::uint8_t *>(&payload), sizeof(payload)),
+      sizeof(blob.header.crc32));
+}
+
+// Structural checks only. A record that passes still goes through the same
+// value validation as the legacy keys.
+bool blob_intact(const Blob &blob, std::size_t size) {
+  const BlobPayload &payload = blob.payload;
+  return size == sizeof(Blob) &&
+         std::memcmp(blob.header.magic, kBlobMagic, sizeof(kBlobMagic)) == 0 &&
+         get_le(blob.header.version, sizeof(blob.header.version)) ==
+             kBlobVersion &&
+         get_le(blob.header.length, sizeof(blob.header.length)) ==
+             sizeof(BlobPayload) &&
+         get_le(blob.header.crc32, sizeof(blob.header.crc32)) ==
+             crc32(reinterpret_cast<const std::uint8_t *>(&payload),
+                   sizeof(payload)) &&
+         terminated(payload.ssid) && terminated(payload.psk) &&
+         terminated(payload.sensor) && terminated(payload.location) &&
+         terminated(payload.ntp);
+}
+
 bool save_locked(const Settings &settings) {
   nvs_handle_t store;
   if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK)
     return false;
-  // Preserve the existing per-key persistence contract and NVS value types.
-  bool ok =
-      committed(store, nvs_set_u8(store, "pair",
-                                  static_cast<std::uint8_t>(settings.pair)));
-  ok = committed(store, nvs_set_u32(store, "pin", settings.pin)) && ok;
-  ok = committed(store, nvs_set_u8(store, "disp", settings.display ? 1 : 0)) &&
-       ok;
-  ok =
-      committed(store, nvs_set_u8(store, "wifion", settings.wifi_on ? 1 : 0)) &&
-      ok;
-  ok = save_string(store, "ssid", settings.ssid) && ok;
-  ok = save_string(store, "psk", settings.psk) && ok;
-  ok = committed(store, nvs_set_u8(store, "lanon", settings.lan_on ? 1 : 0)) &&
-       ok;
-  ok = committed(store,
-                 nvs_set_blob(store, "token", settings.token, kTokenBytes)) &&
-       ok;
-  char sensor[80];
-  encode_sensor(sensor, sizeof(sensor), settings);
-  ok = ok && save_string(store, "sensor", sensor);
-  // Each new policy is one coherent NVS record, including the privacy cap.
-  char location[40];
-  encode_location(location, sizeof(location), settings.location);
-  ok = ok && save_string(store, "location", location);
-  char ntp[560];
-  encode_ntp(ntp, sizeof(ntp), settings.ntp);
-  ok = ok && save_string(store, "ntp", ntp);
+  encode_blob(staged_blob, settings);
+  // One write and one commit. Legacy per-key values are left untouched.
+  bool ok = committed(
+      store, nvs_set_blob(store, kBlobKey, &staged_blob, sizeof(staged_blob)));
+  std::size_t length = sizeof(readback_blob);
+  ok = ok && nvs_get_blob(store, kBlobKey, &readback_blob, &length) == ESP_OK &&
+       length == sizeof(staged_blob) &&
+       std::memcmp(&readback_blob, &staged_blob, sizeof(staged_blob)) == 0;
   nvs_close(store);
   return ok;
+}
+
+void clear_sensor(Settings &settings) {
+  settings.sensor_vendor[0] = '\0';
+  settings.sensor_model[0] = '\0';
+  settings.sensor_serial[0] = '\0';
+  settings.sensor_batch_candidate = false;
+  aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
+}
+
+// Invalid records are disabled or unset rather than silently enabling
+// external traffic or location.
+void apply_location(bool valid, char *record, Settings &settings) {
+  if (!valid || !decode_location(record, settings.location)) {
+    settings.location = LocationSettings{};
+    aqlog.println("CONFIG LOCATION invalid-stored-profile=true");
+  }
+}
+
+void apply_ntp(bool valid, char *record, Settings &settings) {
+  if (!valid || !decode_ntp(record, settings.ntp)) {
+    settings.ntp = NtpSettings{};
+    settings.ntp.enabled = false;
+    settings.ntp.public_fallback = false;
+    aqlog.println("CONFIG NTP invalid-stored-profile=true");
+  }
+}
+
+PairMode stored_pair_mode(std::uint8_t pair) {
+  return pair > 2 ? PairMode::Random : static_cast<PairMode>(pair);
+}
+
+// Decodes an intact record in place. Its text fields are scratch afterwards.
+void load_blob(BlobPayload &payload, Settings &settings) {
+  settings.pair = stored_pair_mode(payload.pair);
+  settings.pin = get_le(payload.pin, sizeof(payload.pin)) % 1000000U;
+  settings.display = payload.display != 0;
+  settings.wifi_on = payload.wifi_on != 0;
+  settings.lan_on = payload.lan_on != 0;
+  std::memcpy(settings.ssid, payload.ssid, sizeof(settings.ssid));
+  std::memcpy(settings.psk, payload.psk, sizeof(settings.psk));
+  std::memcpy(settings.token, payload.token, sizeof(settings.token));
+  if (!decode_sensor(payload.sensor, settings))
+    clear_sensor(settings);
+  apply_location(true, payload.location, settings);
+  apply_ntp(true, payload.ntp, settings);
+}
+
+// Pre-blob layout, kept for migration and as the fallback for a torn record.
+void load_legacy(nvs_handle_t store, bool display_detected,
+                 Settings &settings) {
+  settings.pair = stored_pair_mode(read_u8(store, "pair", 0));
+  settings.pin = read_u32(store, "pin", kLegacyDefaultPin) % 1000000U;
+  settings.display = read_u8(store, "disp", display_detected ? 1 : 0) != 0;
+  settings.wifi_on = read_u8(store, "wifion", 0) != 0;
+  read_string(store, "ssid", settings.ssid, sizeof(settings.ssid));
+  read_string(store, "psk", settings.psk, sizeof(settings.psk));
+  settings.lan_on = read_u8(store, "lanon", 1) != 0;
+  std::size_t token_size = kTokenBytes;
+  if (nvs_get_blob(store, "token", settings.token, &token_size) != ESP_OK ||
+      token_size != kTokenBytes)
+    esp_fill_random(settings.token, kTokenBytes);
+  char sensor[kSensorRecordBytes]{};
+  if (read_string(store, "sensor", sensor, sizeof(sensor)) &&
+      !decode_sensor(sensor, settings))
+    clear_sensor(settings);
+  // Missing records on a legacy image receive defaults.
+  char location[kLocationRecordBytes]{};
+  std::size_t location_size = sizeof(location);
+  const auto location_result =
+      nvs_get_str(store, "location", location, &location_size);
+  if (location_result != ESP_ERR_NVS_NOT_FOUND)
+    apply_location(location_result == ESP_OK, location, settings);
+  char ntp[kNtpRecordBytes]{};
+  std::size_t ntp_size = sizeof(ntp);
+  const auto ntp_result = nvs_get_str(store, "ntp", ntp, &ntp_size);
+  if (ntp_result != ESP_ERR_NVS_NOT_FOUND)
+    apply_ntp(ntp_result == ESP_OK, ntp, settings);
 }
 
 void publish(const Settings &settings) {
@@ -388,8 +568,16 @@ bool load(bool display_detected) {
     booted = settings;
     return false;
   }
+  std::size_t blob_size = sizeof(readback_blob);
+  const auto blob_result =
+      nvs_get_blob(store, kBlobKey, &readback_blob, &blob_size);
+  const bool from_blob =
+      blob_result == ESP_OK && blob_intact(readback_blob, blob_size);
+  if (blob_result != ESP_ERR_NVS_NOT_FOUND && !from_blob)
+    aqlog.println("CONFIG BLOB invalid=true fallback=legacy");
   std::uint8_t stored_pair;
   const bool first_boot =
+      !from_blob &&
       nvs_get_u8(store, "pair", &stored_pair) == ESP_ERR_NVS_NOT_FOUND;
   bool migrated_pin = false;
   if (first_boot) {
@@ -397,57 +585,15 @@ bool load(bool display_detected) {
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
     settings.pin = random_pin();
     esp_fill_random(settings.token, kTokenBytes);
+  } else if (from_blob) {
+    load_blob(readback_blob.payload, settings);
   } else {
-    const auto pair = read_u8(store, "pair", 0);
-    settings.pair = pair > 2 ? PairMode::Random : static_cast<PairMode>(pair);
-    settings.pin = read_u32(store, "pin", kLegacyDefaultPin) % 1000000U;
-    if (settings.pin == kLegacyDefaultPin) {
-      settings.pin = random_pin();
-      migrated_pin = true;
-      aqlog.println("CONFIG SECURITY legacy_pin_rotated=true");
-    }
-    settings.display = read_u8(store, "disp", display_detected ? 1 : 0) != 0;
-    settings.wifi_on = read_u8(store, "wifion", 0) != 0;
-    read_string(store, "ssid", settings.ssid, sizeof(settings.ssid));
-    read_string(store, "psk", settings.psk, sizeof(settings.psk));
-    settings.lan_on = read_u8(store, "lanon", 1) != 0;
-    std::size_t token_size = kTokenBytes;
-    if (nvs_get_blob(store, "token", settings.token, &token_size) != ESP_OK ||
-        token_size != kTokenBytes)
-      esp_fill_random(settings.token, kTokenBytes);
-    char sensor[80]{};
-    if (read_string(store, "sensor", sensor, sizeof(sensor)) &&
-        !decode_sensor(sensor, settings)) {
-      settings.sensor_vendor[0] = '\0';
-      settings.sensor_model[0] = '\0';
-      settings.sensor_serial[0] = '\0';
-      settings.sensor_batch_candidate = false;
-      aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
-    }
+    load_legacy(store, display_detected, settings);
   }
-  // Missing records on a legacy image receive defaults. Invalid records are
-  // disabled/unset rather than silently enabling external traffic or location.
-  if (!first_boot) {
-    char location[40]{};
-    std::size_t location_size = sizeof(location);
-    const auto location_result =
-        nvs_get_str(store, "location", location, &location_size);
-    if (location_result != ESP_ERR_NVS_NOT_FOUND &&
-        (location_result != ESP_OK ||
-         !decode_location(location, settings.location))) {
-      settings.location = LocationSettings{};
-      aqlog.println("CONFIG LOCATION invalid-stored-profile=true");
-    }
-    char ntp[560]{};
-    std::size_t ntp_size = sizeof(ntp);
-    const auto ntp_result = nvs_get_str(store, "ntp", ntp, &ntp_size);
-    if (ntp_result != ESP_ERR_NVS_NOT_FOUND &&
-        (ntp_result != ESP_OK || !decode_ntp(ntp, settings.ntp))) {
-      settings.ntp = NtpSettings{};
-      settings.ntp.enabled = false;
-      settings.ntp.public_fallback = false;
-      aqlog.println("CONFIG NTP invalid-stored-profile=true");
-    }
+  if (!first_boot && settings.pin == kLegacyDefaultPin) {
+    settings.pin = random_pin();
+    migrated_pin = true;
+    aqlog.println("CONFIG SECURITY legacy_pin_rotated=true");
   }
   nvs_close(store);
   persistent = true;

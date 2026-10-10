@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <parquet_writer.h>
+#include <storage_governor.h>
 
 namespace aqlogger {
 // Pure snapshot/formatter shared by the runtime and host boundary tests.
@@ -23,6 +24,7 @@ struct StatusSnapshot {
   std::int64_t utc_ms = 0;
   std::int64_t clock_age_seconds = 0;
   bool storage_ok = false;
+  storage::State sd_state = storage::State::Retry;
   std::uint32_t total_kib = 0;
   std::uint32_t used_kib = 0;
   std::uint32_t heap_free = 0;

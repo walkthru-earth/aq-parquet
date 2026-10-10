@@ -16,7 +16,7 @@ def main() -> None:
             str(common / "logger/tests/test_rotation.cpp"), "-o", str(executable),
         ], check=True)
         subprocess.run([str(executable)], check=True)
-    print("UTC windows, clock transitions and row-group bounds passed")
+    print("UTC and unsynced monotonic windows, clock transitions and row-group bounds passed")
 
 
 if __name__ == "__main__":

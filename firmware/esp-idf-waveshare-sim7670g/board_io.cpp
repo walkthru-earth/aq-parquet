@@ -3,6 +3,7 @@
 #include <driver/sdmmc_host.h>
 #include <driver/uart.h>
 #include <esp_vfs_fat.h>
+#include <fat_volume.h>
 #include <freertos/FreeRTOS.h>
 #include <led_strip.h>
 #include <sd_transfer_buffer.h>
@@ -20,12 +21,13 @@ std::uint64_t cached_total_bytes = 0;
 std::uint64_t cached_used_bytes = 0;
 
 void refresh_capacity() {
-  if (!card)
-    return;
   std::uint64_t total = 0, free = 0;
-  if (esp_vfs_fat_info("/sd", &total, &free) == ESP_OK && free <= total) {
+  if (card && esp_vfs_fat_info("/sd", &total, &free) == ESP_OK &&
+      free <= total) {
     cached_total_bytes = total;
     cached_used_bytes = total - free;
+  } else {
+    cached_total_bytes = cached_used_bytes = 0;
   }
 }
 } // namespace
@@ -51,7 +53,10 @@ int read_sensor() {
   return sensor_ready && uart_read_bytes(UART_NUM_1, &value, 1, 0) == 1 ? value
                                                                         : -1;
 }
-bool mount_card() {
+namespace {
+// A remount keeps the DMA buffer reserved: once radios run, internal DMA
+// memory may be too fragmented to reserve it again.
+bool mount(bool keep_buffer) {
   if (card)
     return true;
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
@@ -77,11 +82,24 @@ bool mount_card() {
       esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &config, &mounted);
   // IDF mount helper releases its host/FAT resources on failure.
   if (result != ESP_OK) {
-    sd_transfer_buffer.release();
+    if (!keep_buffer)
+      sd_transfer_buffer.release();
     return false;
   }
   card = mounted;
   return true;
+}
+} // namespace
+bool mount_card() { return mount(false); }
+bool remount_card() {
+  if (card && esp_vfs_fat_sdcard_unmount("/sd", card) != ESP_OK)
+    return false;
+  card = nullptr;
+  return mount(true);
+}
+std::uint32_t cluster_bytes() { return aq::storage::fat_cluster_bytes(card); }
+bool storage_free_bytes(std::uint64_t &free_bytes) {
+  return card && aq::storage::fat_free_bytes("/sd", free_bytes);
 }
 std::uint64_t card_bytes() {
   return card ? static_cast<std::uint64_t>(card->csd.capacity) *

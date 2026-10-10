@@ -10,6 +10,7 @@
 #include "device_config.h"
 #include "lz4_codec.h"
 #include "parquet_writer.h"
+#include "storage_governor.h"
 #include "wifi_link.h"
 #include <archive_sync.h>
 #include <control_sync.h>
@@ -54,6 +55,7 @@ Config config;
 Hooks hooks;
 std::size_t field_count = 0;
 std::size_t sequence = 0, event_time_utc_ns = 0, clock_epoch = 0;
+std::size_t monotonic_field = 0;
 constexpr std::int32_t kClockNone = aq::utc::None;
 constexpr std::int32_t kClockHost = aq::utc::Host;
 constexpr std::int32_t kClockRtc = aq::utc::Rtc;
@@ -67,10 +69,19 @@ using aq::sync::put_u32;
 using aq::utc::days_from_civil;
 constexpr std::size_t kMaxRows = 90;
 constexpr std::int64_t kSampleUs = 10000000;
-// Keep unanchored data readable within a minute at normal sampling cadence.
-// The bounded RAM batch can still be lost if power disappears before flush.
-constexpr std::size_t kUnsyncedRows = 6;
 const char *kDirectory = "/sd/output";
+const char *kBenchDirectory = "/sd/bench";
+// Footer key/value budget. finalize_file fills a fixed array in this order.
+constexpr std::size_t kFixedMetadata = 22;
+constexpr std::size_t kLocationMetadata =
+    std::tuple_size<decltype(LocationMetadata::entries)>::value;
+constexpr std::size_t kAnchorMetadata = 3;
+constexpr std::size_t kMaxConfigMetadata = 32;
+constexpr std::size_t kFooterMetadata = 64;
+static_assert(kFixedMetadata + kLocationMetadata + kAnchorMetadata +
+                      kMaxConfigMetadata <=
+                  kFooterMetadata,
+              "footer metadata array is too small");
 // One Parquet file in progress: created as `.partial`, grown by one row group
 // per completed RAM batch (each fsynced), finalized with the footer at the
 // window boundary, at kMaxRowGroups, or on an explicit flush. Rows already in
@@ -81,7 +92,8 @@ struct OutputFile {
   Workspace workspace{};
   char stem[384]{}; // <partition>/<prefix>_<boot>_<first>
   char partial[416]{};
-  char *staging = nullptr; // internal-RAM stdio buffer
+  char *staging = nullptr;    // stdio buffer, see WriterState
+  const char *root = nullptr; // kDirectory or kBenchDirectory
   bool benchmark = false;
   bool dated = false; // false: unsynced tree
   Codec codec = Codec::Uncompressed;
@@ -102,9 +114,10 @@ struct WriterState {
   OutputFile benchmark; // codec-test copies never touch the telemetry file
   Lz4Workspace lz4{};
 };
-// stdio staging stays in internal RAM, distinct from the PSRAM row buffer.
-char staging_telemetry[4096];
-char staging_benchmark[4096];
+// Telemetry stdio staging stays in internal RAM, distinct from the PSRAM row
+// buffer. codec-test staging is PSRAM, allocated only while the test runs.
+constexpr std::size_t kStagingBytes = 4096;
+char staging_telemetry[kStagingBytes];
 struct Command {
   enum class Source : std::uint8_t { Serial, Control, Network };
   Source source = Source::Serial;
@@ -128,6 +141,11 @@ std::atomic<std::uint64_t> quarantine_bytes{0};
 // Rows/row groups already on the card in the open .partial (footer pending).
 std::atomic<std::uint32_t> open_rows{0}, open_groups{0};
 std::atomic<bool> worker_failed{false}, storage_ok{false};
+// Storage worker only. Mirrored to sd_state for STATUS.
+storage::Governor governor;
+std::atomic<std::uint8_t> sd_state{
+    static_cast<std::uint8_t>(storage::State::Retry)};
+std::uint32_t quarantine_counter = 0; // unique per boot
 // Advertising bit `new_files`: set when a file finalizes, cleared when a LIST
 // has been answered on any link (that phone now knows; a phone that then fails
 // its download is covered by its periodic run).
@@ -324,9 +342,13 @@ std::size_t rows_per_group() {
   return rows < kMaxRows ? rows : kMaxRows;
 }
 
+// Dated rows rotate on UTC, unsynced rows on monotonic time of this boot.
 std::int64_t window_index(const Sample &row) {
-  return row.data[event_time_utc_ns] / 1000000000 /
-         static_cast<std::int64_t>(rotation_seconds.load());
+  const auto rotation = static_cast<std::int64_t>(rotation_seconds.load());
+  return row.valid[event_time_utc_ns]
+             ? rotation_window(row.data[event_time_utc_ns] / 1000000000,
+                               rotation)
+             : rotation_window(row.data[monotonic_field] / 1000000, rotation);
 }
 
 // Whether `row` may join the file/batch that `reference` started: same clock
@@ -336,8 +358,88 @@ bool same_window(const Sample &row, std::int32_t epoch, bool dated,
                  std::int64_t window) {
   const bool row_dated = row.valid[event_time_utc_ns] != 0;
   return same_rotation_window(static_cast<std::int32_t>(row.data[clock_epoch]),
-                              row_dated, row_dated ? window_index(row) : 0,
-                              epoch, dated, window);
+                              row_dated, window_index(row), epoch, dated,
+                              window);
+}
+
+struct ArchiveDirectoryIO {
+  static DIR *open(const char *path) {
+    BusLock lock;
+    return ::opendir(path);
+  }
+  static const struct dirent *read(DIR *directory) {
+    BusLock lock;
+    errno = 0;
+    return ::readdir(directory);
+  }
+  static int inspect(const char *path, struct stat *info) {
+    BusLock lock;
+    return ::stat(path, info);
+  }
+  static int close(DIR *directory) {
+    BusLock lock;
+    return ::closedir(directory);
+  }
+};
+
+// Adds the quarantine moves, one bus lock per call.
+struct StorageIO : ArchiveDirectoryIO {
+  static bool make_directories(const char *path) {
+    return aqlogger::make_directories(path);
+  }
+  static bool exists(const char *path) {
+    BusLock lock;
+    return ::access(path, F_OK) == 0;
+  }
+  static int rename(const char *from, const char *to) {
+    BusLock lock;
+    return ::rename(from, to);
+  }
+};
+
+// Moves the .partial at `relative` below `root` into provenance quarantine,
+// unless its finalized sibling exists (possible FAT crosslink after a power
+// cut inside rename). Suspects stay untouched. Nothing is ever deleted.
+bool quarantine_one(const char *root, const char *relative,
+                    const char *origin) {
+  const char *base = std::strrchr(relative, '/');
+  base = base ? base + 1 : relative;
+  char directory[416];
+  const int length =
+      base == relative
+          ? std::snprintf(directory, sizeof(directory), "%s", root)
+          : std::snprintf(directory, sizeof(directory), "%s/%.*s", root,
+                          static_cast<int>(base - relative - 1), relative);
+  if (length < 0 || static_cast<std::size_t>(length) >= sizeof(directory)) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=quarantine reason=path-too-long\n");
+    return false;
+  }
+  StorageIO io;
+  if (aq::logger::detail::crosslink_suspect(io, directory, base)) {
+    aqlog.printf("PARQUET RECOVERY crosslink-suspect file=%s action=none\n",
+                 relative);
+    return false;
+  }
+  char source[416];
+  struct stat info{};
+  std::snprintf(source, sizeof(source), "%s/%s", root, relative);
+  if (io.inspect(source, &info) != 0)
+    info.st_size = 0;
+  char destination[416];
+  const bool ok = aq::logger::detail::quarantine_partial(
+      io, root, relative, boot_text, quarantine_counter++, destination,
+      sizeof(destination));
+  if (!ok) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=quarantine file=%s errno=%d\n",
+                 relative, errno);
+    return false;
+  }
+  aqlog.printf("PARQUET QUARANTINE source=%s target=%s bytes=%llu origin=%s\n",
+               relative, destination + std::strlen(root) + 1,
+               static_cast<unsigned long long>(info.st_size), origin);
+  return true;
 }
 
 void close_failed(OutputFile &target, const char *operation,
@@ -348,12 +450,33 @@ void close_failed(OutputFile &target, const char *operation,
                operation, target.stem, reason ? reason : "io-or-validation",
                errno, static_cast<unsigned long>(target.rows));
   if (target.file) {
-    BusLock lock;
-    std::fclose(target.file); // the .partial is retained, never repaired
+    bool closed;
+    {
+      BusLock lock;
+      closed = std::fclose(target.file) == 0;
+    }
+    if (!closed) {
+      ++errors;
+      aqlog.printf("PARQUET ERROR operation=close file=%s errno=%d\n",
+                   target.stem, errno);
+    }
   }
   target.file = nullptr;
   if (!target.benchmark)
     open_rows = open_groups = 0;
+  // The .partial is retained, never repaired. Move it out of the active tree
+  // now, so the next file and LIST never see it beside live data.
+  char relative[416];
+  const int length =
+      std::snprintf(relative, sizeof(relative), "%s-%lu.partial", target.stem,
+                    static_cast<unsigned long>(target.attempt));
+  if (target.root && length > 0 &&
+      static_cast<std::size_t>(length) < sizeof(relative) &&
+      quarantine_one(target.root, relative, "same-boot") &&
+      target.root == kDirectory) {
+    if (partials_quarantined.load() != UINT32_MAX)
+      ++partials_quarantined;
+  }
 }
 
 // Creates `<partition>/<prefix>_<boot>_<first>-<attempt>.partial` from the
@@ -362,10 +485,13 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
   static std::uint32_t attempt = 0;
   const Sample &first_row = writer_state->rows[0];
   char partition[160], prefix[24];
+  int partition_length;
   target.dated = false;
+  target.root = benchmark ? kBenchDirectory : kDirectory;
+  target.window = window_index(first_row);
   if (benchmark) {
-    std::snprintf(partition, sizeof(partition), "benchmarks/boot=%s",
-                  boot_text);
+    partition_length =
+        std::snprintf(partition, sizeof(partition), "boot=%s", boot_text);
     std::strcpy(prefix, codec == Codec::Lz4Raw ? "lz4_raw" : "uncompressed");
   } else if (first_row.valid[event_time_utc_ns]) {
     const std::int64_t seconds = first_row.data[event_time_utc_ns] / 1000000000;
@@ -376,20 +502,30 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
       ++errors;
       return false;
     }
-    std::snprintf(partition, sizeof(partition),
-                  "station=%s/year=%04d/month=%02d/day=%02d", station_text,
-                  utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
+    partition_length =
+        std::snprintf(partition, sizeof(partition),
+                      "station=%s/year=%04d/month=%02d/day=%02d", station_text,
+                      utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
     std::snprintf(prefix, sizeof(prefix), "data_%02d%02d", utc.tm_hour,
                   utc.tm_min);
     target.dated = true;
-    target.window = window_index(first_row);
   } else {
-    std::snprintf(partition, sizeof(partition), "station=%s/unsynced/boot=%s",
-                  station_text, boot_text);
+    partition_length =
+        std::snprintf(partition, sizeof(partition),
+                      "station=%s/unsynced/boot=%s", station_text, boot_text);
     std::strcpy(prefix, "data_unsynced");
   }
   char directory[192];
-  std::snprintf(directory, sizeof(directory), "%s/%s", kDirectory, partition);
+  const int directory_length = std::snprintf(directory, sizeof(directory),
+                                             "%s/%s", target.root, partition);
+  if (partition_length < 0 ||
+      static_cast<std::size_t>(partition_length) >= sizeof(partition) ||
+      directory_length < 0 ||
+      static_cast<std::size_t>(directory_length) >= sizeof(directory)) {
+    ++errors;
+    aqlog.println("PARQUET ERROR operation=create reason=path-too-long");
+    return false;
+  }
   if (!make_directories(directory)) {
     ++errors;
     aqlog.println("PARQUET ERROR operation=mkdir");
@@ -404,11 +540,20 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
   target.writer_us = target.codec_us = target.sync_us = 0;
   target.attempt = attempt++;
   target.opened_us = esp_timer_get_time();
-  std::snprintf(target.stem, sizeof(target.stem), "%s/%s_%s_%lld", partition,
-                prefix, boot_text, static_cast<long long>(target.first));
-  std::snprintf(target.partial, sizeof(target.partial), "%s/%s-%lu.partial",
-                kDirectory, target.stem,
-                static_cast<unsigned long>(target.attempt));
+  const int stem_length = std::snprintf(
+      target.stem, sizeof(target.stem), "%s/%s_%s_%lld", partition, prefix,
+      boot_text, static_cast<long long>(target.first));
+  const int partial_length = std::snprintf(
+      target.partial, sizeof(target.partial), "%s/%s-%lu.partial", target.root,
+      target.stem, static_cast<unsigned long>(target.attempt));
+  if (stem_length < 0 ||
+      static_cast<std::size_t>(stem_length) >= sizeof(target.stem) ||
+      partial_length < 0 ||
+      static_cast<std::size_t>(partial_length) >= sizeof(target.partial)) {
+    ++errors;
+    aqlog.println("PARQUET ERROR operation=create reason=path-too-long");
+    return false;
+  }
   {
     BusLock lock;
     const int fd = ::open(target.partial, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -424,7 +569,7 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
                  target.stem);
     return false;
   }
-  std::setvbuf(target.file, target.staging, _IOFBF, 4096);
+  std::setvbuf(target.file, target.staging, _IOFBF, kStagingBytes);
   // The writer copies this configuration; the LZ4 buffers/state it points to
   // live in writer_state for the whole session.
   const auto compression = writer_state->lz4.configuration();
@@ -506,7 +651,7 @@ bool finalize_file(OutputFile &target) {
   std::snprintf(groups_text, sizeof(groups_text), "%u",
                 unsigned(target.writer.row_groups()));
   const LocationMetadata location_metadata(target.location);
-  KeyValue metadata[64] = {
+  KeyValue metadata[kFooterMetadata] = {
       {"schema_version", config.schema_name},
       {"device_id", device_text},
       {"station_id", station_text},
@@ -534,7 +679,8 @@ bool finalize_file(OutputFile &target) {
       {"durability",
        "RAM batch; unfinished rows lost on reset; each row group "
        "fsynced; footer at finalization; completed files retained"}};
-  std::size_t metadata_count = 22;
+  std::size_t metadata_count = kFixedMetadata;
+  static_assert(sizeof(metadata) / sizeof(metadata[0]) == kFooterMetadata);
   for (const auto &entry : location_metadata.entries)
     metadata[metadata_count++] = entry;
   // Evidence belongs to this file's boot, regardless of the rows' original
@@ -567,7 +713,7 @@ bool finalize_file(OutputFile &target) {
   if (!target.benchmark)
     open_rows = open_groups = 0;
   char ready[416];
-  std::snprintf(ready, sizeof(ready), "%s/%s-%lld-%lu.parquet", kDirectory,
+  std::snprintf(ready, sizeof(ready), "%s/%s-%lld-%lu.parquet", target.root,
                 target.stem, static_cast<long long>(target.last),
                 static_cast<unsigned long>(target.attempt));
   std::uint32_t size = 0, crc = 0;
@@ -639,9 +785,6 @@ bool commit(std::size_t &count, bool finalize) {
   return true;
 }
 
-// Flush everything: RAM batch into a row group, then the footer.
-bool write_batch(std::size_t &count) { return commit(count, true); }
-
 // A one-row-group diagnostic copy of the RAM batch outside station trees;
 // the rows stay buffered for normal telemetry rotation.
 bool write_benchmark(std::size_t count, Codec codec) {
@@ -663,26 +806,6 @@ void emit_file_serial(void *, const char *name, std::uint32_t bytes) {
   aqlog.printf("PARQUET FILE name=%s bytes=%lu\n", name,
                static_cast<unsigned long>(bytes));
 }
-
-struct ArchiveDirectoryIO {
-  static DIR *open(const char *path) {
-    BusLock lock;
-    return ::opendir(path);
-  }
-  static const struct dirent *read(DIR *directory) {
-    BusLock lock;
-    errno = 0;
-    return ::readdir(directory);
-  }
-  static int inspect(const char *path, struct stat *info) {
-    BusLock lock;
-    return ::stat(path, info);
-  }
-  static int close(DIR *directory) {
-    BusLock lock;
-    return ::closedir(directory);
-  }
-};
 
 bool list_directory(unsigned &partials, FileEmitter emit, void *context,
                     const char *base = kDirectory,
@@ -716,9 +839,9 @@ bool partial_name(const char *name) {
   return length > 8 && std::strcmp(name + length - 8, ".partial") == 0;
 }
 
-// Move interrupted files out of active station/benchmark trees without
-// deleting or pretending to repair them. The relative path is flattened into
-// a unique boot-scoped name under output/quarantine/.
+// Move interrupted files out of active station trees without deleting or
+// pretending to repair them. Each lands under output/quarantine/ in a
+// directory that keeps its station and partition provenance.
 void quarantine_directory(const char *relative, unsigned depth,
                           unsigned &quarantined) {
   if (depth > 6)
@@ -762,24 +885,8 @@ void quarantine_directory(const char *relative, unsigned depth,
     }
     if (!partial_name(name))
       continue;
-    char quarantine[416];
-    std::snprintf(quarantine, sizeof(quarantine),
-                  "%s/quarantine/%s-%08lx.partial", kDirectory, boot_text,
-                  static_cast<unsigned long>(quarantined));
-    bool ok;
-    {
-      BusLock lock;
-      ok = ::rename(path, quarantine) == 0;
-    }
-    if (ok) {
+    if (quarantine_one(kDirectory, name, "boot"))
       ++quarantined;
-      aqlog.printf("PARQUET QUARANTINE source=%s bytes=%llu\n", name,
-                   static_cast<unsigned long long>(info.st_size));
-    } else {
-      ++errors;
-      aqlog.printf("PARQUET ERROR operation=quarantine file=%s errno=%d\n",
-                   name, errno);
-    }
   }
   {
     BusLock lock;
@@ -787,45 +894,24 @@ void quarantine_directory(const char *relative, unsigned depth,
   }
 }
 
+// Recursive, so provenance subdirectories and the flat pre-#5 layout count.
 void count_quarantine(unsigned &count, std::uint64_t &bytes) {
-  DIR *directory;
-  {
-    BusLock lock;
-    char path[64];
-    std::snprintf(path, sizeof(path), "%s/quarantine", kDirectory);
-    directory = ::opendir(path);
-  }
-  if (!directory)
-    return;
-  for (;;) {
-    const struct dirent *entry;
-    {
-      BusLock lock;
-      entry = ::readdir(directory);
-    }
-    if (!entry)
-      break;
-    if (entry->d_name[0] == '.' || !partial_name(entry->d_name))
-      continue;
-    char path[416];
-    std::snprintf(path, sizeof(path), "%s/quarantine/%s", kDirectory,
-                  entry->d_name);
-    struct stat info{};
-    {
-      BusLock lock;
-      if (::stat(path, &info) != 0)
-        continue;
-    }
-    if (!S_ISREG(info.st_mode))
-      continue;
+  char root[64];
+  std::snprintf(root, sizeof(root), "%s/quarantine", kDirectory);
+  ArchiveDirectoryIO io;
+  auto visit = [&](const char *name, const struct stat &info) {
+    if (!S_ISREG(info.st_mode) || !partial_name(name))
+      return true;
     if (count != UINT32_MAX)
       ++count;
     const std::uint64_t file_bytes = static_cast<std::uint64_t>(info.st_size);
     bytes = UINT64_MAX - bytes < file_bytes ? UINT64_MAX : bytes + file_bytes;
-  }
-  {
-    BusLock lock;
-    ::closedir(directory);
+    return true;
+  };
+  if (!aq::logger::detail::walk_directory(io, root, "", 0, visit) &&
+      errno != ENOENT) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=quarantine-count errno=%d\n", errno);
   }
 }
 
@@ -1116,6 +1202,7 @@ std::size_t build_status_json(char *out, std::size_t size) {
     view.clock_age_seconds = (now - mono_anchor) / 1000000;
   }
   view.storage_ok = storage_ok.load();
+  view.sd_state = static_cast<storage::State>(sd_state.load());
   view.total_kib = total_kib.load();
   view.used_kib = used_kib.load();
   view.heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -1324,10 +1411,175 @@ const aqsync::ControlReplies control_replies{
       return respond_error(op, code, detail);
     }};
 
+std::int64_t uptime_seconds() { return esp_timer_get_time() / 1000000; }
+
+// Fresh free-space reading. False when the volume cannot answer.
+bool measure_free(std::uint64_t &free_bytes) {
+  if (!hooks.storage_free_bytes)
+    return false;
+  BusLock lock;
+  return hooks.storage_free_bytes(free_bytes, hooks.context);
+}
+
+// Capacity and allocation unit right after a mount. Configures the governor
+// thresholds and returns false when the volume cannot report free space.
+bool measure_volume() {
+  std::uint64_t total = 0, used = 0;
+  std::uint32_t cluster = 0;
+  {
+    BusLock lock;
+    total = hooks.storage_total_bytes ? hooks.storage_total_bytes(hooks.context)
+                                      : 0;
+    used =
+        hooks.storage_used_bytes ? hooks.storage_used_bytes(hooks.context) : 0;
+    cluster = hooks.storage_cluster_bytes
+                  ? hooks.storage_cluster_bytes(hooks.context)
+                  : 0;
+  }
+  total_kib = static_cast<std::uint32_t>(total / 1024);
+  used_kib = static_cast<std::uint32_t>(used / 1024);
+  std::uint64_t free_bytes = 0;
+  const bool ok = total != 0 && measure_free(free_bytes);
+  aqlog.printf(
+      "PARQUET STORAGE mount cluster_bytes=%lu total_kib=%llu "
+      "free_kib=%llu reserve_kib=%llu high_kib=%llu\n",
+      static_cast<unsigned long>(cluster),
+      static_cast<unsigned long long>(total / 1024),
+      static_cast<unsigned long long>(free_bytes / 1024),
+      static_cast<unsigned long long>(storage::thresholds(total).reserve /
+                                      1024),
+      static_cast<unsigned long long>(storage::thresholds(total).high / 1024));
+  governor.configure(total);
+  if (ok)
+    governor.observe_free(free_bytes, uptime_seconds());
+  return ok;
+}
+
+// Mirrors the governor into STATUS and the log. Entering Full finalizes the
+// open telemetry file so its rows are readable while logging is paused; the
+// footer is a few KiB and comes out of the hard reserve.
+void publish_storage(storage::State previous) {
+  auto current = governor.state();
+  if (current == storage::State::Full && previous != current &&
+      writer_state->telemetry.open() &&
+      !finalize_file(writer_state->telemetry)) {
+    governor.write_failed(uptime_seconds());
+    current = governor.state();
+  }
+  sd_state = static_cast<std::uint8_t>(current);
+  worker_failed = storage::alarm(current); // fail means "not writing"
+  if (current == previous)
+    return;
+  const auto free_kib =
+      static_cast<unsigned long long>(governor.free_bytes() / 1024);
+  aqlog.printf("PARQUET STORAGE state=%s previous=%s free_kib=%llu "
+               "retry_attempts=%lu\n",
+               storage::state_name(current), storage::state_name(previous),
+               free_kib, static_cast<unsigned long>(governor.retry_attempts()));
+  if (current == storage::State::Full)
+    aqlog.printf("PARQUET ALARM storage=full free_kib=%llu action=paused "
+                 "deleted=0\n",
+                 free_kib);
+  publish_status();
+}
+
+// Every telemetry write passes here so the governor sees each result. A
+// failure never retries in place; the probe schedule owns recovery.
+bool governed_commit(std::size_t &count, bool finalize) {
+  const auto previous = governor.state();
+  bool ok = commit(count, finalize);
+  std::uint64_t free_bytes = 0;
+  if (ok && measure_free(free_bytes)) {
+    governor.observe_free(free_bytes, uptime_seconds());
+  } else {
+    ok = false;
+    governor.write_failed(uptime_seconds());
+  }
+  publish_storage(previous);
+  return ok;
+}
+
+// No file may be open across a remount; the archive session reopens by path.
+bool files_closed() {
+  return !writer_state->telemetry.open() && !writer_state->benchmark.open();
+}
+
+// Remount (when the board allows it) and re-measure. Clears Retry only when
+// the card answers and, with rows waiting, a write succeeds again.
+void probe_storage(std::size_t &count, bool &storage_ready) {
+  const auto previous = governor.state();
+  const auto now = uptime_seconds();
+  bool mounted_again = false;
+  bool ok = storage_ready || hooks.storage_remount;
+  // An open file is finalized (or closed and quarantined by close_failed on
+  // error) so no FILE* outlives the mount.
+  if (ok && hooks.storage_remount && writer_state->telemetry.open())
+    finalize_file(writer_state->telemetry);
+  if (ok && hooks.storage_remount && files_closed()) {
+    BusLock lock;
+    ok = hooks.storage_remount(hooks.context) &&
+         aq::logger::detail::ensure_directory(kDirectory);
+    mounted_again = ok;
+  }
+  std::uint64_t free_bytes = 0;
+  ok = ok && (!mounted_again || measure_volume()) && measure_free(free_bytes);
+  if (ok && !storage_ready) {
+    storage_ready = true;
+    storage_ok = true;
+  }
+  // Partials left by the pulled card move before any new file is created,
+  // so the probe write below can never quarantine its own open file.
+  if (ok && mounted_again) {
+    const unsigned quarantined = quarantine_partials();
+    aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0 "
+                 "origin=remount\n",
+                 quarantined);
+  }
+  // Waiting rows are the real write test. Committed while still in Retry so
+  // a card that mounts but cannot write keeps its growing backoff.
+  if (ok && count && free_bytes >= governor.limits().reserve)
+    ok = commit(count, false) && measure_free(free_bytes);
+  if (ok)
+    governor.probe_succeeded(free_bytes, now);
+  else
+    governor.probe_failed(now);
+  publish_storage(previous);
+}
+
+// Runs due probes and the 60 s free-space recheck while not Ready. A Full
+// card is remounted so space freed on a PC becomes visible.
+void service_storage(std::size_t &count, bool &storage_ready) {
+  const auto now = uptime_seconds();
+  if (governor.probe_due(now) && (storage_ready || hooks.storage_remount)) {
+    probe_storage(count, storage_ready);
+    return;
+  }
+  if (!governor.recheck_due(now))
+    return;
+  const auto previous = governor.state();
+  if (previous == storage::State::Full && hooks.storage_remount &&
+      files_closed()) {
+    probe_storage(count, storage_ready);
+    return;
+  }
+  std::uint64_t free_bytes = 0;
+  if (measure_free(free_bytes))
+    governor.observe_free(free_bytes, now);
+  else
+    governor.write_failed(now);
+  publish_storage(previous);
+}
+
+// Explicit owner actions retry at once instead of waiting for the backoff.
+bool storage_writable(std::size_t &count, bool &storage_ready) {
+  governor.request_probe();
+  service_storage(count, storage_ready);
+  return storage_ready && governor.writable();
+}
+
 struct WorkerState {
   std::size_t &count;
-  bool &failed;
-  bool storage_ready;
+  bool &storage_ready;
 };
 
 void handle_control_request(const ble::ControlRequest &request,
@@ -1376,23 +1628,22 @@ void handle_control_request(const ble::ControlRequest &request,
     return;
   }
   case ble::kOpFlush: {
-    if ((!state.count && !writer_state->telemetry.open()) ||
-        !state.storage_ready) {
+    if (!state.count && !writer_state->telemetry.open()) {
       respond_error(ble::kOpFlush, ble::kErrNothingToFlush, nullptr);
+      return;
+    }
+    if (!storage_writable(state.count, state.storage_ready)) {
+      respond_error(ble::kOpFlush, ble::kErrStorage,
+                    storage::state_name(governor.state()));
       return;
     }
     // Rows reported: RAM batch plus row groups already on the card.
     const auto rows =
         static_cast<std::uint16_t>(state.count + open_rows.load());
-    if (!write_batch(state.count)) {
-      state.failed = true;
-      worker_failed = true;
+    if (!governed_commit(state.count, true)) {
       respond_error(ble::kOpFlush, ble::kErrStorage, "write");
-      publish_status();
       return;
     }
-    state.failed = false;
-    worker_failed = false;
     std::uint8_t frame[7];
     frame[0] = ble::kFrameFlushed;
     put_u16(frame + 1, rows);
@@ -1407,12 +1658,8 @@ void handle_control_request(const ble::ControlRequest &request,
   case ble::kOpReboot: {
     // Never lose the RAM batch to a reboot the owner asked for.
     if ((state.count || writer_state->telemetry.open()) &&
-        state.storage_ready && !state.failed) {
-      if (!write_batch(state.count)) {
-        state.failed = true;
-        worker_failed = true;
-      }
-    }
+        state.storage_ready && governor.writable())
+      governed_commit(state.count, true);
     constexpr std::uint16_t kDelayMs = 500;
     std::uint8_t frame[3];
     frame[0] = ble::kFrameRebooting;
@@ -1440,28 +1687,25 @@ void storage_worker(void *) {
   }
   storage_ok = storage_ready;
   if (storage_ready) {
-    {
-      BusLock lock;
-      total_kib =
-          (hooks.storage_total_bytes ? hooks.storage_total_bytes(hooks.context)
-                                     : 0) /
-          1024;
-      used_kib =
-          (hooks.storage_used_bytes ? hooks.storage_used_bytes(hooks.context)
-                                    : 0) /
-          1024;
-    }
+    if (!measure_volume())
+      governor.write_failed(uptime_seconds());
+    publish_storage(storage::State::Retry);
     const unsigned quarantined = quarantine_partials();
     aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0\n",
                  quarantined);
     list_files(false);
   } else {
     ++errors;
-    aqlog.println("PARQUET ERROR operation=mount-or-directory "
-                  "samples_will_be_dropped=true");
+    aqlog.printf("PARQUET ERROR operation=mount-or-directory "
+                 "samples_will_be_dropped=true remount=%s\n",
+                 hooks.storage_remount ? "retry" : "none");
+    if (hooks.storage_remount)
+      governor.write_failed(uptime_seconds());
+    sd_state = static_cast<std::uint8_t>(governor.state());
+    worker_failed = true; // fail means "not writing"
+    publish_status();
   }
   std::size_t count = 0;
-  bool failed = false;
   Sample row;
   Command command;
   for (;;) {
@@ -1469,7 +1713,7 @@ void storage_worker(void *) {
     // Sample priority is retained without sleeping before every control
     // request. Successful producers signal after copying to a queue.
     if (xQueueReceive(samples, &row, 0) == pdTRUE) {
-      if (!storage_ready || failed || count == kMaxRows) {
+      if ((!storage_ready && !hooks.storage_remount) || count == kMaxRows) {
         ++dropped;
       } else {
         // Never mix clock epochs or UTC windows (including midnight) in a
@@ -1483,26 +1727,23 @@ void storage_worker(void *) {
           const auto &previous = writer_state->rows[0];
           fits = same_window(row, previous.data[clock_epoch],
                              previous.valid[event_time_utc_ns] != 0,
-                             previous.valid[event_time_utc_ns]
-                                 ? window_index(previous)
-                                 : 0) &&
+                             window_index(previous)) &&
                  config::same_location(row.location, previous.location);
         }
-        if (!fits && !write_batch(count)) {
-          failed = true;
+        // A batch from another window can only leave RAM through a write.
+        // While the card cannot take it, the new row is the one dropped.
+        if (!fits && (!storage_ready || !governor.writable() ||
+                      !governed_commit(count, true))) {
           ++dropped;
           continue;
         }
         writer_state->rows[count++] = row;
         buffered = count;
-        if (!row.valid[event_time_utc_ns] && count >= kUnsyncedRows) {
-          if (!write_batch(count))
-            failed = true;
-        } else if (count >= rows_per_group() && !commit(count, false))
-          failed = true;
+        if (count >= rows_per_group() && storage_ready && governor.writable())
+          governed_commit(count, false);
       }
     }
-    worker_failed = failed;
+    service_storage(count, storage_ready);
     if (xQueueReceive(commands, &command, 0) != pdTRUE) {
       // Drain pending samples before sleeping. Queue-then-signal also covers
       // an enqueue racing this check: the signal remains pending until taken.
@@ -1522,7 +1763,7 @@ void storage_worker(void *) {
       continue;
     }
     if (command.source == Command::Source::Control) {
-      WorkerState state{count, failed, storage_ready};
+      WorkerState state{count, storage_ready};
       current_request = &command.control;
       handle_control_request(command.control, state);
       current_request = nullptr;
@@ -1550,11 +1791,17 @@ void storage_worker(void *) {
             target->file = nullptr;
           }
         }
-        erased = closed &&
-                 aq::logger::detail::erase_archive("/sd/output", files_removed,
-                                                   directories_removed) &&
-                 aq::logger::detail::erase_archive("/sd/parquet", files_removed,
-                                                   directories_removed);
+        // Only the configured archive roots. The benchmark root is not
+        // archive data and stays untouched.
+        erased =
+            closed &&
+            aq::logger::detail::erase_archive(
+                kDirectory, kDirectory, config.legacy_directory, files_removed,
+                directories_removed) &&
+            (!config.legacy_directory ||
+             aq::logger::detail::erase_archive(
+                 config.legacy_directory, kDirectory, config.legacy_directory,
+                 files_removed, directories_removed));
       }
       count = 0;
       buffered = open_rows = open_groups = 0;
@@ -1612,7 +1859,8 @@ void storage_worker(void *) {
       aqlog.printf(
           "PARQUET STATUS interval_s=%lu buffered=%u open_rows=%lu "
           "open_groups=%lu finalized=%lu "
-          "dropped=%lu errors=%lu queue_peak=%lu failed=%s station=%s "
+          "dropped=%lu errors=%lu queue_peak=%lu failed=%s sd_state=%s "
+          "sd_free_kib=%llu station=%s "
           "codec=%s schema=%s config=%s deployment=unknown "
           "calibration=unknown\n",
           static_cast<unsigned long>(rotation_seconds.load()), unsigned(count),
@@ -1622,8 +1870,11 @@ void storage_worker(void *) {
           static_cast<unsigned long>(dropped.load()),
           static_cast<unsigned long>(errors.load()),
           static_cast<unsigned long>(queue_peak.load()),
-          failed ? "true" : "false", station_text, codec_name(selected_codec),
-          config.schema_name, config.configuration_id);
+          worker_failed.load() ? "true" : "false",
+          storage::state_name(governor.state()),
+          static_cast<unsigned long long>(governor.free_bytes() / 1024),
+          station_text, codec_name(selected_codec), config.schema_name,
+          config.configuration_id);
     } else if (std::strcmp(command.text, "parquet schema") == 0) {
       aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s\n",
                    config.schema_name, unsigned(field_count),
@@ -1638,46 +1889,71 @@ void storage_worker(void *) {
       }
       aqlog.println("PARQUET SCHEMA END");
     } else if (std::strcmp(command.text, "parquet codec-test") == 0) {
-      if (!count || !storage_ready || failed) {
-        aqlog.println("PARQUET ERROR operation=codec-test "
-                      "reason=empty-or-storage-failed");
-      } else if (write_benchmark(count, Codec::Uncompressed) &&
-                 write_benchmark(count, Codec::Lz4Raw)) {
+      // Diagnostic copies only spend space a Ready card does not need.
+      if (!count || !storage_writable(count, storage_ready) ||
+          governor.state() != storage::State::Ready) {
+        aqlog.printf("PARQUET ERROR operation=codec-test reason=%s\n",
+                     count ? storage::state_name(governor.state()) : "empty");
+      } else if (!(writer_state->benchmark.staging = static_cast<char *>(
+                       heap_caps_malloc(kStagingBytes, MALLOC_CAP_SPIRAM |
+                                                           MALLOC_CAP_8BIT)))) {
+        // Benchmark staging is borrowed from PSRAM only for this command.
+        ++errors;
+        aqlog.println("PARQUET ERROR operation=codec-test reason=no-psram");
+      } else {
+        const auto previous = governor.state();
+        const bool ok = write_benchmark(count, Codec::Uncompressed) &&
+                        write_benchmark(count, Codec::Lz4Raw);
+        heap_caps_free(writer_state->benchmark.staging);
+        writer_state->benchmark.staging = nullptr;
+        // A failed diagnostic copy does not pause telemetry; the next
+        // telemetry write is the card test.
+        std::uint64_t free_bytes = 0;
+        if (measure_free(free_bytes))
+          governor.observe_free(free_bytes, uptime_seconds());
+        publish_storage(previous);
         // Keep the original batch for normal telemetry rotation. Benchmark
-        // copies live outside station trees and are explicitly labeled.
-        aqlog.printf("PARQUET BENCH END rows=%u retained_for_telemetry=true\n",
-                     unsigned(count));
+        // copies live under the bench root, outside the synced archive.
+        if (ok)
+          aqlog.printf(
+              "PARQUET BENCH END rows=%u retained_for_telemetry=true\n",
+              unsigned(count));
       }
     } else if (std::strcmp(command.text, "parquet codec none") == 0 ||
                std::strcmp(command.text, "parquet codec lz4") == 0) {
       // A file holds one codec: finish the open one before switching.
-      if (!write_batch(count)) {
-        failed = true;
+      if ((count || writer_state->telemetry.open()) &&
+          (!storage_writable(count, storage_ready) ||
+           !governed_commit(count, true))) {
+        aqlog.printf("PARQUET ERROR operation=codec reason=storage-%s\n",
+                     storage::state_name(governor.state()));
         continue;
       }
-      failed = false;
       selected_codec =
           command.text[14] == 'l' ? Codec::Lz4Raw : Codec::Uncompressed;
       aqlog.printf("PARQUET CONFIG codec=%s persistent=false\n",
                    codec_name(selected_codec));
     } else if (std::strcmp(command.text, "parquet flush") == 0) {
-      if ((count || writer_state->telemetry.open()) && storage_ready) {
-        if (write_batch(count))
-          failed = false;
-      } else
-        aqlog.println(
-            "PARQUET ERROR operation=flush reason=empty-or-no-storage");
+      if (!count && !writer_state->telemetry.open())
+        aqlog.println("PARQUET ERROR operation=flush reason=empty");
+      else if (!storage_writable(count, storage_ready))
+        aqlog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
+                     storage::state_name(governor.state()));
+      else
+        governed_commit(count, true);
     } else if (std::strncmp(command.text, "parquet interval ", 17) == 0 &&
                (std::strcmp(command.text + 17, "600") == 0 ||
                 std::strcmp(command.text + 17, "900") == 0 ||
                 std::strcmp(command.text + 17, "1800") == 0 ||
                 std::strcmp(command.text + 17, "3600") == 0)) {
       // The window defines the file: finish the open one first.
-      if (!write_batch(count)) {
-        failed = true;
+      if ((count || writer_state->telemetry.open()) &&
+          (!storage_writable(count, storage_ready) ||
+           !governed_commit(count, true))) {
+        aqlog.printf("PARQUET ERROR operation=interval reason=storage-%s\n",
+                     storage::state_name(governor.state()));
         continue;
       }
-      failed = false;
       rotation_seconds = static_cast<std::uint32_t>(
           std::strtoul(command.text + 17, nullptr, 10));
       aqlog.printf("PARQUET CONFIG interval_s=%lu persistent=false\n",
@@ -1743,7 +2019,7 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   counter(row, "heap_min_free_bytes",
           heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
   counter(row, "psram_free_bytes", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  if (mounted) {
+  if (total_kib.load()) { // also set by a later remount
     counter(row, "sd_total_bytes", std::int64_t(total_kib.load()) * 1024);
     counter(row, "sd_used_bytes", std::int64_t(used_kib.load()) * 1024);
   }
@@ -1813,16 +2089,24 @@ void unlock_bus() {
     xSemaphoreGive(spi_mutex);
 }
 
+// True when `path` is `root` or lies below it.
+bool path_within(const char *path, const char *root) {
+  const std::size_t length = std::strlen(root);
+  return std::strncmp(path, root, length) == 0 &&
+         (path[length] == '\0' || path[length] == '/');
+}
+
 bool begin(const Config &configuration, const Hooks &board_hooks,
            bool sd_mounted) {
   if (writer_state || accepting || !configuration.fields ||
       configuration.column_count == 0 ||
       configuration.column_count > telemetry::kMaxColumns ||
-      configuration.metadata_count > 32 ||
+      configuration.metadata_count > kMaxConfigMetadata ||
       (configuration.metadata_count && !configuration.metadata) ||
       bool(board_hooks.lock_bus) != bool(board_hooks.unlock_bus) ||
-      (sd_mounted &&
-       (!board_hooks.storage_total_bytes || !board_hooks.storage_used_bytes)))
+      ((sd_mounted || board_hooks.storage_remount) &&
+       (!board_hooks.storage_total_bytes || !board_hooks.storage_used_bytes ||
+        !board_hooks.storage_free_bytes)))
     return false;
   config = configuration;
   hooks = board_hooks;
@@ -1832,7 +2116,11 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !config.configuration_id || !config.configuration ||
       !config.time_semantics || !config.board || !config.output_directory ||
       config.output_directory[0] != '/' ||
-      std::strlen(config.output_directory) > 31)
+      std::strlen(config.output_directory) > 31 ||
+      !config.benchmark_directory || config.benchmark_directory[0] != '/' ||
+      std::strlen(config.benchmark_directory) > 31 ||
+      path_within(config.benchmark_directory, config.output_directory) ||
+      path_within(config.output_directory, config.benchmark_directory))
     return false;
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = config.fields[i];
@@ -1854,7 +2142,9 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       config.fields[monotonic].type != telemetry::PhysicalType::Int64 ||
       config.fields[clock_epoch].type != telemetry::PhysicalType::Int32)
     return false;
+  monotonic_field = monotonic;
   kDirectory = config.output_directory;
+  kBenchDirectory = config.benchmark_directory;
   mounted = sd_mounted;
   if (!station_identity()) {
     aqlog.println("PARQUET ERROR operation=station-identity logging=false");
@@ -1892,7 +2182,6 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   }
   new (writer_state) WriterState{};
   writer_state->telemetry.staging = staging_telemetry;
-  writer_state->benchmark.staging = staging_benchmark;
   prepare_columns();
   // Before the worker starts, so the first row of the boot is already dated
   // when the RTC holds an earlier host sync.

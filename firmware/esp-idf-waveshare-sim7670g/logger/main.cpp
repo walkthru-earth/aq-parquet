@@ -115,6 +115,12 @@ const aqlogger::Hooks kHooks{
     .collect = collect,
     .storage_total_bytes = [](void *) { return board::storage_total_bytes(); },
     .storage_used_bytes = [](void *) { return board::storage_used_bytes(); },
+    .storage_free_bytes =
+        [](std::uint64_t &free_bytes, void *) {
+          return board::storage_free_bytes(free_bytes);
+        },
+    .storage_cluster_bytes = [](void *) { return board::cluster_bytes(); },
+    .storage_remount = [](void *) { return board::remount_card(); },
 };
 } // namespace
 

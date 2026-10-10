@@ -37,6 +37,8 @@ struct Config {
   const char *output_directory = "/sd/output";
   // Optional legacy archive root; no board path is assumed.
   const char *legacy_directory = nullptr;
+  // codec-test copies live here, outside the listed and synced archive.
+  const char *benchmark_directory = "/sd/bench";
   const telemetry::KeyValue *metadata = nullptr;
   std::size_t metadata_count = 0;
 };
@@ -46,9 +48,16 @@ struct Hooks {
   // memory/storage counters and collection completion after this callback.
   void (*collect)(Row &, std::int64_t now, std::int64_t scheduled,
                   void *context) = nullptr;
-  // Storage worker only, after the board has mounted its filesystem.
+  // Storage worker only, after the board has mounted its filesystem, called
+  // with the bus lock held. free returns false when the volume cannot answer.
   std::uint64_t (*storage_total_bytes)(void *) = nullptr;
   std::uint64_t (*storage_used_bytes)(void *) = nullptr;
+  bool (*storage_free_bytes)(std::uint64_t &free_bytes, void *) = nullptr;
+  std::uint32_t (*storage_cluster_bytes)(void *) = nullptr; // 0 when unknown
+  // Optional. Unmount and mount the card again so a reinserted card or space
+  // freed on a PC becomes visible. Called by the storage worker with the bus
+  // lock held and no file open. Never formats. Returns true when mounted.
+  bool (*storage_remount)(void *) = nullptr;
   // Supply both or neither. Otherwise the engine owns its own bus mutex.
   void (*lock_bus)(void *) = nullptr;
   void (*unlock_bus)(void *) = nullptr;
