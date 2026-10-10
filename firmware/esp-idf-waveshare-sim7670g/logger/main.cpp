@@ -11,6 +11,7 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <log_persist.h>
 #include <nvs_flash.h>
 #include <pms_frame.h>
 
@@ -219,6 +220,7 @@ void board_task(void *) {
 extern "C" void app_main() {
   if (!aq::console::begin())
     return;
+  aq::log::attach_persistent(); // PSRAM log; the internal ring otherwise
   if (xTaskCreate(board_task, "aq-board", 12288, nullptr, 1, nullptr) != pdPASS)
     aqlog.println("AQ ERROR operation=board-task-create logging=false");
 }

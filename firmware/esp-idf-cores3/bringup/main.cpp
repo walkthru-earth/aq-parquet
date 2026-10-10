@@ -1,6 +1,7 @@
 #include "ble_sync.h"
 #include "debug_log.h"
 #include "device_config.h"
+#include "log_persist.h"
 #include "telemetry_logger.h"
 #include "wifi_link.h"
 #include <M5Unified.h>
@@ -919,6 +920,7 @@ void board_task(void *) {
 extern "C" void app_main() {
   if (!aq::console::begin())
     return;
+  aq::log::attach_persistent(); // PSRAM log; the internal ring otherwise
   const esp_err_t nvs = nvs_flash_init();
   if (nvs != ESP_OK) {
     aqlog.printf("DIAG ERROR operation=nvs-init error=%d erased=false\n", nvs);

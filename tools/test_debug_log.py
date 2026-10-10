@@ -18,7 +18,7 @@ def main() -> None:
             "-o", str(executable),
         ], check=True)
         subprocess.run([str(executable)], check=True)
-    print("Debug log: blocked console isolation, full ring retention and serial forwarding passed")
+    print("Debug log: console isolation, 64 KiB persistent ring, sliced reads, warm reboot and corrupt header passed")
 
 
 if __name__ == "__main__":
