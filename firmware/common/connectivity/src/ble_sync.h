@@ -49,6 +49,8 @@ enum Op : std::uint8_t {
   kOpReboot = 0x0b,
   kOpLogTail = 0x0c,
   kOpGetToken = 0x0d,
+  kOpGetDiag = 0x0e,
+  kOpAbort = 0x0f,
 };
 enum Frame : std::uint8_t {
   kFrameFile = 0x10,
@@ -70,6 +72,9 @@ enum Frame : std::uint8_t {
   kFrameStatus = 0x48,
   kFrameLive = 0x49,
   kFrameConfigChunk = 0x4a,
+  kFrameBye = 0x4b,
+  kFrameDiag = 0x4c,
+  kFrameAborted = 0x4d,
   kFrameError = 0x7f,
 };
 enum Error : std::uint8_t {
@@ -88,6 +93,7 @@ enum Error : std::uint8_t {
   kErrNotOnThisLink = 13,
   kErrAuth = 14,
   kErrWifiUnavailable = 15,
+  kErrAborted = 16,
 };
 
 // Advertising service data (protocol v2.1, docs/shared/ble-sync-protocol.md

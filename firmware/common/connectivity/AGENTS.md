@@ -24,4 +24,5 @@ remains tied to each board image and is historical until native readback.
   mDNS and sockets. Use `esp_netif_sntp` for safe TCP/IP marshaling and publish
   UTC only on a successful sync callback. Never log a PSK or LAN token.
 - Radio ownership belongs to this module once started. No second Wi-Fi/NimBLE initializer in a consuming trial. Configuration/logging live in the opt-in AQRuntime component; pure encoding/helpers live in AQCommon.
+- Every session close carries a typed `ble::DisconnectReason` (`disconnect.h`). Record it once through `record_disconnect`, and send LAN `BYE` before closing. New reasons append codes and update the protocol doc, `tools/ble_sync.py` and the DIAG counter count together.
 - Shared source compilation and host codec tests are distinct from on-board radio/coexistence measurements. Do not relabel CoreS3 bench results as another board's results.

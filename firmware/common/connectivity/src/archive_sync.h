@@ -85,7 +85,7 @@ private:
   };
   struct ListContext {
     ArchiveSession *session;
-    std::uint16_t count = 0;
+    std::uint32_t count = 0;
     bool ok = true;
     const char *failure_detail = nullptr;
   };

@@ -1,6 +1,7 @@
 #include <control_sync.h>
 #include <debug_log.h>
 #include <device_config.h>
+#include <disconnect.h>
 #include <sync_codec.h>
 #include <wifi_link.h>
 
@@ -9,6 +10,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
+
+// The default board layout (runtime Kconfig), 64 KiB and 64 events.
+constexpr DebugLog::Layout kTestLayout{65536, 64};
 
 namespace {
 unsigned bonds_cleared = 0, sessions_dropped = 0, wifi_reapplied = 0,
@@ -211,7 +215,12 @@ void token_guard() {
 }
 
 void logs() {
-  const std::string contents(DebugLog::kRingBytes, 'L');
+  // Attach a persistent block, as a PSRAM board does, so the ring is 64 KiB.
+  static std::vector<std::uint32_t> block(
+      DebugLog::persistent_bytes(kTestLayout) / 4 + 1);
+  assert(!aqlog.attach(block.data(), block.size() * 4, kTestLayout, true));
+  assert(aqlog.ring_bytes() == 65536);
+  const std::string contents(DebugLog::kFallbackRingBytes, 'L');
   assert(aqlog.write(reinterpret_cast<const std::uint8_t *>(contents.data()),
                      contents.size()) == contents.size());
   std::string length(2, '\0');
@@ -234,7 +243,30 @@ void logs() {
     const auto &end = peer.successful.back().bytes;
     assert(end.size() == 7 && end[0] == ble::kFrameLogEnd);
     assert(aq::sync::get_u16(end.data() + 5) == count && count == 1500);
-    assert(aq::sync::get_u32(end.data() + 1) >= DebugLog::kRingBytes);
+    assert(aq::sync::get_u32(end.data() + 1) >= DebugLog::kFallbackRingBytes);
+  }
+  // A full 65535-byte tail streams from the 64 KiB ring in slices, in order.
+  std::string sequence(70000, '\0');
+  for (std::size_t i = 0; i < sequence.size(); ++i)
+    sequence[i] = static_cast<char>('A' + (i * 13) % 26);
+  assert(aqlog.write(reinterpret_cast<const std::uint8_t *>(sequence.data()),
+                     sequence.size()) == sequence.size());
+  aq::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()), 65535);
+  for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
+    Peer peer;
+    peer.payload = 2000;
+    handle(request(ble::kOpLogTail, link, length), peer);
+    const auto cap = link == ble::Link::Ble ? 512U : 1024U;
+    std::string streamed;
+    for (std::size_t i = 0; i + 1 < peer.successful.size(); ++i) {
+      const auto &frame = peer.successful[i].bytes;
+      assert(frame[0] == ble::kFrameLog && frame.size() <= cap);
+      streamed.append(frame.begin() + 1, frame.end());
+    }
+    assert(peer.successful.size() - 1 == (65535 + cap - 2) / (cap - 1));
+    assert(streamed == sequence.substr(sequence.size() - 65535));
+    const auto &end = peer.successful.back().bytes;
+    assert(end.size() == 7 && aq::sync::get_u16(end.data() + 5) == 65535);
   }
   Peer failed;
   failed.fail_attempt = 2;
@@ -248,6 +280,50 @@ void logs() {
   handle(request(ble::kOpLogTail, ble::Link::Lan, "x"), malformed);
   assert(malformed.successful.empty() && malformed.errors.size() == 1);
   assert(malformed.errors[0].code == ble::kErrMalformed);
+}
+
+void diagnostics() {
+  // GET_DIAG: newest events that fit the link, oldest first.
+  for (unsigned i = 0; i < 70; ++i)
+    ble::record_disconnect(ble::DisconnectReason::IdleTimeout,
+                           static_cast<std::uint8_t>(1 + i % 3), i, 0, 0,
+                           std::int64_t(i) * 1000000);
+  for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
+    Peer peer;
+    peer.payload = 2000;
+    handle(request(ble::kOpGetDiag, link), peer);
+    assert(peer.errors.empty() && peer.successful.size() == 1);
+    const auto &frame = peer.successful[0].bytes;
+    const std::size_t n = link == ble::Link::Ble ? 29 : 61;
+    assert(frame[0] == ble::kFrameDiag && frame[37] == n);
+    assert(frame.size() == 38 + 16 * n);
+    assert(aq::sync::get_u16(frame.data() + 1) == aqlog.boot_seq());
+    assert(aq::sync::get_u16(frame.data() + 3 + 2 * 1) == 70);
+    const auto last = ble::decode_event(frame.data() + 38 + 16 * (n - 1));
+    const auto first = ble::decode_event(frame.data() + 38);
+    assert(last.generation == 69 && first.generation == 70 - n);
+    assert(last.uptime_s == 69 && last.reason == 1);
+  }
+  Peer narrow;
+  narrow.payload = 37;
+  handle(request(ble::kOpGetDiag, ble::Link::Ble), narrow);
+  assert(narrow.successful.empty() && narrow.errors.size() == 1);
+  assert(narrow.errors[0].code == ble::kErrBusy);
+  Peer malformed;
+  handle(request(ble::kOpGetDiag, ble::Link::Lan, "x"), malformed);
+  assert(malformed.errors.size() == 1 &&
+         malformed.errors[0].code == ble::kErrMalformed);
+
+  // ABORT while idle: ABORTED op 0.
+  Peer idle;
+  handle(request(ble::kOpAbort, ble::Link::Lan), idle);
+  assert(idle.errors.empty() && idle.successful.size() == 1);
+  assert((idle.successful[0].bytes ==
+          std::vector<std::uint8_t>{ble::kFrameAborted, 0}));
+  Peer bad_abort;
+  handle(request(ble::kOpAbort, ble::Link::Ble, "x"), bad_abort);
+  assert(bad_abort.errors.size() == 1 &&
+         bad_abort.errors[0].code == ble::kErrMalformed);
 }
 
 void dispatch() {
@@ -283,7 +359,10 @@ Status status() {
   value.clients = 3;
   return value;
 }
-void drop_session() { ++sessions_dropped; }
+void drop_session(ble::DisconnectReason reason) {
+  assert(reason == ble::DisconnectReason::TokenRotated);
+  ++sessions_dropped;
+}
 void apply_time_settings() { ++time_reapplied; }
 void apply_settings() { ++wifi_reapplied; }
 } // namespace lan
@@ -294,6 +373,7 @@ int main() {
   config_chunks();
   token_guard();
   logs();
+  diagnostics();
   dispatch();
 }
 

@@ -9,6 +9,7 @@
 // the worker.
 
 #include "ble_sync.h"
+#include "disconnect.h"
 #include "network_time.h"
 
 #include <cstddef>
@@ -50,8 +51,10 @@ void apply_time_settings();
 // WIFI_SCAN_END). At most one scan is pending; a second request is refused.
 bool request_scan(ble::Link link, std::uint32_t link_generation,
                   std::uint8_t peer = 0);
-// Close every TCP session, e.g. after the token was rotated.
-void drop_session();
+// Close every TCP session with a typed BYE, e.g. after the token was rotated
+// or before an owner-requested reboot.
+void drop_session(
+    ble::DisconnectReason reason = ble::DisconnectReason::TokenRotated);
 
 // From the storage worker: send to one authenticated slot. Pass the request's
 // generation to reject stale replies atomically with socket identity checks;

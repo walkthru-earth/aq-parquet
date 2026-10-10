@@ -1,6 +1,7 @@
 #include "control_sync.h"
 #include "debug_log.h"
 #include "device_config.h"
+#include "disconnect.h"
 #include "wifi_link.h"
 #include <sync_codec.h>
 
@@ -77,27 +78,30 @@ void send_config(ble::Link link, ble::Op op, const ControlReplies &replies,
   }
 }
 
-void send_log_tail(ble::Link link, std::uint16_t max_bytes,
-                   const ControlReplies &replies) {
-  static char text[DebugLog::kRingBytes];
-  std::uint32_t total = 0;
-  const std::size_t wanted =
-      max_bytes > DebugLog::kRingBytes ? DebugLog::kRingBytes : max_bytes;
-  const std::size_t count = aqlog.tail(text, wanted, total);
-  std::size_t payload_max = replies.payload_max(replies.context, link);
+std::size_t reply_cap(ble::Link link, const ControlReplies &replies) {
+  const std::size_t payload_max = replies.payload_max(replies.context, link);
   const std::size_t cap =
       link == ble::Link::Ble ? ble::kMaxFrame : kPayloadCapacity;
-  if (payload_max > cap)
-    payload_max = cap;
+  return payload_max < cap ? payload_max : cap;
+}
+
+// Streams straight from the ring by cursor; no ring-sized copy. LOG_TAIL's
+// u16 request clips the reply at 65535 bytes, so `sent` fits LOG_END's u16.
+void send_log_tail(ble::Link link, std::uint16_t max_bytes,
+                   const ControlReplies &replies) {
+  std::uint32_t total = 0;
+  auto cursor = aqlog.tail_cursor(max_bytes, total);
+  const std::size_t payload_max = reply_cap(link, replies);
   std::uint8_t frame[1 + kPayloadCapacity];
   std::size_t sent = 0;
   if (payload_max > 1) {
     const std::size_t slice_max = payload_max - 1;
-    while (sent < count) {
+    while (cursor.remaining) {
       const std::size_t slice =
-          count - sent < slice_max ? count - sent : slice_max;
+          aqlog.read(cursor, reinterpret_cast<char *>(frame + 1), slice_max);
+      if (!slice)
+        break;
       frame[0] = ble::kFrameLog;
-      std::memcpy(frame + 1, text + sent, slice);
       if (!replies.respond(replies.context, link, frame, 1 + slice))
         break;
       sent += slice;
@@ -108,6 +112,17 @@ void send_log_tail(ble::Link link, std::uint16_t max_bytes,
   put_u32(end + 1, total);
   put_u16(end + 5, static_cast<std::uint16_t>(sent));
   replies.respond(replies.context, link, end, sizeof(end));
+}
+
+void send_diag(ble::Link link, const ControlReplies &replies) {
+  const std::size_t capacity = reply_cap(link, replies);
+  std::uint8_t frame[kPayloadCapacity];
+  const std::size_t length = ble::encode_diag_snapshot(frame, capacity);
+  if (!length) {
+    replies.error(replies.context, link, ble::kOpGetDiag, ble::kErrBusy, "mtu");
+    return;
+  }
+  replies.respond(replies.context, link, frame, length);
 }
 } // namespace
 
@@ -145,6 +160,25 @@ bool handle_common_control(const ble::ControlRequest &request,
     else if (actions.ntp_changed)
       lan::apply_time_settings();
     send_config(request.link, ble::kOpSetConfig, replies);
+    return true;
+  }
+  case ble::kOpGetDiag:
+    if (length)
+      replies.error(replies.context, request.link, ble::kOpGetDiag,
+                    ble::kErrMalformed, nullptr);
+    else
+      send_diag(request.link, replies);
+    return true;
+  case ble::kOpAbort: {
+    // The worker runs one command at a time, so nothing is in flight here.
+    if (length) {
+      replies.error(replies.context, request.link, ble::kOpAbort,
+                    ble::kErrMalformed, nullptr);
+      return true;
+    }
+    std::uint8_t frame[ble::kAbortedBytes];
+    replies.respond(replies.context, request.link, frame,
+                    ble::encode_aborted(frame, sizeof(frame), 0));
     return true;
   }
   case ble::kOpLogTail:

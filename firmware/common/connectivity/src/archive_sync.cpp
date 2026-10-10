@@ -87,7 +87,7 @@ void ArchiveSession::emit_file(void *context, const char *name,
   if (!list.ok)
     return;
   auto &session = *list.session;
-  if (list.count == UINT16_MAX) {
+  if (list.count == UINT32_MAX) {
     list.ok = false;
     list.failure_detail = "count";
     return;
@@ -140,13 +140,13 @@ void ArchiveSession::list() {
                 : nullptr);
     return;
   }
-  std::uint8_t frame[13];
+  std::uint8_t frame[15];
   frame[0] = ble::kFrameListEnd;
-  put_u16(frame + 1, list.count);
-  put_u16(frame + 3, static_cast<std::uint16_t>(
+  put_u32(frame + 1, list.count);
+  put_u16(frame + 5, static_cast<std::uint16_t>(
                          result.partials > 65535 ? 65535 : result.partials));
-  put_u32(frame + 5, archive_.total_kib(archive_.context));
-  put_u32(frame + 9, archive_.used_kib(archive_.context));
+  put_u32(frame + 7, archive_.total_kib(archive_.context));
+  put_u32(frame + 11, archive_.used_kib(archive_.context));
   // A failed terminal delivery leaves the client without a complete snapshot.
   if (respond(frame, sizeof(frame)) && archive_.listed)
     archive_.listed(archive_.context);

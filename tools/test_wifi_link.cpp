@@ -2,6 +2,7 @@
 // task creation are faked; framing, authentication, routing and sockets are
 // not.
 #include "../firmware/common/connectivity/src/wifi_link.cpp"
+#include "sync_codec.h"
 #include <esp_netif_sntp.h>
 
 #include <cassert>
@@ -89,6 +90,31 @@ void request_status(int fd, std::uint8_t peer) {
   write_bytes(fd, bytes, sizeof(bytes));
   lan::handle_client_bytes(peer);
 }
+
+// The device says why before it closes: one BYE frame, then EOF. Cached
+// STATUS/LIVE pushes queued ahead of it are skipped.
+std::vector<std::uint8_t> expect_bye(int fd, ble::DisconnectReason reason) {
+  auto frame = read_frame(fd);
+  while (frame[0] == ble::kFrameStatus || frame[0] == ble::kFrameLive)
+    frame = read_frame(fd);
+  assert(frame.size() == ble::kByeBytes && frame[0] == ble::kFrameBye);
+  assert(frame[1] == static_cast<std::uint8_t>(reason));
+  std::uint8_t byte;
+  assert(::recv(fd, &byte, 1, 0) == 0);
+  return frame;
+}
+
+ble::DisconnectEvent expect_event(ble::DisconnectReason reason,
+                                  std::uint8_t link) {
+  std::uint8_t raw[DebugLog::kFallbackEventSlots][DebugLog::kEventBytes];
+  const auto count = aqlog.events(raw, DebugLog::kFallbackEventSlots);
+  assert(count > 0);
+  const auto event = ble::decode_event(raw[count - 1]);
+  assert(event.reason == static_cast<std::uint8_t>(reason));
+  assert(event.link == link);
+  assert(ble::disconnect_stats().last == reason);
+  return event;
+}
 } // namespace
 
 namespace config {
@@ -148,11 +174,13 @@ int main() {
     authenticate(phones[peer], peer, peer == 1);
   }
   assert(lan::status().clients == 3 && lan::status().authenticated);
+  const auto disconnects_before = ble::disconnect_stats().count;
   const int fourth = connect_phone();
   const auto busy = read_frame(fourth);
   assert(busy[0] == ble::kFrameError && busy[2] == ble::kErrBusy);
-  std::uint8_t byte;
-  assert(::recv(fourth, &byte, 1, 0) == 0);
+  expect_bye(fourth, ble::DisconnectReason::SessionsFull);
+  expect_event(ble::DisconnectReason::SessionsFull, ble::kEventLinkRefused);
+  assert(ble::disconnect_stats().count == disconnects_before + 1);
   ::close(fourth);
   assert(lan::status().clients == 3);
 
@@ -228,6 +256,8 @@ int main() {
   ::close(phones[1]);
   lan::handle_client_bytes(1);
   assert(lan::status().clients == 2);
+  assert(expect_event(ble::DisconnectReason::PeerClosed, 2).generation ==
+         old_generation);
   assert(lan::connection_generation(2) == other_generation);
   phones[1] = connect_phone();
   authenticate(phones[1], 1);
@@ -245,12 +275,16 @@ int main() {
   write_bytes(phones[0], malformed, sizeof(malformed));
   lan::handle_client_bytes(0);
   assert(read_frame(phones[0])[2] == ble::kErrMalformed);
+  expect_bye(phones[0], ble::DisconnectReason::Malformed);
+  expect_event(ble::DisconnectReason::Malformed, 1);
   ::close(phones[0]);
   phones[0] = connect_phone();
   std::uint8_t invalid[lan::kHandshakeBytes]{};
   write_bytes(phones[0], invalid, sizeof(invalid));
   lan::handle_client_bytes(0);
   assert(read_frame(phones[0])[2] == ble::kErrAuth);
+  expect_bye(phones[0], ble::DisconnectReason::AuthFailed);
+  expect_event(ble::DisconnectReason::AuthFailed, 1);
   ::close(phones[0]);
   assert(lan::status().clients == 2);
   phones[0] = connect_phone();
@@ -260,6 +294,8 @@ int main() {
   request_status(phones[2], 2);
   lan::poll_server();
   assert(lan::clients[0].fd.load() < 0 && lan::status().clients == 2);
+  expect_bye(phones[0], ble::DisconnectReason::HandshakeTimeout);
+  expect_event(ble::DisconnectReason::HandshakeTimeout, 1);
   ::close(phones[0]);
   // Reconnecting slot 1 received its cached initial snapshots on poll.
   assert(read_frame(phones[1])[0] == ble::kFrameStatus);
@@ -287,12 +323,23 @@ int main() {
   assert(failed && lan::clients[1].drop.load());
   lan::poll_server();
   assert(lan::status().clients == 1 && lan::payload_max(2) == lan::kPayloadMax);
+  assert(expect_event(ble::DisconnectReason::SendError, 2).err != 0);
   lan::drop_session();
   assert(!lan::send_response(response, sizeof(response), 2));
   assert(lan::payload_max(2) == 0);
   lan::poll_server();
   assert(lan::status().clients == 0 && !lan::status().client);
+  expect_bye(phones[2], ble::DisconnectReason::TokenRotated);
+  expect_event(ble::DisconnectReason::TokenRotated, 3);
   ::close(phones[2]);
+  // An owner-requested reboot names itself before the sockets go away.
+  const int rebooting = connect_phone();
+  authenticate(rebooting, 0);
+  lan::drop_session(ble::DisconnectReason::Reboot);
+  lan::poll_server();
+  expect_bye(rebooting, ble::DisconnectReason::Reboot);
+  expect_event(ble::DisconnectReason::Reboot, 1);
+  ::close(rebooting);
   const int idle = connect_phone();
   authenticate(idle, 0);
   const auto idle_generation = lan::connection_generation(0);
@@ -300,8 +347,84 @@ int main() {
   lan::poll_server();
   assert(!lan::status().client &&
          lan::connection_generation(0) != idle_generation);
-  assert(::recv(idle, &byte, 1, 0) == 0);
+  const auto bye = expect_bye(idle, ble::DisconnectReason::IdleTimeout);
+  assert(aq::sync::get_u32(bye.data() + 2) == idle_generation);
+  assert(aq::sync::get_u32(bye.data() + 10) == fake_now_us / 1000000);
+  assert(expect_event(ble::DisconnectReason::IdleTimeout, 1).generation ==
+         idle_generation);
   ::close(idle);
+
+  // A peer that stops reading times out a send. The slot closes as SlowPeer
+  // with the send errno, not as a generic SendError.
+  const int slow = connect_phone();
+  authenticate(slow, 0);
+  int small = 4096;
+  assert(::setsockopt(slow, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0);
+  const int slow_fd = lan::clients[0].fd.load();
+  assert(::setsockopt(slow_fd, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) ==
+         0);
+  timeval short_send{0, 20000};
+  assert(::setsockopt(slow_fd, SOL_SOCKET, SO_SNDTIMEO, &short_send,
+                      sizeof(short_send)) == 0);
+  std::vector<std::uint8_t> bulk(lan::kPayloadMax, 0x5a);
+  bulk[0] = ble::kFrameLive;
+  bool stalled = false;
+  for (unsigned attempt = 0; attempt < 4096 && !stalled; ++attempt)
+    stalled = !lan::send_response(bulk.data(), bulk.size(), 0);
+  assert(stalled && lan::clients[0].drop.load());
+  // A frame cut off mid-send leaves no room for a BYE. The close skips it and
+  // still records the reason.
+  const bool torn = lan::clients[0].torn;
+  lan::poll_server();
+  assert(!lan::clients[0].torn);
+  const auto slow_event = expect_event(ble::DisconnectReason::SlowPeer, 1);
+  assert(slow_event.err == EAGAIN || slow_event.err == EWOULDBLOCK ||
+         slow_event.err == ETIMEDOUT);
+  if (torn) {
+    // Drain to EOF. The last bytes are a partial frame, never a BYE frame.
+    std::vector<std::uint8_t> tail;
+    std::uint8_t chunk[4096];
+    ssize_t got;
+    while ((got = ::recv(slow, chunk, sizeof(chunk), 0)) > 0)
+      tail.insert(tail.end(), chunk, chunk + got);
+    assert(tail.size() < ble::kByeBytes + 2 ||
+           tail[tail.size() - ble::kByeBytes] != ble::kFrameBye ||
+           tail[tail.size() - ble::kByeBytes - 2] != ble::kByeBytes);
+  }
+  ::close(slow);
+
+  // A reset peer fails recv. The event keeps the errno.
+  const int reset_peer = connect_phone();
+  authenticate(reset_peer, 0);
+  const auto reset_fd = lan::clients[0].fd.load();
+  assert(::setsockopt(reset_peer, SOL_SOCKET, SO_LINGER, &reset,
+                      sizeof(reset)) == 0);
+  ::close(reset_peer);
+  fd_set reset_ready;
+  FD_ZERO(&reset_ready);
+  FD_SET(reset_fd, &reset_ready);
+  timeval reset_timeout{1, 0};
+  assert(::select(reset_fd + 1, &reset_ready, nullptr, nullptr,
+                  &reset_timeout) > 0);
+  lan::handle_client_bytes(0);
+  assert(lan::clients[0].fd.load() < 0);
+  assert(expect_event(ble::DisconnectReason::RecvError, 1).err == ECONNRESET);
+
+  // A rotation requested between poll_server and a handshake refuses HELLO.
+  // The new peer learns the rotation, not a generic send error.
+  const int racing = connect_phone();
+  std::uint8_t handshake[lan::kHandshakeBytes];
+  std::memcpy(handshake, "AQS1", 4);
+  std::memcpy(handshake + 4, fixture_settings.token, config::kTokenBytes);
+  write_bytes(racing, handshake, sizeof(handshake));
+  lan::drop_session();
+  lan::handle_client_bytes(0);
+  assert(lan::clients[0].fd.load() < 0);
+  expect_bye(racing, ble::DisconnectReason::TokenRotated);
+  expect_event(ble::DisconnectReason::TokenRotated, 1);
+  ::close(racing);
+  lan::poll_server();
+  assert(!lan::drop_requested.load());
 
   fixture_settings.wifi_on = true;
   std::memcpy(fixture_settings.ssid, "fixture", 8);
@@ -357,15 +480,53 @@ int main() {
   lan::poll_radio();
   lan::poll_radio();
   assert(lan::listen_fd >= 0);
+  // Losing the station closes sessions with WifiLost; reapplying unchanged
+  // LAN settings restarts the server with ServerStop.
+  const int lost = connect_phone();
+  authenticate(lost, 0);
+  fake_wifi_lost();
+  lan::poll_radio();
+  expect_bye(lost, ble::DisconnectReason::WifiLost);
+  expect_event(ble::DisconnectReason::WifiLost, 1);
+  ::close(lost);
+  fake_wifi_got_ip();
+  lan::poll_radio();
+  lan::poll_radio();
+  assert(lan::listen_fd >= 0);
+  const int restarted = connect_phone();
+  authenticate(restarted, 0);
+  lan::apply_settings();
+  lan::poll_radio();
+  expect_bye(restarted, ble::DisconnectReason::ServerStop);
+  expect_event(ble::DisconnectReason::ServerStop, 1);
+  ::close(restarted);
+  lan::poll_radio();
+  lan::poll_radio();
+  assert(lan::listen_fd >= 0);
+  // SET_CONFIG that rotates the token and changes Wi-Fi drops the session,
+  // then reapplies. poll_radio runs first and must still name the rotation.
+  const int rotated = connect_phone();
+  authenticate(rotated, 0);
+  lan::drop_session();
+  lan::apply_settings();
+  lan::poll_radio();
+  assert(!lan::drop_requested.load());
+  expect_bye(rotated, ble::DisconnectReason::TokenRotated);
+  expect_event(ble::DisconnectReason::TokenRotated, 1);
+  ::close(rotated);
+  lan::poll_radio();
+  lan::poll_radio();
+  assert(lan::listen_fd >= 0);
   const int restored = connect_phone();
   authenticate(restored, 0);
   fixture_settings.lan_on = false;
   lan::apply_settings();
   lan::poll_radio();
   assert(lan::listen_fd < 0 && !lan::status().client);
-  assert(::recv(restored, &byte, 1, 0) == 0);
+  expect_bye(restored, ble::DisconnectReason::LanDisabled);
+  expect_event(ble::DisconnectReason::LanDisabled, 1);
   ::close(restored);
-  lan::stop_server("test-end");
+  lan::stop_server(ble::DisconnectReason::ServerStop);
 
   // Native station events drive link state; failed association keeps the
   // existing bounded 30 second connect / 30 second retry cadence.
@@ -471,7 +632,7 @@ int main() {
   assert(std::memcmp(fake_wifi_config.sta.password, fixture_settings.psk,
                      config::kPskMax) == 0 &&
          fake_wifi_config.sta.password[config::kPskMax] == 0);
-  char log[DebugLog::kRingBytes];
+  char log[DebugLog::kFallbackRingBytes];
   std::uint32_t logged;
   const auto length = aqlog.tail(log, sizeof(log), logged);
   assert(std::string(log, length).find(fixture_settings.psk) ==

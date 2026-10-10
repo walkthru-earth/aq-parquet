@@ -1,6 +1,7 @@
 #include "wifi_link.h"
 #include "debug_log.h"
 #include "device_config.h"
+#include "disconnect.h"
 
 #include <esp_event.h>
 #include <esp_mac.h>
@@ -23,6 +24,7 @@
 
 namespace lan {
 namespace {
+using ble::DisconnectReason;
 constexpr TickType_t kTick = pdMS_TO_TICKS(100);
 constexpr std::int64_t kConnectTimeoutUs = 30LL * 1000000LL;
 constexpr std::int64_t kRetryUs = 30LL * 1000000LL;
@@ -99,6 +101,8 @@ portMUX_TYPE status_mutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t socket_mutex = nullptr;
 
 std::atomic<bool> reapply{true}, time_reapply{false}, drop_requested{false};
+std::atomic<std::uint8_t> drop_all_reason{
+    static_cast<std::uint8_t>(DisconnectReason::TokenRotated)};
 std::atomic<bool> lan_ready{false};
 std::atomic<bool> scan_pending{false};
 std::atomic<std::uint8_t> scan_link{0};
@@ -113,6 +117,12 @@ struct Client {
   std::atomic<int> fd{-1};
   std::atomic<bool> authenticated{false}, drop{false};
   std::atomic<std::uint32_t> generation{0};
+  // Why a worker send asked the LAN task to drop this slot.
+  std::atomic<std::uint8_t> drop_reason{0};
+  std::atomic<int> drop_err{0};
+  // A send failed after part of a frame went out, so the stream is torn and a
+  // BYE written now would land inside that frame. Guarded by socket_mutex.
+  bool torn = false;
   std::uint8_t rx[2 + ble::kMaxControlBytes + kHandshakeBytes]{};
   std::size_t rx_length = 0;
   std::int64_t since_us = 0, last_rx_us = 0;
@@ -173,7 +183,8 @@ void set_status(const char *state, bool link_up) {
 
 // ---- socket helpers. An fd never escapes the socket_mutex for a send/close.
 
-bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
+bool write_all(int fd, const std::uint8_t *data, std::size_t length,
+               bool *torn = nullptr) {
   std::size_t sent = 0;
   const auto deadline_us = esp_timer_get_time() + kSendUs;
   while (sent < length) {
@@ -186,8 +197,12 @@ bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
       count = ::send(fd, data + sent, length - sent, 0);
     }
     if (count <= 0) {
+      const int failure = count == 0 ? EPIPE : errno;
       aqlog.record_only().printf("LAN SEND FAILED errno=%d sent=%u of=%u\n",
-                                 errno, unsigned(sent), unsigned(length));
+                                 failure, unsigned(sent), unsigned(length));
+      if (torn && sent > 0)
+        *torn = true;
+      errno = failure;
       return false;
     }
     sent += static_cast<std::size_t>(count);
@@ -197,14 +212,15 @@ bool write_all(int fd, const std::uint8_t *data, std::size_t length) {
 }
 
 // Called with socket_mutex held, including for the unassigned busy socket.
-bool send_framed_locked(int fd, const std::uint8_t *frame, std::size_t length) {
+bool send_framed_locked(int fd, const std::uint8_t *frame, std::size_t length,
+                        bool *torn = nullptr) {
   if (fd < 0 || length == 0 || length > kPayloadMax)
     return false;
   std::uint8_t buffer[2 + kPayloadMax];
   buffer[0] = length & 0xff;
   buffer[1] = (length >> 8) & 0xff;
   std::memcpy(buffer + 2, frame, length);
-  return write_all(fd, buffer, 2 + length);
+  return write_all(fd, buffer, 2 + length, torn);
 }
 
 bool send_to(std::uint8_t peer, const std::uint8_t *frame, std::size_t length,
@@ -221,9 +237,16 @@ bool send_to(std::uint8_t peer, const std::uint8_t *frame, std::size_t length,
       fd >= 0 && !drop_requested.load() && !client.drop.load() &&
       (!require_authenticated || client.authenticated.load()) &&
       (!expected_generation || client.generation.load() == expected_generation);
-  const bool ok = valid && send_framed_locked(fd, frame, length);
-  if (valid && !ok)
+  const bool ok = valid && send_framed_locked(fd, frame, length, &client.torn);
+  if (valid && !ok && !client.drop.load()) {
+    const int failure = errno;
+    const bool slow =
+        failure == ETIMEDOUT || failure == EAGAIN || failure == EWOULDBLOCK;
+    client.drop_reason = static_cast<std::uint8_t>(
+        slow ? DisconnectReason::SlowPeer : DisconnectReason::SendError);
+    client.drop_err = failure;
     client.drop = true;
+  }
   xSemaphoreGive(socket_mutex);
   return ok;
 }
@@ -252,25 +275,51 @@ bool send_error_to(std::uint8_t peer, ble::Op op, ble::Error code,
   return send_to(peer, frame, length, 0, false);
 }
 
-void close_client(std::uint8_t peer, const char *reason) {
+std::int16_t clamp_err(int err) {
+  return static_cast<std::int16_t>(err > 32767    ? 32767
+                                   : err < -32768 ? -32768
+                                                  : err);
+}
+
+// Best effort, never blocks: a BYE that does not fit the send buffer is lost.
+void send_bye_locked(int fd, DisconnectReason reason, std::uint32_t generation,
+                     int err) {
+  std::uint8_t buffer[2 + ble::kByeBytes];
+  const auto length = ble::encode_bye(
+      buffer + 2, ble::kByeBytes, reason, generation, clamp_err(err), 0,
+      static_cast<std::uint32_t>(esp_timer_get_time() / 1000000));
+  buffer[0] = length & 0xff;
+  buffer[1] = (length >> 8) & 0xff;
+  ::send(fd, buffer, 2 + length, MSG_DONTWAIT);
+}
+
+void close_client(std::uint8_t peer, DisconnectReason reason, int err = 0) {
   auto &client = clients[peer];
   // Wait for any whole-frame send to finish before closing; no unlocked
   // fallback can close an fd that another task is still using.
   xSemaphoreTake(socket_mutex, portMAX_DELAY);
   const int fd = client.fd.exchange(-1);
   const bool was_authenticated = client.authenticated.exchange(false);
+  const std::uint32_t generation = client.generation.load();
   if (fd >= 0) {
+    // The event below still records the reason when the BYE is skipped.
+    if (!client.torn)
+      send_bye_locked(fd, reason, generation, err);
     ::close(fd);
     ++client.generation;
   }
   client.drop = false;
+  client.torn = false;
   xSemaphoreGive(socket_mutex);
   client.rx_length = 0;
   client.needs_snapshots = false;
   if (fd >= 0) {
+    ble::record_disconnect(reason, static_cast<std::uint8_t>(peer + 1),
+                           generation, clamp_err(err), 0, esp_timer_get_time());
     aqlog.record_only().printf(
-        "LAN DISCONNECT slot=%u reason=%s authenticated=%s\n", unsigned(peer),
-        reason, was_authenticated ? "true" : "false");
+        "LAN DISCONNECT slot=%u reason=%s err=%d authenticated=%s\n",
+        unsigned(peer), ble::disconnect_reason_name(reason), err,
+        was_authenticated ? "true" : "false");
     touch_ui();
   }
 }
@@ -330,7 +379,7 @@ void start_server() {
       unsigned(config::kLanPort), host_label, mdns_on ? "true" : "false");
 }
 
-void stop_server(const char *reason) {
+void stop_server(DisconnectReason reason) {
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
     close_client(peer, reason);
   if (mdns_on) {
@@ -340,7 +389,8 @@ void stop_server(const char *reason) {
   if (listen_fd >= 0) {
     ::close(listen_fd);
     listen_fd = -1;
-    aqlog.record_only().printf("LAN STOP reason=%s\n", reason);
+    aqlog.record_only().printf("LAN STOP reason=%s\n",
+                               ble::disconnect_reason_name(reason));
   }
   portENTER_CRITICAL(&status_mutex);
   current.mdns = false;
@@ -349,7 +399,7 @@ void stop_server(const char *reason) {
 
 void radio_off(const char *reason) {
   aq::network_time::set_network_available(false);
-  stop_server(reason);
+  stop_server(DisconnectReason::LanDisabled);
   if (radio_on) {
     esp_wifi_disconnect();
     esp_wifi_stop();
@@ -415,8 +465,16 @@ void poll_radio() {
     settings = config::get();
     apply_time_policy(settings.ntp);
     // Reconcile lan.on and invalidate old sessions even when the station
-    // stays associated with the same network.
-    stop_server("settings");
+    // stays associated with the same network. A drop requested with the same
+    // settings write (token rotation, reboot) runs before poll_server, so its
+    // reason names the restart instead of ServerStop.
+    const bool lan_kept =
+        settings.lan_on && settings.wifi_on && settings.ssid[0];
+    const bool dropped = drop_requested.exchange(false);
+    stop_server(!lan_kept ? DisconnectReason::LanDisabled
+                : dropped
+                    ? static_cast<DisconnectReason>(drop_all_reason.load())
+                    : DisconnectReason::ServerStop);
     connected = false;
     if (!settings.wifi_on || !settings.ssid[0]) {
       radio_off("settings");
@@ -445,7 +503,7 @@ void poll_radio() {
   } else if (!up && connected) {
     connected = false;
     aq::network_time::set_network_available(false);
-    stop_server("wifi-lost");
+    stop_server(DisconnectReason::WifiLost);
     aqlog.record_only().println("WIFI LOST");
     radio_connect();
   } else if (!up && retry_at_us == 0 &&
@@ -618,8 +676,12 @@ void accept_client() {
                                     ble::kErrBusy, "sessions-full");
     xSemaphoreTake(socket_mutex, portMAX_DELAY);
     send_framed_locked(fd, frame, length);
+    send_bye_locked(fd, DisconnectReason::SessionsFull, 0, 0);
     ::close(fd);
     xSemaphoreGive(socket_mutex);
+    ble::record_disconnect(DisconnectReason::SessionsFull,
+                           ble::kEventLinkRefused, 0, 0, 0,
+                           esp_timer_get_time());
     return;
   }
   auto &client = clients[peer];
@@ -659,7 +721,15 @@ bool open_session(std::uint8_t peer) {
   xSemaphoreGive(socket_mutex);
   ++sessions;
   if (!send_hello(peer)) {
-    close_client(peer, "hello-failed");
+    if (client.drop.load())
+      close_client(peer,
+                   static_cast<DisconnectReason>(client.drop_reason.load()),
+                   client.drop_err.load());
+    else if (drop_requested.load())
+      // send_to refuses while a drop is pending, so report the drop's reason.
+      close_client(peer, static_cast<DisconnectReason>(drop_all_reason.load()));
+    else
+      close_client(peer, DisconnectReason::SendError);
     return false;
   }
   client.needs_snapshots = true;
@@ -675,7 +745,10 @@ void handle_client_bytes(std::uint8_t peer) {
   const int count = ::recv(client.fd.load(), client.rx + client.rx_length,
                            sizeof(client.rx) - client.rx_length, 0);
   if (count <= 0) {
-    close_client(peer, count == 0 ? "peer-closed" : "recv-error");
+    if (count == 0)
+      close_client(peer, DisconnectReason::PeerClosed);
+    else
+      close_client(peer, DisconnectReason::RecvError, errno);
     return;
   }
   client.rx_length += static_cast<std::size_t>(count);
@@ -686,7 +759,7 @@ void handle_client_bytes(std::uint8_t peer) {
     if (!token_matches(client.rx)) {
       aqlog.record_only().println("LAN AUTH result=rejected");
       send_error_to(peer, static_cast<ble::Op>(0), ble::kErrAuth, "token");
-      close_client(peer, "auth");
+      close_client(peer, DisconnectReason::AuthFailed);
       return;
     }
     std::memmove(client.rx, client.rx + kHandshakeBytes,
@@ -703,7 +776,7 @@ void handle_client_bytes(std::uint8_t peer) {
     if (body == 0 || body > ble::kMaxControlBytes) {
       send_error_to(peer, static_cast<ble::Op>(0), ble::kErrMalformed,
                     "length");
-      close_client(peer, "bad-frame");
+      close_client(peer, DisconnectReason::Malformed);
       return;
     }
     if (client.rx_length < 2 + body)
@@ -760,9 +833,15 @@ void push_documents() {
 
 void poll_server(int wait_us = 0) {
   const bool drop_all = drop_requested.exchange(false);
-  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
-    if (drop_all || clients[peer].drop.load())
-      close_client(peer, "dropped");
+  for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
+    auto &client = clients[peer];
+    if (drop_all)
+      close_client(peer, static_cast<DisconnectReason>(drop_all_reason.load()));
+    else if (client.drop.load())
+      close_client(peer,
+                   static_cast<DisconnectReason>(client.drop_reason.load()),
+                   client.drop_err.load());
+  }
   if (listen_fd < 0)
     return;
   fd_set readable;
@@ -797,9 +876,9 @@ void poll_server(int wait_us = 0) {
     if (client.fd.load() < 0)
       continue;
     if (!client.authenticated.load() && now - client.since_us > kHandshakeUs)
-      close_client(peer, "handshake-timeout");
+      close_client(peer, DisconnectReason::HandshakeTimeout);
     else if (now - client.last_rx_us > kIdleUs)
-      close_client(peer, "idle");
+      close_client(peer, DisconnectReason::IdleTimeout);
   }
   push_documents();
 }
@@ -903,7 +982,10 @@ bool request_scan(ble::Link link, std::uint32_t link_generation,
   return true;
 }
 
-void drop_session() { drop_requested = true; }
+void drop_session(ble::DisconnectReason reason) {
+  drop_all_reason = static_cast<std::uint8_t>(reason);
+  drop_requested = true;
+}
 
 bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint8_t peer, std::uint32_t expected_generation) {

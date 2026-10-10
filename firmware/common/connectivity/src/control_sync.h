@@ -14,7 +14,8 @@ struct ControlReplies {
   bool (*error)(void *, ble::Link, ble::Op, ble::Error, const char *) = nullptr;
 };
 
-// Executes GET/SET_CONFIG, LOG_TAIL, GET_TOKEN and busy WIFI_SCAN replies.
+// Executes GET/SET_CONFIG, LOG_TAIL, GET_DIAG, idle ABORT, GET_TOKEN and busy
+// WIFI_SCAN replies.
 // Clock, STATUS, flush and reboot remain runtime operations. One command worker
 // owns this service and config writes; returns false for a runtime operation.
 bool handle_common_control(const ble::ControlRequest &request,

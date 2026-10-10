@@ -1,6 +1,7 @@
 #include "ble_sync.h"
 #include "ble_advert.h"
 #include "debug_log.h"
+#include "disconnect.h"
 
 #include <esp_random.h>
 #include <esp_timer.h>
@@ -28,6 +29,7 @@ void ble_store_config_init(void);
 
 namespace ble {
 namespace {
+static_assert(BLE_HS_ERR_HCI_BASE == kHciStatusBase, "NimBLE HCI status base");
 constexpr const char *kServiceUuid = "c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01";
 constexpr std::int64_t kPairingWindowUs = 60LL * 1000000LL;
 // Preserve the measured controller back-pressure budget: 400 x 10 ms = 4 s.
@@ -58,6 +60,16 @@ std::atomic<bool> enabled{false}, advertising{false}, connected{false},
 std::atomic<std::uint16_t> conn_handle{BLE_HS_CONN_HANDLE_NONE}, mtu{0};
 std::atomic<std::uint32_t> passkey{0}, bonds{0}, generation{0}, ui{0};
 std::atomic<std::int64_t> pairing_deadline{0};
+// Why this side asked the controller to terminate. The controller reports a
+// local termination as HCI 0x16, which carries no reason of its own.
+std::atomic<DisconnectReason> pending_reason{DisconnectReason::Unknown};
+
+// A failed terminate leaves no stale reason to mislabel the next connection.
+void terminate(std::uint16_t handle, DisconnectReason reason) {
+  pending_reason = reason;
+  if (ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) != 0)
+    pending_reason = DisconnectReason::Unknown;
+}
 config::PairMode mode = config::PairMode::Random;
 std::uint32_t fixed_passkey = 0;
 // Only the host writes applied_advert. Publishers update one atomic word so
@@ -325,7 +337,7 @@ int gap_event(ble_gap_event *event, void *) {
       return 0;
     }
     if (!host_requested.load()) {
-      ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+      terminate(event->connect.conn_handle, DisconnectReason::ServerStop);
       return 0;
     }
     ++generation; // Invalidate previous worker replies before exposing handle.
@@ -338,7 +350,13 @@ int gap_event(ble_gap_event *event, void *) {
     touch_ui();
     aqlog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
     return 0;
-  case BLE_GAP_EVENT_DISCONNECT:
+  case BLE_GAP_EVENT_DISCONNECT: {
+    const auto local = pending_reason.exchange(DisconnectReason::Unknown);
+    const std::uint32_t closed = generation.load();
+    std::int16_t err = 0;
+    const auto reason =
+        map_ble_disconnect(event->disconnect.reason, local, err);
+    const int hci = event->disconnect.reason - BLE_HS_ERR_HCI_BASE;
     connected = false;
     authenticated = false;
     pairing_active = false;
@@ -347,7 +365,10 @@ int gap_event(ble_gap_event *event, void *) {
     mtu = 0;
     ++generation;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
-    aqlog.printf("BLE DISCONNECT reason=%d\n", event->disconnect.reason);
+    record_disconnect(reason, kEventLinkBle, closed, err, 0,
+                      esp_timer_get_time());
+    aqlog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
+                 disconnect_reason_name(reason), unsigned(hci & 0xff));
     if (enabled.load() && host_requested.load())
       start_advertising();
     else {
@@ -355,6 +376,7 @@ int gap_event(ble_gap_event *event, void *) {
       touch_ui();
     }
     return 0;
+  }
   case BLE_GAP_EVENT_MTU:
     if (event->mtu.conn_handle == conn_handle.load()) {
       mtu = event->mtu.value;
@@ -379,8 +401,7 @@ int gap_event(ble_gap_event *event, void *) {
     touch_ui();
     if (!authenticated.load()) {
       aqlog.println("BLE AUTH result=failed action=disconnect");
-      ble_gap_terminate(event->enc_change.conn_handle,
-                        BLE_ERR_REM_USER_CONN_TERM);
+      terminate(event->enc_change.conn_handle, DisconnectReason::AuthFailed);
     } else {
       aqlog.printf("BLE BONDED authenticated=true bonds=%lu\n",
                    static_cast<unsigned long>(bonds.load()));
@@ -596,8 +617,9 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
     host_requested = false;
     enabled = false;
     ble_gap_adv_stop();
-    if (connected.load())
-      ble_gap_terminate(conn_handle.load(), BLE_ERR_REM_USER_CONN_TERM);
+    if (connected.load()) {
+      terminate(conn_handle.load(), DisconnectReason::ServerStop);
+    }
     advertising = false;
     aqlog.println("BLE ERROR operation=host-start");
     return false;

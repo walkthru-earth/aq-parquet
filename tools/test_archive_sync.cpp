@@ -224,9 +224,9 @@ int main(int argc, char **argv) {
   assert(session.handle(request(f, ble::kOpList), true));
   assert(f.frames.size() == 2 && f.listed == 1 && f.progress == 2);
   const auto &list = f.frames.back().bytes;
-  assert(list.size() == 13 && list[0] == ble::kFrameListEnd);
-  assert(get_u16(list.data() + 1) == 1 && get_u16(list.data() + 3) == 65535);
-  assert(get_u32(list.data() + 5) == 123 && get_u32(list.data() + 9) == 45);
+  assert(list.size() == 15 && list[0] == ble::kFrameListEnd);
+  assert(get_u32(list.data() + 1) == 1 && get_u16(list.data() + 5) == 65535);
+  assert(get_u32(list.data() + 7) == 123 && get_u32(list.data() + 11) == 45);
   f.clear();
   f.refuse_frame = 1;
   session.handle(request(f, ble::kOpList), true);
@@ -257,18 +257,12 @@ int main(int argc, char **argv) {
   session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
   assert(f.frames.size() == 2 && f.listed == 2 && f.errors.empty());
   f.clear();
-  f.list_repeats = 65535;
+  f.list_repeats = 65536; // Proto 3 LIST_END count is u32, past the old cap.
   session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
-  assert(f.frames.size() == 65536 && f.listed == 3 && f.errors.empty());
+  assert(f.frames.size() == 65537 && f.listed == 3 && f.errors.empty());
   assert(f.frames.back().bytes[0] == ble::kFrameListEnd &&
-         get_u16(f.frames.back().bytes.data() + 1) == 65535);
-  f.clear();
-  f.list_repeats = 65536; // LIST_END's u16 count cannot wrap to zero.
-  session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
-  assert(f.frames.size() == 65535 &&
-         f.frames.back().bytes[0] == ble::kFrameFile && f.listed == 3);
-  assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrBusy &&
-         f.errors[0].detail == "count");
+         f.frames.back().bytes.size() == 15 &&
+         get_u32(f.frames.back().bytes.data() + 1) == 65536);
   f.list_repeats = 1;
 
   auto handle = open(f, session);
