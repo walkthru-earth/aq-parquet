@@ -19,6 +19,8 @@ the device except for the explicitly named write operations (`time`, `flush`,
   pixi run ble-sync wifi-scan                  # WIFI_AP list
   pixi run ble-sync token --save artifacts/lan-token.txt        # BLE only
   pixi run ble-sync log [--bytes 8192]         # LOG_TAIL
+  pixi run ble-sync diag                       # GET_DIAG disconnect counters and events
+  pixi run ble-sync abort                      # ABORT whatever the device is running
   pixi run ble-sync reboot                     # explicit
 
 Every command also runs over the LAN transport once a token is held:
@@ -52,15 +54,23 @@ INFO, STATUS, LIVE, CONTROL, RESPONSE = (BASE.format(i) for i in range(2, 7))
 
 OP_LIST, OP_OPEN, OP_READ, OP_CLOSE, OP_SET_TIME, OP_FLUSH, OP_STATUS = range(1, 8)
 OP_GET_CONFIG, OP_SET_CONFIG, OP_WIFI_SCAN, OP_REBOOT, OP_LOG_TAIL, OP_GET_TOKEN = range(8, 14)
+OP_GET_DIAG, OP_ABORT = 0x0E, 0x0F
 F_FILE, F_LIST_END = 0x10, 0x11
 F_OPENED, F_CHUNK, F_READ_END, F_CLOSED = 0x20, 0x21, 0x22, 0x23
 F_TIME_SET, F_FLUSHED, F_ERROR = 0x30, 0x31, 0x7F
 F_CONFIG, F_WIFI_AP, F_WIFI_SCAN_END, F_REBOOTING = 0x40, 0x41, 0x42, 0x43
 F_LOG, F_LOG_END, F_TOKEN, F_HELLO, F_STATUS, F_LIVE = 0x44, 0x45, 0x46, 0x47, 0x48, 0x49
+F_BYE, F_DIAG, F_ABORTED = 0x4B, 0x4C, 0x4D
 ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed",
           5: "bad-handle", 6: "range", 7: "busy", 8: "storage-unavailable",
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
-          12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable"}
+          12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
+          16: "aborted"}
+# Protocol 3 typed disconnect reasons (BYE, DIAG events, STATUS `dr`).
+DISCONNECT_REASONS = ["unknown", "idle-timeout", "handshake-timeout", "auth-failed",
+                      "sessions-full", "slow-peer", "tx-overflow", "malformed", "wifi-lost",
+                      "lan-disabled", "token-rotated", "reboot", "peer-closed", "recv-error",
+                      "send-error", "server-stop", "keepalive-failed"]
 WIFI_AUTH = {0: "open", 1: "WEP", 2: "WPA", 3: "WPA2", 4: "WPA/WPA2", 5: "WPA2-Enterprise",
              6: "WPA3", 7: "WPA2/WPA3", 255: "other"}
 LAN_PORT = 47390
@@ -89,6 +99,10 @@ class LanLink:
         self.task = None
         self.is_connected = False
         self.mtu_size = LAN_PAYLOAD_MAX + 3
+        # Set when the device ends the session. Session registers on_close so a
+        # pending or later frame() raises at once instead of waiting a deadline.
+        self.close_error: ProtocolError | None = None
+        self.on_close = None
 
     async def connect(self):
         self.reader, self.writer = await asyncio.wait_for(
@@ -96,6 +110,8 @@ class LanLink:
         self.writer.write(b"AQS1" + self.token)
         await self.writer.drain()
         hello = await self._read_frame()
+        if hello[0] == F_BYE:
+            raise LinkClosedByDevice(decode_bye(hello))
         if hello[0] == F_ERROR:
             raise ProtocolError(f"LAN handshake refused code={hello[2]} ({ERRORS.get(hello[2], '?')})")
         if hello[0] != F_HELLO:
@@ -125,10 +141,28 @@ class LanLink:
                 elif frame and frame[0] == F_LIVE:
                     self._snapshot(LIVE, frame[1:])
                     self._deliver(LIVE, frame[1:])
+                elif frame and frame[0] == F_BYE:
+                    # The device closes right after BYE, so stop reading here.
+                    try:
+                        self._closed(LinkClosedByDevice(decode_bye(frame)))
+                    except ProtocolError as error:
+                        self._closed(error)
+                    return
                 else:
                     self._deliver(RESPONSE, frame)
-        except (asyncio.IncompleteReadError, ConnectionError, asyncio.CancelledError):
+        except (asyncio.IncompleteReadError, ConnectionError):
+            # Protocol 3 sends BYE before every device close. EOF without it is
+            # reason unknown (the BYE was lost or the peer is older).
+            self._closed(ProtocolError("LAN link closed by the device without BYE (reason unknown)"))
+        except asyncio.CancelledError:
             self.is_connected = False
+
+    def _closed(self, error: ProtocolError):
+        self.is_connected = False
+        if self.close_error is None:
+            self.close_error = error
+        if self.on_close:
+            self.on_close(self.close_error)
 
     def _snapshot(self, uuid: str, data: bytes):
         self.latest[uuid] = bytes(data)
@@ -161,7 +195,7 @@ class LanLink:
 
     async def write_gatt_char(self, _uuid: str, data: bytes, response=True):
         if not self.is_connected:
-            raise ProtocolError("LAN link closed")
+            raise self.close_error or ProtocolError("LAN link closed")
         self.writer.write(struct.pack("<H", len(data)) + bytes(data))
         await self.writer.drain()
 
@@ -177,6 +211,23 @@ class ProtocolError(RuntimeError):
     pass
 
 
+class LinkClosedByDevice(ProtocolError):
+    """The device sent BYE (0x4B) and closed the LAN session.
+
+    Carries the decoded BYE fields. `reason` is the DisconnectReason name."""
+
+    def __init__(self, bye: dict):
+        self.bye = dict(bye)
+        self.reason = bye["reason"]
+        self.reason_code = bye["reason_code"]
+        self.generation = bye["generation"]
+        self.err = bye["err"]
+        self.queued_frames = bye["queued_frames"]
+        self.uptime_s = bye["uptime_s"]
+        super().__init__(f"device closed the link: BYE reason={self.reason} generation={self.generation} "
+                         f"err={self.err} queued_frames={self.queued_frames} uptime_s={self.uptime_s}")
+
+
 class Session:
     """One connection; serializes control requests and collects response frames."""
 
@@ -184,33 +235,49 @@ class Session:
         if not math.isfinite(read_timeout) or read_timeout <= 0:
             raise ValueError("read timeout must be finite and positive")
         self.client = client
-        self.frames: asyncio.Queue[bytes] = asyncio.Queue()
+        # Response frames, or the error that ended the link (kept at the head
+        # so every later frame() raises it without waiting).
+        self.frames: asyncio.Queue[bytes | ProtocolError] = asyncio.Queue()
         self.verbose = verbose
         self.bytes_received = 0
         self.read_timeout = read_timeout
 
     async def start(self):
         await self.client.start_notify(RESPONSE, self._on_response)
+        if hasattr(self.client, "on_close"):
+            self.client.on_close = self._on_close
+            if self.client.close_error is not None:
+                self._on_close(self.client.close_error)
 
     def _on_response(self, _characteristic, data: bytearray):
         self.bytes_received += len(data)
         self.frames.put_nowait(bytes(data))
 
+    def _on_close(self, error: ProtocolError):
+        self.frames.put_nowait(error)
+
     async def request(self, payload: bytes):
         await self.client.write_gatt_char(CONTROL, payload, response=True)
 
-    async def frame(self, timeout=15.0) -> bytes:
+    async def frame(self, timeout=15.0, *, raise_error=True) -> bytes:
         try:
             data = await asyncio.wait_for(self.frames.get(), timeout)
         except asyncio.TimeoutError:
             raise ProtocolError("no response frame within deadline") from None
+        if isinstance(data, ProtocolError):
+            self.frames.put_nowait(data)  # the link stays closed for later reads
+            raise data
         if not data:
             raise ProtocolError("empty frame")
-        if data[0] == F_ERROR:
-            op, code = data[1], data[2]
-            raise ProtocolError(f"device ERROR op=0x{op:02x} code={code} ({ERRORS.get(code, '?')}) "
-                                f"detail={data[3:].decode('utf-8', 'replace')!r}")
+        if data[0] == F_ERROR and raise_error:
+            raise self._device_error(data)
         return data
+
+    @staticmethod
+    def _device_error(data: bytes) -> ProtocolError:
+        op, code = data[1], data[2]
+        return ProtocolError(f"device ERROR op=0x{op:02x} code={code} ({ERRORS.get(code, '?')}) "
+                             f"detail={data[3:].decode('utf-8', 'replace')!r}")
 
     async def read_char(self, uuid: str) -> bytearray:
         # Bleak 3.0.2's CoreBluetooth backend ignores read timeout kwargs and
@@ -244,11 +311,10 @@ class Session:
                 name = device.safe_name(data[5:].decode("utf-8"))
                 listed[name] = size
             elif data[0] == F_LIST_END:
-                count, partials, sd_kib, used_kib = struct.unpack_from("<HHII", data, 1)
-                if count != len(listed):
-                    raise ProtocolError(f"LIST_END count {count} != {len(listed)} received entries")
-                return listed, {"count": count, "partials": partials,
-                                "sd_kib": sd_kib, "sd_used_kib": used_kib}
+                end = decode_list_end(data)
+                if end["count"] != len(listed):
+                    raise ProtocolError(f"LIST_END count {end['count']} != {len(listed)} received entries")
+                return listed, end
             else:
                 raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during LIST")
 
@@ -395,6 +461,32 @@ class Session:
             else:
                 raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during LOG_TAIL")
 
+    async def get_diag(self) -> dict:
+        await self.request(bytes([OP_GET_DIAG]))
+        data = await self.frame()
+        if data[0] != F_DIAG:
+            raise ProtocolError(f"expected DIAG, got 0x{data[0]:02x}")
+        return decode_diag(data)
+
+    async def abort(self) -> dict:
+        """ABORT. A running op first ends with ERROR code 16, then ABORTED names it."""
+        await self.request(bytes([OP_ABORT]))
+        interrupted = None
+        while True:
+            data = await self.frame(raise_error=False)
+            if data[0] == F_ERROR and len(data) >= 3 and data[2] == 16:
+                interrupted = data[1]
+            elif data[0] == F_ERROR:
+                raise self._device_error(data)
+            elif data[0] == F_ABORTED:
+                result = decode_aborted(data)
+                result["error_aborted_op"] = interrupted
+                return result
+            elif data[0] in (F_FILE, F_CHUNK, F_LOG, F_WIFI_AP) and interrupted is None:
+                continue  # in flight from the op being stopped
+            else:
+                raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during ABORT")
+
     async def reboot(self) -> dict:
         await self.request(bytes([OP_REBOOT]))
         data = await self.frame(timeout=60)
@@ -465,6 +557,62 @@ def decode_advert(payload):
         "fin": int.from_bytes(payload[2:6], "little"),
         "boot16": f"{int.from_bytes(payload[6:8], 'little'):04x}",
     }
+
+
+def reason_name(code: int) -> str:
+    # A newer device may add codes. Show them as unknown, never reject them.
+    return DISCONNECT_REASONS[code] if code < len(DISCONNECT_REASONS) else "unknown"
+
+
+def link_name(link: int) -> str:
+    return "ble" if link == 0 else "refused" if link == 0xFF else f"lan{link}"
+
+
+def decode_list_end(frame: bytes) -> dict:
+    """LIST_END (0x11), protocol 3: count u32, partials u16, sd_kib u32, sd_used_kib u32, 15 bytes.
+
+    The 13-byte form with a u16 count is rejected, never read as a short count."""
+    if len(frame) != 15 or frame[0] != F_LIST_END:
+        raise ProtocolError(f"LIST_END must be 15 bytes, got {len(frame)}")
+    count, partials, sd_kib, used_kib = struct.unpack_from("<IHII", frame, 1)
+    return {"count": count, "partials": partials, "sd_kib": sd_kib, "sd_used_kib": used_kib}
+
+
+def decode_bye(frame: bytes) -> dict:
+    """BYE (0x4B), protocol 3: reason u8, generation u32, err i16, queued_frames u16, uptime_s u32."""
+    if len(frame) != 14 or frame[0] != F_BYE:
+        raise ProtocolError(f"BYE must be 14 bytes, got {len(frame)}")
+    reason, generation, err, queued, uptime = struct.unpack_from("<BIhHI", frame, 1)
+    return {"reason": reason_name(reason), "reason_code": reason, "generation": generation,
+            "err": err, "queued_frames": queued, "uptime_s": uptime}
+
+
+def decode_event(raw: bytes) -> dict:
+    """One 16-byte DisconnectEvent. uptime_s u32, generation u32, reason u8, link u8, err i16,
+    queued_frames u16, boot_seq u16."""
+    if len(raw) != 16:
+        raise ProtocolError(f"DisconnectEvent must be 16 bytes, got {len(raw)}")
+    uptime, generation, reason, link, err, queued, boot_seq = struct.unpack("<IIBBhHH", raw)
+    return {"uptime_s": uptime, "generation": generation, "reason": reason_name(reason),
+            "reason_code": reason, "link": link, "link_name": link_name(link), "err": err,
+            "queued_frames": queued, "boot_seq": boot_seq}
+
+
+def decode_diag(frame: bytes) -> dict:
+    """DIAG (0x4C), protocol 3: boot_seq u16, counts[17] u16, n u8, then n 16-byte events oldest first."""
+    if len(frame) < 38 or frame[0] != F_DIAG or len(frame) != 38 + 16 * frame[37]:
+        raise ProtocolError(f"DIAG length {len(frame)} does not match its event count")
+    (boot_seq,) = struct.unpack_from("<H", frame, 1)
+    counts = list(struct.unpack_from("<17H", frame, 3))
+    return {"boot_seq": boot_seq, "counts": counts,
+            "events": [decode_event(frame[38 + 16 * i:54 + 16 * i]) for i in range(frame[37])]}
+
+
+def decode_aborted(frame: bytes) -> dict:
+    """ABORTED (0x4D): op u8, the opcode that was stopped, 0 when nothing was running."""
+    if len(frame) != 2 or frame[0] != F_ABORTED:
+        raise ProtocolError(f"ABORTED must be 2 bytes, got {len(frame)}")
+    return {"op": frame[1]}
 
 
 async def cmd_scan(args):
@@ -654,6 +802,29 @@ async def cmd_log(args):
         await client.disconnect()
 
 
+async def cmd_diag(args):
+    client, session = await connect(args)
+    try:
+        diag = await session.get_diag()
+        counts = " ".join(f"{reason_name(code)}={n}" for code, n in enumerate(diag["counts"]) if n)
+        print(f"DIAG boot_seq={diag['boot_seq']} counts={counts or '-'}")
+        for event in diag["events"]:
+            print(f"DIAG EVENT boot_seq={event['boot_seq']} uptime_s={event['uptime_s']} "
+                  f"link={event['link_name']} generation={event['generation']} reason={event['reason']} "
+                  f"err={event['err']} queued_frames={event['queued_frames']}")
+        print(f"DIAG END events={len(diag['events'])}")
+    finally:
+        await client.disconnect()
+
+
+async def cmd_abort(args):
+    client, session = await connect(args)
+    try:
+        print(json.dumps({"aborted": await session.abort()}))
+    finally:
+        await client.disconnect()
+
+
 async def cmd_reboot(args):
     client, session = await connect(args)
     try:
@@ -706,6 +877,8 @@ def main():
     log = sub.add_parser("log", help="LOG_TAIL: the device's recent serial log")
     log.add_argument("--bytes", type=int, default=8192)
     log.set_defaults(run=cmd_log)
+    sub.add_parser("diag", help="GET_DIAG: persistent disconnect counters and recent events").set_defaults(run=cmd_diag)
+    sub.add_parser("abort", help="ABORT the op the device is running, if any").set_defaults(run=cmd_abort)
     sub.add_parser("reboot", help="reboot the device after it finalizes its RAM batch (explicit)").set_defaults(run=cmd_reboot)
     args = parser.parse_args()
     if getattr(args, "out", None) is not None and "build" in args.out.parts:

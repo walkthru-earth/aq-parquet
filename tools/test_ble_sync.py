@@ -22,13 +22,23 @@ TOKEN = bytes(range(32))
 LOG = b"PARQUET BEGIN x\n" + b"BLE CONNECT peer=y\n" * 20
 INFO = b'{"proto":2,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
 STATUS = b'{"part":3,"qf":7,"qb":123456,"open":0,"open_rg":0}'
+# Protocol 3 goldens, byte for byte from docs/shared/ble-sync-protocol.md.
+GOLDEN_LIST_END = bytes.fromhex("117011010001000066ed0000040000")
+GOLDEN_LIST_END_V2 = bytes.fromhex("11" + "7011" + "0100" + "0066ed00" + "00040000")  # 13-byte u16 count
+GOLDEN_EVENT = bytes.fromhex("78000000070000000302ffff00000200")
+GOLDEN_DIAG = bytes.fromhex("4c0200" + "0000" + "0500" + "0000" + "0100" + "0000" * 13 + "01") + GOLDEN_EVENT
+GOLDEN_BYE = bytes.fromhex("4b0104030201f5ff0300100e0000")
+GOLDEN_ABORTED_IDLE = bytes.fromhex("4d00")
+GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
 
 
 class FakeClient:
     """Scripted device: LIST of two files, one openable file served in chunks."""
 
-    def __init__(self, chunk=100, drop_frame=False):
+    def __init__(self, chunk=100, drop_frame=False, list_end=None):
         self.chunk = chunk
+        self.list_end = list_end
+        self.reading = False
         self.callback = None
         self.handle = 0
         self.drop_frame = drop_frame
@@ -50,7 +60,7 @@ class FakeClient:
         if op == ble.OP_LIST:
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", len(FILE)) + NAME.encode())
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", 7) + b"legacy-parquet/x.parquet")
-            self.emit(bytes([ble.F_LIST_END]) + struct.pack("<HHII", 2, 0, 1000, 10))
+            self.emit(self.list_end or bytes([ble.F_LIST_END]) + struct.pack("<IHII", 2, 0, 1000, 10))
         elif op == ble.OP_OPEN:
             name = data[1:].decode()
             if name != NAME:
@@ -106,6 +116,17 @@ class FakeClient:
             self.emit(bytes([ble.F_LOG_END]) + struct.pack("<IH", len(LOG), len(text)))
         elif op == ble.OP_REBOOT:
             self.emit(bytes([ble.F_REBOOTING]) + struct.pack("<H", 500))
+        elif op == ble.OP_GET_DIAG:
+            assert len(data) == 1, data
+            self.emit(GOLDEN_DIAG)
+        elif op == ble.OP_ABORT:
+            assert len(data) == 1, data
+            if self.reading:  # a stopped READ ends with ERROR 16, then ABORTED names it
+                self.emit(bytes([ble.F_CHUNK]) + struct.pack("<HI", 1, 0) + b"PAR1")
+                self.emit(bytes([ble.F_ERROR, ble.OP_READ, 16]) + b"aborted")
+                self.emit(GOLDEN_ABORTED_READ)
+            else:
+                self.emit(GOLDEN_ABORTED_IDLE)
 
 
 async def run():
@@ -172,8 +193,69 @@ async def run():
     assert text.encode() == LOG[-100:] and meta["total_bytes_since_boot"] == len(LOG), meta
     assert await session.reboot() == {"delay_ms": 500}
     print("PASS ble_sync frame codec: list, fetch, time, error, lost-chunk detection, config, scan, token, log, reboot")
+    await run_protocol3()
     await run_lan()
     await run_lan_snapshot_deadlines()
+    await run_lan_bye()
+
+
+def expect_protocol_error(call, needle):
+    try:
+        call()
+    except ble.ProtocolError as error:
+        assert needle in str(error), error
+    else:
+        raise AssertionError(f"expected ProtocolError containing {needle!r}")
+
+
+async def run_protocol3():
+    """LIST_END width, DIAG, ABORTED and BYE goldens from the protocol 3 contract."""
+    assert len(GOLDEN_LIST_END) == 15 and len(GOLDEN_LIST_END_V2) == 13
+    assert ble.decode_list_end(GOLDEN_LIST_END) == {"count": 70000, "partials": 1,
+                                                    "sd_kib": 15558144, "sd_used_kib": 1024}
+    for frame in (GOLDEN_LIST_END_V2, GOLDEN_LIST_END[:14], GOLDEN_LIST_END + b"\0"):
+        expect_protocol_error(lambda frame=frame: ble.decode_list_end(frame), "LIST_END must be 15 bytes")
+    # A proto 2 device's 13-byte LIST_END fails the listing, never commits it.
+    old = ble.Session(FakeClient(list_end=bytes([ble.F_LIST_END]) + struct.pack("<HHII", 2, 0, 1000, 10)))
+    await old.start()
+    try:
+        await old.list_files()
+    except ble.ProtocolError as error:
+        assert "LIST_END must be 15 bytes, got 13" in str(error), error
+    else:
+        raise AssertionError("13-byte LIST_END must raise")
+
+    event = ble.decode_event(GOLDEN_EVENT)
+    assert event == {"uptime_s": 120, "generation": 7, "reason": "auth-failed", "reason_code": 3,
+                     "link": 2, "link_name": "lan2", "err": -1, "queued_frames": 0, "boot_seq": 2}, event
+    assert len(GOLDEN_DIAG) == 54
+    diag = ble.decode_diag(GOLDEN_DIAG)
+    assert diag["boot_seq"] == 2 and len(diag["counts"]) == 17, diag
+    assert diag["counts"][1] == 5 and diag["counts"][3] == 1 and sum(diag["counts"]) == 6, diag
+    assert diag["events"] == [event], diag
+    expect_protocol_error(lambda: ble.decode_diag(GOLDEN_DIAG[:-1]), "DIAG length")
+    expect_protocol_error(lambda: ble.decode_diag(GOLDEN_DIAG[:37]), "DIAG length")
+
+    assert ble.decode_aborted(GOLDEN_ABORTED_IDLE) == {"op": 0}
+    assert ble.decode_aborted(GOLDEN_ABORTED_READ) == {"op": ble.OP_READ}
+    expect_protocol_error(lambda: ble.decode_aborted(b"\x4d"), "ABORTED must be 2 bytes")
+
+    bye = ble.decode_bye(GOLDEN_BYE)
+    assert bye == {"reason": "idle-timeout", "reason_code": 1, "generation": 0x01020304,
+                   "err": -11, "queued_frames": 3, "uptime_s": 3600}, bye
+    expect_protocol_error(lambda: ble.decode_bye(GOLDEN_BYE[:13]), "BYE must be 14 bytes")
+    # Codes from a newer device are shown as unknown, never rejected.
+    assert ble.decode_bye(bytes([ble.F_BYE, 200]) + GOLDEN_BYE[2:])["reason"] == "unknown"
+    assert ble.DISCONNECT_REASONS[16] == "keepalive-failed" and len(ble.DISCONNECT_REASONS) == 17
+
+    client = FakeClient()
+    session = ble.Session(client)
+    await session.start()
+    assert (await session.get_diag())["events"][0]["reason"] == "auth-failed"
+    assert await session.abort() == {"op": 0, "error_aborted_op": None}
+    client.reading = True
+    assert await session.abort() == {"op": ble.OP_READ, "error_aborted_op": ble.OP_READ}
+    print("PASS ble_sync protocol 3: 15-byte LIST_END (13 rejected), DIAG, ABORTED, BYE goldens, GET_DIAG and ABORT")
 
 
 async def run_discovery():
@@ -340,6 +422,8 @@ async def run_lan():
     assert payload == FILE and transfer["windows"] == 1, transfer
     assert pushed == [b'{"seq":1}'], pushed
     assert await session.read_char(ble.LIVE) == bytearray(b'{"seq":1}')
+    assert (await session.get_diag())["counts"][1] == 5
+    assert await session.abort() == {"op": 0, "error_aborted_op": None}
     await link.disconnect()
     bad = ble.LanLink("127.0.0.1", bytes(32), port)
     try:
@@ -420,6 +504,87 @@ async def run_lan_snapshot_deadlines():
         server.close()
         await server.wait_closed()
     print("PASS ble_sync LAN snapshots: fresh OP_STATUS, >2 s response, empty push rejection and deadline cancellation")
+
+
+async def run_lan_bye():
+    """BYE on the LAN read path raises the typed close, and later reads fail at once."""
+    async def serve(reader, writer):
+        try:
+            assert await reader.readexactly(36) == b"AQS1" + TOKEN
+            hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+            writer.write(struct.pack("<H", len(hello)) + hello)
+            await writer.drain()
+            (length,) = struct.unpack("<H", await reader.readexactly(2))
+            assert await reader.readexactly(length) == bytes([ble.OP_GET_DIAG])
+            wire = struct.pack("<H", len(GOLDEN_BYE)) + GOLDEN_BYE
+            assert wire[:2] == bytes.fromhex("0e00") and len(wire) == 16
+            writer.write(wire)
+            await writer.drain()
+            await asyncio.sleep(0.05)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    link = ble.LanLink("127.0.0.1", TOKEN, port, timeout=3)
+    try:
+        await link.connect()
+        session = ble.Session(link)
+        await session.start()
+        try:
+            await session.get_diag()
+        except ble.LinkClosedByDevice as error:
+            assert error.reason == "idle-timeout" and error.generation == 0x01020304, error
+            assert error.err == -11 and error.queued_frames == 3 and error.uptime_s == 3600, error
+            assert isinstance(error, ble.ProtocolError) and "reason=idle-timeout" in str(error)
+            first = error
+        else:
+            raise AssertionError("BYE must raise LinkClosedByDevice")
+        assert not link.is_connected
+        started = asyncio.get_running_loop().time()
+        for later in (session.frame(timeout=5), session.list_files()):
+            try:
+                await later
+            except ble.LinkClosedByDevice as error:
+                assert error is first
+            else:
+                raise AssertionError("reads after BYE must raise the same close")
+        assert asyncio.get_running_loop().time() - started < 0.5
+    finally:
+        await link.disconnect()
+        server.close()
+        await server.wait_closed()
+
+    # EOF without BYE is reason unknown and also fails at once.
+    async def drop(reader, writer):
+        await reader.readexactly(36)
+        hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+        writer.write(struct.pack("<H", len(hello)) + hello)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(drop, "127.0.0.1", 0)
+    link = ble.LanLink("127.0.0.1", TOKEN, server.sockets[0].getsockname()[1], timeout=3)
+    try:
+        await link.connect()
+        session = ble.Session(link)
+        await session.start()
+        started = asyncio.get_running_loop().time()
+        try:
+            await session.frame(timeout=5)
+        except ble.LinkClosedByDevice:
+            raise AssertionError("EOF without BYE is not a typed close") from None
+        except ble.ProtocolError as error:
+            assert "without BYE" in str(error) and "unknown" in str(error), error
+        else:
+            raise AssertionError("EOF must raise")
+        assert asyncio.get_running_loop().time() - started < 0.5
+    finally:
+        await link.disconnect()
+        server.close()
+        await server.wait_closed()
+    print("PASS ble_sync LAN BYE: typed close with reason, no hang after BYE, EOF without BYE is unknown")
 
 
 if __name__ == "__main__":
