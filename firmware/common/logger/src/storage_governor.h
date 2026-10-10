@@ -86,6 +86,15 @@ constexpr State next_space_state(State current, std::uint64_t free_bytes,
   return State::Retry;
 }
 
+// A remount may expose another card, so its active tree is scanned for
+// partials before any file can be created there. A Full recheck remount only
+// finds files this device closed before it, so it rescans only when the probe
+// may write again. A card that stays below the reserve is never rescanned.
+constexpr bool remount_scans_partials(State previous, std::uint64_t free_bytes,
+                                      const Thresholds &t) {
+  return previous != State::Full || free_bytes >= t.reserve;
+}
+
 // 10 s, 30 s, 60 s, then doubling to a 600 s cap.
 constexpr std::uint32_t backoff_seconds(std::uint32_t attempt) {
   if (attempt == 0)

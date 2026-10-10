@@ -1529,7 +1529,9 @@ void probe_storage(std::size_t &count, bool &storage_ready) {
   }
   // Partials left by the pulled card move before any new file is created,
   // so the probe write below can never quarantine its own open file.
-  if (ok && mounted_again) {
+  if (ok && mounted_again &&
+      storage::remount_scans_partials(previous, free_bytes,
+                                      governor.limits())) {
     const unsigned quarantined = quarantine_partials();
     aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0 "
                  "origin=remount\n",
@@ -1744,6 +1746,10 @@ void storage_worker(void *) {
       }
     }
     service_storage(count, storage_ready);
+    // A recheck can resume without a probe write. A full batch would
+    // otherwise drop every later sample. A failed commit leaves writable().
+    if (count >= rows_per_group() && storage_ready && governor.writable())
+      governed_commit(count, false);
     if (xQueueReceive(commands, &command, 0) != pdTRUE) {
       // Drain pending samples before sleeping. Queue-then-signal also covers
       // an enqueue racing this check: the signal remains pending until taken.

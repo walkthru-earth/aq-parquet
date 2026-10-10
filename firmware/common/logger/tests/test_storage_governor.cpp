@@ -148,6 +148,34 @@ void full_card_probe() {
   assert(g.retry_attempts() == 1 && !g.probe_due(229) && g.probe_due(230));
 }
 
+// Retry and Ready remounts always scan. A Full recheck remount scans only
+// when the probe may write, so a card that stays full is not rescanned.
+void remount_partial_scan() {
+  const auto t = thresholds(64 * GiB);
+  assert(remount_scans_partials(State::Retry, 0, t));
+  assert(remount_scans_partials(State::Ready, 10 * GiB, t));
+  assert(remount_scans_partials(State::Degraded, 100 * MiB, t));
+  assert(!remount_scans_partials(State::Full, 0, t));
+  assert(!remount_scans_partials(State::Full, 31 * MiB, t));
+  assert(remount_scans_partials(State::Full, 32 * MiB, t));
+  assert(remount_scans_partials(State::Full, 1 * GiB, t));
+}
+
+// A recheck alone makes a Full card writable, which lets the worker commit a
+// waiting full batch. A failed commit leaves writable() so it cannot spin.
+void recheck_resume_then_failed_commit() {
+  Governor g;
+  g.configure(64 * GiB);
+  g.observe_free(30 * MiB, 0);
+  assert(g.state() == State::Full && !g.writable());
+  assert(g.recheck_due(60));
+  g.observe_free(1 * GiB, 60);
+  assert(g.state() == State::Ready && g.writable());
+  g.write_failed(61);
+  assert(g.state() == State::Retry && !g.writable());
+  assert(!g.recheck_due(1000) && !g.probe_due(70) && g.probe_due(71));
+}
+
 void names_are_stable() {
   assert(std::strcmp(state_name(State::Ready), "ready") == 0);
   assert(std::strcmp(state_name(State::Degraded), "degraded") == 0);
@@ -170,6 +198,8 @@ int main() {
   retry_backoff_and_recovery();
   unmounted_boot_starts_in_retry();
   full_card_probe();
+  remount_partial_scan();
+  recheck_resume_then_failed_commit();
   names_are_stable();
   return 0;
 }
