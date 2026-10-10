@@ -493,7 +493,16 @@ class Session:
         if data[0] != F_REBOOTING:
             raise ProtocolError(f"expected REBOOTING, got 0x{data[0]:02x}")
         (delay_ms,) = struct.unpack_from("<H", data, 1)
-        return {"delay_ms": delay_ms}
+        result = {"delay_ms": delay_ms}
+        if isinstance(self.client, LanLink):
+            # Hanging up first would record peer-closed instead of reboot.
+            try:
+                await self.frame(timeout=delay_ms / 1000 + 5)
+            except LinkClosedByDevice as bye:
+                result["bye"] = bye.reason
+            except ProtocolError:
+                pass
+        return result
 
 
 def advertises_sync_service(ad):

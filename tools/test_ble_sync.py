@@ -556,6 +556,42 @@ async def run_lan_bye():
         server.close()
         await server.wait_closed()
 
+    # REBOOT over LAN waits for BYE reboot instead of hanging up first.
+    bye_received = asyncio.Event()
+
+    async def rebooting(reader, writer):
+        try:
+            await reader.readexactly(36)
+            hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+            writer.write(struct.pack("<H", len(hello)) + hello)
+            await writer.drain()
+            (length,) = struct.unpack("<H", await reader.readexactly(2))
+            assert await reader.readexactly(length) == bytes([ble.OP_REBOOT])
+            for frame in (bytes([ble.F_REBOOTING]) + struct.pack("<H", 500),
+                          bytes([ble.F_BYE, ble.DISCONNECT_REASONS.index("reboot")]) + GOLDEN_BYE[2:]):
+                await asyncio.sleep(0.05)
+                writer.write(struct.pack("<H", len(frame)) + frame)
+                await writer.drain()
+            # The client is still connected when BYE is written.
+            if not reader.at_eof():
+                bye_received.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(rebooting, "127.0.0.1", 0)
+    link = ble.LanLink("127.0.0.1", TOKEN, server.sockets[0].getsockname()[1], timeout=3)
+    try:
+        await link.connect()
+        session = ble.Session(link)
+        await session.start()
+        assert await session.reboot() == {"delay_ms": 500, "bye": "reboot"}
+        assert bye_received.is_set()
+    finally:
+        await link.disconnect()
+        server.close()
+        await server.wait_closed()
+
     # EOF without BYE is reason unknown and also fails at once.
     async def drop(reader, writer):
         await reader.readexactly(36)
@@ -584,7 +620,7 @@ async def run_lan_bye():
         await link.disconnect()
         server.close()
         await server.wait_closed()
-    print("PASS ble_sync LAN BYE: typed close with reason, no hang after BYE, EOF without BYE is unknown")
+    print("PASS ble_sync LAN BYE: typed close with reason, no hang after BYE, reboot waits for BYE, EOF without BYE is unknown")
 
 
 if __name__ == "__main__":
