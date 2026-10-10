@@ -31,6 +31,13 @@ struct StatusSnapshot {
   std::uint64_t quarantine_bytes = 0;
   std::uint32_t open_rows = 0;
   std::uint32_t open_groups = 0;
+  // Sessions closed since boot (BLE and LAN, saturating like the DIAG counts)
+  // and the newest ble::DisconnectReason code; "dr" is null until the first
+  // close. A u16 keeps the worst-case object within ble::kMaxJson.
+  // Contract in docs/shared/ble-sync-protocol.md, "Protocol 3 contract"
+  // (#protocol-3-contract), and the `status` table (#status-read-notify).
+  std::uint16_t disconnects = 0;
+  std::uint8_t last_disconnect = 0;
 };
 // Returns zero on insufficient capacity, never reports truncated JSON as valid.
 std::size_t format_status(const StatusSnapshot &, char *, std::size_t capacity);

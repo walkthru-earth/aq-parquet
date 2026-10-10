@@ -27,6 +27,7 @@ def main() -> None:
                     str(common / "runtime/src/debug_log.cpp"),
                     str(root / "tools/host_fakes/config/aq_console.cpp"),
                     str(common / "connectivity/src/control_sync.cpp"),
+                    str(common / "connectivity/src/disconnect.cpp"),
                     "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

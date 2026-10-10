@@ -31,7 +31,7 @@ Status status() {
   value.state = "off";
   return value;
 }
-void drop_session() { ++dropped; }
+void drop_session(ble::DisconnectReason) { ++dropped; }
 void apply_time_settings() {}
 void apply_settings() { ++reapplied; }
 } // namespace lan
@@ -89,7 +89,7 @@ int main() {
   std::strcpy(settings.ssid, std::string(config::kSsidMax, 's').c_str());
   std::strcpy(settings.psk, std::string(config::kPskMax, 'p').c_str());
   assert(aqlogger::format_wifi_profile(settings, profile, sizeof(profile)) > 0);
-  char logs[DebugLog::kRingBytes + 1]{};
+  char logs[DebugLog::kFallbackRingBytes + 1]{};
   std::uint32_t total = 0;
   const auto count = aqlog.tail(logs, sizeof(logs) - 1, total);
   logs[count] = '\0';

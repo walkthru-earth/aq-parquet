@@ -27,6 +27,8 @@ int main() {
       view.dropped = view.errors = view.total_kib = view.used_kib =
           view.heap_free = view.partials = view.quarantined = view.open_rows =
               view.open_groups = maximum;
+  view.disconnects = std::numeric_limits<std::uint16_t>::max();
+  view.last_disconnect = std::numeric_limits<std::uint8_t>::max();
   // Include the extra minus sign even though runtime miss/generation counts
   // are nonnegative: this also covers every signed representable length.
   view.missed = std::numeric_limits<std::int64_t>::min();
@@ -59,9 +61,11 @@ int main() {
     assert(aqlogger::format_status(view, nullptr, 0) == 0);
   }
   view.utc = false;
+  view.disconnects = 0;
   const auto length =
       aqlogger::format_status(view, buffer.data(), buffer.size());
   assert(length && length <= ble::kMaxJson);
   assert(std::strstr(buffer.data(), "\"utc_ms\":null,\"clk_age_s\":null}"));
+  assert(std::strstr(buffer.data(), "\"dc\":0,\"dr\":null,"));
   std::cout << buffer.data() << '\n';
 }
