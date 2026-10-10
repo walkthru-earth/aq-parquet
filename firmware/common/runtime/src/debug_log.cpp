@@ -94,7 +94,7 @@ int LogOutput::printf(const char *format, ...) {
 }
 
 bool DebugLog::attach(void *block, std::size_t bytes, const Layout &layout,
-                      bool cold) {
+                      bool cold, Writeback writeback) {
   if (!block || layout.ring_bytes == 0 || layout.event_slots == 0 ||
       bytes < persistent_bytes(layout) ||
       reinterpret_cast<std::uintptr_t>(block) % alignof(Header) != 0)
@@ -141,6 +141,7 @@ bool DebugLog::attach(void *block, std::size_t bytes, const Layout &layout,
   std::memcpy(early_counters, counters_, sizeof(early_counters));
 
   header_ = header;
+  writeback_ = writeback;
   ring_ = ring;
   ring_size_ = layout.ring_bytes;
   event_ring_ = event_ring;
@@ -239,12 +240,19 @@ void DebugLog::append_locked(const std::uint8_t *source, std::size_t count) {
   std::memcpy(ring_ + head_, source, first);
   if (count > first)
     std::memcpy(ring_, source + first, count - first);
+  if (writeback_) {
+    writeback_(ring_ + head_, first);
+    if (count > first)
+      writeback_(ring_, count - first);
+  }
   head_ = (head_ + count) % ring_size_;
   retained_ = retained_ + count > ring_size_ ? ring_size_ : retained_ + count;
 }
 
 void DebugLog::append_event_locked(const std::uint8_t *event) {
   std::memcpy(event_ring_[event_head_], event, kEventBytes);
+  if (writeback_)
+    writeback_(event_ring_[event_head_], kEventBytes);
   event_head_ = (event_head_ + 1) % event_slots_;
   if (event_count_ < event_slots_)
     ++event_count_;
@@ -260,6 +268,8 @@ void DebugLog::seal_locked() {
   header_->event_count = static_cast<std::uint32_t>(event_count_);
   header_->crc = crc32(reinterpret_cast<const std::uint8_t *>(header_),
                        offsetof(Header, crc));
+  if (writeback_)
+    writeback_(header_, sizeof(Header));
 }
 
 std::size_t DebugLog::copy_locked(std::uint64_t position, char *out,

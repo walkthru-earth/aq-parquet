@@ -67,12 +67,19 @@ public:
     output_context_ = context;
   }
 
+  // Pushes a range of the block from a write-back data cache to memory, so
+  // a reset that skips the cache (watchdog, panic, reset pin) keeps it. Runs
+  // inside the spinlock, so it must be ISR safe and must not block.
+  using Writeback = void (*)(const void *, std::size_t);
+
   // Moves the log onto `block` (persistent_bytes(layout) bytes, 4-byte
   // aligned, outliving this log). A valid header from the previous boot is
   // kept unless `cold`; otherwise the block starts empty. Lines and events
-  // logged before the attach are appended. Returns true when the previous
-  // contents were retained.
-  bool attach(void *block, std::size_t bytes, const Layout &layout, bool cold);
+  // logged before the attach are appended. Every later write hands the bytes
+  // it changed to `writeback`, ring or event slot first, header last.
+  // Returns true when the previous contents were retained.
+  bool attach(void *block, std::size_t bytes, const Layout &layout, bool cold,
+              Writeback writeback = nullptr);
   bool persistent() const;
   // 0 on the internal ring; 1 after a cold start, then +1 per warm reboot.
   std::uint16_t boot_seq() const;
@@ -135,6 +142,7 @@ private:
   void *output_context_ = nullptr;
 
   Header *header_ = nullptr; // set once attached
+  Writeback writeback_ = nullptr;
   char *ring_ = fallback_ring_;
   std::size_t ring_size_ = kFallbackRingBytes;
   std::uint8_t (*event_ring_)[kEventBytes] = fallback_events_;

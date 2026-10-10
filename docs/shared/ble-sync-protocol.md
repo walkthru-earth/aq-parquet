@@ -476,19 +476,22 @@ a 13-byte `LIST_END`.
 Board images with PSRAM and
 `CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY=y` (CoreS3 and the Waveshare
 logger) keep the log in a no-init PSRAM block of 112 header bytes, a 64 KiB text
-ring and 64 event slots (66,672 bytes). The header carries magic `AQLG`, a
-version, `boot_seq`, the ring and event positions, 32 u16 counter slots and a
-CRC-32 that every write updates. After a software or watchdog reset a valid
-header is kept and `boot_seq` increments. A power-on, brownout or unknown reset,
-or a header that fails validation, starts empty with `boot_seq` 1. Lines and
-events logged before the attach are appended. A build without the option or
-without initialized PSRAM (the Waveshare diagnostic image) keeps a 4 KiB
-internal ring with 8 event slots, `boot_seq` 0, and logs
-`LOG ring=internal reason=no-psram` or `reason=no-noinit`. The build never
-fails for lack of PSRAM. Of the 32 counter slots, 17 are used, one per
-[disconnect reason](#disconnect-reasons) code 0 to 16, and slots 17 to 31 stay
-reserved. Warm-reboot survival is a host-fixture result until it
-is read back from a board.
+ring and 64 event slots (66,672 bytes). The block starts 64 bytes into the
+no-init segment, because ESP-IDF PSRAM init writes a probe word to physical
+address 0 on every boot. The header carries magic `AQLG`, a version,
+`boot_seq`, the ring and event positions, 32 u16 counter slots and a CRC-32
+that every write updates. Every write also pushes the bytes it changed from the
+write-back data cache to PSRAM, ring or event slot first and header last, so a
+reset that skips `esp_restart` (watchdog, panic, reset pin) keeps them. After a
+software, watchdog or chip reset a valid header is kept and `boot_seq`
+increments. A power-on, brownout or unknown reset, or a header that fails
+validation, starts empty with `boot_seq` 1. Lines and events logged before the
+attach are appended. A build without the option or without initialized PSRAM
+(the Waveshare diagnostic image) keeps a 4 KiB internal ring with 8 event
+slots, `boot_seq` 0, and logs `LOG ring=internal reason=no-psram` or
+`reason=no-noinit`. The build never fails for lack of PSRAM. Of the 32 counter
+slots, 17 are used, one per [disconnect reason](#disconnect-reasons) code 0 to
+16, and slots 17 to 31 stay reserved.
 
 ## LAN transport (v2)
 

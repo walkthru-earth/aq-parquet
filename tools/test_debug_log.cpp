@@ -155,6 +155,45 @@ void persistent_ring() {
 }
 } // namespace
 
+// A reset that skips the cache keeps only what was written back. Model the
+// cache as `block` and memory as `memory`; writeback copies a range across.
+// A fresh log attaching `memory` must then see every line and event.
+std::uint8_t *cached_block = nullptr;
+std::uint8_t *memory_block = nullptr;
+void copy_to_memory(const void *address, std::size_t bytes) {
+  const auto offset = static_cast<const std::uint8_t *>(address) - cached_block;
+  std::memcpy(memory_block + offset, address, bytes);
+}
+
+void writeback_survives_cache_loss() {
+  constexpr DebugLog::Layout small{4096, 8};
+  constexpr std::size_t kBytes = DebugLog::persistent_bytes(small);
+  std::vector<std::uint32_t> cache(kBytes / 4 + 1, 0x5a5a5a5au);
+  std::vector<std::uint32_t> memory(cache);
+  cached_block = reinterpret_cast<std::uint8_t *>(cache.data());
+  memory_block = reinterpret_cast<std::uint8_t *>(memory.data());
+  auto boot = std::make_unique<DebugLog>();
+  boot->set_output(nullptr, nullptr);
+  write_text(*boot, "before attach\n");
+  assert(!boot->attach(cache.data(), kBytes, small, true, copy_to_memory));
+  const std::string wrapped = pattern(4096 + 300, 3); // wraps the ring
+  write_text(*boot, wrapped);
+  std::uint8_t event[DebugLog::kEventBytes]{};
+  event[0] = 0x42;
+  boot->record_event(event, 5);
+  const std::string expected = read_all(*boot, 4096, 512);
+  boot.reset();
+  // The cache is gone. Only `memory` survives into the next boot.
+  DebugLog next;
+  next.set_output(nullptr, nullptr);
+  assert(next.attach(memory.data(), kBytes, small, false));
+  assert(next.boot_seq() == 2);
+  assert(read_all(next, 4096, 512) == expected);
+  std::uint8_t events[8][DebugLog::kEventBytes];
+  assert(next.events(events, 8) == 1 && events[0][0] == 0x42);
+  assert(next.counter(5) == 1);
+}
+
 // Writers and a LOG_TAIL reader race on a small ring. Every read is a
 // contiguous span of the single writer's stream, located by the cursor.
 void concurrent_slices() {
@@ -208,6 +247,7 @@ void concurrent_slices() {
 
 int main() {
   persistent_ring();
+  writeback_survives_cache_loss();
   concurrent_slices();
   DebugLog log;
   Console console;

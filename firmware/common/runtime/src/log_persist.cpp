@@ -8,12 +8,28 @@
 
 #if CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY
 #include <esp_psram.h>
+#include <hal/cache_hal.h>
 
 namespace {
 constexpr DebugLog::Layout kReserved{CONFIG_AQ_LOG_PERSIST_RING_BYTES,
                                      CONFIG_AQ_LOG_PERSIST_EVENT_SLOTS};
-EXT_RAM_NOINIT_ATTR alignas(4) std::uint8_t
-    persistent_block[DebugLog::persistent_bytes(kReserved)];
+// PSRAM init on the ESP32-S3 (quad and octal) writes a probe word to
+// physical address 0 on every boot, which is where the no-init segment
+// starts. Keep the block one cache line past that.
+constexpr std::size_t kProbeGuardBytes = 64;
+EXT_RAM_NOINIT_ATTR alignas(64) std::uint8_t
+    persistent_storage[kProbeGuardBytes +
+                       DebugLog::persistent_bytes(kReserved)];
+std::uint8_t *const persistent_block = persistent_storage + kProbeGuardBytes;
+constexpr std::size_t kPersistentBytes = DebugLog::persistent_bytes(kReserved);
+
+// PSRAM sits behind the write-back data cache. Without this, a reset that
+// skips esp_restart's teardown (watchdog, panic, reset pin) can lose the
+// header and the newest lines while they are still dirty in the cache.
+void writeback(const void *address, std::size_t bytes) {
+  cache_hal_writeback_addr(reinterpret_cast<std::uint32_t>(address),
+                           static_cast<std::uint32_t>(bytes));
+}
 } // namespace
 #endif
 
@@ -29,7 +45,7 @@ bool attach_persistent(const DebugLog::Layout &layout) {
                  unsigned(aqlog.ring_bytes()));
     return false;
   }
-  if (DebugLog::persistent_bytes(layout) > sizeof(persistent_block)) {
+  if (DebugLog::persistent_bytes(layout) > kPersistentBytes) {
     aqlog.printf("LOG ring=internal bytes=%u reason=layout-too-large\n",
                  unsigned(aqlog.ring_bytes()));
     return false;
@@ -39,7 +55,7 @@ bool attach_persistent(const DebugLog::Layout &layout) {
   const bool cold = reset == ESP_RST_POWERON || reset == ESP_RST_BROWNOUT ||
                     reset == ESP_RST_UNKNOWN;
   const bool kept =
-      aqlog.attach(persistent_block, sizeof(persistent_block), layout, cold);
+      aqlog.attach(persistent_block, kPersistentBytes, layout, cold, writeback);
   aqlog.printf("LOG ring=psram bytes=%u events=%u boot_seq=%u kept=%d "
                "retained=%u reset=%d\n",
                unsigned(aqlog.ring_bytes()), unsigned(layout.event_slots),
