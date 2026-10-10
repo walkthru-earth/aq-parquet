@@ -665,6 +665,8 @@ async def cmd_live(args):
         await client.start_notify(STATUS, show("STATUS"))
         while time.monotonic() < deadline and client.is_connected:
             await asyncio.sleep(0.5)
+        if getattr(client, "close_error", None) is not None:
+            print(f"CLOSED {client.close_error}", flush=True)
     finally:
         await client.disconnect()
 
