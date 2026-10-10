@@ -31,6 +31,16 @@ frames, archive semantics and board dictionaries are preserved. Arduino-era
 bond-store compatibility is not guaranteed; qualify reconnect/re-pairing while
 retaining station/config NVS. [Migration validation](development.md#native-migration-validation-2026-10-09).
 
+**Protocol 3** (issue #1, 2026-10-11) is a breaking contract with no backward
+compatibility. Mobile refuses a device that reports `proto` below 3. It adds
+typed disconnect reasons, a `BYE` frame before every device-initiated LAN close,
+`GET_DIAG`/`DIAG`, `ABORT`/`ABORTED`, a 32-bit `LIST_END.count`, STATUS `dc`
+and `dr`, a 65535-byte `LOG_TAIL` and a persistent PSRAM log. See
+[Protocol 3 contract](#protocol-3-contract). Firmware implements the frames now
+but still reports `info.proto=2`, `HELLO.proto=2` and TXT `proto=2` until the
+proto flip in issue #2, together with the non-blocking writer, the BYE linger
+sequence and ABORT interruption of a running transfer.
+
 ## Purpose and non-goals
 
 The system is **offline-first**: the card is the data origin, and a local archive on a phone, laptop or hub is its first copy. Logging and local sync work with no internet. Any link between device and phone — BLE today, Wi-Fi or LoRa device-to-device later — is a sync transport, and if the device or the phone happens to have Wi-Fi or a SIM, that is welcome but never required. Cloud upload, when it exists, is a separate opt-in step that runs *after* local sync and is off by default. This document covers the BLE transport. A phone within Bluetooth range must be able to, without internet or any server:
@@ -140,6 +150,7 @@ Notified after every stored sample (every 10 s) and after any `control` request 
 | `sd` | 1 when the card is mounted and the output directory exists |
 | `part` | retained `.partial` files seen at the last listing |
 | `qf` / `qb` | retained quarantine file count / bytes after startup quarantine; includes earlier boots |
+| `dc` / `dr` | proto 3. `dc` counts BLE and LAN sessions closed since boot, including refused LAN clients, saturating at 65535. `dr` is the newest [disconnect reason](#disconnect-reasons) code, or null while `dc` is 0 |
 
 A board without an enabled RTC adapter reports `rtc=2`. Each boot starts with
 `utc=0`, `clk=0` and null UTC row fields until automatic host SET_TIME or successful Wi-Fi SNTP; it cannot restore a
@@ -188,13 +199,15 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `0x09` | `SET_CONFIG` | `key=value` lines, utf8, `\n`-separated (see [configuration](#device-configuration-v2)) | `CONFIG` or BLE `CONFIG_CHUNK` sequence; `ERROR` 12 with the offending key as `detail` |
 | `0x0A` | `WIFI_SCAN` | — | `WIFI_AP` × n, then `WIFI_SCAN_END`; `ERROR` 15 if the radio cannot scan |
 | `0x0B` | `REBOOT` | — | `REBOOTING`, then the device finalizes any RAM batch and restarts |
-| `0x0C` | `LOG_TAIL` | `max_bytes` u16 (device clips to its ring size, 8192) | `LOG` × n, then `LOG_END` |
+| `0x0C` | `LOG_TAIL` | `max_bytes` u16 (device clips to the bytes it retains, at most 65535) | `LOG` × n, then `LOG_END` |
 | `0x0D` | `GET_TOKEN` | — | `TOKEN`; **BLE only**, `ERROR` 13 over LAN |
+| `0x0E` | `GET_DIAG` | empty (any body is `ERROR` 1) | `DIAG`, or `ERROR` 7 `detail="mtu"` when `payload_max` is below 38 |
+| `0x0F` | `ABORT` | empty (any body is `ERROR` 1) | `ABORTED` with the op it stopped, `op=0` when idle |
 
 | Frame | Type | Body |
 | --- | --- | --- |
 | `FILE` | `0x10` | `bytes` u32, `name` utf8 |
-| `LIST_END` | `0x11` | `count` u16, `partials` u16, `sd_kib` u32, `sd_used_kib` u32 |
+| `LIST_END` | `0x11` | `count` u32, `partials` u16, `sd_kib` u32, `sd_used_kib` u32. 15 bytes with the type (proto 3, was 13 with a u16 count) |
 | `OPENED` | `0x20` | `handle` u16, `size` u32, `crc32` u32, `name` utf8 |
 | `CHUNK` | `0x21` | `handle` u16, `offset` u32, `payload` (≤ `payload_max − 7`) |
 | `READ_END` | `0x22` | `handle` u16, `next_offset` u32, `status` u8 (0 = ok, else error code) |
@@ -211,14 +224,17 @@ First byte is the opcode. Unknown opcode → `ERROR` code 11.
 | `HELLO` | `0x47` | LAN only: `proto` u8, `payload_max` u16, info JSON (same document as the `info` characteristic) |
 | `STATUS` | `0x48` | LAN only, push: status JSON |
 | `LIVE` | `0x49` | LAN only, push: live JSON |
+| `BYE` | `0x4B` | `reason` u8, `generation` u32, `err` i16, `queued` u16, `uptime_s` u32. 14 bytes with the type, 16 on the LAN wire. See [BYE](#bye) |
+| `DIAG` | `0x4C` | `boot_seq` u16, `counts` 17 × u16, `n` u8, then `n` × 16-byte events. 38 + 16n bytes. See [DIAG](#get_diag-and-diag) |
+| `ABORTED` | `0x4D` | `op` u8, the opcode that was stopped, 0 when nothing was running |
 | `CONFIG_CHUNK` | `0x4A` | BLE only: `flags` u8 (same as CONFIG), `total_json_bytes` u16 LE, `offset` u16 LE, then a raw UTF-8 JSON slice. The header is 6 bytes; slices are at most 128 bytes and frames never exceed negotiated `payload_max`. A UTF-8 character may cross frames, so assemble bytes before decoding JSON. Require contiguous offsets from zero until `offset + slice_bytes = total_json_bytes`, with identical flags and total length on each chunk. There is no terminal frame; abandon an incomplete answer and make a fresh GET_CONFIG request |
 | `ERROR` | `0x7F` | `op` u8, `code` u8, `detail` utf8 |
 
-The status JSON remains bounded to 480 bytes. The actual formatter retains every key at 398 bytes with the widest representable counter values (393 for LZ4), checked by `pixi run logger-status-test`. In addition to the existing counters, `part` is the number of retained `.partial` files found by the startup/list scan, while `qf` and `qb` are the total file count and total bytes currently under `/output/quarantine/` after startup quarantine completes. `qf` and `qb` include files preserved by earlier boots, not only files moved during the current boot; both saturate at their unsigned integer limits rather than wrapping.
+The status JSON remains bounded to 480 bytes. The actual formatter retains every key at 479 bytes with the widest representable values, including `dc=65535` and `dr=255` (474 for LZ4), checked by `pixi run logger-status-test`. In addition to the existing counters, `part` is the number of retained `.partial` files found by the startup/list scan, while `qf` and `qb` are the total file count and total bytes currently under `/output/quarantine/` after startup quarantine completes. `qf` and `qb` include files preserved by earlier boots, not only files moved during the current boot; both saturate at their unsigned integer limits rather than wrapping.
 
-`ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU — another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` aborts LIST with error 7 (`detail="mtu"`) and is logged on serial as `BLE LIST SKIP`. An archive exceeding the u16 count capacity (65,535 files) aborts LIST with error 7 (`detail="count"`). Filesystem enumeration failures (including an SD read failure after earlier entries) abort LIST with error 8. Neither case produces `LIST_END`. Clients commit a replacement listing only after a valid `LIST_END`; preceding `FILE` entries alone are an incomplete snapshot. The device clears its `new_files` hint only after a complete scan and accepted `LIST_END` delivery. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count — and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16–18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
+`ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU, another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` aborts LIST with error 7 (`detail="mtu"`) and is logged on serial as `BLE LIST SKIP`. An archive exceeding the u32 count capacity aborts LIST with error 7 (`detail="count"`). Filesystem enumeration failures (including an SD read failure after earlier entries) abort LIST with error 8. Neither case produces `LIST_END`. Clients commit a replacement listing only after a valid `LIST_END`; preceding `FILE` entries alone are an incomplete snapshot. The device clears its `new_files` hint only after a complete scan and accepted `LIST_END` delivery. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count, and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16 to 18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
 
-Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full or transfer in progress) · 8 storage unavailable · 9 invalid epoch (outside 2020–2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (LAN handshake) · 15 Wi-Fi unavailable.
+Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full or transfer in progress) · 8 storage unavailable · 9 invalid epoch (outside 2020 to 2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (LAN handshake) · 15 Wi-Fi unavailable · 16 aborted (proto 3).
 
 Rules:
 
@@ -245,7 +261,7 @@ Rules:
 | `wifi.ssid` | ≤ 32 bytes | immediately | network name |
 | `wifi.psk` | ≤ 63 bytes, empty for an open network | immediately | passphrase, stored in NVS in clear (flash encryption is not used on this board by rule) |
 | `lan.on` | `0` \| `1` | immediately | TCP sync server + mDNS while Wi-Fi is connected (on by default) |
-| `lan.rotate_token` | `1` | *action* | new LAN token; every LAN session is dropped, phones must fetch the token again over BLE |
+| `lan.rotate_token` | `1` | *action* | new LAN token. Every LAN session receives a [BYE](#bye) with reason `token-rotated` (10) and closes, and phones must fetch the token again over BLE |
 | `ntp.on` | `0` \| `1` (default 1) | immediately | enable automatic native SNTP when Wi-Fi has an IP lease |
 | `ntp.dhcp` | `0` \| `1` (default 1) | immediately; new DHCP options at next lease | prefer router-provided DHCP option 42 servers |
 | `ntp.public_fallback` | `0` \| `1` (default 1) | immediately | allow `time.cloudflare.com` only after router/configured servers fail |
@@ -326,7 +342,7 @@ wifi.on=1
 
 Changing Wi-Fi settings over a LAN session is allowed but will usually drop that session; the phone should do provisioning over BLE. `REBOOT` attempts to finalize pending rows first when storage is healthy; failures remain visible in the logger counters and do not establish durability. It answers `REBOOTING` with the delay before restart (≈ 500 ms) so the phone can disconnect cleanly.
 
-`LOG_TAIL` returns the newest `max_bytes` of an 8 KiB diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies — the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API.
+`LOG_TAIL` returns the newest `max_bytes` (at most 65535) of the diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies, the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API. The ring is in PSRAM (64 KiB by default, `CONFIG_AQ_LOG_PERSIST_RING_BYTES`) when the board image provides a persistent block, otherwise a 4 KiB internal ring (see [persistent log](#persistent-log)). The reply streams in `LOG` slices of at most 512 bytes over BLE or 1024 over LAN, also bounded by `payload_max`. A tail can contain lines from the previous boot after a warm reboot.
 
 `WIFI_SCAN` runs on the Wi-Fi task, not on the storage worker, and takes 2–4 s; the phone should show progress. Hidden networks are omitted; duplicate SSIDs (several access points) are reported once with the strongest RSSI.
 
@@ -350,6 +366,130 @@ rotation); malformed hex, bounds violations, embedded NULs and invalid settings
 are rejected. Unknown error text is reduced to an allowlisted identifier so a
 malformed credential cannot be echoed into the diagnostic ring.
 
+## Protocol 3 contract
+
+All multi-byte fields are little-endian. The goldens below are produced by the
+firmware encoders and checked by `pixi run disconnect-test`.
+
+### Disconnect reasons
+
+| Code | Name | When |
+| --- | --- | --- |
+| 0 | `unknown` | BLE controller reason without a mapping. `err` carries the HCI code |
+| 1 | `idle-timeout` | LAN, no bytes from the phone for 300 s |
+| 2 | `handshake-timeout` | LAN, no complete `AQS1` + token within 5 s |
+| 3 | `auth-failed` | LAN token mismatch, or BLE encryption failed |
+| 4 | `sessions-full` | LAN, three slots taken. Sent after `ERROR` op=0 code 7, with `generation` 0 |
+| 5 | `slow-peer` | LAN send timed out or would block (`err` is the errno) |
+| 6 | `tx-overflow` | reserved for the non-blocking writer (issue #2) |
+| 7 | `malformed` | LAN framing or length error |
+| 8 | `wifi-lost` | the station lost its IP |
+| 9 | `lan-disabled` | `lan.on=0`, Wi-Fi off, or radios turned off |
+| 10 | `token-rotated` | `lan.rotate_token=1` dropped every session |
+| 11 | `reboot` | `REBOOT` was accepted |
+| 12 | `peer-closed` | the phone closed. TCP EOF, or BLE HCI 0x13 |
+| 13 | `recv-error` | LAN receive failed (`err` is the errno) |
+| 14 | `send-error` | LAN send failed for another reason (`err` is the errno, `EPIPE` when nothing was written) |
+| 15 | `server-stop` | the LAN server restarted to apply settings, or BLE stopped |
+| 16 | `keepalive-failed` | BLE supervision timeout, HCI 0x08 |
+
+BLE maps the controller reason as follows. HCI 0x13 is `peer-closed`, 0x08 is
+`keepalive-failed`, 0x16 (local host terminated) is the reason the device stored
+before it called terminate, and anything else is `unknown` with `err` set to the
+HCI code. BLE never sends BYE, so a phone learns its BLE reason from `DIAG`.
+Unknown codes from a newer device must be shown as `unknown`, never rejected.
+
+### Disconnect event
+
+Every close (BLE, LAN, and a refused LAN client) appends one 16-byte event to
+the persistent event ring and increments that reason's counter.
+
+| Offset | Field | Type | Meaning |
+| --- | --- | --- | --- |
+| 0 | `uptime_s` | u32 | seconds since boot at the close |
+| 4 | `generation` | u32 | the closed connection's generation |
+| 8 | `reason` | u8 | [disconnect reason](#disconnect-reasons) code |
+| 9 | `link` | u8 | 0 BLE, 1 to 3 the LAN slot, 255 a refused LAN client |
+| 10 | `err` | i16 | errno or HCI code, clamped, 0 when not applicable |
+| 12 | `queued` | u16 | frames still queued for that peer, 0 until issue #2 |
+| 14 | `boot_seq` | u16 | persistent boot sequence (see [persistent log](#persistent-log)) |
+
+Golden event `78000000070000000302ffff00000200` is uptime 120 s, generation 7,
+`auth-failed`, LAN slot 2, `err` −1, nothing queued, boot 2.
+
+### BYE
+
+The device sends one `BYE` frame immediately before it closes a LAN socket,
+then closes. It is written with `MSG_DONTWAIT`, so a full send buffer loses it.
+When a send failed after part of a frame went out (`slow-peer`, `send-error`)
+the device skips the BYE, because it would land inside that frame, and only
+records the event for `DIAG`. A phone must therefore treat EOF without BYE as
+reason `unknown`. The phone
+never sends BYE.
+
+| Offset | Field | Type |
+| --- | --- | --- |
+| 0 | type `0x4B` | u8 |
+| 1 | `reason` | u8 |
+| 2 | `generation` | u32, the generation that is closing |
+| 6 | `err` | i16 |
+| 8 | `queued` | u16 |
+| 10 | `uptime_s` | u32 |
+
+Golden `4b0104030201f5ff0300100e0000` is `idle-timeout`, generation 0x01020304,
+`err` −11, 3 queued, uptime 3600 s. On LAN it is preceded by the length `0e00`
+(16 bytes on the wire).
+
+### GET_DIAG and DIAG
+
+`GET_DIAG` (`0x0E`) takes no body. `DIAG` (`0x4C`) carries `boot_seq` u16, one
+saturating u16 counter per reason code 0 to 16 (34 bytes), `n` u8, and then `n`
+events, oldest first. The device includes the newest events that fit
+`payload_max`, which is at most 61 events on LAN (1024 bytes) and 29 on BLE
+(512 bytes). A link narrower than the 38-byte header receives `ERROR` op `0x0E`
+code 7 `detail="mtu"`. Counters and events survive a warm reboot together with
+the persistent log, so `boot_seq` in each event tells which boot it belongs to.
+
+Golden, `boot_seq` 2, five `idle-timeout`, one `auth-failed`, one event (the
+event golden above).
+
+```text
+4c0200 0000 0500 0000 0100 0000×13 01 78000000070000000302ffff00000200
+```
+
+### ABORT and ABORTED
+
+`ABORT` (`0x0F`) takes no body and answers `ABORTED` (`0x4D`) with the opcode
+it stopped. The storage worker runs one command at a time, so in this revision
+an `ABORT` that reaches it always finds nothing running and answers `4d00`.
+Interrupting a running `READ` or `LIST` with `ABORTED` and `ERROR` 16 is issue
+#2. Golden `4d00` (idle) and `4d03` (a stopped `READ`).
+
+### LIST_END
+
+`count` widens to u32. Golden `117011010001000066ed0000040000` is 70000 files,
+1 partial, `sd_kib` 15558144, `sd_used_kib` 1024. A proto 3 phone must reject
+a 13-byte `LIST_END`.
+
+### Persistent log
+
+Board images with PSRAM and
+`CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY=y` (CoreS3 and the Waveshare
+logger) keep the log in a no-init PSRAM block of 112 header bytes, a 64 KiB text
+ring and 64 event slots (66,672 bytes). The header carries magic `AQLG`, a
+version, `boot_seq`, the ring and event positions, 32 u16 counter slots and a
+CRC-32 that every write updates. After a software or watchdog reset a valid
+header is kept and `boot_seq` increments. A power-on, brownout or unknown reset,
+or a header that fails validation, starts empty with `boot_seq` 1. Lines and
+events logged before the attach are appended. A build without the option or
+without initialized PSRAM (the Waveshare diagnostic image) keeps a 4 KiB
+internal ring with 8 event slots, `boot_seq` 0, and logs
+`LOG ring=internal reason=no-psram` or `reason=no-noinit`. The build never
+fails for lack of PSRAM. Of the 32 counter slots, 17 are used, one per
+[disconnect reason](#disconnect-reasons) code 0 to 16, and slots 17 to 31 stay
+reserved. Warm-reboot survival is a host-fixture result until it
+is read back from a board.
+
 ## LAN transport (v2)
 
 The same request bodies and response frames as BLE, carried over **one TCP connection**. Nothing about file sync changes; only the envelope, discovery and authentication differ.
@@ -359,8 +499,8 @@ The same request bodies and response frames as BLE, carried over **one TCP conne
 | Discovery | mDNS/DNS-SD service **`_aqsync._tcp.local.`**, instance = BLE local name (`AQ-xxxx`), host `aq-xxxx.local`, TXT records `proto=2`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
 | Port | **47390** (unassigned at IANA; deliberately not Meshtastic's 4403). |
 | Framing | Every message in both directions is `len` u16 LE followed by exactly `len` bytes. Phone → device: a control request body (first byte = opcode), ≤ 512 bytes. Device → phone: one response or push frame, ≤ `payload_max` = **1024** bytes, so `CHUNK` carries up to 1017 bytes. |
-| Handshake | Within 5 s of connecting the phone sends `"AQS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON) or a framed `ERROR` op=0 code 14 and closes. Anything else, or a timeout, closes the socket silently. |
-| Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. |
+| Handshake | Within 5 s of connecting the phone sends `"AQS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `AQS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
+| Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. In proto 3 every device-initiated close first sends a [BYE](#bye) naming the reason. |
 | Pushes | `STATUS` (0x48) and `LIVE` (0x49) frames are pushed to every authenticated socket whenever the device would notify `status`/`live` over BLE. They may arrive **between any two response frames** (the sampling loop does not wait for a transfer); the phone dispatches on the type byte and must not assume `CHUNK`s are contiguous on the wire. Frames are never interleaved *within* a frame — the socket is written under a mutex. |
 | Token | 32 random bytes generated at first boot and kept in NVS. Obtainable **only** via `GET_TOKEN` over an authenticated BLE link (`ERROR` 13 over LAN). `lan.rotate_token=1` replaces it. The token is a bearer secret for anyone on the LAN: keep it in app-private storage, never log it. |
 | Security | The TCP stream is **not encrypted**; the token authenticates the phone, it does not protect data or the token from an active/passive LAN observer after the handshake, and there is no forward secrecy. Restrict it to a trusted WPA2/WPA3 LAN, disable `lan.on` when not needed, rotate the token after suspected exposure, and prefer BLE for provisioning/control. Do not use LAN sync for anything you would not print on the device screen. TLS requires certificate/trust provisioning and measured ESP32-S3 memory/jitter impact; it is not implemented here rather than being faked with an unverifiable self-signed endpoint. |
