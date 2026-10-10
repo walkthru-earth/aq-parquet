@@ -122,8 +122,8 @@ ownership. It does not flash hardware. The fixture chooses OPI PSRAM purely for
 compilation; the board adapter owns the physical board's verified PSRAM mode.
 `pixi run python tools/test_logger_status.py --sanitize` tests the actual shared
 STATUS formatter with every unsigned counter at its maximum and signed values
-at their longest representation. All fields fit the 480-byte JSON limit (398
-bytes uncompressed, 393 bytes LZ4); insufficient buffers fail rather than report
+at their longest representation. All fields fit the 480-byte JSON limit (472
+bytes uncompressed, 467 bytes LZ4); insufficient buffers fail rather than report
 truncated JSON as valid. Shared BLE/LAN cached snapshot capacities derive from
 that limit, and frames retain the 512-byte cap. BLE snapshots exceeding
 negotiated MTU − 3 are cached but not notified; long reads retain the complete
