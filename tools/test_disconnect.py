@@ -64,7 +64,7 @@ def main() -> None:
     assert struct.unpack_from("<IHII", list_end, 1) == (70000, 1, 15558144, 1024)
     assert len(client.DISCONNECT_REASONS) == 17
     print("Disconnect: 16-byte event, BYE/DIAG/ABORTED/LIST_END golden vectors, "
-          "DIAG truncation 61/29 and persistent counters passed")
+          "DIAG truncation 61/29, persistent counters and one record per closed link passed")
 
 
 if __name__ == "__main__":

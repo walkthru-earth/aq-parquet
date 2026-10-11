@@ -159,4 +159,11 @@ int main() {
   assert(ble::map_ble_disconnect(0x13, DisconnectReason::Unknown, err) ==
              DisconnectReason::Unknown &&
          err == 0x13);
+
+  // A REBOOT that timed out records its own event. A late GAP callback for
+  // the same link then records nothing, and the next link records again.
+  ble::CloseClaim claim;
+  assert(claim.claim(4));
+  assert(!claim.claim(4));
+  assert(claim.claim(5) && !claim.claim(5));
 }

@@ -64,6 +64,7 @@ std::atomic<std::int64_t> pairing_deadline{0};
 // Why this side asked the controller to terminate. The controller reports a
 // local termination as HCI 0x16, which carries no reason of its own.
 std::atomic<DisconnectReason> pending_reason{DisconnectReason::Unknown};
+CloseClaim close_claim;
 
 // A failed terminate leaves no stale reason to mislabel the next connection.
 void terminate(std::uint16_t handle, DisconnectReason reason) {
@@ -363,8 +364,9 @@ int gap_event(ble_gap_event *event, void *) {
         map_ble_disconnect(event->disconnect.reason, local, err);
     const int hci = event->disconnect.reason - BLE_HS_ERR_HCI_BASE;
     // Record before clearing `connected`: disconnect() callers wait on it.
-    record_disconnect(reason, kEventLinkBle, closed, err, 0,
-                      esp_timer_get_time());
+    if (close_claim.claim(closed))
+      record_disconnect(reason, kEventLinkBle, closed, err, 0,
+                        esp_timer_get_time());
     connected = false;
     authenticated = false;
     pairing_active = false;
@@ -647,6 +649,19 @@ void disconnect(DisconnectReason reason) {
   const auto handle = conn_handle.load();
   if (connected.load() && handle != BLE_HS_CONN_HANDLE_NONE)
     terminate(handle, reason);
+}
+
+void disconnect_and_wait(DisconnectReason reason, std::uint32_t timeout_ms) {
+  disconnect(reason);
+  for (std::uint32_t waited = 0; waited < timeout_ms && connected.load();
+       waited += 10)
+    vTaskDelay(pdMS_TO_TICKS(10));
+  // The callback clears `connected` before the generation moves on, so a link
+  // still up here is the one that was asked to close.
+  const std::uint32_t closed = generation.load();
+  if (connected.load() && close_claim.claim(closed))
+    record_disconnect(reason, kEventLinkBle, closed, 0, 0,
+                      esp_timer_get_time());
 }
 
 void clear_bonds() {

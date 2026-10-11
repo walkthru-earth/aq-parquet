@@ -175,6 +175,9 @@ void clear_bonds();
 // from any task; a no-op without a connection. link().connected turns false
 // only after the event is recorded.
 void disconnect(DisconnectReason reason);
+// disconnect(), then waits up to timeout_ms for the close. On timeout the
+// event is recorded here so a restart that follows still leaves it.
+void disconnect_and_wait(DisconnectReason reason, std::uint32_t timeout_ms);
 
 // From the sampling loop, after the row was queued. Payloads <= kMaxJson.
 // Cache the complete value; omit notifications exceeding negotiated MTU - 3.

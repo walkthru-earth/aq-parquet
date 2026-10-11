@@ -7,6 +7,7 @@
 // persists across a warm reboot when the board attached its PSRAM block.
 // Events never carry an address, token, PIN or name.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -94,6 +95,18 @@ struct DisconnectStats {
   DisconnectReason last = DisconnectReason::Unknown; // valid when count > 0
 };
 DisconnectStats disconnect_stats();
+
+// One event per closed BLE link. The GAP callback and a local close that timed
+// out both claim the link's generation; only the first caller records.
+class CloseClaim {
+public:
+  bool claim(std::uint32_t generation) {
+    return last_.exchange(generation) != generation;
+  }
+
+private:
+  std::atomic<std::uint32_t> last_{0};
+};
 
 // DIAG from the persistent ring and counters.
 std::size_t encode_diag_snapshot(std::uint8_t *out, std::size_t capacity);

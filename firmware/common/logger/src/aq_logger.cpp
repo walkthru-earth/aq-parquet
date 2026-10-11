@@ -1748,9 +1748,7 @@ void handle_control_request(const ble::ControlRequest &request,
     aq::console::flush();
     vTaskDelay(pdMS_TO_TICKS(kDelayMs));
     // After the delay REBOOTING has left; a BLE peer gets a recorded close too.
-    ble::disconnect(ble::DisconnectReason::Reboot);
-    for (int waited = 0; waited < 20 && ble::link().connected; ++waited)
-      vTaskDelay(pdMS_TO_TICKS(10));
+    ble::disconnect_and_wait(ble::DisconnectReason::Reboot, 1000);
     esp_restart();
     return;
   }
