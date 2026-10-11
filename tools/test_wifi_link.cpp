@@ -345,9 +345,13 @@ int main() {
     const std::vector<std::uint8_t> oversize(lan::kPayloadMax + 1, 0x5a);
     const auto clients = lan::status().clients;
     errno = EPIPE;
-    assert(!lan::send_response(oversize.data(), oversize.size(), 1));
+    assert(lan::enqueue_response(oversize.data(), oversize.size(), 1,
+                                 lan::connection_generation(1)) ==
+           aqsync::EnqueueResult::Closed);
     assert(lan::status().clients == clients);
-    assert(lan::send_response(response, sizeof(response), 1));
+    assert(lan::enqueue_response(response, sizeof(response), 1,
+                                 lan::connection_generation(1)) ==
+           aqsync::EnqueueResult::Ok);
     assert(read_frame(phones[1]) ==
            std::vector<std::uint8_t>(response, response + 2));
   }
@@ -434,17 +438,21 @@ int main() {
   assert(expect_event(ble::DisconnectReason::IdleTimeout, 1).generation ==
          idle_generation);
 
-  // A frame that can never fit the ring closes its peer as tx-overflow
-  // instead of leaving the worker waiting.
+  // A valid frame that can never fit a ring smaller than ring_bytes closes
+  // its peer as tx-overflow instead of leaving the worker waiting.
   const int oversized = connect_phone();
   authenticate(oversized, 0);
-  std::vector<std::uint8_t> huge(lan::kPayloadMax + 1, 0x11);
-  assert(lan::enqueue_response(huge.data(), huge.size(), 0) ==
+  const aqsync::FrameRing full_ring = lan::clients[0].tx;
+  std::uint8_t tiny[64];
+  lan::clients[0].tx.attach(tiny, sizeof(tiny));
+  std::vector<std::uint8_t> large(lan::kPayloadMax, 0x11);
+  assert(lan::enqueue_response(large.data(), large.size(), 0) ==
          aqsync::EnqueueResult::Closed);
   assert(lan::payload_max(0) == 0);
   lan::poll_server();
   expect_bye(oversized, ble::DisconnectReason::TxOverflow, 0);
   expect_event(ble::DisconnectReason::TxOverflow, 1);
+  lan::clients[0].tx = full_ring;
 
   // A peer that stops reading fills only its own ring. The worker never
   // blocks on its socket, other peers keep receiving, at most one STATUS and

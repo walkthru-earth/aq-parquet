@@ -1645,9 +1645,8 @@ void service_samples_while_waiting() {
   static Sample row;
   auto &count = active_state->count;
   while (xQueuePeek(samples, &row, 0) == pdTRUE) {
-    const std::size_t limit =
-        row.valid[event_time_utc_ns] ? rows_per_group() : kUnsyncedRows;
-    if (count + 1 >= limit || count + 1 >= kMaxRows || !fits_batch(row, count))
+    if (count + 1 >= rows_per_group() || count + 1 >= kMaxRows ||
+        !fits_batch(row, count))
       return;
     xQueueReceive(samples, &row, 0);
     writer_state->rows[count++] = row;
