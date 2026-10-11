@@ -146,6 +146,9 @@ struct Client {
   std::atomic<int> drop_err{0};
   SemaphoreHandle_t tx_lock = nullptr;
   aqsync::FrameRing tx;
+  // Under tx_lock. While a scan reply retries after a flush, other producers
+  // see Full so the worker cannot refill the space the flush just freed.
+  bool scan_reserve = false;
   // LAN task only from here on.
   std::uint8_t rx[2 + ble::kMaxControlBytes + kHandshakeBytes]{};
   std::size_t rx_length = 0;
@@ -248,7 +251,8 @@ void request_drop(Client &client, DisconnectReason reason, int err) {
 aqsync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
                            std::size_t length,
                            std::uint32_t expected_generation = 0,
-                           bool require_authenticated = true) {
+                           bool require_authenticated = true,
+                           bool scan_reply = false) {
   if (peer >= ble::kMaxLanClients || !clients[peer].tx_lock)
     return aqsync::EnqueueResult::Closed;
   // A frame this side cannot encode is a caller bug, not a peer failure: keep
@@ -267,6 +271,8 @@ aqsync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
       (!expected_generation || client.generation.load() == expected_generation);
   if (!valid)
     return aqsync::EnqueueResult::Closed;
+  if (client.scan_reserve && !scan_reply)
+    return aqsync::EnqueueResult::Full;
   if (!client.tx.fits(length)) {
     // Waiting cannot help a frame larger than the ring. Close the peer so the
     // reply fails visibly instead of looping on Full.
@@ -774,8 +780,10 @@ std::uint8_t auth_code(wifi_auth_mode_t mode) {
 }
 
 // Scans run on aq-lan, the only sender, so a full ring cannot drain while a
-// scan reply waits. Flush the peer once and retry, else close it as
-// tx-overflow so the scan never stalls the LAN task.
+// scan reply waits. Reserve the ring, flush the peer once and retry, else
+// close it as tx-overflow so the scan never stalls the LAN task. The reserve
+// keeps the worker from refilling the flushed space before the retry, so a
+// peer that drained is never dropped.
 bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
              const std::uint8_t *frame, std::size_t length) {
   if (link != ble::Link::Lan)
@@ -783,16 +791,32 @@ bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
   auto result = enqueue_response(frame, length, peer, link_generation);
   if (result != aqsync::EnqueueResult::Full)
     return result == aqsync::EnqueueResult::Ok;
+  auto &client = clients[peer];
+  {
+    TxLock lock(client);
+    client.scan_reserve = true;
+  }
   if (!flush(peer, esp_timer_get_time())) {
-    begin_close(peer, DisconnectReason::SendError, errno);
+    const int failure = errno;
+    {
+      TxLock lock(client);
+      client.scan_reserve = false;
+    }
+    signal_space();
+    begin_close(peer, DisconnectReason::SendError, failure);
     return false;
   }
-  result = enqueue_response(frame, length, peer, link_generation);
-  if (result == aqsync::EnqueueResult::Full) {
-    aqlog.record_only().printf("LAN SCAN OVERFLOW slot=%u\n", unsigned(peer));
-    TxLock lock(clients[peer]);
-    request_drop(clients[peer], DisconnectReason::TxOverflow, 0);
+  result = push(peer, frame, length, link_generation, true, true);
+  {
+    TxLock lock(client);
+    client.scan_reserve = false;
+    if (result == aqsync::EnqueueResult::Full) {
+      aqlog.record_only().printf("LAN SCAN OVERFLOW slot=%u free=%u\n",
+                                 unsigned(peer), unsigned(client.tx.free()));
+      request_drop(client, DisconnectReason::TxOverflow, 0);
+    }
   }
+  signal_space();
   return result == aqsync::EnqueueResult::Ok;
 }
 

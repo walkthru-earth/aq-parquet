@@ -519,19 +519,24 @@ int main() {
     record.rssi = -40;
     record.authmode = WIFI_AUTH_WPA2_PSK;
     record.primary = 3;
+    // While a scan reply holds the reserve, the worker's pushes see Full
+    // and cannot refill the space the scan's flush frees.
+    lan::clients[0].scan_reserve = true;
+    assert(lan::enqueue_response(filler, sizeof(filler), 0) ==
+           aqsync::EnqueueResult::Full);
+    lan::clients[0].scan_reserve = false;
     assert(lan::enqueue_response(filler, sizeof(filler), 0) ==
            aqsync::EnqueueResult::Ok);
     fake_scan_records = {record};
     assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
-    lan::run_scan();
-    lan::scan_pending = false;
+    scan_now();
     assert(read_frame(scanner).size() == sizeof(filler));
     const auto found = read_frame(scanner);
     assert(found.size() == 11 && found[0] == ble::kFrameWifiAp &&
            found[3] == 3 && std::memcmp(found.data() + 4, "fixture", 7) == 0);
     assert(read_frame(scanner) ==
            (std::vector<std::uint8_t>{ble::kFrameWifiScanEnd, 1, 0, 0}));
-    assert(!lan::clients[0].drop.load());
+    assert(!lan::clients[0].drop.load() && !lan::clients[0].scan_reserve);
 
     // Stall the socket. Queue frames the size of the scan reply and pump
     // until three rounds in a row move nothing, so a flush makes no progress.
@@ -556,8 +561,7 @@ int main() {
     }
     fake_scan_records = {record};
     assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
-    lan::run_scan();
-    lan::scan_pending = false;
+    scan_now();
     assert(lan::clients[0].drop.load() &&
            lan::clients[0].drop_reason ==
                static_cast<std::uint8_t>(ble::DisconnectReason::TxOverflow));
