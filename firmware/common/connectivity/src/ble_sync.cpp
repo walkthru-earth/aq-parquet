@@ -357,6 +357,9 @@ int gap_event(ble_gap_event *event, void *) {
     const auto reason =
         map_ble_disconnect(event->disconnect.reason, local, err);
     const int hci = event->disconnect.reason - BLE_HS_ERR_HCI_BASE;
+    // Record before clearing `connected`: disconnect() callers wait on it.
+    record_disconnect(reason, kEventLinkBle, closed, err, 0,
+                      esp_timer_get_time());
     connected = false;
     authenticated = false;
     pairing_active = false;
@@ -365,8 +368,6 @@ int gap_event(ble_gap_event *event, void *) {
     mtu = 0;
     ++generation;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
-    record_disconnect(reason, kEventLinkBle, closed, err, 0,
-                      esp_timer_get_time());
     aqlog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
                  disconnect_reason_name(reason), unsigned(hci & 0xff));
     if (enabled.load() && host_requested.load())
@@ -636,6 +637,12 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
 const char *local_name() { return name_text; }
 const char *info_json() { return info_text; }
 config::PairMode pair_mode() { return mode; }
+
+void disconnect(DisconnectReason reason) {
+  const auto handle = conn_handle.load();
+  if (connected.load() && handle != BLE_HS_CONN_HANDLE_NONE)
+    terminate(handle, reason);
+}
 
 void clear_bonds() {
   if (!enabled.load() || !clear_mutex)

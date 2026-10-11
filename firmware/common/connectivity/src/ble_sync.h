@@ -9,6 +9,7 @@
 // The display loop reads pairing()/link() and draws; nothing here draws.
 
 #include "device_config.h"
+#include "disconnect.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -168,6 +169,10 @@ const char *info_json();
 config::PairMode pair_mode();
 // Forgets every bonded peer (ble.clear_bonds). Safe from any task.
 void clear_bonds();
+// Ends the current link and records `reason` as its disconnect event. Safe
+// from any task; a no-op without a connection. link().connected turns false
+// only after the event is recorded.
+void disconnect(DisconnectReason reason);
 
 // From the sampling loop, after the row was queued. Payloads <= kMaxJson.
 // Cache the complete value; omit notifications exceeding negotiated MTU - 3.

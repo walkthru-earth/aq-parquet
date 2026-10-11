@@ -387,7 +387,7 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | 8 | `wifi-lost` | the station lost its IP |
 | 9 | `lan-disabled` | `lan.on=0`, Wi-Fi off, or radios turned off |
 | 10 | `token-rotated` | `lan.rotate_token=1` dropped every session |
-| 11 | `reboot` | `REBOOT` was accepted. |
+| 11 | `reboot` | `REBOOT` was accepted. LAN sessions get BYE after `REBOOTING`. A BLE peer still connected when the delay ends is disconnected with this reason before the restart |
 | 12 | `peer-closed` | the phone closed. TCP EOF, or BLE HCI 0x13 |
 | 13 | `recv-error` | LAN receive failed (`err` is the errno) |
 | 14 | `send-error` | LAN send failed for another reason (`err` is the errno, `EPIPE` when nothing was written) |
