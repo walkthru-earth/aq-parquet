@@ -228,6 +228,13 @@ bool send_to(std::uint8_t peer, const std::uint8_t *frame, std::size_t length,
              bool require_authenticated = true) {
   if (peer >= ble::kMaxLanClients || !socket_mutex)
     return false;
+  // A frame this side cannot encode is a caller bug, not a peer failure: keep
+  // the client instead of reading a stale errno as send-error or slow-peer.
+  if (length == 0 || length > kPayloadMax) {
+    aqlog.record_only().printf("LAN SEND REJECTED bytes=%u max=%u\n",
+                               unsigned(length), unsigned(kPayloadMax));
+    return false;
+  }
   // Every holder is bounded by the cumulative write deadline above. Wait for
   // frame ownership rather than silently losing a reply on lock contention.
   xSemaphoreTake(socket_mutex, portMAX_DELAY);

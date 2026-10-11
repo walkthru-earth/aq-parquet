@@ -269,6 +269,18 @@ int main() {
                             lan::connection_generation(1)));
   assert(read_frame(phones[1]) ==
          std::vector<std::uint8_t>(response, response + 2));
+  // An oversize frame is refused without dropping a healthy client, even with
+  // a stale errno left over from earlier socket work.
+  {
+    const std::vector<std::uint8_t> oversize(lan::kPayloadMax + 1, 0x5a);
+    const auto clients = lan::status().clients;
+    errno = EPIPE;
+    assert(!lan::send_response(oversize.data(), oversize.size(), 1));
+    assert(lan::status().clients == clients);
+    assert(lan::send_response(response, sizeof(response), 1));
+    assert(read_frame(phones[1]) ==
+           std::vector<std::uint8_t>(response, response + 2));
+  }
 
   // Malformed/auth-failing clients cannot terminate their neighbors.
   const std::uint8_t malformed[] = {1, 2}; // 513 exceeds bounded control size
