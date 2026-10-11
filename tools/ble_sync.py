@@ -259,7 +259,13 @@ class Session:
     async def request(self, payload: bytes):
         await self.client.write_gatt_char(CONTROL, payload, response=True)
 
-    async def frame(self, timeout=15.0, *, raise_error=True) -> bytes:
+    # Per frame deadline. On LAN a reply can wait up to the device's 15 s
+    # slow-peer bound behind another phone, so callers there may raise it.
+    frame_timeout = 15.0
+
+    async def frame(self, timeout=None, *, raise_error=True) -> bytes:
+        if timeout is None:
+            timeout = self.frame_timeout
         try:
             data = await asyncio.wait_for(self.frames.get(), timeout)
         except asyncio.TimeoutError:

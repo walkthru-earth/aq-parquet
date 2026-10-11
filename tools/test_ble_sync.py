@@ -1,4 +1,4 @@
-"""Frame-level tests for tools/ble_sync.py against docs/shared/ble-sync-protocol.md v2.
+"""Frame-level tests for tools/ble_sync.py against docs/shared/ble-sync-protocol.md v3.
 
 Run: pixi run python tools/test_ble_sync.py
 A fake client answers control writes with scripted response frames; nothing
@@ -20,7 +20,7 @@ CONFIG = (b'{"ble":{"pair":"random","pin_set":1,"pin_default":0,"bonds":1,"displ
           b'"lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0}}')
 TOKEN = bytes(range(32))
 LOG = b"PARQUET BEGIN x\n" + b"BLE CONNECT peer=y\n" * 20
-INFO = b'{"proto":2,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
+INFO = b'{"proto":3,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
 STATUS = b'{"part":3,"qf":7,"qb":123456,"open":0,"open_rg":0}'
 # Protocol 3 goldens, byte for byte from docs/shared/ble-sync-protocol.md.
 GOLDEN_LIST_END = bytes.fromhex("117011010001000066ed0000040000")
@@ -302,14 +302,14 @@ async def run_read_deadlines():
         connected, session = await ble.connect(args)
     constructor.assert_called_once_with("known-device", timeout=90)
     assert connected is client and session.read_timeout == 90
-    assert (await session.info())["proto"] == 2
+    assert (await session.info())["proto"] == 3
     assert (await session.status())["qf"] == 7
 
     # Simulate the CoreBluetooth delegate's timeout while pairing, followed by
     # success once the user has answered. No backend-specific kwargs are needed.
     read = AsyncMock(side_effect=[TimeoutError(), bytearray(INFO)])
     session = ble.Session(SimpleNamespace(read_gatt_char=read), read_timeout=0.4)
-    assert (await session.info())["proto"] == 2
+    assert (await session.info())["proto"] == 3
     assert read.await_count == 2
     assert all(call.args == (ble.INFO,) and not call.kwargs for call in read.await_args_list)
 
@@ -388,7 +388,7 @@ async def run_lan():
             await writer.drain()
             writer.close()
             return
-        hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+        hello = bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO
         writer.write(struct.pack("<H", len(hello)) + hello)
         emitted = []
         fake.callback = lambda _c, data: emitted.append(bytes(data))
@@ -415,7 +415,7 @@ async def run_lan():
     await link.start_notify(ble.LIVE, lambda _c, data: pushed.append(bytes(data)))
     session = ble.Session(link)
     await session.start()
-    assert (await session.info())["proto"] == 2
+    assert (await session.info())["proto"] == 3
     assert (await session.status())["qf"] == 7
     listed, _ = await session.list_files()
     payload, transfer = await session.fetch(NAME, 1000)
@@ -448,7 +448,7 @@ async def run_lan_snapshot_deadlines():
 
         try:
             assert await reader.readexactly(36) == b"AQS1" + TOKEN
-            await emit(bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO)
+            await emit(bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO)
             while True:
                 (length,) = struct.unpack("<H", await reader.readexactly(2))
                 request = await reader.readexactly(length)
@@ -475,7 +475,7 @@ async def run_lan_snapshot_deadlines():
         session = ble.Session(link, read_timeout=3)
         await session.start()
         started = asyncio.get_running_loop().time()
-        assert (await session.info())["proto"] == 2
+        assert (await session.info())["proto"] == 3
         assert asyncio.get_running_loop().time() - started < 0.5
         started = asyncio.get_running_loop().time()
         assert (await session.status())["qf"] == 7
@@ -511,7 +511,7 @@ async def run_lan_bye():
     async def serve(reader, writer):
         try:
             assert await reader.readexactly(36) == b"AQS1" + TOKEN
-            hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+            hello = bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO
             writer.write(struct.pack("<H", len(hello)) + hello)
             await writer.drain()
             (length,) = struct.unpack("<H", await reader.readexactly(2))
@@ -595,7 +595,7 @@ async def run_lan_bye():
     # EOF without BYE is reason unknown and also fails at once.
     async def drop(reader, writer):
         await reader.readexactly(36)
-        hello = bytes([ble.F_HELLO, 2]) + struct.pack("<H", 1024) + INFO
+        hello = bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO
         writer.write(struct.pack("<H", len(hello)) + hello)
         await writer.drain()
         writer.close()
