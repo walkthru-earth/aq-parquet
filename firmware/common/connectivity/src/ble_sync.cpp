@@ -69,10 +69,12 @@ std::atomic<DisconnectReason> pending_reason{DisconnectReason::Unknown};
 CloseClaim close_claim;
 
 // A failed terminate leaves no stale reason to mislabel the next connection.
-void terminate(std::uint16_t handle, DisconnectReason reason) {
+bool terminate(std::uint16_t handle, DisconnectReason reason) {
   pending_reason = reason;
-  if (ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) != 0)
-    pending_reason = DisconnectReason::Unknown;
+  if (ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0)
+    return true;
+  pending_reason = DisconnectReason::Unknown;
+  return false;
 }
 config::PairMode mode = config::PairMode::Random;
 std::uint32_t fixed_passkey = 0;
@@ -114,7 +116,7 @@ std::uint8_t tx_capacity = 0, tx_head = 0, tx_queued = 0;
 bool awaiting_tx = false, notify_tx_seen = false;
 int notify_tx_status = 0;
 std::uint32_t stall_reported = 0; // generation already closed as SlowPeer
-ble_npl_callout retry_callout{}, relax_callout{};
+ble_npl_callout retry_callout{}, relax_callout{}, advertise_callout{};
 AdvertWindow adv_window; // host task only
 IntervalPolicy interval; // host task only
 std::atomic<bool> adv_fast{false};
@@ -199,6 +201,9 @@ bool start_advertising() {
   touch_ui();
   if (rc != 0) {
     aqlog.printf("BLE ERROR operation=advertise rc=%d\n", rc);
+    // A transient failure must not leave the device invisible until the next
+    // disconnect: try again in a second.
+    ble_npl_callout_reset(&advertise_callout, ble_npl_time_ms_to_ticks32(1000));
     return false;
   }
   if (adv_fast.exchange(fast) != fast || fast)
@@ -215,6 +220,12 @@ void speed_up_advertising() {
       !enabled.load() || !host_requested.load())
     return;
   if (ble_gap_adv_stop() == 0)
+    start_advertising();
+}
+
+void advertise_on_host(ble_npl_event *) {
+  if (enabled.load() && host_requested.load() && !connected.load() &&
+      !advertising.load())
     start_advertising();
 }
 
@@ -311,6 +322,14 @@ void drain_responses(ble_npl_event *) {
     portEXIT_CRITICAL(&tx_lock);
     if (!any)
       break;
+    if (!connected.load() || !authenticated.load() ||
+        !subscribed[Response].load() || generation.load() != slot.session ||
+        conn_handle.load() != slot.handle) {
+      // The phone unsubscribed or the session ended. The stream is over for
+      // this session, but the link itself did nothing wrong.
+      close_responses();
+      return;
+    }
     notify_tx_seen = false;
     awaiting_tx = true;
     const int rc =
@@ -349,15 +368,17 @@ void drain_responses(ble_npl_event *) {
     }
     // Refused. The host frees buffers without telling the application, so the
     // head frame is offered again shortly, until the progress timeout.
+    if (stalled && stall_reported == slot.session)
+      return; // The close is under way; DISCONNECT clears the queue.
     if (stalled) {
-      if (stall_reported != slot.session) {
+      aqlog.printf("BLE SLOW timeout_ms=%lu\n",
+                   static_cast<unsigned long>(options.progress_timeout_ms));
+      if (terminate(slot.handle, DisconnectReason::SlowPeer)) {
         stall_reported = slot.session;
-        aqlog.printf("BLE SLOW credits=%u timeout_ms=%lu\n",
-                     unsigned(credits.available()),
-                     static_cast<unsigned long>(options.progress_timeout_ms));
-        terminate(slot.handle, DisconnectReason::SlowPeer);
+        return;
       }
-      return;
+      // The terminate did not start; keep retrying so the close is tried
+      // again rather than leaving the link wedged.
     }
     ble_npl_callout_reset(&retry_callout,
                           ble_npl_time_ms_to_ticks32(options.refused_retry_ms));
@@ -401,8 +422,8 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
   return aqsync::EnqueueResult::Ok;
 }
 
-void request_conn_params(std::uint16_t handle, const ConnParams &p,
-                         const char *label) {
+int request_conn_params(std::uint16_t handle, const ConnParams &p,
+                        const char *label) {
   ble_gap_upd_params params{};
   params.itvl_min = p.itvl_min;
   params.itvl_max = p.itvl_max;
@@ -413,6 +434,7 @@ void request_conn_params(std::uint16_t handle, const ConnParams &p,
       "BLE CONN request=%s itvl=%u-%u lat=%u to=%u rc=%d\n", label,
       unsigned(p.itvl_min), unsigned(p.itvl_max), unsigned(p.latency),
       unsigned(p.supervision_timeout), rc);
+  return rc;
 }
 
 // The relax timer: the link goes to the relaxed interval once no control
@@ -423,9 +445,14 @@ void relax_on_host(ble_npl_event *) {
   std::uint32_t rearm_ms = 0;
   const auto action =
       interval.on_timer(esp_timer_get_time(), options.relax_after_ms, rearm_ms);
-  if (action == IntervalPolicy::Action::RequestRelaxed)
-    request_conn_params(conn_handle.load(), options.relaxed, "relaxed");
-  else if (rearm_ms)
+  if (action == IntervalPolicy::Action::RequestRelaxed) {
+    if (request_conn_params(conn_handle.load(), options.relaxed, "relaxed") !=
+        0) {
+      // A procedure was in progress. Stay active and try again later.
+      interval.request_failed();
+      ble_npl_callout_reset(&relax_callout, ble_npl_time_ms_to_ticks32(1000));
+    }
+  } else if (rearm_ms)
     ble_npl_callout_reset(&relax_callout, ble_npl_time_ms_to_ticks32(rearm_ms));
 }
 
@@ -508,7 +535,9 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   // Any request brings a relaxed link back to the active interval.
   if (interval.on_request(request.received_mono_us) ==
       IntervalPolicy::Action::RequestActive) {
-    request_conn_params(handle, options.active, "active");
+    // A refused request leaves the mode relaxed so the next write retries.
+    if (request_conn_params(handle, options.active, "active") != 0)
+      interval.request_failed();
     ble_npl_callout_reset(&relax_callout,
                           ble_npl_time_ms_to_ticks32(options.relax_after_ms));
   }
@@ -875,6 +904,8 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
                        drain_responses, nullptr);
   ble_npl_callout_init(&relax_callout, nimble_port_get_dflt_eventq(),
                        relax_on_host, nullptr);
+  ble_npl_callout_init(&advertise_callout, nimble_port_get_dflt_eventq(),
+                       advertise_on_host, nullptr);
   if (xTaskCreate(error_task, "aq_ble_error", 3072, nullptr, 4, nullptr) !=
       pdPASS)
     return false;

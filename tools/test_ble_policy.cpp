@@ -237,6 +237,16 @@ void test_interval_policy() {
   assert(rearm == 29000);
   assert(policy.on_timer(t + 160 * kSec, 60000, rearm) ==
          Action::RequestRelaxed);
+  // A refused relax request keeps the link active, and the timer asks again.
+  policy.request_failed();
+  assert(!policy.relaxed());
+  assert(policy.on_timer(t + 161 * kSec, 60000, rearm) ==
+         Action::RequestRelaxed);
+  // A refused active request leaves it relaxed, so the next write retries.
+  assert(policy.on_request(t + 162 * kSec) == Action::RequestActive);
+  policy.request_failed();
+  assert(policy.relaxed());
+  assert(policy.on_request(t + 163 * kSec) == Action::RequestActive);
 
   // A reconnect starts active again.
   policy.connect(t + 200 * kSec);

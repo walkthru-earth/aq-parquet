@@ -157,6 +157,9 @@ public:
   // otherwise reports how many ms remain through `rearm_ms`.
   Action on_timer(std::int64_t now_us, std::uint32_t relax_after_ms,
                   std::uint32_t &rearm_ms);
+  // The stack refused the request on_request() or on_timer() asked for, so
+  // the link keeps its previous interval: flip the mode back.
+  void request_failed() { relaxed_ = !relaxed_; }
   bool relaxed() const { return relaxed_; }
 
 private:
