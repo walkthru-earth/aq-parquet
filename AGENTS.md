@@ -64,7 +64,10 @@ write, run these commands in order.
 4. `pixi run efuse --port <port>`
 5. `pixi run backup --board <board> --port <port>`
 
-Confirm the backup is **16,777,216 bytes** in `backup/`. The first four
+For CoreS3 and Waveshare V2, confirm the backup is **16,777,216 bytes** in
+`backup/`. For a new board, extend the backup and flash helpers before supporting
+a different capacity. Confirm its backup matches the full flash capacity
+reported by `flash-id`. The first four
 commands read flash/device state. `chip` can reset a running app on exit. Never
 write eFuses or format the card. Never assume flash size from a product name.
 CoreS3 native USB readback must use esptool's default baud. 921600 corrupted a
