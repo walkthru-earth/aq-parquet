@@ -713,12 +713,27 @@ std::uint8_t auth_code(wifi_auth_mode_t mode) {
   }
 }
 
+// Scans run on aq-lan, the only sender, so a full ring cannot drain while a
+// scan reply waits. Flush the peer once and retry, else close it as
+// tx-overflow so the scan never stalls the LAN task.
 bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
              const std::uint8_t *frame, std::size_t length) {
-  if (link == ble::Link::Lan)
-    return enqueue_response(frame, length, peer, link_generation) ==
-           aqsync::EnqueueResult::Ok;
-  return ble::send_response(frame, length, link_generation);
+  if (link != ble::Link::Lan)
+    return ble::send_response(frame, length, link_generation);
+  auto result = enqueue_response(frame, length, peer, link_generation);
+  if (result != aqsync::EnqueueResult::Full)
+    return result == aqsync::EnqueueResult::Ok;
+  if (!flush(peer, esp_timer_get_time())) {
+    begin_close(peer, DisconnectReason::SendError, errno);
+    return false;
+  }
+  result = enqueue_response(frame, length, peer, link_generation);
+  if (result == aqsync::EnqueueResult::Full) {
+    aqlog.record_only().printf("LAN SCAN OVERFLOW slot=%u\n", unsigned(peer));
+    TxLock lock(clients[peer]);
+    request_drop(clients[peer], DisconnectReason::TxOverflow, 0);
+  }
+  return result == aqsync::EnqueueResult::Ok;
 }
 
 void run_scan() {

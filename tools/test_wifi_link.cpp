@@ -457,6 +457,73 @@ int main() {
   expect_event(ble::DisconnectReason::TxOverflow, 1);
   lan::clients[0].tx = full_ring;
 
+  // A LAN scan runs on aq-lan, the only sender. A full ring is flushed once
+  // and the reply retried. A ring the socket cannot drain closes the peer as
+  // tx-overflow instead of stalling the scan.
+  {
+    const int scanner = connect_phone();
+    authenticate(scanner, 0);
+    const aqsync::FrameRing scan_ring = lan::clients[0].tx;
+    std::uint8_t small_ring[24];
+    lan::clients[0].tx.attach(small_ring, sizeof(small_ring));
+    std::uint8_t filler[20] = {ble::kFrameLive};
+    wifi_ap_record_t record{};
+    std::memcpy(record.ssid, "fixture", 8);
+    record.rssi = -40;
+    record.authmode = WIFI_AUTH_WPA2_PSK;
+    record.primary = 3;
+    assert(lan::enqueue_response(filler, sizeof(filler), 0) ==
+           aqsync::EnqueueResult::Ok);
+    fake_scan_records = {record};
+    assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
+    lan::run_scan();
+    lan::scan_pending = false;
+    assert(read_frame(scanner).size() == sizeof(filler));
+    const auto found = read_frame(scanner);
+    assert(found.size() == 11 && found[0] == ble::kFrameWifiAp &&
+           found[3] == 3 && std::memcmp(found.data() + 4, "fixture", 7) == 0);
+    assert(read_frame(scanner) ==
+           (std::vector<std::uint8_t>{ble::kFrameWifiScanEnd, 1, 0, 0}));
+    assert(!lan::clients[0].drop.load());
+
+    // Stall the socket. Queue frames the size of the scan reply and pump
+    // until three rounds in a row move nothing, so a flush makes no progress.
+    const int scan_fd = lan::clients[0].fd.load();
+    int tiny_buffer = 4096;
+    assert(::setsockopt(scanner, SOL_SOCKET, SO_RCVBUF, &tiny_buffer,
+                        sizeof(tiny_buffer)) == 0);
+    assert(::setsockopt(scan_fd, SOL_SOCKET, SO_SNDBUF, &tiny_buffer,
+                        sizeof(tiny_buffer)) == 0);
+    static std::uint8_t stall_ring[4096];
+    lan::clients[0].tx.attach(stall_ring, sizeof(stall_ring));
+    std::uint8_t same_size[11] = {ble::kFrameLive};
+    for (unsigned round = 0, stable = 0; stable < 3; ++round) {
+      assert(round < 100000);
+      while (lan::enqueue_response(same_size, sizeof(same_size), 0) ==
+             aqsync::EnqueueResult::Ok) {
+      }
+      const auto sent = lan::clients[0].tx.consumed_total();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      pump();
+      stable = lan::clients[0].tx.consumed_total() == sent ? stable + 1 : 0;
+    }
+    fake_scan_records = {record};
+    assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
+    lan::run_scan();
+    lan::scan_pending = false;
+    assert(lan::clients[0].drop.load() &&
+           lan::clients[0].drop_reason ==
+               static_cast<std::uint8_t>(ble::DisconnectReason::TxOverflow));
+    ::close(scanner);
+    for (int tick = 0; tick < 50 && lan::clients[0].fd.load() >= 0; ++tick) {
+      fake_now_us += 100000;
+      lan::poll_server(10000);
+    }
+    assert(lan::clients[0].fd.load() < 0);
+    expect_event(ble::DisconnectReason::TxOverflow, 1);
+    lan::clients[0].tx = scan_ring;
+  }
+
   // A peer that stops reading fills only its own ring. The worker never
   // blocks on its socket, other peers keep receiving, at most one STATUS and
   // one LIVE wait in the ring, and after slow_peer_ms without progress the
