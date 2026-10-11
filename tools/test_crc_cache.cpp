@@ -5,8 +5,10 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 using aq::storage::crc_path_hash;
+using aq::storage::crc_stat_key;
 using aq::storage::CrcCache;
 using aq::storage::CrcKey;
 
@@ -73,12 +75,39 @@ void clear_all() {
   assert(cache.size() == 0);
   assert(!cache.lookup(key("f79", 91, 79), crc));
 }
+// Mirrors finalize (remember_crc on the ready path after the .partial rename)
+// and OPEN (crc_key on the same path). Host rename(2), not FatFs f_rename.
+void key_after_rename(const std::string &directory) {
+  const std::string partial = directory + "/a.parquet.partial";
+  const std::string ready = directory + "/a.parquet";
+  FILE *file = std::fopen(partial.c_str(), "wb");
+  assert(file && std::fwrite("PAR1xxxxPAR1", 1, 12, file) == 12);
+  assert(std::fclose(file) == 0);
+  CrcKey before{};
+  assert(crc_stat_key(partial.c_str(), before) && before.size == 12);
+  assert(std::rename(partial.c_str(), ready.c_str()) == 0);
+
+  CrcKey stored{}, opened{}, stale{};
+  assert(crc_stat_key(ready.c_str(), stored));
+  assert(stored.size == before.size && stored.mtime == before.mtime);
+  CrcCache<4> cache;
+  cache.insert(stored, 0x414fa339U);
+  std::uint32_t crc = 0;
+  assert(crc_stat_key(ready.c_str(), opened));
+  assert(cache.lookup(opened, crc) && crc == 0x414fa339U);
+  // A key remembered before the rename names the old path and never hits.
+  assert(!cache.lookup(before, crc) && cache.size() == 1);
+  assert(!crc_stat_key(partial.c_str(), stale));
+  assert(!crc_stat_key(nullptr, stale));
+}
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  assert(argc == 2);
   hit_and_miss();
   invalidation();
   lru_eviction();
   clear_all();
+  key_after_rename(argv[1]);
   return 0;
 }

@@ -1,4 +1,5 @@
-"""Host checks for the archive OPEN CRC cache (hit, miss, LRU, invalidation).
+"""Host checks for the archive OPEN CRC cache (hit, miss, LRU, invalidation,
+key after rename).
 
 Synthetic keys do not establish SD timestamps, finalize timing or OPEN latency.
 """
@@ -26,8 +27,8 @@ def main() -> None:
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
-        subprocess.run([str(executable)], check=True)
-    print("CRC cache hit, miss, invalidation and LRU checks passed")
+        subprocess.run([str(executable), directory], check=True)
+    print("CRC cache hit, miss, invalidation, LRU and key after rename checks passed")
 
 
 if __name__ == "__main__":

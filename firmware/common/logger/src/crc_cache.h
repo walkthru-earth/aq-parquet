@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <sys/stat.h>
 
 // Finalize-time CRC cache for archive OPEN. Finalized files are immutable, so
 // the CRC computed after the .partial rename stays valid while the path, size
@@ -27,6 +28,18 @@ inline std::uint64_t crc_path_hash(const char *path) {
     hash *= 0x100000001b3ULL;
   }
   return hash;
+}
+
+// Key of the file at `path` from stat(). FatFs fstat reports no mtime, so the
+// path is required. f_rename keeps the entry timestamp, so a key taken after
+// the .partial rename still matches at OPEN. The caller holds the bus lock.
+inline bool crc_stat_key(const char *path, CrcKey &key) {
+  struct stat info{};
+  if (!path || ::stat(path, &info) != 0)
+    return false;
+  key = {crc_path_hash(path), static_cast<std::int64_t>(info.st_mtime),
+         static_cast<std::uint32_t>(info.st_size)};
+  return true;
 }
 
 template <std::size_t Capacity> class CrcCache {

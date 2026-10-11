@@ -217,19 +217,10 @@ bool sink(void *context, const std::uint8_t *data, std::size_t size) {
   return true;
 }
 
-// Cache key of a finalized file. FatFs fstat reports no mtime, so stat the
-// path. f_rename keeps the entry timestamp, so the key survives finalize.
+// Cache key of a finalized file (crc_cache.h) under the bus lock.
 bool crc_key(const char *path, aq::storage::CrcKey &key) {
-  struct stat info{};
-  {
-    BusLock lock;
-    if (::stat(path, &info) != 0)
-      return false;
-  }
-  key = {aq::storage::crc_path_hash(path),
-         static_cast<std::int64_t>(info.st_mtime),
-         static_cast<std::uint32_t>(info.st_size)};
-  return true;
+  BusLock lock;
+  return aq::storage::crc_stat_key(path, key);
 }
 
 // Structural completion check and CRC-32 of `file`, an open stream. PyArrow +
