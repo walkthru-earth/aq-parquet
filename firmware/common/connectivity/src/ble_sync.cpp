@@ -174,8 +174,8 @@ void refresh_advert(ble_npl_event *) {
                static_cast<unsigned long>(word >> 8));
   // A scanner filtering on the flag byte must see a flip within a minute, so
   // a flag change advertises fast for flag_window_ms. The counter alone does
-  // not.
-  if ((previous & 0xffU) != (word & 0xffU)) {
+  // not. The first apply after boot is no flip; the boot window covers it.
+  if (previous != ~0ULL && (previous & 0xffU) != (word & 0xffU)) {
     adv_window.extend(esp_timer_get_time(), options.flag_window_ms);
     speed_up_advertising();
   }
