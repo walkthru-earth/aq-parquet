@@ -15,6 +15,7 @@ struct StartResult {
 // Sync service tuning with shared defaults. A board passes its own values
 // through aq::logger::Config::sync; queue depths size the logger's queues.
 struct ServiceConfig {
+  ble::Options ble{};
   lan::Options lan{};
   std::size_t command_queue_depth = 6;
   std::size_t sample_queue_depth = 8;

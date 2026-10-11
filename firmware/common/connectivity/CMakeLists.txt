@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "src/archive_sync.cpp" "src/ble_sync.cpp" "src/control_sync.cpp" "src/frame_ring.cpp"
+    SRCS "src/archive_sync.cpp" "src/ble_policy.cpp" "src/ble_sync.cpp" "src/control_sync.cpp" "src/frame_ring.cpp"
          "src/sync_service.cpp" "src/wifi_link.cpp" "src/network_time.cpp"
          "src/disconnect.cpp"
     INCLUDE_DIRS "src"

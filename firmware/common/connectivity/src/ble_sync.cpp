@@ -1,9 +1,11 @@
 #include "ble_sync.h"
 #include "abort_signal.h"
 #include "ble_advert.h"
+#include "ble_policy.h"
 #include "debug_log.h"
 #include "disconnect.h"
 
+#include <esp_heap_caps.h>
 #include <esp_random.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -27,15 +29,15 @@ void ble_store_config_init(void);
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 namespace ble {
 namespace {
 static_assert(BLE_HS_ERR_HCI_BASE == kHciStatusBase, "NimBLE HCI status base");
 constexpr const char *kServiceUuid = "c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01";
 constexpr std::int64_t kPairingWindowUs = 60LL * 1000000LL;
-// Preserve the measured controller back-pressure budget: 400 x 10 ms = 4 s.
-constexpr unsigned kNotifyRetries = 400;
-constexpr TickType_t kNotifyRetryDelay = pdMS_TO_TICKS(10);
+// send_response() from tasks other than the worker keeps the prior 4 s budget.
+constexpr std::int64_t kSendBudgetUs = 4LL * 1000000LL;
 // Native NimBLE UUID bytes use the same Bluetooth wire order as ADV.
 ble_uuid128_t native_uuid(std::uint16_t selector) {
   ble_uuid128_t result{};
@@ -89,19 +91,33 @@ struct ImmediateError {
 QueueHandle_t immediate_errors = nullptr;
 SemaphoreHandle_t startup_done = nullptr, response_mutex = nullptr,
                   clear_mutex = nullptr, clear_done = nullptr,
-                  response_done = nullptr;
-ble_npl_event advert_event{}, clear_event{}, response_event{}, snapshot_event{};
-struct ResponseAttempt {
-  std::uint8_t frame[kMaxFrame]{};
+                  space_event = nullptr;
+ble_npl_event advert_event{}, clear_event{}, response_event{}, snapshot_event{},
+    wake_event{};
+Options options;
+
+// Response transmit queue ("Link parameters and notify flow" in the protocol
+// doc). One slot per notify credit. A producer, serialised by response_mutex,
+// takes a credit and reserves the slot after the queued ones, fills it outside
+// the lock and then publishes it. The host task alone sends and pops the head.
+// tx_lock guards credits, the slot metadata, tx_head and tx_queued.
+struct TxSlot {
   std::uint16_t length = 0, handle = 0;
-  std::uint32_t session = 0, ticket = 0;
-  std::int64_t deadline_us = 0;
+  std::uint32_t session = 0;
 };
-ResponseAttempt response_attempt;
-std::atomic<bool> response_pending{false};
-std::atomic<std::uint32_t> completed_ticket{0};
-std::atomic<int> response_result{BLE_HS_ENOTCONN};
-std::uint32_t next_ticket = 0; // Protected by response_mutex.
+portMUX_TYPE tx_lock = portMUX_INITIALIZER_UNLOCKED;
+NotifyCredits credits;
+std::uint8_t *tx_frames = nullptr; // capacity x kMaxFrame
+TxSlot *tx_slots = nullptr;
+std::uint8_t tx_capacity = 0, tx_head = 0, tx_queued = 0;
+// Host task only: the NOTIFY_TX status for the frame being submitted.
+bool awaiting_tx = false, notify_tx_seen = false;
+int notify_tx_status = 0;
+std::uint32_t stall_reported = 0; // generation already closed as SlowPeer
+ble_npl_callout retry_callout{}, relax_callout{};
+AdvertWindow adv_window; // host task only
+IntervalPolicy interval; // host task only
+std::atomic<bool> adv_fast{false};
 std::atomic<unsigned> pending_snapshots{0};
 std::atomic<bool> startup_ok{false}, host_requested{false};
 
@@ -138,8 +154,13 @@ bool apply_advert_data() {
   return true;
 }
 
+int gap_event(ble_gap_event *event, void *);
+bool start_advertising();
+void speed_up_advertising();
+
 void refresh_advert(ble_npl_event *) {
-  if (desired_advert.load() == applied_advert.load())
+  const auto previous = applied_advert.load();
+  if (desired_advert.load() == previous)
     return;
   if (!apply_advert_data()) {
     aqlog.println("BLE ERROR operation=advert-refresh");
@@ -149,23 +170,57 @@ void refresh_advert(ble_npl_event *) {
   const auto word = applied_advert.load();
   aqlog.printf("BLE ADV flags=0x%02x fin=%lu\n", unsigned(word & 0xffU),
                static_cast<unsigned long>(word >> 8));
+  // A scanner filtering on the flag byte must see a flip within a minute, so
+  // a flag change advertises fast for flag_window_ms. The counter alone does
+  // not.
+  if ((previous & 0xffU) != (word & 0xffU)) {
+    adv_window.extend(esp_timer_get_time(), options.flag_window_ms);
+    speed_up_advertising();
+  }
 }
 
-int gap_event(ble_gap_event *event, void *);
-
+// Two stage advertising. Fast for the rest of the window, then slow with no
+// end. The controller ends the fast stage itself (BLE_GAP_EVENT_ADV_COMPLETE
+// with BLE_HS_ETIMEOUT), and that event restarts advertising slow.
 bool start_advertising() {
+  const auto now = esp_timer_get_time();
+  const bool fast = adv_window.fast(now);
   ble_gap_adv_params params{};
   params.conn_mode = BLE_GAP_CONN_MODE_UND;
   params.disc_mode = BLE_GAP_DISC_MODE_GEN;
-  params.itvl_min = 48; // 30 ms, matching the existing fast legacy interval.
-  params.itvl_max = 96; // 60 ms.
-  const int rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, nullptr, BLE_HS_FOREVER,
+  params.itvl_min = fast ? options.fast_adv_min : options.slow_adv_min;
+  params.itvl_max = fast ? options.fast_adv_max : options.slow_adv_max;
+  const std::int32_t duration =
+      fast ? static_cast<std::int32_t>(adv_window.remaining_ms(now))
+           : BLE_HS_FOREVER;
+  const int rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, nullptr, duration,
                                    &params, gap_event, nullptr);
   advertising = rc == 0;
   touch_ui();
-  if (rc != 0)
+  if (rc != 0) {
     aqlog.printf("BLE ERROR operation=advertise rc=%d\n", rc);
-  return rc == 0;
+    return false;
+  }
+  if (adv_fast.exchange(fast) != fast || fast)
+    aqlog.record_only().printf(
+        "BLE ADV mode=%s itvl=%u-%u ms=%ld\n", fast ? "fast" : "slow",
+        unsigned(params.itvl_min), unsigned(params.itvl_max),
+        static_cast<long>(fast ? duration : 0));
+  return true;
+}
+
+// Restart a slow advertiser fast after the window grew. Host task only.
+void speed_up_advertising() {
+  if (!advertising.load() || adv_fast.load() || connected.load() ||
+      !enabled.load() || !host_requested.load())
+    return;
+  if (ble_gap_adv_stop() == 0)
+    start_advertising();
+}
+
+void wake_on_host(ble_npl_event *) {
+  adv_window.extend(esp_timer_get_time(), options.fast_window_ms);
+  speed_up_advertising();
 }
 
 // All notification submissions execute on the host task. Its GAP callbacks
@@ -186,67 +241,44 @@ int notify_on_host(Characteristic which, const std::uint8_t *data,
                 : BLE_HS_ENOMEM;
 }
 
-void submit_response(ble_npl_event *) {
-  const auto &attempt = response_attempt;
-  const auto ticket = attempt.ticket;
-  response_result =
-      esp_timer_get_time() >= attempt.deadline_us
-          ? BLE_HS_ETIMEOUT
-          : notify_on_host(Response, attempt.frame, attempt.length,
-                           attempt.session, attempt.handle);
-  response_pending = false;
-  completed_ticket = ticket;
-  xSemaphoreGive(response_done);
+NotifyStatus classify_notify(int rc) {
+  if (rc == 0)
+    return NotifyStatus::Sent;
+  // Out of mbufs or the controller queue is full: the same frame goes again.
+  if (rc == BLE_HS_ENOMEM || rc == BLE_HS_EBUSY || rc == BLE_HS_EAGAIN)
+    return NotifyStatus::Refused;
+  return NotifyStatus::Failed;
 }
 
-bool notify_response(const std::uint8_t *data, std::size_t length,
-                     std::uint32_t expected_generation, unsigned retries) {
-  if (!data || !length || length > kMaxFrame || length > payload_max() ||
-      response_pending.load())
-    return false;
-  const auto session =
-      expected_generation ? expected_generation : generation.load();
-  const auto handle = conn_handle.load();
-  if (xTaskGetCurrentTaskHandle() == host_task_handle)
-    return notify_on_host(Response, data, length, session, handle) == 0;
-  std::memcpy(response_attempt.frame, data, length);
-  response_attempt.length = static_cast<std::uint16_t>(length);
-  response_attempt.session = session;
-  response_attempt.handle = handle;
-  const auto deadline = esp_timer_get_time() + 4LL * 1000000LL;
-  response_attempt.deadline_us = deadline;
-  for (unsigned attempt = 0; attempt < retries; ++attempt) {
-    if (!connected.load() || !authenticated.load() ||
-        !subscribed[Response].load() || generation.load() != session ||
-        conn_handle.load() != handle || esp_timer_get_time() >= deadline)
-      return false;
-    xSemaphoreTake(response_done, 0);
-    const auto ticket = ++next_ticket;
-    response_attempt.ticket = ticket;
-    response_pending = true;
-    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &response_event);
-    while (completed_ticket.load() != ticket) {
-      const auto remaining = deadline - esp_timer_get_time();
-      if (remaining <= 0 ||
-          xSemaphoreTake(response_done,
-                         pdMS_TO_TICKS((remaining + 999) / 1000)) != pdTRUE) {
-        // Leave the static frame untouched until the pending host event has
-        // finished. Future sends refuse it while response_pending is true.
-        return false;
-      }
-    }
-    const int rc = response_result.load();
-    if (rc == 0)
-      return true;
-    if (rc != BLE_HS_ENOMEM && rc != BLE_HS_EBUSY && rc != BLE_HS_EAGAIN)
-      return false;
-    if (attempt + 1 < retries)
-      vTaskDelay(kNotifyRetryDelay);
-  }
-  return false;
+// Empties the queue and wakes a waiting producer, which then sees Closed or
+// fresh credits. Caller holds tx_lock.
+void clear_queue_locked() {
+  tx_head = 0;
+  tx_queued = 0;
+}
+
+void close_responses() {
+  portENTER_CRITICAL(&tx_lock);
+  credits.close();
+  clear_queue_locked();
+  portEXIT_CRITICAL(&tx_lock);
+  if (space_event)
+    xSemaphoreGive(space_event);
+  ble_npl_callout_stop(&retry_callout);
+}
+
+bool responses_idle() {
+  portENTER_CRITICAL(&tx_lock);
+  const bool idle = tx_queued == 0 && credits.idle();
+  portEXIT_CRITICAL(&tx_lock);
+  return idle;
 }
 
 void notify_snapshots(ble_npl_event *) {
+  // Snapshots never slip between the frames of a response stream and never
+  // compete with it for host buffers; the pending bits wait for idle credits.
+  if (!responses_idle())
+    return;
   const unsigned pending = pending_snapshots.exchange(0);
   for (const auto which : {Status, Live}) {
     if (!(pending & (1U << which)))
@@ -260,6 +292,156 @@ void notify_snapshots(ble_npl_event *) {
       notify_on_host(which, reinterpret_cast<const std::uint8_t *>(value),
                      length, generation.load(), conn_handle.load());
   }
+}
+
+// Host task. Submits queued frames in order until the queue empties or the
+// host refuses one. NimBLE reports a notification through NOTIFY_TX inside
+// ble_gatts_notify_custom() once the host has taken or dropped it, which is
+// when its credit returns; the frame may still wait in the controller.
+void drain_responses(ble_npl_event *) {
+  for (;;) {
+    TxSlot slot;
+    std::uint8_t head = 0;
+    portENTER_CRITICAL(&tx_lock);
+    const bool any = tx_queued != 0;
+    if (any) {
+      head = tx_head;
+      slot = tx_slots[head];
+    }
+    portEXIT_CRITICAL(&tx_lock);
+    if (!any)
+      break;
+    notify_tx_seen = false;
+    awaiting_tx = true;
+    const int rc =
+        notify_on_host(Response, tx_frames + std::size_t(head) * kMaxFrame,
+                       slot.length, slot.session, slot.handle);
+    awaiting_tx = false;
+    const auto status = classify_notify(notify_tx_seen ? notify_tx_status : rc);
+    const auto now = esp_timer_get_time();
+    portENTER_CRITICAL(&tx_lock);
+    const bool current = credits.on_notify_tx(slot.session, status, now);
+    if (!current || status == NotifyStatus::Failed) {
+      clear_queue_locked();
+    } else if (status == NotifyStatus::Sent) {
+      tx_head = static_cast<std::uint8_t>((tx_head + 1) % tx_capacity);
+      --tx_queued;
+    }
+    const bool stalled =
+        current && status == NotifyStatus::Refused && credits.stalled(now);
+    portEXIT_CRITICAL(&tx_lock);
+    if (status == NotifyStatus::Sent && current) {
+      interval.on_activity(now);
+      xSemaphoreGive(space_event);
+      continue;
+    }
+    if (!current) {
+      // A frame from a closed session; the queue was cleared with it.
+      xSemaphoreGive(space_event);
+      return;
+    }
+    if (status == NotifyStatus::Failed) {
+      xSemaphoreGive(space_event);
+      aqlog.printf("BLE ERROR operation=notify rc=%d\n", rc);
+      if (connected.load() && conn_handle.load() == slot.handle)
+        terminate(slot.handle, DisconnectReason::SendError);
+      return;
+    }
+    // Refused. The host frees buffers without telling the application, so the
+    // head frame is offered again shortly, until the progress timeout.
+    if (stalled) {
+      if (stall_reported != slot.session) {
+        stall_reported = slot.session;
+        aqlog.printf("BLE SLOW credits=%u timeout_ms=%lu\n",
+                     unsigned(credits.available()),
+                     static_cast<unsigned long>(options.progress_timeout_ms));
+        terminate(slot.handle, DisconnectReason::SlowPeer);
+      }
+      return;
+    }
+    ble_npl_callout_reset(&retry_callout,
+                          ble_npl_time_ms_to_ticks32(options.refused_retry_ms));
+    return;
+  }
+  if (pending_snapshots.load())
+    notify_snapshots(nullptr);
+}
+
+// Producer side, serialised by response_mutex. Ok queued the frame, Full has
+// no credit now, Closed never will for this session.
+aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
+                                       std::size_t length,
+                                       std::uint32_t session) {
+  if (!data || !length || length > kMaxFrame || length > payload_max())
+    return aqsync::EnqueueResult::Closed;
+  const auto handle = conn_handle.load();
+  if (!connected.load() || !authenticated.load() ||
+      !subscribed[Response].load() || generation.load() != session)
+    return aqsync::EnqueueResult::Closed;
+  portENTER_CRITICAL(&tx_lock);
+  const auto taken = credits.take(session, esp_timer_get_time());
+  const auto slot =
+      static_cast<std::uint8_t>((tx_head + tx_queued) % tx_capacity);
+  portEXIT_CRITICAL(&tx_lock);
+  if (taken != aqsync::EnqueueResult::Ok)
+    return taken;
+  // The credit keeps this slot outside the queued range until it is published,
+  // so the host never reads it while it is filled.
+  std::memcpy(tx_frames + std::size_t(slot) * kMaxFrame, data, length);
+  portENTER_CRITICAL(&tx_lock);
+  const bool open = credits.open_for(session);
+  if (open) {
+    tx_slots[slot] = {static_cast<std::uint16_t>(length), handle, session};
+    ++tx_queued;
+  }
+  portEXIT_CRITICAL(&tx_lock);
+  if (!open)
+    return aqsync::EnqueueResult::Closed;
+  ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &response_event);
+  return aqsync::EnqueueResult::Ok;
+}
+
+void request_conn_params(std::uint16_t handle, const ConnParams &p,
+                         const char *label) {
+  ble_gap_upd_params params{};
+  params.itvl_min = p.itvl_min;
+  params.itvl_max = p.itvl_max;
+  params.latency = p.latency;
+  params.supervision_timeout = p.supervision_timeout;
+  const int rc = ble_gap_update_params(handle, &params);
+  aqlog.record_only().printf(
+      "BLE CONN request=%s itvl=%u-%u lat=%u to=%u rc=%d\n", label,
+      unsigned(p.itvl_min), unsigned(p.itvl_max), unsigned(p.latency),
+      unsigned(p.supervision_timeout), rc);
+}
+
+// The relax timer: the link goes to the relaxed interval once no control
+// write arrived and no response frame left for relax_after_ms.
+void relax_on_host(ble_npl_event *) {
+  if (!connected.load())
+    return;
+  std::uint32_t rearm_ms = 0;
+  const auto action =
+      interval.on_timer(esp_timer_get_time(), options.relax_after_ms, rearm_ms);
+  if (action == IntervalPolicy::Action::RequestRelaxed)
+    request_conn_params(conn_handle.load(), options.relaxed, "relaxed");
+  else if (rearm_ms)
+    ble_npl_callout_reset(&relax_callout, ble_npl_time_ms_to_ticks32(rearm_ms));
+}
+
+void request_link_parameters(std::uint16_t handle) {
+  const int dle = ble_gap_set_data_len(handle, options.data_len_octets,
+                                       options.data_len_time_us);
+  int phy = 0;
+  if (options.prefer_2m_phy)
+    phy = ble_gap_set_prefered_le_phy(handle, BLE_GAP_LE_PHY_2M_MASK,
+                                      BLE_GAP_LE_PHY_2M_MASK,
+                                      BLE_GAP_LE_PHY_CODED_ANY);
+  aqlog.record_only().printf("BLE LINK request dle=%u/%u rc=%d phy=%s rc=%d\n",
+                             unsigned(options.data_len_octets),
+                             unsigned(options.data_len_time_us), dle,
+                             options.prefer_2m_phy ? "2m" : "default", phy);
+  request_conn_params(handle, options.active, "active");
 }
 
 bool defer_error(Op op, Error code, const char *detail, std::uint32_t session) {
@@ -323,6 +505,13 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   aqlog.record_only().printf("BLE CMD op=0x%02x bytes=%u\n",
                              unsigned(request.bytes[0]),
                              unsigned(request.length));
+  // Any request brings a relaxed link back to the active interval.
+  if (interval.on_request(request.received_mono_us) ==
+      IntervalPolicy::Action::RequestActive) {
+    request_conn_params(handle, options.active, "active");
+    ble_npl_callout_reset(&relax_callout,
+                          ble_npl_time_ms_to_ticks32(options.relax_after_ms));
+  }
   aqsync::abort::stamp(request);
   if (request_handler(request)) {
     aqsync::abort::commit(request);
@@ -353,8 +542,20 @@ int gap_event(ble_gap_event *event, void *) {
     authenticated = secure(event->connect.conn_handle);
     connected = true;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
+    {
+      const auto now = esp_timer_get_time();
+      portENTER_CRITICAL(&tx_lock);
+      credits.open(generation.load(), now);
+      clear_queue_locked();
+      portEXIT_CRITICAL(&tx_lock);
+      adv_fast = false;
+      interval.connect(now);
+      ble_npl_callout_reset(&relax_callout,
+                            ble_npl_time_ms_to_ticks32(options.relax_after_ms));
+    }
     touch_ui();
     aqlog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
+    request_link_parameters(event->connect.conn_handle);
     return 0;
   case BLE_GAP_EVENT_DISCONNECT: {
     const auto local = pending_reason.exchange(DisconnectReason::Unknown);
@@ -375,8 +576,12 @@ int gap_event(ble_gap_event *event, void *) {
     mtu = 0;
     ++generation;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
+    close_responses();
+    ble_npl_callout_stop(&relax_callout);
     aqlog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
                  disconnect_reason_name(reason), unsigned(hci & 0xff));
+    // A phone that just lost the link reconnects fastest from a fast advert.
+    adv_window.extend(esp_timer_get_time(), options.fast_window_ms);
     if (enabled.load() && host_requested.load())
       start_advertising();
     else {
@@ -443,9 +648,43 @@ int gap_event(ble_gap_event *event, void *) {
     return BLE_GAP_REPEAT_PAIRING_IGNORE;
   }
   case BLE_GAP_EVENT_ADV_COMPLETE:
+    // BLE_HS_ETIMEOUT ends the fast stage; the restart below is slow.
     advertising = false;
-    if (enabled.load() && !connected.load())
+    if (enabled.load() && host_requested.load() && !connected.load())
       start_advertising();
+    return 0;
+  case BLE_GAP_EVENT_NOTIFY_TX:
+    if (awaiting_tx && !event->notify_tx.indication &&
+        event->notify_tx.conn_handle == conn_handle.load() &&
+        event->notify_tx.attr_handle == value_handles[Response]) {
+      notify_tx_status = event->notify_tx.status;
+      notify_tx_seen = true;
+    }
+    return 0;
+  case BLE_GAP_EVENT_CONN_UPDATE: {
+    ble_gap_conn_desc desc{};
+    if (event->conn_update.conn_handle == conn_handle.load() &&
+        ble_gap_conn_find(event->conn_update.conn_handle, &desc) == 0)
+      aqlog.record_only().printf(
+          "BLE CONN itvl=%u lat=%u to=%u status=%d\n", unsigned(desc.conn_itvl),
+          unsigned(desc.conn_latency), unsigned(desc.supervision_timeout),
+          event->conn_update.status);
+    return 0;
+  }
+  case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+    if (event->phy_updated.conn_handle == conn_handle.load())
+      aqlog.record_only().printf("BLE PHY tx=%u rx=%u status=%d\n",
+                                 unsigned(event->phy_updated.tx_phy),
+                                 unsigned(event->phy_updated.rx_phy),
+                                 event->phy_updated.status);
+    return 0;
+  case BLE_GAP_EVENT_DATA_LEN_CHG:
+    if (event->data_len_chg.conn_handle == conn_handle.load())
+      aqlog.record_only().printf("BLE DLE tx=%u/%u rx=%u/%u\n",
+                                 unsigned(event->data_len_chg.max_tx_octets),
+                                 unsigned(event->data_len_chg.max_tx_time),
+                                 unsigned(event->data_len_chg.max_rx_octets),
+                                 unsigned(event->data_len_chg.max_rx_time));
     return 0;
   default:
     return 0;
@@ -471,6 +710,8 @@ void on_reset(int reason) {
   mtu = 0;
   ++generation;
   std::fill(std::begin(subscribed), std::end(subscribed), false);
+  close_responses();
+  ble_npl_callout_stop(&relax_callout);
   touch_ui();
   aqlog.printf("BLE RESET reason=%d\n", reason);
 }
@@ -494,6 +735,7 @@ void on_sync() {
   update_bonds();
   if (ok) {
     enabled = true;
+    adv_window.extend(esp_timer_get_time(), options.fast_window_ms);
     ok = start_advertising();
   }
   // A late controller synchronization must not enable the service after
@@ -518,11 +760,13 @@ void host_task(void *) {
 } // namespace
 
 bool begin(const Identity &identity, config::PairMode pairing_mode,
-           std::uint32_t fixed_pin, RequestHandler handler) {
+           std::uint32_t fixed_pin, RequestHandler handler,
+           const Options &link_options) {
   if (!handler || startup_done || !identity.station || !identity.device ||
       !identity.boot || !identity.schema || !identity.dictionary_sha256 ||
-      !identity.firmware)
+      !identity.firmware || !valid_options(link_options))
     return false;
+  options = link_options;
   request_handler = handler;
   mode = pairing_mode;
   fixed_passkey = fixed_pin % 1000000U;
@@ -555,10 +799,21 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   response_mutex = xSemaphoreCreateMutex();
   clear_mutex = xSemaphoreCreateMutex();
   clear_done = xSemaphoreCreateBinary();
-  response_done = xSemaphoreCreateBinary();
+  space_event = xSemaphoreCreateBinary();
   immediate_errors = xQueueCreate(8, sizeof(ImmediateError));
   if (!startup_done || !response_mutex || !clear_mutex || !clear_done ||
-      !immediate_errors || !response_done)
+      !immediate_errors || !space_event)
+    return false;
+  tx_capacity = options.notify_credits;
+  credits.configure(tx_capacity, options.progress_timeout_ms);
+  const std::size_t frame_bytes = std::size_t(tx_capacity) * kMaxFrame;
+  tx_frames = static_cast<std::uint8_t *>(
+      heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (!tx_frames)
+    tx_frames = static_cast<std::uint8_t *>(
+        heap_caps_malloc(frame_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  tx_slots = new (std::nothrow) TxSlot[tx_capacity];
+  if (!tx_frames || !tx_slots)
     return false;
   // config::load() owns NVS initialization. Do not erase settings on failure.
   const auto rc = nimble_port_init();
@@ -613,8 +868,13 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   ble_store_config_init();
   ble_npl_event_init(&advert_event, refresh_advert, nullptr);
   ble_npl_event_init(&clear_event, clear_bonds_on_host, nullptr);
-  ble_npl_event_init(&response_event, submit_response, nullptr);
+  ble_npl_event_init(&response_event, drain_responses, nullptr);
   ble_npl_event_init(&snapshot_event, notify_snapshots, nullptr);
+  ble_npl_event_init(&wake_event, wake_on_host, nullptr);
+  ble_npl_callout_init(&retry_callout, nimble_port_get_dflt_eventq(),
+                       drain_responses, nullptr);
+  ble_npl_callout_init(&relax_callout, nimble_port_get_dflt_eventq(),
+                       relax_on_host, nullptr);
   if (xTaskCreate(error_task, "aq_ble_error", 3072, nullptr, 4, nullptr) !=
       pdPASS)
     return false;
@@ -633,11 +893,11 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
     return false;
   }
   aqlog.printf("BLE BEGIN name=%s service=%s mtu_max=%u bonds=%lu pair=%s "
-               "adv_ver=%u boot16=%04x\n",
+               "adv_ver=%u boot16=%04x credits=%u\n",
                name_text, kServiceUuid, unsigned(kMaxMtu),
                static_cast<unsigned long>(bonds.load()),
                config::pair_name(mode), unsigned(kAdvertVersion),
-               unsigned(boot16));
+               unsigned(boot16), unsigned(tx_capacity));
   return true;
 }
 
@@ -708,24 +968,59 @@ void publish_advert(const AdvertState &state) {
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &advert_event);
 }
 
-bool send_response(const std::uint8_t *frame, std::size_t length,
-                   std::uint32_t expected_generation) {
+namespace {
+// Queues one frame, waiting for a credit in steps. `budget_us` bounds a wait
+// with no credit returned; the host closes a stalled link sooner.
+bool deliver_frame(const std::uint8_t *frame, std::size_t length,
+                   std::uint32_t expected_generation, WaitStep between_steps,
+                   void *context, std::int64_t budget_us) {
   if (!enabled.load() || !response_mutex)
     return false;
-  const bool on_host = xTaskGetCurrentTaskHandle() == host_task_handle;
-  if (xSemaphoreTake(response_mutex, on_host ? 0 : pdMS_TO_TICKS(4000)) !=
-      pdTRUE)
-    return false;
-  const bool ok = notify_response(frame, length, expected_generation,
-                                  on_host ? 1 : kNotifyRetries);
+  const auto session =
+      expected_generation ? expected_generation : generation.load();
+  if (xTaskGetCurrentTaskHandle() == host_task_handle) {
+    // The host cannot wait for itself: one attempt, never blocking.
+    if (xSemaphoreTake(response_mutex, 0) != pdTRUE)
+      return false;
+    const bool ok =
+        enqueue_response(frame, length, session) == aqsync::EnqueueResult::Ok;
+    xSemaphoreGive(response_mutex);
+    return ok;
+  }
+  const TickType_t step = pdMS_TO_TICKS(options.wait_step_ms);
+  std::int64_t waited_from = esp_timer_get_time();
+  while (xSemaphoreTake(response_mutex, step) != pdTRUE) {
+    if ((between_steps && !between_steps(context)) ||
+        esp_timer_get_time() - waited_from >= budget_us)
+      return false;
+  }
+  bool ok = false;
+  waited_from = esp_timer_get_time();
+  for (;;) {
+    // Drop a stale wake before looking, so a credit returned after the look
+    // still ends the wait below.
+    xSemaphoreTake(space_event, 0);
+    const auto result = enqueue_response(frame, length, session);
+    if (result != aqsync::EnqueueResult::Full) {
+      ok = result == aqsync::EnqueueResult::Ok;
+      break;
+    }
+    if (xSemaphoreTake(space_event, step) == pdTRUE)
+      waited_from = esp_timer_get_time();
+    if (between_steps && !between_steps(context))
+      break;
+    if (esp_timer_get_time() - waited_from >= budget_us)
+      break;
+  }
   xSemaphoreGive(response_mutex);
   return ok;
 }
 
-bool send_error(Op op, Error code, const char *detail,
-                std::uint32_t expected_generation) {
-  std::uint8_t frame[3 + 64] = {kFrameError, static_cast<std::uint8_t>(op),
-                                static_cast<std::uint8_t>(code)};
+std::size_t encode_error(std::uint8_t (&frame)[3 + 64], Op op, Error code,
+                         const char *detail) {
+  frame[0] = kFrameError;
+  frame[1] = static_cast<std::uint8_t>(op);
+  frame[2] = static_cast<std::uint8_t>(code);
   std::size_t length = 3;
   if (detail) {
     const auto detail_length = std::strlen(detail);
@@ -734,7 +1029,42 @@ bool send_error(Op op, Error code, const char *detail,
     length += copy;
   }
   aqlog.printf("BLE ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
+  return length;
+}
+} // namespace
+
+bool deliver(const std::uint8_t *frame, std::size_t length,
+             std::uint32_t expected_generation, WaitStep between_steps,
+             void *context) {
+  // Twice the progress timeout: the host normally closes a stalled link first.
+  return deliver_frame(frame, length, expected_generation, between_steps,
+                       context, 2LL * options.progress_timeout_ms * 1000LL);
+}
+
+bool deliver_error(Op op, Error code, const char *detail,
+                   std::uint32_t expected_generation, WaitStep between_steps,
+                   void *context) {
+  std::uint8_t frame[3 + 64]{};
+  const auto length = encode_error(frame, op, code, detail);
+  return deliver(frame, length, expected_generation, between_steps, context);
+}
+
+bool send_response(const std::uint8_t *frame, std::size_t length,
+                   std::uint32_t expected_generation) {
+  return deliver_frame(frame, length, expected_generation, nullptr, nullptr,
+                       kSendBudgetUs);
+}
+
+bool send_error(Op op, Error code, const char *detail,
+                std::uint32_t expected_generation) {
+  std::uint8_t frame[3 + 64]{};
+  const auto length = encode_error(frame, op, code, detail);
   return send_response(frame, length, expected_generation);
+}
+
+void wake_advertising() {
+  if (enabled.load())
+    ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &wake_event);
 }
 
 std::uint16_t payload_max() { return wire::response_capacity(mtu.load()); }

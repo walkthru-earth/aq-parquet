@@ -1435,17 +1435,19 @@ bool respond(const std::uint8_t *frame, std::size_t length) {
   return current_request && current_request->link == ble::Link::Lan
              ? lan_deliver(frame, length, current_request->peer,
                            current_request->link_generation)
-             : ble::send_response(
-                   frame, length,
-                   current_request ? current_request->link_generation : 0);
+             : ble::deliver(frame, length,
+                            current_request ? current_request->link_generation
+                                            : 0,
+                            data_wait_step, nullptr);
 }
 bool respond_error(ble::Op op, ble::Error code, const char *detail) {
   return current_request && current_request->link == ble::Link::Lan
              ? lan_error(op, code, detail, current_request->peer,
                          current_request->link_generation)
-             : ble::send_error(
+             : ble::deliver_error(
                    op, code, detail,
-                   current_request ? current_request->link_generation : 0);
+                   current_request ? current_request->link_generation : 0,
+                   error_wait_step, nullptr);
 }
 // Archive policy stays with the board worker; file-transfer sessions and wire
 // frames are shared across boards and BLE/LAN transports.
@@ -1484,13 +1486,15 @@ aqsync::ArchiveSession archive_session(
         const std::uint8_t *frame, std::size_t length) {
        return link == ble::Link::Lan
                   ? lan_deliver(frame, length, peer, generation)
-                  : ble::send_response(frame, length, generation);
+                  : ble::deliver(frame, length, generation, data_wait_step,
+                                 nullptr);
      },
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         ble::Op op, ble::Error code, const char *detail) {
        return link == ble::Link::Lan
                   ? lan_error(op, code, detail, peer, generation)
-                  : ble::send_error(op, code, detail, generation);
+                  : ble::deliver_error(op, code, detail, generation,
+                                       error_wait_step, nullptr);
      },
      [](void *) { worker_heartbeat_us = esp_timer_get_time(); }});
 

@@ -23,8 +23,8 @@ StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
   worker_handler = handler;
   result.settings_loaded = config::load(display_detected);
   const config::Settings settings = config::get();
-  result.ble_started =
-      ble::begin(identity, settings.pair, settings.pin, dispatch_request);
+  result.ble_started = ble::begin(identity, settings.pair, settings.pin,
+                                  dispatch_request, config.ble);
   // mDNS host label mirrors the BLE name: AQ-6b40 -> aq-6b40.
   char host[24];
   std::snprintf(host, sizeof(host), "%s", ble::local_name());

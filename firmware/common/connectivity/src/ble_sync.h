@@ -4,10 +4,12 @@
 //
 // Threading contract. NimBLE callbacks run on the host task and never touch the
 // SD card or the display. `control` writes become ControlRequest values that
-// the storage worker dequeues and executes; the worker emits `response` frames
-// through send_response(). The sampling loop publishes `live`/`status` JSON.
+// the storage worker dequeues and executes; the worker queues `response` frames
+// with deliver(), which waits on notify credits the host task returns. The
+// sampling loop publishes `live`/`status` JSON.
 // The display loop reads pairing()/link() and draws; nothing here draws.
 
+#include "ble_policy.h"
 #include "device_config.h"
 #include "disconnect.h"
 
@@ -162,10 +164,13 @@ struct LinkState {
 
 // Call once after the firmware command queue and config::load(); identities
 // must outlive the program. `mode`/`fixed_pin` are the pairing settings the
-// stack starts with (they cannot change until the next boot). Returns false
-// when the stack could not start (logging continues).
+// stack starts with (they cannot change until the next boot). `options` sets
+// advertising, link parameters and notify credits and must pass
+// valid_options(). Returns false when the stack could not start (logging
+// continues).
 bool begin(const Identity &identity, config::PairMode mode,
-           std::uint32_t fixed_pin, RequestHandler handler);
+           std::uint32_t fixed_pin, RequestHandler handler,
+           const Options &options = Options{});
 const char *local_name();
 const char *info_json();
 config::PairMode pair_mode();
@@ -188,8 +193,24 @@ void publish_status(const char *json, std::size_t length);
 // compare. Safe from any task; a no-op until begin() succeeded.
 void publish_advert(const AdvertState &state);
 
-// From the storage worker. Blocks briefly on host back-pressure; false when
-// the peer is gone or the host kept refusing the notification.
+// Advertises fast for Options::fast_window_ms, for example after a user wake.
+// Safe from any task; a no-op until begin() succeeded.
+void wake_advertising();
+
+// From the storage worker. Queues one response frame, waiting for a notify
+// credit in Options::wait_step_ms steps and calling `between_steps` after
+// each; it returns false to stop waiting. False when the frame was not queued:
+// the peer is gone, the stream broke, the wait was stopped or no credit came
+// back for twice the progress timeout. Frames leave in order.
+using WaitStep = bool (*)(void *context);
+bool deliver(const std::uint8_t *frame, std::size_t length,
+             std::uint32_t expected_generation, WaitStep between_steps,
+             void *context);
+bool deliver_error(Op op, Error code, const char *detail,
+                   std::uint32_t expected_generation, WaitStep between_steps,
+                   void *context);
+// From any other task: deliver() with no wait step and a 4 s budget. On the
+// host task it tries once without waiting.
 bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint32_t expected_generation = 0);
 bool send_error(Op op, Error code, const char *detail,
