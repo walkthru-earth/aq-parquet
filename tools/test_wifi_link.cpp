@@ -347,8 +347,11 @@ int main() {
     errno = EPIPE;
     assert(lan::enqueue_response(oversize.data(), oversize.size(), 1,
                                  lan::connection_generation(1)) ==
-           aqsync::EnqueueResult::Closed);
-    assert(lan::status().clients == clients);
+           aqsync::EnqueueResult::Rejected);
+    assert(
+        lan::enqueue_response(response, 0, 1, lan::connection_generation(1)) ==
+        aqsync::EnqueueResult::Rejected);
+    assert(lan::status().clients == clients && !lan::clients[1].drop.load());
     assert(lan::enqueue_response(response, sizeof(response), 1,
                                  lan::connection_generation(1)) ==
            aqsync::EnqueueResult::Ok);

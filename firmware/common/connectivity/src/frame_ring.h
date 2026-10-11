@@ -13,9 +13,10 @@
 
 namespace aqsync {
 enum class EnqueueResult : std::uint8_t {
-  Ok,     // the whole frame is queued
-  Full,   // not enough free space now, retry after the writer drains
-  Closed, // the peer is gone or closing, never retry
+  Ok,       // the whole frame is queued
+  Full,     // not enough free space now, retry after the writer drains
+  Closed,   // the peer is gone or closing, never retry
+  Rejected, // the frame is empty or over the payload limit, the peer stays
 };
 
 class FrameRing {

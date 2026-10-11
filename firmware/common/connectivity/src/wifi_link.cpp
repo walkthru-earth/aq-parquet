@@ -241,7 +241,7 @@ aqsync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
   if (length == 0 || length > kPayloadMax) {
     aqlog.record_only().printf("LAN SEND REJECTED bytes=%u max=%u\n",
                                unsigned(length), unsigned(kPayloadMax));
-    return aqsync::EnqueueResult::Closed;
+    return aqsync::EnqueueResult::Rejected;
   }
   auto &client = clients[peer];
   TxLock lock(client);

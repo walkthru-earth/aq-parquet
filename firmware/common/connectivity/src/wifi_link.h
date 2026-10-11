@@ -78,7 +78,8 @@ void drop_session(
 // checks; zero addresses the current session and is reserved for immediate
 // callers. Full means retry after wait_for_space(). Closed is final: the peer
 // is gone, closing, or replaced, or the frame can never fit its ring (the peer
-// is then closed with tx-overflow).
+// is then closed with tx-overflow). Rejected is final for the frame only: it
+// is empty or over kPayloadMax, and the peer stays connected.
 aqsync::EnqueueResult enqueue_response(const std::uint8_t *frame,
                                        std::size_t length,
                                        std::uint8_t peer = 0,
