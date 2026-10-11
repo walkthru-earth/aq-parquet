@@ -2185,6 +2185,44 @@ void collect(std::int64_t now, std::int64_t scheduled) {
                static_cast<unsigned long>(buffered.load()),
                static_cast<unsigned long>(dropped.load()));
 }
+// Hourly, and once a minute after begin: stack high water marks (bytes left)
+// for every app task and the heap minimums, so stacks are sized from
+// measurements. Called on the board task, which reports itself by name.
+void report_runtime(std::int64_t now) {
+  static std::int64_t next_report_us = 0;
+  if (!next_report_us)
+    next_report_us = now + 60LL * 1000000LL;
+  if (now < next_report_us)
+    return;
+  next_report_us = now + 3600LL * 1000000LL;
+  const auto stack_free = [](const char *name) {
+    TaskHandle_t task = xTaskGetHandle(name);
+    return task ? long(uxTaskGetStackHighWaterMark(task)) : -1L;
+  };
+  aqlog.printf(
+      "DIAG tasks %s=%u parquet-sd=%ld aq-lan=%ld aq_ble_error=%ld "
+      "nimble_host=%ld tiT=%ld uptime_s=%lld\n",
+      pcTaskGetName(nullptr), unsigned(uxTaskGetStackHighWaterMark(nullptr)),
+      worker_task ? long(uxTaskGetStackHighWaterMark(worker_task)) : -1L,
+      stack_free("aq-lan"), stack_free("aq_ble_error"),
+      stack_free("nimble_host"), stack_free("tiT"),
+      static_cast<long long>(now / 1000000));
+  constexpr auto kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  constexpr auto kDma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
+  aqlog.printf(
+      "DIAG heap internal_free=%lu internal_min=%lu internal_largest=%lu "
+      "dma_free=%lu dma_min=%lu dma_largest=%lu psram_free=%lu "
+      "psram_min=%lu\n",
+      static_cast<unsigned long>(heap_caps_get_free_size(kInternal)),
+      static_cast<unsigned long>(heap_caps_get_minimum_free_size(kInternal)),
+      static_cast<unsigned long>(heap_caps_get_largest_free_block(kInternal)),
+      static_cast<unsigned long>(heap_caps_get_free_size(kDma)),
+      static_cast<unsigned long>(heap_caps_get_minimum_free_size(kDma)),
+      static_cast<unsigned long>(heap_caps_get_largest_free_block(kDma)),
+      static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
+      static_cast<unsigned long>(
+          heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)));
+}
 } // namespace
 
 std::size_t field_index(const char *name) {
@@ -2326,8 +2364,9 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   // when the RTC holds an earlier host sync.
   seed_clock_from_rtc();
   next_sample_us = esp_timer_get_time() + kSampleUs;
-  if (xTaskCreate(storage_worker, "parquet-sd", 24576, nullptr, 1,
-                  &worker_task) != pdPASS) {
+  if (xTaskCreate(storage_worker, "parquet-sd",
+                  static_cast<std::uint32_t>(config.worker_stack_bytes),
+                  nullptr, config.worker_priority, &worker_task) != pdPASS) {
     aqlog.println("PARQUET ERROR operation=task logging=false");
     return false;
   }
@@ -2400,6 +2439,7 @@ void poll() {
                       : 0U);
     }
   }
+  report_runtime(now);
   if (now >= next_sample_us) {
     const auto skipped = (now - next_sample_us) / kSampleUs;
     missed_deadlines += skipped;

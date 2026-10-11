@@ -14,6 +14,7 @@
 #include <log_persist.h>
 #include <nvs_flash.h>
 #include <pms_frame.h>
+#include <power.h>
 
 #ifndef CONFIG_SPIRAM
 #error The Waveshare logger requires the qualified 8 MB OPI PSRAM target.
@@ -227,6 +228,8 @@ extern "C" void app_main() {
   if (!aq::console::begin())
     return;
   aq::log::attach_persistent(); // PSRAM log; the internal ring otherwise
-  if (xTaskCreate(board_task, "aq-board", 12288, nullptr, 1, nullptr) != pdPASS)
+  aq::power::configure_dfs();
+  if (xTaskCreate(board_task, "aq-board", 12288, nullptr,
+                  aqlogger::kBoardTaskPriority, nullptr) != pdPASS)
     aqlog.println("AQ ERROR operation=board-task-create logging=false");
 }

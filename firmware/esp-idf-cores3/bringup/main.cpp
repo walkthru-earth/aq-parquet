@@ -2,6 +2,7 @@
 #include "debug_log.h"
 #include "device_config.h"
 #include "log_persist.h"
+#include "power.h"
 #include "telemetry_logger.h"
 #include "wifi_link.h"
 #include <M5Unified.h>
@@ -9,6 +10,7 @@
 #include <sd_transfer_buffer.h>
 
 #include "aq_console.h"
+#include <aq_logger.h>
 #include <driver/sdspi_host.h>
 #include <driver/uart.h>
 #include <esp_chip_info.h>
@@ -953,7 +955,8 @@ extern "C" void app_main() {
     aqlog.printf("DIAG ERROR operation=nvs-init error=%d erased=false\n", nvs);
     return;
   }
-  if (xTaskCreate(board_task, "cores3-board", 16 * 1024, nullptr, 1, nullptr) !=
-      pdPASS)
+  aq::power::configure_dfs();
+  if (xTaskCreate(board_task, "cores3-board", 16 * 1024, nullptr,
+                  aqlogger::kBoardTaskPriority, nullptr) != pdPASS)
     aqlog.println("DIAG ERROR operation=board-task-create");
 }

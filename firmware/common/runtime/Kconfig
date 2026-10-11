@@ -19,3 +19,25 @@ config AQ_LOG_PERSIST_EVENT_SLOTS
         DIAG sends at most 61 of them on LAN and 29 on BLE.
 
 endmenu
+
+menu "AQ power management"
+
+config AQ_PM_DFS_MIN_MHZ
+    int "DFS minimum CPU MHz"
+    range 40 240
+    default 80
+    help
+        CPU frequency with no power management lock held, applied by
+        aq::power::configure_dfs() when the image sets PM_ENABLE. The
+        ESP32-S3 accepts 40, 80, 160 or 240. At 80 MHz or more the APB clock
+        stays at 80 MHz, so SPI, I2C and UART clocks do not change.
+
+config AQ_PM_DFS_MAX_MHZ
+    int "DFS maximum CPU MHz"
+    range 40 240
+    default 240
+    help
+        CPU frequency while a CPU_FREQ_MAX lock is held, for example by the
+        LAN task while a peer is authenticated.
+
+endmenu

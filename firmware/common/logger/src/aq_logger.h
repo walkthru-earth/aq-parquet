@@ -44,7 +44,16 @@ struct Config {
   std::size_t metadata_count = 0;
   // Sync service tuning; nullptr keeps the shared defaults.
   const aqsync::ServiceConfig *sync = nullptr;
+  // Storage worker task. Its stack stays in internal RAM: the worker commits
+  // NVS (SET_CONFIG, station id), and a flash write disables the cache that a
+  // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
+  unsigned worker_priority = 3;
+  std::size_t worker_stack_bytes = 24576;
 };
+// Shared default for each board's sampling and UI task: above the idle
+// housekeeping, below the storage worker (3), the LAN task (4) and the BLE
+// error task (4).
+constexpr unsigned kBoardTaskPriority = 2;
 struct Hooks {
   void *context = nullptr;
   // Main loop only. Set hardware fields; runtime supplies identity, clock,
