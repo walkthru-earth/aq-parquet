@@ -9,6 +9,7 @@ cppcheck "${options[@]}" \
   firmware/esp-idf-cores3/bringup/main.cpp \
   firmware/esp-idf-cores3/bringup/telemetry_logger.cpp \
   firmware/common/connectivity/src/ble_sync.cpp \
+  firmware/common/connectivity/src/ble_policy.cpp \
   firmware/common/connectivity/src/wifi_link.cpp \
   firmware/common/connectivity/src/network_time.cpp \
   firmware/common/location/src/aq_location.cpp \
