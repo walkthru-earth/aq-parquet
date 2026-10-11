@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <numeric_sample.h>
 #include <parquet_writer.h>
+#include <sync_service.h>
 
 namespace aqlogger {
 using Row = aq::NumericSample<telemetry::kMaxColumns>;
@@ -41,6 +42,8 @@ struct Config {
   const char *benchmark_directory = "/sd/bench";
   const telemetry::KeyValue *metadata = nullptr;
   std::size_t metadata_count = 0;
+  // Sync service tuning; nullptr keeps the shared defaults.
+  const aqsync::ServiceConfig *sync = nullptr;
 };
 struct Hooks {
   void *context = nullptr;

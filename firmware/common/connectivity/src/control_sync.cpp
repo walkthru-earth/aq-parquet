@@ -1,4 +1,5 @@
 #include "control_sync.h"
+#include "abort_signal.h"
 #include "debug_log.h"
 #include "device_config.h"
 #include "disconnect.h"
@@ -87,8 +88,15 @@ std::size_t reply_cap(ble::Link link, const ControlReplies &replies) {
 
 // Streams straight from the ring by cursor; no ring-sized copy. LOG_TAIL's
 // u16 request clips the reply at 65535 bytes, so `sent` fits LOG_END's u16.
-void send_log_tail(ble::Link link, std::uint16_t max_bytes,
+// An ABORT ends the stream with ERROR aborted and no LOG_END.
+void send_log_tail(const ble::ControlRequest &request, std::uint16_t max_bytes,
                    const ControlReplies &replies) {
+  const ble::Link link = request.link;
+  const auto stop = [&] {
+    replies.error(replies.context, link, ble::kOpLogTail, ble::kErrAborted,
+                  nullptr);
+    abort::note_stopped(request, ble::kOpLogTail);
+  };
   std::uint32_t total = 0;
   auto cursor = aqlog.tail_cursor(max_bytes, total);
   const std::size_t payload_max = reply_cap(link, replies);
@@ -97,13 +105,22 @@ void send_log_tail(ble::Link link, std::uint16_t max_bytes,
   if (payload_max > 1) {
     const std::size_t slice_max = payload_max - 1;
     while (cursor.remaining) {
+      if (abort::pending(request)) {
+        stop();
+        return;
+      }
       const std::size_t slice =
           aqlog.read(cursor, reinterpret_cast<char *>(frame + 1), slice_max);
       if (!slice)
         break;
       frame[0] = ble::kFrameLog;
-      if (!replies.respond(replies.context, link, frame, 1 + slice))
+      if (!replies.respond(replies.context, link, frame, 1 + slice)) {
+        if (abort::pending(request)) {
+          stop();
+          return;
+        }
         break;
+      }
       sent += slice;
     }
   }
@@ -153,13 +170,14 @@ bool handle_common_control(const ble::ControlRequest &request,
     }
     if (actions.clear_bonds)
       ble::clear_bonds();
-    if (actions.rotate_token)
-      lan::drop_session();
     if (actions.wifi_changed)
       lan::apply_settings();
     else if (actions.ntp_changed)
       lan::apply_time_settings();
     send_config(request.link, ble::kOpSetConfig, replies);
+    // After the reply, so a LAN caller reads CONFIG before BYE token-rotated.
+    if (actions.rotate_token)
+      lan::drop_session();
     return true;
   }
   case ble::kOpGetDiag:
@@ -170,7 +188,8 @@ bool handle_common_control(const ble::ControlRequest &request,
       send_diag(request.link, replies);
     return true;
   case ble::kOpAbort: {
-    // The worker runs one command at a time, so nothing is in flight here.
+    // The worker runs one command at a time. Anything this ABORT stopped
+    // already ended with ERROR aborted; the marker names it, or 0 when idle.
     if (length) {
       replies.error(replies.context, request.link, ble::kOpAbort,
                     ble::kErrMalformed, nullptr);
@@ -178,7 +197,8 @@ bool handle_common_control(const ble::ControlRequest &request,
     }
     std::uint8_t frame[ble::kAbortedBytes];
     replies.respond(replies.context, request.link, frame,
-                    ble::encode_aborted(frame, sizeof(frame), 0));
+                    ble::encode_aborted(frame, sizeof(frame),
+                                        abort::take_stopped(request)));
     return true;
   }
   case ble::kOpLogTail:
@@ -186,7 +206,7 @@ bool handle_common_control(const ble::ControlRequest &request,
       replies.error(replies.context, request.link, ble::kOpLogTail,
                     ble::kErrMalformed, nullptr);
     else
-      send_log_tail(request.link, get_u16(body), replies);
+      send_log_tail(request, get_u16(body), replies);
     return true;
   case ble::kOpGetToken: {
     if (request.link != ble::Link::Ble) {

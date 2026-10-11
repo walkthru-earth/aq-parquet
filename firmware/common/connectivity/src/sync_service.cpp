@@ -16,7 +16,7 @@ bool dispatch_request(const ble::ControlRequest &request) {
 }
 } // namespace
 StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
-                  bool display_detected) {
+                  bool display_detected, const ServiceConfig &config) {
   StartResult result;
   if (!handler)
     return result;
@@ -31,7 +31,7 @@ StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
   for (char *p = host; *p; ++p)
     if (*p >= 'A' && *p <= 'Z')
       *p = static_cast<char>(*p - 'A' + 'a');
-  result.lan_started = lan::begin(host, identity, dispatch_request);
+  result.lan_started = lan::begin(host, identity, dispatch_request, config.lan);
   return result;
 }
 } // namespace aqsync

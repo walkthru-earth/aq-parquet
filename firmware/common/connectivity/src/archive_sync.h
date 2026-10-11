@@ -87,6 +87,7 @@ private:
     ArchiveSession *session;
     std::uint32_t count = 0;
     bool ok = true;
+    bool aborted = false;
     const char *failure_detail = nullptr;
   };
   static constexpr std::size_t kPayloadCapacity = 1024;
@@ -97,6 +98,7 @@ private:
   ble::Link request_link_ = ble::Link::Ble;
   std::uint8_t request_peer_ = 0;
   std::uint32_t request_generation_ = 0;
+  const ble::ControlRequest *request_ = nullptr;
 
   OpenFile &file();
   void close_current();
@@ -104,6 +106,10 @@ private:
   bool respond(const std::uint8_t *frame, std::size_t length);
   bool error(ble::Op op, ble::Error code, const char *detail = nullptr);
   bool handle_matches(std::uint16_t file_handle) const;
+  // An ABORT arrived on this request's link after it (abort_signal.h). The
+  // op then ends with ERROR aborted and the marker's ABORTED names it.
+  bool aborted() const;
+  void stop_aborted(ble::Op op);
   static void emit_file(void *context, const char *name, std::uint32_t bytes);
   void list();
   void open(const std::uint8_t *name_bytes, std::size_t name_length);

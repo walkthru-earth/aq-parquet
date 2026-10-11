@@ -30,7 +30,7 @@ def main() -> None:
             str(root / "tools/test_control_sync.cpp"),
             str(runtime / "device_config.cpp"), str(runtime / "debug_log.cpp"),
             str(root / "tools/host_fakes/config/aq_console.cpp"),
-            str(connectivity / "control_sync.cpp"),
+            str(connectivity / "control_sync.cpp"), str(connectivity / "archive_sync.cpp"),
             str(connectivity / "disconnect.cpp"), "-o", str(executable),
         ]
         if args.sanitize:
@@ -40,7 +40,7 @@ def main() -> None:
                     *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Shared control: configuration secrecy/actions, BLE-only token, 65535-byte log slices, GET_DIAG and idle ABORT passed")
+    print("Shared control: configuration secrecy/actions, BLE-only token, 65535-byte log slices, GET_DIAG, idle ABORT and ABORT of LIST/LOG_TAIL with stale-marker and per-link checks passed")
 
 
 if __name__ == "__main__":

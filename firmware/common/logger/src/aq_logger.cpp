@@ -12,6 +12,7 @@
 #include "parquet_writer.h"
 #include "storage_governor.h"
 #include "wifi_link.h"
+#include <abort_signal.h>
 #include <archive_sync.h>
 #include <control_sync.h>
 #include <sync_codec.h>
@@ -131,6 +132,7 @@ QueueHandle_t samples = nullptr;
 QueueHandle_t commands = nullptr;
 SemaphoreHandle_t spi_mutex = nullptr;
 SemaphoreHandle_t worker_wakeup = nullptr;
+aqsync::ServiceConfig sync_config{};
 std::atomic<std::uint32_t> dropped{0}, errors{0}, finalized{0}, buffered{0};
 std::atomic<std::uint32_t> write_us{0}, sync_us{0}, queue_peak{0};
 std::atomic<std::uint32_t> total_kib{0}, used_kib{0}, rotation_seconds{900};
@@ -1345,21 +1347,45 @@ std::uint16_t link_payload_max() {
   const std::uint16_t raw = ble::payload_max();
   return raw > ble::kMaxFrame ? ble::kMaxFrame : raw;
 }
+void service_samples_while_waiting();
+// Between ring-space waits: the worker is alive and keeps taking samples. A
+// data frame stops waiting once an ABORT arrived; a terminal ERROR does not,
+// and the slow peer rule bounds that wait.
+bool error_wait_step(void *) {
+  worker_heartbeat_us = esp_timer_get_time();
+  service_samples_while_waiting();
+  return true;
+}
+bool data_wait_step(void *context) {
+  error_wait_step(context);
+  return !(current_request && aqsync::abort::pending(*current_request));
+}
+bool lan_deliver(const std::uint8_t *frame, std::size_t length,
+                 std::uint8_t peer, std::uint32_t generation) {
+  return lan::deliver(frame, length, peer, generation, data_wait_step, nullptr);
+}
+bool lan_error(ble::Op op, ble::Error code, const char *detail,
+               std::uint8_t peer, std::uint32_t generation) {
+  std::uint8_t frame[lan::kErrorFrameBytes]{};
+  const std::size_t length = lan::encode_error(frame, op, code, detail);
+  return lan::deliver(frame, length, peer, generation, error_wait_step,
+                      nullptr);
+}
 bool respond(const std::uint8_t *frame, std::size_t length) {
   // A long LIST or READ is progress, not a stall: stamp the heartbeat per
   // frame so the stall detector only fires when sending truly stops.
   worker_heartbeat_us = esp_timer_get_time();
   return current_request && current_request->link == ble::Link::Lan
-             ? lan::send_response(frame, length, current_request->peer,
-                                  current_request->link_generation)
+             ? lan_deliver(frame, length, current_request->peer,
+                           current_request->link_generation)
              : ble::send_response(
                    frame, length,
                    current_request ? current_request->link_generation : 0);
 }
 bool respond_error(ble::Op op, ble::Error code, const char *detail) {
   return current_request && current_request->link == ble::Link::Lan
-             ? lan::send_error(op, code, detail, current_request->peer,
-                               current_request->link_generation)
+             ? lan_error(op, code, detail, current_request->peer,
+                         current_request->link_generation)
              : ble::send_error(
                    op, code, detail,
                    current_request ? current_request->link_generation : 0);
@@ -1396,13 +1422,13 @@ aqsync::ArchiveSession archive_session(
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         const std::uint8_t *frame, std::size_t length) {
        return link == ble::Link::Lan
-                  ? lan::send_response(frame, length, peer, generation)
+                  ? lan_deliver(frame, length, peer, generation)
                   : ble::send_response(frame, length, generation);
      },
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         ble::Op op, ble::Error code, const char *detail) {
        return link == ble::Link::Lan
-                  ? lan::send_error(op, code, detail, peer, generation)
+                  ? lan_error(op, code, detail, peer, generation)
                   : ble::send_error(op, code, detail, generation);
      },
      [](void *) { worker_heartbeat_us = esp_timer_get_time(); }});
@@ -1588,6 +1614,46 @@ struct WorkerState {
   std::size_t &count;
   bool &storage_ready;
 };
+// Set while the worker executes a control request.
+WorkerState *active_state = nullptr;
+
+// Never mix clock epochs or UTC windows (including midnight) in a file: the
+// open file, or else the RAM batch, is the reference.
+bool fits_batch(const Sample &row, std::size_t count) {
+  const OutputFile &open = writer_state->telemetry;
+  if (open.open())
+    return same_window(row, open.epoch, open.dated, open.window) &&
+           config::same_location(row.location, open.location);
+  if (!count)
+    return true;
+  const auto &previous = writer_state->rows[0];
+  return same_window(row, previous.data[clock_epoch],
+                     previous.valid[event_time_utc_ns] != 0,
+                     window_index(previous)) &&
+         config::same_location(row.location, previous.location);
+}
+
+// While a LAN reply waits for ring space, move queued samples into the RAM
+// batch so the sample queue does not overflow. Only appends that need no card
+// write happen here: the bus may be held by the transfer, so anything else
+// stays queued for the main loop.
+void service_samples_while_waiting() {
+  // Mirrors the main loop: without storage or a remount hook rows are dropped
+  // there, and a row the batch cannot take needs a write.
+  if (!active_state || (!active_state->storage_ready && !hooks.storage_remount))
+    return;
+  static Sample row;
+  auto &count = active_state->count;
+  while (xQueuePeek(samples, &row, 0) == pdTRUE) {
+    const std::size_t limit =
+        row.valid[event_time_utc_ns] ? rows_per_group() : kUnsyncedRows;
+    if (count + 1 >= limit || count + 1 >= kMaxRows || !fits_batch(row, count))
+      return;
+    xQueueReceive(samples, &row, 0);
+    writer_state->rows[count++] = row;
+    buffered = count;
+  }
+}
 
 void handle_control_request(const ble::ControlRequest &request,
                             WorkerState &state) {
@@ -1667,6 +1733,9 @@ void handle_control_request(const ble::ControlRequest &request,
     if ((state.count || writer_state->telemetry.open()) &&
         state.storage_ready && governor.writable())
       governed_commit(state.count, true);
+    // Rows taken while REBOOTING waits for ring space would die with the
+    // restart, so leave them in the sample queue.
+    active_state = nullptr;
     constexpr std::uint16_t kDelayMs = 500;
     std::uint8_t frame[3];
     frame[0] = ble::kFrameRebooting;
@@ -1729,24 +1798,11 @@ void storage_worker(void *) {
       if ((!storage_ready && !hooks.storage_remount) || count == kMaxRows) {
         ++dropped;
       } else {
-        // Never mix clock epochs or UTC windows (including midnight) in a
-        // file: the open file, or else the RAM batch, is the reference.
-        const OutputFile &open = writer_state->telemetry;
-        bool fits = true;
-        if (open.open())
-          fits = same_window(row, open.epoch, open.dated, open.window) &&
-                 config::same_location(row.location, open.location);
-        else if (count) {
-          const auto &previous = writer_state->rows[0];
-          fits = same_window(row, previous.data[clock_epoch],
-                             previous.valid[event_time_utc_ns] != 0,
-                             window_index(previous)) &&
-                 config::same_location(row.location, previous.location);
-        }
         // A batch from another window can only leave RAM through a write.
         // While the card cannot take it, the new row is the one dropped.
-        if (!fits && (!storage_ready || !governor.writable() ||
-                      !governed_commit(count, true))) {
+        if (!fits_batch(row, count) &&
+            (!storage_ready || !governor.writable() ||
+             !governed_commit(count, true))) {
           ++dropped;
           continue;
         }
@@ -1782,7 +1838,9 @@ void storage_worker(void *) {
     if (command.source == Command::Source::Control) {
       WorkerState state{count, storage_ready};
       current_request = &command.control;
+      active_state = &state;
       handle_control_request(command.control, state);
+      active_state = nullptr;
       current_request = nullptr;
       continue;
     }
@@ -2186,8 +2244,9 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
                 static_cast<unsigned long long>(boot_hi),
                 static_cast<unsigned long long>(boot_lo));
   spi_mutex = xSemaphoreCreateMutex();
-  samples = xQueueCreate(8, sizeof(Sample));
-  commands = xQueueCreate(6, sizeof(Command));
+  sync_config = config.sync ? *config.sync : aqsync::ServiceConfig{};
+  samples = xQueueCreate(sync_config.sample_queue_depth, sizeof(Sample));
+  commands = xQueueCreate(sync_config.command_queue_depth, sizeof(Command));
   // Created before the worker: wakeups do not depend on task-handle
   // publication.
   worker_wakeup = xSemaphoreCreateBinary();
@@ -2314,7 +2373,8 @@ bool start_links(bool display_detected) {
       station_text,       device_text,           boot_text,
       config.schema_name, unsigned(field_count), config.dictionary_sha256,
       config.firmware};
-  return aqsync::begin(identity, enqueue_request, display_detected).ble_started;
+  return aqsync::begin(identity, enqueue_request, display_detected, sync_config)
+      .ble_started;
 }
 
 bool enqueue_request(const ble::ControlRequest &request) {

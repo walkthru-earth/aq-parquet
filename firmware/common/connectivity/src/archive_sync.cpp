@@ -1,4 +1,5 @@
 #include "archive_sync.h"
+#include "abort_signal.h"
 #include <sync_codec.h>
 
 #include <cstdio>
@@ -54,6 +55,15 @@ bool ArchiveSession::error(ble::Op op, ble::Error code, const char *detail) {
                           request_generation_, op, code, detail);
 }
 
+bool ArchiveSession::aborted() const {
+  return request_ && abort::pending(*request_);
+}
+
+void ArchiveSession::stop_aborted(ble::Op op) {
+  error(op, ble::kErrAborted);
+  abort::note_stopped(*request_, op);
+}
+
 ArchiveSession::OpenFile &ArchiveSession::file() {
   return open_[request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0];
 }
@@ -87,6 +97,11 @@ void ArchiveSession::emit_file(void *context, const char *name,
   if (!list.ok)
     return;
   auto &session = *list.session;
+  if (session.aborted()) {
+    list.ok = false;
+    list.aborted = true;
+    return;
+  }
   if (list.count == UINT32_MAX) {
     list.ok = false;
     list.failure_detail = "count";
@@ -112,14 +127,8 @@ void ArchiveSession::emit_file(void *context, const char *name,
   put_u32(frame + 1, bytes);
   std::memcpy(frame + 5, name, name_length);
   if (!session.respond(frame, 5 + name_length)) {
-    if (session.archive_.log) {
-      char line[96];
-      std::snprintf(line, sizeof(line),
-                    "BLE LIST ABORT after=%u reason=notify-refused\n",
-                    unsigned(list.count));
-      session.archive_.log(session.archive_.context, line);
-    }
     list.ok = false;
+    list.aborted = session.aborted();
     return;
   }
   ++list.count;
@@ -128,16 +137,31 @@ void ArchiveSession::emit_file(void *context, const char *name,
 void ArchiveSession::list() {
   ListContext list{this};
   const ListResult result = archive_.list(archive_.context, emit_file, &list);
+  if (!list.ok && archive_.log) {
+    char line[96];
+    std::snprintf(line, sizeof(line),
+                  "LIST ABORT link=%s after=%lu reason=%s\n",
+                  request_link_ == ble::Link::Lan ? "lan" : "ble",
+                  static_cast<unsigned long>(list.count),
+                  list.aborted          ? "aborted"
+                  : list.failure_detail ? list.failure_detail
+                                        : "refused");
+    archive_.log(archive_.context, line);
+  }
+  // An ABORT wins over a walk error: the client asked to stop.
+  if (list.aborted) {
+    stop_aborted(ble::kOpList);
+    return;
+  }
   if (!result.complete) {
     error(ble::kOpList, ble::kErrStorage);
     return;
   }
   if (!list.ok) {
-    if (list.failure_detail)
-      error(ble::kOpList, ble::kErrBusy,
-            payload_max() >= 3 + std::strlen(list.failure_detail)
-                ? list.failure_detail
-                : nullptr);
+    // Always try a terminal ERROR so the client never waits for LIST_END.
+    const char *detail = list.failure_detail ? list.failure_detail : "refused";
+    error(ble::kOpList, ble::kErrBusy,
+          payload_max() >= 3 + std::strlen(detail) ? detail : nullptr);
     return;
   }
   std::uint8_t frame[15];
@@ -273,6 +297,11 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
   std::uint8_t frame[7 + kChunkCap];
   std::uint32_t sent = 0;
   while (sent < length) {
+    // An aborted READ ends with ERROR aborted and no READ_END.
+    if (aborted()) {
+      stop_aborted(ble::kOpRead);
+      return;
+    }
     const std::size_t want =
         length - sent < chunk_max ? std::size_t(length - sent) : chunk_max;
     std::size_t count;
@@ -288,7 +317,10 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     put_u16(frame + 1, file_handle);
     put_u32(frame + 3, offset + sent);
     if (!respond(frame, 7 + count)) {
-      end(offset + sent, ble::kErrBusy);
+      if (aborted())
+        stop_aborted(ble::kOpRead);
+      else
+        end(offset + sent, ble::kErrBusy);
       return;
     }
     sent += count;
@@ -333,6 +365,7 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   request_link_ = request.link;
   request_peer_ = request.peer;
   request_generation_ = request.link_generation;
+  request_ = &request;
   // Queued commands from a disconnected peer must not change a replacement
   // peer's handle or deliver frames to that peer.
   if (request_generation_ !=
@@ -340,6 +373,12 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
     return true;
   const std::uint8_t *body = request.bytes + 1;
   const std::size_t length = request.length - 1;
+  // A LIST or READ queued before an ABORT on its link never starts.
+  if ((op == ble::kOpList || op == ble::kOpRead) && aborted()) {
+    stop_aborted(op);
+    request_ = nullptr;
+    return true;
+  }
   switch (op) {
   case ble::kOpList:
     if (!storage_ready)
@@ -368,6 +407,7 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   default:
     break;
   }
+  request_ = nullptr;
   return true;
 }
 } // namespace aqsync

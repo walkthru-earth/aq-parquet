@@ -1,6 +1,6 @@
 #pragma once
 
-// Bluetooth LE sync service, protocol v2: docs/shared/ble-sync-protocol.md.
+// Bluetooth LE sync service, protocol v3: docs/shared/ble-sync-protocol.md.
 //
 // Threading contract. NimBLE callbacks run on the host task and never touch the
 // SD card or the display. `control` writes become ControlRequest values that
@@ -15,7 +15,7 @@
 #include <cstdint>
 
 namespace ble {
-constexpr std::uint8_t kProtocolVersion = 2;
+constexpr std::uint8_t kProtocolVersion = 3;
 constexpr std::size_t kMaxControlBytes = 512;
 constexpr std::uint8_t kMaxLanClients = 3;
 constexpr std::uint32_t kMaxRead = 16384;
@@ -129,6 +129,8 @@ struct ControlRequest {
   Link link = Link::Ble;
   std::uint8_t peer = 0; // LAN slot; BLE always uses zero
   std::uint32_t link_generation = 0;
+  // The link's ABORT sequence when this request arrived (abort_signal.h).
+  std::uint32_t abort_seq = 0;
 };
 
 using RequestHandler = bool (*)(const ControlRequest &request);

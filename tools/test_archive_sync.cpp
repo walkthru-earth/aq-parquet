@@ -1,3 +1,4 @@
+#include "abort_signal.h"
 #include "archive_sync.h"
 #include "sync_codec.h"
 
@@ -13,6 +14,27 @@ namespace {
 using namespace aq::sync;
 std::size_t slot(ble::Link link, std::uint8_t peer = 0) {
   return link == ble::Link::Ble ? 0 : 1 + peer;
+}
+// abort::sequences and abort::stopped are process-wide; every ABORT case
+// starts from a clean slate so earlier cases cannot leak a pending abort.
+void reset_abort() {
+  for (auto &sequence : aqsync::abort::sequences)
+    sequence.store(0);
+  for (auto &entry : aqsync::abort::stopped)
+    entry = aqsync::abort::Stopped{};
+}
+// What a transport task does when an ABORT arrives on (link, peer).
+ble::ControlRequest stamp_abort(ble::Link link, std::uint8_t peer,
+                                std::uint32_t generation) {
+  ble::ControlRequest marker;
+  marker.link = link;
+  marker.peer = peer;
+  marker.link_generation = generation;
+  marker.bytes[0] = ble::kOpAbort;
+  marker.length = 1;
+  aqsync::abort::stamp(marker);
+  aqsync::abort::commit(marker);
+  return marker;
 }
 unsigned descriptor_count() {
   unsigned count = 0;
@@ -49,6 +71,11 @@ struct Fixture {
   bool listing_complete = true;
   std::size_t refuse_frame = 0;
   std::size_t disconnect_frame = 0;
+  // Stamp an ABORT on (abort_link, abort_peer) as this frame is delivered.
+  std::size_t abort_frame = 0;
+  ble::Link abort_link = ble::Link::Ble;
+  std::uint8_t abort_peer = 0;
+  std::vector<std::string> logs;
 
   explicit Fixture(const char *path) : directory(path), bytes(20000) {
     for (std::size_t i = 0; i < bytes.size(); ++i)
@@ -66,6 +93,10 @@ struct Fixture {
     errors.clear();
     refuse_frame = 0;
     disconnect_frame = 0;
+    abort_frame = 0;
+    abort_link = ble::Link::Ble;
+    abort_peer = 0;
+    logs.clear();
   }
   aqsync::ArchiveHooks archive() {
     return {
@@ -105,7 +136,9 @@ struct Fixture {
           auto &f = *static_cast<Fixture *>(ctx);
           assert(f.lock_depth-- == 1);
         },
-        nullptr};
+        [](void *ctx, const char *line) {
+          static_cast<Fixture *>(ctx)->logs.push_back(line);
+        }};
   }
   aqsync::ArchiveTransport transport() {
     return {this,
@@ -124,6 +157,9 @@ struct Fixture {
               f.frames.push_back({link, peer, {data, data + size}});
               if (f.disconnect_frame && f.frames.size() == f.disconnect_frame)
                 ++f.generation[slot(link, peer)];
+              if (f.abort_frame && f.frames.size() == f.abort_frame)
+                stamp_abort(f.abort_link, f.abort_peer,
+                            f.generation[slot(f.abort_link, f.abort_peer)]);
               return !f.refuse_frame || f.frames.size() != f.refuse_frame;
             },
             [](void *ctx, ble::Link link, std::uint8_t peer,
@@ -210,6 +246,149 @@ void verify_read(Fixture &f, std::uint16_t handle, std::uint32_t offset,
   assert(get_u16(end.bytes.data() + 1) == handle);
   assert(get_u32(end.bytes.data() + 3) == offset + count);
 }
+
+// ABORT (abort_signal.h): transports stamp each request, an ABORT advances the
+// link's sequence, and the worker stops what the ABORT overtook.
+void abort_cases(Fixture &f, aqsync::ArchiveSession &session) {
+  namespace abort = aqsync::abort;
+  const auto stamped = [&](ble::ControlRequest r) {
+    abort::stamp(r);
+    abort::commit(r);
+    return r;
+  };
+  const auto expect_aborted = [&](ble::Op op, ble::Link link,
+                                  std::uint8_t peer) {
+    assert(f.errors.size() == 1 && f.errors[0].op == op &&
+           f.errors[0].code == ble::kErrAborted && f.errors[0].link == link &&
+           f.errors[0].peer == peer && f.errors[0].detail.empty());
+  };
+  f.payload = {517, 1024, 1024, 1024};
+  f.list_repeats = 5;
+  const unsigned listed = f.listed;
+
+  // A LIST queued before an ABORT on its link never starts: ERROR aborted
+  // only, then the marker names LIST once and a second marker names nothing.
+  reset_abort();
+  f.clear();
+  const auto queued = stamped(request(f, ble::kOpList));
+  stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  assert(session.handle(queued, true));
+  expect_aborted(ble::kOpList, ble::Link::Ble, 0);
+  assert(f.frames.empty() && f.logs.empty() && f.listed == listed);
+  auto marker = stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  assert(abort::take_stopped(marker) == ble::kOpList);
+  assert(abort::take_stopped(marker) == 0);
+
+  // ABORT mid LIST: FILE frames stop, ERROR aborted and no LIST_END.
+  for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
+    reset_abort();
+    f.clear();
+    f.abort_frame = 2;
+    f.abort_link = link;
+    session.handle(stamped(request(f, ble::kOpList, link)), true);
+    assert(f.frames.size() == 2);
+    for (const auto &frame : f.frames)
+      assert(frame.bytes[0] == ble::kFrameFile);
+    expect_aborted(ble::kOpList, link, 0);
+    assert(f.listed == listed);
+    assert(f.logs.size() == 1);
+    assert(f.logs[0].find("LIST ABORT") != std::string::npos &&
+           f.logs[0].find("reason=aborted") != std::string::npos &&
+           f.logs[0].find("after=2") != std::string::npos &&
+           f.logs[0].find(link == ble::Link::Lan ? "link=lan" : "link=ble") !=
+               std::string::npos);
+    marker = stamp_abort(link, 0, f.generation[slot(link)]);
+    assert(abort::take_stopped(marker) == ble::kOpList);
+  }
+  // The transport refusing the frame the ABORT overtook is still aborted, not
+  // busy.
+  reset_abort();
+  f.clear();
+  f.abort_frame = f.refuse_frame = 3;
+  session.handle(stamped(request(f, ble::kOpList)), true);
+  assert(f.frames.size() == 3);
+  expect_aborted(ble::kOpList, ble::Link::Ble, 0);
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find("after=2 reason=aborted") != std::string::npos);
+
+  // ABORT mid READ: CHUNKs stop, ERROR aborted and no READ_END, both when the
+  // overtaken frame was delivered and when the transport refused it.
+  reset_abort();
+  const auto handle = open(f, session, ble::Link::Lan, "sample.parquet", 2);
+  for (const std::size_t refuse : {std::size_t(0), std::size_t(2)}) {
+    reset_abort();
+    f.clear();
+    f.abort_frame = 2;
+    f.refuse_frame = refuse;
+    f.abort_link = ble::Link::Lan;
+    f.abort_peer = 2;
+    session.handle(stamped(read(f, handle, 0, 8000, ble::Link::Lan, 2)), true);
+    assert(f.frames.size() == 2);
+    for (const auto &frame : f.frames)
+      assert(frame.bytes[0] == ble::kFrameChunk && frame.peer == 2);
+    expect_aborted(ble::kOpRead, ble::Link::Lan, 2);
+    marker =
+        stamp_abort(ble::Link::Lan, 2, f.generation[slot(ble::Link::Lan, 2)]);
+    assert(abort::take_stopped(marker) == ble::kOpRead);
+  }
+  // A READ queued before the ABORT never sends a CHUNK.
+  reset_abort();
+  f.clear();
+  const auto queued_read = stamped(read(f, handle, 0, 100, ble::Link::Lan, 2));
+  stamp_abort(ble::Link::Lan, 2, f.generation[slot(ble::Link::Lan, 2)]);
+  session.handle(queued_read, true);
+  expect_aborted(ble::kOpRead, ble::Link::Lan, 2);
+  assert(f.frames.empty());
+  // The handle survives the ABORT; a fresh READ after it runs normally.
+  f.clear();
+  session.handle(stamped(read(f, handle, 10, 3000, ble::Link::Lan, 2)), true);
+  verify_read(f, handle, 10, 3000, 1024, ble::Link::Lan, 2);
+
+  // Stale marker: the stop was recorded under generation g, the marker
+  // arrives for the replacement connection g+1 and names nothing.
+  reset_abort();
+  f.clear();
+  const auto old_list = stamped(request(f, ble::kOpList, ble::Link::Lan, 1));
+  stamp_abort(ble::Link::Lan, 1, f.generation[slot(ble::Link::Lan, 1)]);
+  session.handle(old_list, true);
+  expect_aborted(ble::kOpList, ble::Link::Lan, 1);
+  marker =
+      stamp_abort(ble::Link::Lan, 1, f.generation[slot(ble::Link::Lan, 1)] + 1);
+  assert(abort::take_stopped(marker) == 0);
+
+  // Abort slots are per link and per LAN peer: an ABORT on BLE or on another
+  // LAN peer neither stops nor is named by this peer's LIST and READ.
+  reset_abort();
+  f.clear();
+  const auto other_list = stamped(request(f, ble::kOpList, ble::Link::Lan, 2));
+  stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  stamp_abort(ble::Link::Lan, 0, f.generation[slot(ble::Link::Lan, 0)]);
+  stamp_abort(ble::Link::Lan, 1, f.generation[slot(ble::Link::Lan, 1)]);
+  session.handle(other_list, true);
+  assert(f.errors.empty() && f.frames.size() == 6 &&
+         f.frames.back().bytes[0] == ble::kFrameListEnd &&
+         get_u32(f.frames.back().bytes.data() + 1) == 5);
+  f.clear();
+  f.abort_frame = 1;
+  f.abort_link = ble::Link::Lan;
+  f.abort_peer = 1;
+  session.handle(stamped(read(f, handle, 0, 3000, ble::Link::Lan, 2)), true);
+  verify_read(f, handle, 0, 3000, 1024, ble::Link::Lan, 2);
+  f.clear();
+  f.abort_frame = 1;
+  f.abort_link = ble::Link::Ble;
+  session.handle(stamped(request(f, ble::kOpList, ble::Link::Lan, 2)), true);
+  assert(f.errors.empty() && f.frames.back().bytes[0] == ble::kFrameListEnd);
+  for (std::uint8_t peer = 0; peer < 3; ++peer) {
+    const auto link = peer ? ble::Link::Lan : ble::Link::Ble;
+    const auto other = peer ? std::uint8_t(peer - 1) : std::uint8_t(0);
+    marker = stamp_abort(link, other, f.generation[slot(link, other)]);
+    assert(abort::take_stopped(marker) == 0);
+  }
+  reset_abort();
+  f.clear();
+  f.list_repeats = 1;
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -231,6 +410,13 @@ int main(int argc, char **argv) {
   f.refuse_frame = 1;
   session.handle(request(f, ble::kOpList), true);
   assert(f.frames.size() == 1 && f.listed == 1); // no LIST_END after refusal
+  // A refusal without ABORT still ends LIST with a terminal ERROR busy, so
+  // the client never waits for a LIST_END that will not come.
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpList &&
+         f.errors[0].code == ble::kErrBusy && f.errors[0].detail == "refused");
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find("LIST ABORT link=ble after=0 reason=refused") !=
+             std::string::npos);
   f.clear();
   f.payload[0] = 18;
   session.handle(request(f, ble::kOpList), true);
@@ -257,12 +443,12 @@ int main(int argc, char **argv) {
   session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
   assert(f.frames.size() == 2 && f.listed == 2 && f.errors.empty());
   f.clear();
-  f.list_repeats = 65536; // Proto 3 LIST_END count is u32, past the old cap.
+  f.list_repeats = 70000; // Proto 3 LIST_END count is u32, past the old cap.
   session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
-  assert(f.frames.size() == 65537 && f.listed == 3 && f.errors.empty());
+  assert(f.frames.size() == 70001 && f.listed == 3 && f.errors.empty());
   assert(f.frames.back().bytes[0] == ble::kFrameListEnd &&
          f.frames.back().bytes.size() == 15 &&
-         get_u32(f.frames.back().bytes.data() + 1) == 65536);
+         get_u32(f.frames.back().bytes.data() + 1) == 70000);
   f.list_repeats = 1;
 
   auto handle = open(f, session);
@@ -448,6 +634,8 @@ int main(int argc, char **argv) {
   verify_read(f, lan_handles[2], 0, 10, 1024, ble::Link::Lan, 2);
   session.close();
   assert(f.lock_depth == 0);
+
+  abort_cases(f, session);
 
   // File sync is read-only: the synthetic archive remains byte-for-byte equal.
   FILE *file = std::fopen((f.directory + "/sample.parquet").c_str(), "rb");

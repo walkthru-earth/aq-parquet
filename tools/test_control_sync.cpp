@@ -1,3 +1,5 @@
+#include <abort_signal.h>
+#include <archive_sync.h>
 #include <control_sync.h>
 #include <debug_log.h>
 #include <device_config.h>
@@ -26,10 +28,26 @@ struct Failure {
   ble::Op op;
   ble::Error code;
 };
+// abort::sequences and abort::stopped are process-wide; reset between cases.
+void reset_abort() {
+  for (auto &sequence : aqsync::abort::sequences)
+    sequence.store(0);
+  for (auto &entry : aqsync::abort::stopped)
+    entry = aqsync::abort::Stopped{};
+}
+// What a transport task does with a request the queue accepted.
+ble::ControlRequest stamped(ble::ControlRequest request) {
+  aqsync::abort::stamp(request);
+  aqsync::abort::commit(request);
+  return request;
+}
 struct Peer {
   std::uint16_t payload = 600;
   unsigned attempts = 0;
   unsigned fail_attempt = 0;
+  // Stamp an ABORT on this link while this respond attempt is in flight.
+  unsigned abort_attempt = 0;
+  ble::Link abort_link = ble::Link::Ble;
   std::vector<Reply> successful;
   std::vector<Failure> errors;
 
@@ -42,7 +60,15 @@ struct Peer {
   static bool respond(void *context, ble::Link link, const std::uint8_t *bytes,
                       std::size_t size) {
     auto &peer = *static_cast<Peer *>(context);
-    if (++peer.attempts == peer.fail_attempt)
+    if (++peer.attempts == peer.abort_attempt) {
+      ble::ControlRequest marker;
+      marker.link = peer.abort_link;
+      marker.bytes[0] = ble::kOpAbort;
+      marker.length = 1;
+      aqsync::abort::stamp(marker);
+      aqsync::abort::commit(marker);
+    }
+    if (peer.attempts == peer.fail_attempt)
       return false;
     peer.successful.push_back({link, {bytes, bytes + size}});
     return true;
@@ -326,6 +352,141 @@ void diagnostics() {
          bad_abort.errors[0].code == ble::kErrMalformed);
 }
 
+bool aborted_reply(const Peer &peer, std::uint8_t op) {
+  return peer.errors.empty() && peer.successful.size() == 1 &&
+         peer.successful[0].bytes ==
+             std::vector<std::uint8_t>{ble::kFrameAborted, op};
+}
+
+// ABORT through the worker: the stopped op ends with ERROR aborted and the
+// queued ABORT marker answers ABORTED naming it exactly once.
+void aborts() {
+  std::string length(2, '\0');
+  aq::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()), 65535);
+
+  // LOG_TAIL aborted mid stream, after a delivered slice and on a refused
+  // one: ERROR aborted, no LOG_END, then ABORTED names LOG_TAIL.
+  for (const unsigned refuse : {0U, 3U}) {
+    reset_abort();
+    Peer peer;
+    peer.payload = 2000;
+    peer.abort_attempt = 3;
+    peer.fail_attempt = refuse;
+    peer.abort_link = ble::Link::Lan;
+    handle(stamped(request(ble::kOpLogTail, ble::Link::Lan, length)), peer);
+    assert(peer.successful.size() == (refuse ? 2U : 3U));
+    for (const auto &reply : peer.successful)
+      assert(reply.bytes[0] == ble::kFrameLog);
+    assert(peer.errors.size() == 1 && peer.errors[0].op == ble::kOpLogTail &&
+           peer.errors[0].code == ble::kErrAborted &&
+           peer.errors[0].link == ble::Link::Lan);
+    Peer marker;
+    handle(stamped(request(ble::kOpAbort, ble::Link::Lan)), marker);
+    assert(aborted_reply(marker, ble::kOpLogTail));
+    Peer again;
+    handle(stamped(request(ble::kOpAbort, ble::Link::Lan)), again);
+    assert(aborted_reply(again, 0));
+  }
+  // A LOG_TAIL queued before the ABORT sends no LOG frame at all.
+  reset_abort();
+  Peer queued;
+  const auto tail = stamped(request(ble::kOpLogTail, ble::Link::Ble, length));
+  stamped(request(ble::kOpAbort, ble::Link::Ble));
+  handle(tail, queued);
+  assert(queued.successful.empty() && queued.errors.size() == 1 &&
+         queued.errors[0].code == ble::kErrAborted);
+  // An ABORT the full queue refused is stamped but never committed, so it
+  // stops nothing and leaves no stopped op for the next marker.
+  reset_abort();
+  Peer refused;
+  const auto kept = stamped(request(ble::kOpLogTail, ble::Link::Ble, length));
+  auto lost = request(ble::kOpAbort, ble::Link::Ble);
+  aqsync::abort::stamp(lost);
+  handle(kept, refused);
+  assert(refused.errors.empty() &&
+         refused.successful.back().bytes[0] == ble::kFrameLogEnd);
+  Peer next;
+  handle(stamped(request(ble::kOpAbort, ble::Link::Ble)), next);
+  assert(aborted_reply(next, 0));
+  // An ABORT on the other link neither stops nor is named by this LOG_TAIL.
+  reset_abort();
+  Peer other;
+  other.payload = 2000;
+  other.abort_attempt = 1;
+  other.abort_link = ble::Link::Lan;
+  handle(stamped(request(ble::kOpLogTail, ble::Link::Ble, length)), other);
+  assert(other.errors.empty() &&
+         other.successful.back().bytes[0] == ble::kFrameLogEnd);
+  Peer ble_marker;
+  handle(stamped(request(ble::kOpAbort, ble::Link::Ble)), ble_marker);
+  assert(aborted_reply(ble_marker, 0));
+
+  // Stale marker: LOG_TAIL stopped under generation g, the marker belongs to
+  // the replacement connection g+1 and must answer ABORTED 0.
+  reset_abort();
+  Peer stale;
+  auto old_tail = request(ble::kOpLogTail, ble::Link::Lan, length);
+  old_tail.link_generation = 7;
+  old_tail = stamped(old_tail);
+  auto old_abort = request(ble::kOpAbort, ble::Link::Lan);
+  old_abort.link_generation = 7;
+  stamped(old_abort);
+  handle(old_tail, stale);
+  assert(stale.errors.size() == 1 && stale.errors[0].code == ble::kErrAborted);
+  auto new_marker = request(ble::kOpAbort, ble::Link::Lan);
+  new_marker.link_generation = 8;
+  Peer fresh;
+  handle(stamped(new_marker), fresh);
+  assert(aborted_reply(fresh, 0));
+
+  // LIST queued before an ABORT, through the real ArchiveSession: ERROR
+  // aborted only, then the marker answers ABORTED LIST, then ABORTED 0.
+  reset_abort();
+  Peer lan;
+  aqsync::ArchiveHooks hooks{};
+  hooks.list = [](void *, aqsync::FileEmitter, void *) -> aqsync::ListResult {
+    assert(false && "an aborted LIST must not walk the archive");
+    return {};
+  };
+  aqsync::ArchiveTransport transport{};
+  transport.context = &lan;
+  transport.generation = [](void *, ble::Link, std::uint8_t) {
+    return std::uint32_t(3);
+  };
+  transport.payload_max = [](void *, ble::Link, std::uint8_t) {
+    return std::uint16_t(1024);
+  };
+  transport.respond = [](void *ctx, ble::Link link, std::uint8_t, std::uint32_t,
+                         const std::uint8_t *bytes, std::size_t size) {
+    return Peer::respond(ctx, link, bytes, size);
+  };
+  transport.error = [](void *ctx, ble::Link link, std::uint8_t, std::uint32_t,
+                       ble::Op op, ble::Error code, const char *detail) {
+    return Peer::error(ctx, link, op, code, detail);
+  };
+  aqsync::ArchiveSession session(hooks, transport);
+  auto list = request(ble::kOpList, ble::Link::Lan);
+  list.peer = 1;
+  list.link_generation = 3;
+  list = stamped(list);
+  auto abort = request(ble::kOpAbort, ble::Link::Lan);
+  abort.peer = 1;
+  abort.link_generation = 3;
+  abort = stamped(abort);
+  assert(session.handle(list, true));
+  assert(lan.successful.empty() && lan.errors.size() == 1 &&
+         lan.errors[0].op == ble::kOpList &&
+         lan.errors[0].code == ble::kErrAborted);
+  assert(!session.handle(abort, true)); // ABORT is not an archive op
+  Peer marker;
+  handle(abort, marker);
+  assert(aborted_reply(marker, ble::kOpList));
+  Peer idle;
+  handle(stamped(abort), idle);
+  assert(aborted_reply(idle, 0));
+  reset_abort();
+}
+
 void dispatch() {
   Peer peer;
   const auto callbacks = peer.callbacks();
@@ -374,6 +535,7 @@ int main() {
   token_guard();
   logs();
   diagnostics();
+  aborts();
   dispatch();
 }
 
