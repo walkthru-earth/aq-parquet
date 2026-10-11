@@ -74,9 +74,8 @@ bool mount(bool keep_buffer) {
   slot.cmd = GPIO_NUM_4;
   slot.d0 = GPIO_NUM_6;
   slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-  esp_vfs_fat_sdmmc_mount_config_t config{};
-  config.format_if_mount_failed = false;
-  config.max_files = 5;
+  const esp_vfs_fat_sdmmc_mount_config_t config =
+      aq::storage::archive_mount_config();
   sdmmc_card_t *mounted = nullptr;
   const esp_err_t result =
       esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &config, &mounted);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "archive_files.h"
+
 #include <diskio_sdmmc.h>
 #include <esp_vfs_fat.h>
 #include <ff.h>
@@ -8,6 +10,20 @@
 #include <cstdint>
 
 namespace aq::storage {
+
+// A build directory sdkconfig made before tools/idf-sdkconfig.defaults raised
+// the value keeps the old one. Delete that sdkconfig to regenerate it.
+static_assert(FF_FS_LOCK == 0 || FF_FS_LOCK >= kMinFsLock,
+              "CONFIG_FATFS_FS_LOCK must cover archive files and the walk");
+
+// Mount options shared by both boards. Never formats. max_files covers the
+// writers, one transient stream and every persistent archive read handle.
+inline esp_vfs_fat_mount_config_t archive_mount_config() {
+  esp_vfs_fat_mount_config_t mount{};
+  mount.format_if_mount_failed = false;
+  mount.max_files = static_cast<int>(kMaxOpenFiles);
+  return mount;
+}
 
 // Bytes per FAT allocation unit of the volume mounted from `card`, or 0 when
 // unknown. Every file grows in whole clusters, so the space governor logs it

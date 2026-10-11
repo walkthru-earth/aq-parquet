@@ -336,9 +336,8 @@ esp_err_t mount_sd(bool keep_buffer) {
   sdspi_device_config_t device = SDSPI_DEVICE_CONFIG_DEFAULT();
   device.host_id = SPI2_HOST;
   device.gpio_cs = static_cast<gpio_num_t>(kSdCs);
-  esp_vfs_fat_sdmmc_mount_config_t mount{};
-  mount.format_if_mount_failed = false;
-  mount.max_files = 5;
+  const esp_vfs_fat_sdmmc_mount_config_t mount =
+      aq::storage::archive_mount_config();
   const esp_err_t result =
       esp_vfs_fat_sdspi_mount("/sd", &host, &device, &mount, &sd_card);
   if (result != ESP_OK && !keep_buffer)
