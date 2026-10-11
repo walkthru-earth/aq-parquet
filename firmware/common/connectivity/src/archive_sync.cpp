@@ -365,12 +365,14 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   request_link_ = request.link;
   request_peer_ = request.peer;
   request_generation_ = request.link_generation;
-  request_ = &request;
   // Queued commands from a disconnected peer must not change a replacement
   // peer's handle or deliver frames to that peer.
   if (request_generation_ !=
       transport_.generation(transport_.context, request_link_, request_peer_))
     return true;
+  // Set only here, so every later return clears it and no stale pointer
+  // outlives the request.
+  request_ = &request;
   const std::uint8_t *body = request.bytes + 1;
   const std::size_t length = request.length - 1;
   // A LIST or READ queued before an ABORT on its link never starts.
