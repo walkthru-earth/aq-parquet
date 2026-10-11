@@ -18,6 +18,9 @@ initialization and each board's schema/provenance remain in its own trial.
   finalized files. Keep 90-row RAM batches, eight-row-group writer bounds and
   fsync after each row group; `.partial` files are preserved/quarantined rather
   than repaired or deleted. Do not imply power-cut durability from normal resets.
+- The SD space governor never deletes. A full card pauses and alarms; space
+  returning or a successful probe resumes. Keep its logic pure in
+  `storage_governor.h`; boards only supply the free, cluster and remount hooks.
 - Startup archive scans must not print each filename. Retain a bounded summary
   so offline startup does not depend on a USB reader draining archive output.
   Explicit serial `parquet list` still emits entries and its END marker.

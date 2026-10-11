@@ -148,24 +148,23 @@ const KeyValue metadata[] = {
                     "camera/audio not sampled"},
 };
 aqlogger::Config logger_config;
-bool storage_mounted = false;
 std::uint64_t cached_total_bytes = 0;
 std::uint64_t cached_used_bytes = 0;
 
 void refresh_capacity() {
-  if (!storage_mounted)
-    return;
   // Called only by the archive worker under the shared display/storage mutex.
+  // Also after a remount, so a card inserted after boot reports capacity.
   std::uint64_t total = 0, free = 0;
   if (esp_vfs_fat_info("/sd", &total, &free) == ESP_OK && free <= total) {
     cached_total_bytes = total;
     cached_used_bytes = total - free;
+  } else {
+    cached_total_bytes = cached_used_bytes = 0;
   }
 }
 } // namespace
 
 void begin_logger(bool sd_mounted) {
-  storage_mounted = sd_mounted;
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = kFields[i];
     fields[i] = {field.name, field.type,     field.procedure,
@@ -202,6 +201,10 @@ void begin_logger(bool sd_mounted) {
             refresh_capacity();
             return cached_used_bytes;
           },
+      .storage_free_bytes = [](std::uint64_t &free_bytes,
+                               void *) { return sd_free_bytes(free_bytes); },
+      .storage_cluster_bytes = [](void *) { return sd_cluster_bytes(); },
+      .storage_remount = [](void *) { return remount_sd(); },
       .rtc_read = rtc_read,
       .rtc_write = rtc_write,
   };

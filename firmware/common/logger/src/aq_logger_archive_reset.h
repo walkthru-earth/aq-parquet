@@ -119,14 +119,40 @@ inline bool visit(const char *path, unsigned depth, bool remove,
 }
 } // namespace archive_reset
 
+// An archive root must be an absolute path below a mount point, with no
+// empty, "." or ".." segment and no trailing slash. "/sd" alone is rejected.
+inline bool archive_root_valid(const char *root) {
+  if (!root || root[0] != '/')
+    return false;
+  unsigned segments = 0;
+  for (const char *segment = root + 1;;) {
+    const char *end = std::strchr(segment, '/');
+    const std::size_t length =
+        end ? static_cast<std::size_t>(end - segment) : std::strlen(segment);
+    if (length == 0 || (length == 1 && segment[0] == '.') ||
+        (length == 2 && segment[0] == '.' && segment[1] == '.'))
+      return false;
+    ++segments;
+    if (!end)
+      break;
+    segment = end + 1;
+  }
+  return segments >= 2 && std::strlen(root) < archive_reset::kPathBytes;
+}
+
 // Physical owner-authorized maintenance only. Never accept a caller-selected
 // path, card root, radio command or a path derived from a file manifest.
-// Counters accumulate across the two allowlisted roots, including root dirs.
-inline bool erase_archive(const char *root, std::uint32_t &files_removed,
+// root must equal the configured output root or the optional configured
+// legacy root. Counters accumulate across calls, including root dirs.
+inline bool erase_archive(const char *root, const char *output_root,
+                          const char *legacy_root, std::uint32_t &files_removed,
                           std::uint32_t &directories_removed,
                           const ArchiveResetIo &io = {}) {
-  if (!root || (std::strcmp(root, "/sd/output") != 0 &&
-                std::strcmp(root, "/sd/parquet") != 0)) {
+  const bool output = archive_root_valid(output_root) && root &&
+                      std::strcmp(root, output_root) == 0;
+  const bool legacy = legacy_root && archive_root_valid(legacy_root) && root &&
+                      std::strcmp(root, legacy_root) == 0;
+  if (!output && !legacy) {
     errno = EINVAL;
     return false;
   }

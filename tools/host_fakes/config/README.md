@@ -4,9 +4,11 @@ These headers supply the small platform surface used by the **real** shared
 configuration and log implementations. They do not reimplement settings parsing,
 pairing policy, JSON generation, log framing or control handlers.
 
-`nvs.h` models native ESP-IDF NVS types, staged values, explicit per-key commits
-and string lengths including the terminating NUL. Tests inject namespace-open,
-individual key-write and commit failures and verify stored value types. They
+`nvs.h` models native ESP-IDF NVS types, staged values and blobs, explicit
+commits and string lengths including the terminating NUL. Runtime settings are
+one versioned blob, legacy keys are read only for migration. Tests inject
+namespace-open, key or blob write and commit failures and verify stored value
+types. They
 establish error reporting and unchanged runtime settings on failure; they do not
 establish transactional NVS writes or power-loss safety.
 

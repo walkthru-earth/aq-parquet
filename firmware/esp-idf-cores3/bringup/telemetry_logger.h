@@ -20,6 +20,11 @@ struct PmsSnapshot {
 // Called once after M5.begin and SD mount. One worker owns all subsequent SD
 // IO.
 void begin_logger(bool sd_mounted);
+// SD volume owned by main.cpp. Storage worker only, with the display lock
+// held. remount unmounts and mounts again, never formats.
+bool remount_sd();
+std::uint32_t sd_cluster_bytes(); // 0 when unknown
+bool sd_free_bytes(std::uint64_t &free_bytes);
 // Call on every application loop; takes one snapshot when the 10s deadline is
 // due.
 void poll_logger(const PmsSnapshot &pms);

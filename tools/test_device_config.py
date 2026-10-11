@@ -1,7 +1,8 @@
 """Exercise real shared configuration/log code against host platform fakes.
 
-NVS puts commit separately; failure tests establish runtime atomicity and error
-reporting, not transactional persistence across keys or power-loss durability.
+Settings persist as one CRC-checked NVS blob with legacy per-key fallback.
+Failure tests establish runtime atomicity, fallback and error reporting, not
+NVS power-loss durability on hardware.
 """
 
 from __future__ import annotations
@@ -38,7 +39,8 @@ def main() -> None:
                     *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         for scenario in ("headless", "screen", "migration", "validation",
-                         "credentials", "sensor", "nvs", "unavailable", "time-location"):
+                         "credentials", "sensor", "nvs", "unavailable", "time-location",
+                         "blob", "legacy", "torn"):
             result = subprocess.run([str(executable), scenario],
                                     capture_output=True, text=True)
             if result.returncode:
@@ -50,7 +52,8 @@ def main() -> None:
                 assert "pin" not in document["ble"]
                 assert "psk" not in document["wifi"]
                 assert "token" not in document["lan"]
-    print("Shared configuration: defaults, migration, validation, secrecy and NVS failures passed")
+    print("Shared configuration: defaults, migration, validation, secrecy, blob "
+          "fallback and NVS failures passed")
 
 
 if __name__ == "__main__":

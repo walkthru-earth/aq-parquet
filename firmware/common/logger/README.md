@@ -53,10 +53,21 @@ CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never
 mix; station location snapshots never mix either. Unknown UTC uses the `unsynced`
-Hive tree. Finalization writes/syncs the
+Hive tree and rotates on the same window measured on the boot's monotonic clock.
+Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
-`.partial` files are retained under quarantine. No recovery, deletion, retention,
-cloud upload or formatting is performed. RAM batches can be lost on reset;
+`.partial` files are retained under `quarantine/<station>/<partition>/`, at boot
+and right after a same-boot failure; a partial whose finalized sibling exists is
+left in place as a crosslink suspect. No recovery, deletion, retention, cloud
+upload or formatting is performed.
+
+The SD space governor (`src/storage_governor.h`) is pure and header-only. Ready
+and degraded write; full (below a 32 MiB reserve) finalizes the open file, raises
+`PARQUET ALARM storage=full` and drops new rows; retry follows any write, close,
+rename or mount failure and probes on a 10 s to 10 min backoff, remounting through
+the optional `storage_remount` hook. Boards supply `storage_free_bytes`,
+`storage_cluster_bytes` and `storage_remount`; `firmware/common/src/fat_volume.h`
+has the FatFs helpers. STATUS carries `sd_state` (0 to 3). RAM batches can be lost on reset;
 footerless completed row groups need explicit host recovery. fsync is not proof
 of power-cut durability.
 
@@ -73,7 +84,9 @@ See [time and location](../../../docs/shared/time-and-location.md) for owner pol
 
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,
 `interval` (600/900/1800/3600), `codec none`, `codec lz4`, and `codec-test`. Codec
-comparison files remain separately labeled duplicate-row benchmark artifacts.
+comparison files remain separately labeled duplicate-row benchmark artifacts under
+`Config::benchmark_directory` (`/sd/bench`), outside the listed archive. Their 4 KiB
+staging buffer is borrowed from PSRAM only while the command runs.
 
 Startup scans archive entries/stats and retained partials on the storage worker,
 then emits one bounded `PARQUET SCAN` summary. It does not print every archived
@@ -109,8 +122,8 @@ ownership. It does not flash hardware. The fixture chooses OPI PSRAM purely for
 compilation; the board adapter owns the physical board's verified PSRAM mode.
 `pixi run python tools/test_logger_status.py --sanitize` tests the actual shared
 STATUS formatter with every unsigned counter at its maximum and signed values
-at their longest representation. All fields fit the 480-byte JSON limit (398
-bytes uncompressed, 393 bytes LZ4); insufficient buffers fail rather than report
+at their longest representation. All fields fit the 480-byte JSON limit (472
+bytes uncompressed, 467 bytes LZ4); insufficient buffers fail rather than report
 truncated JSON as valid. Shared BLE/LAN cached snapshot capacities derive from
 that limit, and frames retain the 512-byte cap. BLE snapshots exceeding
 negotiated MTU − 3 are cached but not notified; long reads retain the complete

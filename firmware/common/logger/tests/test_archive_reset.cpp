@@ -40,14 +40,33 @@ int main() {
   char temporary[] = "/tmp/aq-archive-reset-XXXXXX";
   assert(::mkdtemp(temporary));
   card = temporary;
-  using aq::logger::detail::erase_archive;
+  using aq::logger::detail::archive_root_valid;
   std::uint32_t files = 0, directories = 0;
+  // Roots come from board config. Only the configured output root and the
+  // optional configured legacy root are accepted.
+  const char *output = "/sd/output", *legacy = "/sd/parquet";
+  const auto erase_archive = [&](const char *root, std::uint32_t &f,
+                                 std::uint32_t &d,
+                                 const aq::logger::detail::ArchiveResetIo &x) {
+    return aq::logger::detail::erase_archive(root, output, legacy, f, d, x);
+  };
   for (const char *path : {"/sd", "/sd/", "/sd/output/", "/sd/output/../",
-                           "/sd/other", "output"}) {
+                           "/sd/other", "output", "/sd/bench"}) {
     assert(!erase_archive(path, files, directories, io));
     assert(errno == EINVAL && files == 0 && directories == 0);
   }
   assert(!erase_archive(nullptr, files, directories, io));
+  for (const char *path :
+       {"/", "/sd", "/sd/", "sd/output", "/sd//output", "/sd/./output",
+        "/sd/../output", "/sd/output/..", "/sd/output/", ""})
+    assert(!archive_root_valid(path));
+  assert(archive_root_valid("/sd/output") && archive_root_valid("/card/a/b"));
+  // Invalid configured roots never authorize anything, even on an exact match.
+  for (const char *bad : {"/sd", "/", "/sd/../sd"}) {
+    assert(!aq::logger::detail::erase_archive(bad, bad, nullptr, files,
+                                              directories, io));
+    assert(errno == EINVAL && files == 0 && directories == 0);
+  }
   assert(erase_archive("/sd/output", files, directories, io));
   assert(files == 0 && directories == 0);
   write(card / "output");
@@ -95,11 +114,30 @@ int main() {
   assert(files == 3 && directories == 6);
   assert(!fs::exists(card / "output"));
   assert(fs::exists(card / "parquet/legacy.parquet"));
+  // A board without a legacy root never erases one, even at the old path.
+  assert(!aq::logger::detail::erase_archive("/sd/parquet", output, nullptr,
+                                            files, directories, io));
+  assert(errno == EINVAL && files == 3 && directories == 6);
+  assert(fs::exists(card / "parquet/legacy.parquet"));
   assert(erase_archive("/sd/parquet", files, directories, io));
   assert(files == 4 && directories == 7);
   assert(fs::exists(card / "unrelated.txt"));
   assert(erase_archive("/sd/output", files, directories, io));
   assert(files == 4 && directories == 7);
+
+  // Custom configured output root without a legacy root.
+  write(card / "custom/archive/station=a/x.parquet");
+  write(card / "output/kept.parquet");
+  assert(aq::logger::detail::erase_archive("/sd/custom/archive",
+                                           "/sd/custom/archive", nullptr, files,
+                                           directories, io));
+  assert(files == 5 && directories == 9);
+  assert(fs::exists(card / "custom") && !fs::exists(card / "custom/archive"));
+  assert(!aq::logger::detail::erase_archive("/sd/output", "/sd/custom/archive",
+                                            nullptr, files, directories, io));
+  assert(fs::exists(card / "output/kept.parquet"));
+  fs::remove_all(card / "output");
+  fs::remove_all(card / "custom");
 
   fs::create_directory_symlink(card, card / "output");
   assert(!erase_archive("/sd/output", files, directories, io));

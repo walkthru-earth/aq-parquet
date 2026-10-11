@@ -18,7 +18,8 @@ std::size_t format_status(const StatusSnapshot &view, char *out,
       out, capacity,
       "{\"up_s\":%lu,\"int_s\":%lu,\"buf\":%lu,\"fin\":%lu,\"drop\":%lu,"
       "\"err\":%lu,\"miss\":%lld,\"fail\":%u,\"codec\":\"%s\",\"utc\":%u,"
-      "\"gen\":%ld,\"clk\":%ld,\"rtc\":%ld,\"sd\":%u,\"sd_kib\":%lu,"
+      "\"gen\":%ld,\"clk\":%u,\"rtc\":%u,\"sd\":%u,\"sd_state\":%u,"
+      "\"sd_kib\":%lu,"
       "\"sd_used_kib\":%lu,\"heap\":%lu,\"part\":%lu,\"qf\":%lu,"
       "\"qb\":%llu,\"open\":%lu,\"open_rg\":%lu,\"dc\":%u,\"dr\":%s,"
       "\"utc_ms\":%s,\"clk_age_s\":%s}",
@@ -31,8 +32,9 @@ std::size_t format_status(const StatusSnapshot &view, char *out,
       static_cast<long long>(view.missed), view.failed ? 1U : 0U,
       view.codec == telemetry::Codec::Lz4Raw ? "LZ4_RAW" : "UNCOMPRESSED",
       view.utc ? 1U : 0U, static_cast<long>(view.generation),
-      static_cast<long>(view.clock_source), static_cast<long>(view.rtc_state),
-      view.storage_ok ? 1U : 0U, static_cast<unsigned long>(view.total_kib),
+      unsigned(view.clock_source), unsigned(view.rtc_state),
+      view.storage_ok ? 1U : 0U, unsigned(view.sd_state),
+      static_cast<unsigned long>(view.total_kib),
       static_cast<unsigned long>(view.used_kib),
       static_cast<unsigned long>(view.heap_free),
       static_cast<unsigned long>(view.partials),

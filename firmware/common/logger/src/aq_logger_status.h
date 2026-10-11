@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <parquet_writer.h>
+#include <storage_governor.h>
 
 namespace aqlogger {
 // Pure snapshot/formatter shared by the runtime and host boundary tests.
@@ -18,11 +19,14 @@ struct StatusSnapshot {
   telemetry::Codec codec = telemetry::Codec::Uncompressed;
   bool utc = false;
   std::int32_t generation = 0;
-  std::int32_t clock_source = 0;
-  std::int32_t rtc_state = 0;
+  // Small codes (clk 0 to 3, rtc 0 to 2) printed as u8 so the worst-case
+  // object keeps headroom under ble::kMaxJson.
+  std::uint8_t clock_source = 0;
+  std::uint8_t rtc_state = 0;
   std::int64_t utc_ms = 0;
   std::int64_t clock_age_seconds = 0;
   bool storage_ok = false;
+  storage::State sd_state = storage::State::Retry;
   std::uint32_t total_kib = 0;
   std::uint32_t used_kib = 0;
   std::uint32_t heap_free = 0;

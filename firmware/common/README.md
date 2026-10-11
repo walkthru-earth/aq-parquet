@@ -97,7 +97,7 @@ STATUS/LIVE JSON allows 480 bytes while BLE frames remain capped at 512. MTU 483
 can carry the largest JSON value in one notification. Publishers always cache
 the complete value and omit notifications exceeding negotiated MTU − 3; clients
 use characteristic long reads for complete cached snapshots. The host STATUS
-boundary test retains every key at 398 bytes even with the widest numeric values.
+boundary test retains every key at 472 bytes even with the widest numeric values.
 LIVE `t` is board-specific (CoreS3 IMU temperature or Waveshare PMS5003T ambient
 temperature); `rh` is Waveshare ambient RH. Absent keys are null. Without an RTC,
 `rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.

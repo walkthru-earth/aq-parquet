@@ -28,7 +28,7 @@ def main() -> None:
         result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
     snapshots = [json.loads(line) for line in result.stdout.splitlines()]
     expected_keys = {"up_s", "int_s", "buf", "fin", "drop", "err", "miss", "fail",
-                     "codec", "utc", "gen", "clk", "rtc", "sd", "sd_kib",
+                     "codec", "utc", "gen", "clk", "rtc", "sd", "sd_state", "sd_kib",
                      "sd_used_kib", "heap", "part", "qf", "qb", "open", "open_rg",
                      "dc", "dr", "utc_ms", "clk_age_s"}
     assert len(snapshots) == 3
@@ -37,11 +37,12 @@ def main() -> None:
         assert row.keys() == expected_keys
         assert row["miss"] == -(2**63)
         assert row["qb"] == 2**64 - 1
-        assert row["gen"] == row["clk"] == row["rtc"] == -(2**31)
+        assert row["gen"] == -(2**31) and row["clk"] == row["rtc"] == 255
         assert row["fail"] == row["utc"] == row["sd"] == 1
+        assert row["sd_state"] == 3  # 0 ready, 1 degraded, 2 full, 3 retry
         assert row["utc_ms"] == row["clk_age_s"] == 2**63 - 1
         assert row["dc"] == 2**16 - 1 and row["dr"] == 255
-        for key in expected_keys - {"miss", "qb", "gen", "clk", "rtc", "fail", "utc", "sd", "codec", "dc", "dr", "utc_ms", "clk_age_s"}:
+        for key in expected_keys - {"miss", "qb", "gen", "clk", "rtc", "fail", "utc", "sd", "sd_state", "codec", "dc", "dr", "utc_ms", "clk_age_s"}:
             assert row[key] == 2**32 - 1
     assert snapshots[2]["utc"] == 0
     assert snapshots[2]["utc_ms"] is None and snapshots[2]["clk_age_s"] is None

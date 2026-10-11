@@ -32,19 +32,22 @@ int main() {
   // Include the extra minus sign even though runtime miss/generation counts
   // are nonnegative: this also covers every signed representable length.
   view.missed = std::numeric_limits<std::int64_t>::min();
-  view.generation = view.clock_source = view.rtc_state =
-      std::numeric_limits<std::int32_t>::min();
+  view.generation = std::numeric_limits<std::int32_t>::min();
+  view.clock_source = view.rtc_state = std::numeric_limits<std::uint8_t>::max();
   view.quarantine_bytes = std::numeric_limits<std::uint64_t>::max();
   view.utc_ms = view.clock_age_seconds =
       std::numeric_limits<std::int64_t>::max();
   view.failed = view.utc = view.storage_ok = true;
+  view.sd_state = aqlogger::storage::State::Retry;
   std::array<char, ble::kMaxJson + 16> buffer{};
   for (const auto codec :
        {telemetry::Codec::Uncompressed, telemetry::Codec::Lz4Raw}) {
     view.codec = codec;
     const auto length =
         aqlogger::format_status(view, buffer.data(), buffer.size());
-    assert(length && length <= ble::kMaxJson);
+    // Keep room for a small key without crossing the 480-byte bound.
+    constexpr std::size_t kHeadroom = 4;
+    assert(length && length + kHeadroom <= ble::kMaxJson);
     assert(!ble::snapshot_notification_fits(length, 23));
     assert(!ble::snapshot_notification_fits(length, 247));
     assert(ble::snapshot_notification_fits(length, 517));
@@ -68,4 +71,16 @@ int main() {
   assert(std::strstr(buffer.data(), "\"utc_ms\":null,\"clk_age_s\":null}"));
   assert(std::strstr(buffer.data(), "\"dc\":0,\"dr\":null,"));
   std::cout << buffer.data() << '\n';
+  // sd_state is the documented wire number: 0 ready, 1 degraded, 2 full,
+  // 3 retry.
+  using aqlogger::storage::State;
+  const char *const wire[] = {"\"sd_state\":0,", "\"sd_state\":1,",
+                              "\"sd_state\":2,", "\"sd_state\":3,"};
+  const State states[] = {State::Ready, State::Degraded, State::Full,
+                          State::Retry};
+  for (std::size_t i = 0; i < 4; ++i) {
+    view.sd_state = states[i];
+    assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
+    assert(std::strstr(buffer.data(), wire[i]));
+  }
 }
