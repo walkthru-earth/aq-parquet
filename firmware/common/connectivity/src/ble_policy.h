@@ -10,6 +10,9 @@
 #include <cstdint>
 
 namespace ble {
+// The response queue holds one slot per credit inline.
+constexpr std::uint8_t kMaxNotifyCredits = 16;
+
 // Connection parameters in Bluetooth units: interval 1.25 ms, supervision
 // timeout 10 ms.
 struct ConnParams {
@@ -58,7 +61,8 @@ struct Options {
   // 100 to 200 ms, latency 4, 4 s timeout once the link is idle.
   ConnParams relaxed{80, 160, 4, 400};
   std::uint32_t relax_after_ms = 60000;
-  // Response frames the host may hold before the worker waits.
+  // Response frames the host may hold before the worker waits, at most
+  // kMaxNotifyCredits.
   std::uint8_t notify_credits = 4;
   // A frame outstanding and none sent for this long closes the link.
   std::uint32_t progress_timeout_ms = 15000;
@@ -75,9 +79,9 @@ constexpr bool valid_options(const Options &o) {
          o.data_len_octets <= 251 && o.data_len_time_us >= 328 &&
          o.data_len_time_us <= 17040 && valid_conn_params(o.active) &&
          valid_conn_params(o.relaxed) && o.notify_credits > 0 &&
-         o.progress_timeout_ms > 0 && o.wait_step_ms > 0 &&
-         o.wait_step_ms < o.progress_timeout_ms && o.refused_retry_ms > 0 &&
-         o.refused_retry_ms < o.progress_timeout_ms;
+         o.notify_credits <= kMaxNotifyCredits && o.progress_timeout_ms > 0 &&
+         o.wait_step_ms > 0 && o.wait_step_ms < o.progress_timeout_ms &&
+         o.refused_retry_ms > 0 && o.refused_retry_ms < o.progress_timeout_ms;
 }
 
 // How the host stack reported one response notification.
@@ -127,6 +131,144 @@ private:
   // The last credit return, or the first take after idle.
   std::int64_t progress_us_ = 0;
   bool open_ = false;
+};
+
+// One queued response frame. The bytes live in the transport, indexed by slot.
+struct TxSlot {
+  std::uint16_t length = 0;
+  std::uint16_t handle = 0;
+  std::uint32_t session = 0;
+};
+
+// The response transmit queue: credits plus a ring of one slot per credit. A
+// producer reserves the slot after the queued ones, fills its bytes outside
+// any lock and then publishes it. The host alone reads and pops the head.
+//
+// Every clear (open, close, a failed or foreign frame) starts a new epoch, so
+// a reservation made before it can never publish into the new ring, even when
+// the stream reopens for the same generation while the bytes are copied.
+// The caller serialises every call (tx_lock in the transport).
+class ResponseQueue {
+public:
+  struct Reservation {
+    aqsync::EnqueueResult result = aqsync::EnqueueResult::Closed;
+    std::uint8_t slot = 0;
+    std::uint32_t epoch = 0;
+  };
+  // What one NOTIFY_TX did. `current` is false when the frame belonged to a
+  // stream that is gone, `stalled` when a refused frame hit the timeout.
+  struct Outcome {
+    bool current = false;
+    bool stalled = false;
+  };
+
+  void configure(std::uint8_t slots, std::uint32_t progress_timeout_ms);
+  // A new stream for `generation`, all credits free and nothing queued.
+  void open(std::uint32_t generation, std::int64_t now_us);
+  // The stream ended. Every reserve() and publish() for it is Closed.
+  void close();
+
+  // Ok takes a credit and names the slot to fill, Full waits for a credit,
+  // Closed never retries.
+  Reservation reserve(std::uint32_t generation, std::int64_t now_us);
+  // Queues a filled slot. False when the stream closed or reopened since the
+  // reservation; the slot bytes are then ignored and no credit is owed.
+  bool publish(const Reservation &reservation, std::uint32_t generation,
+               std::uint16_t length, std::uint16_t handle);
+  // The head frame, if any.
+  bool front(TxSlot &slot, std::uint8_t &index) const;
+  // BLE_GAP_EVENT_NOTIFY_TX for the head frame. Sent pops it, Refused keeps
+  // it, Failed or a frame of another generation clears the queue.
+  Outcome on_notify_tx(std::uint32_t session, NotifyStatus status,
+                       std::int64_t now_us);
+
+  bool open_for(std::uint32_t generation) const {
+    return credits_.open_for(generation);
+  }
+  // Nothing queued and no credit out.
+  bool idle() const { return queued_ == 0 && credits_.idle(); }
+  std::uint8_t capacity() const { return credits_.capacity(); }
+  std::uint8_t queued() const { return queued_; }
+  std::uint32_t epoch() const { return epoch_; }
+
+private:
+  void clear();
+
+  NotifyCredits credits_;
+  TxSlot slots_[kMaxNotifyCredits]{};
+  std::uint8_t head_ = 0;
+  std::uint8_t queued_ = 0;
+  std::uint32_t epoch_ = 0;
+};
+
+// How a Response CCCD write changes the stream.
+enum class StreamChange : std::uint8_t {
+  None,   // nothing to do
+  Close,  // notifications off: end the stream at once
+  Reopen, // on again after an end: a new generation and a fresh stream
+};
+
+// `link_closing` is NimBLE's BLE_GAP_SUBSCRIBE_REASON_TERM during disconnect,
+// which the disconnect handler covers. `open` says whether the current
+// generation's stream is open, which it is from connect until it ends.
+constexpr StreamChange response_subscribe(bool notify, bool link_closing,
+                                          bool open) {
+  if (link_closing)
+    return StreamChange::None;
+  if (!notify)
+    return StreamChange::Close;
+  return open ? StreamChange::None : StreamChange::Reopen;
+}
+
+// What a request to terminate the link did.
+enum class CloseStart : std::uint8_t {
+  Started,        // the controller will report a disconnect
+  AlreadyClosing, // a terminate is already pending; it will report one
+  Failed,         // nothing pending, the link stays up
+};
+
+// `already_rc` is the stack's "a terminate is pending" code (BLE_HS_EALREADY).
+constexpr CloseStart classify_close(int rc, int already_rc) {
+  return rc == 0            ? CloseStart::Started
+         : rc == already_rc ? CloseStart::AlreadyClosing
+                            : CloseStart::Failed;
+}
+
+// Slow peer handling for a refused head frame. A stalled stream is logged and
+// closed once per session. A close that started, or one already pending for
+// another reason (a reboot, say), ends the retries; only a failed terminate
+// keeps them going so the close is tried again.
+class StallClose {
+public:
+  enum class Action : std::uint8_t {
+    Retry, // offer the frame again after refused_retry_ms
+    Close, // log once if log() says so, then terminate as SlowPeer
+    Wait,  // the close is under way, DISCONNECT clears the queue
+  };
+  Action on_refused(std::uint32_t session, bool stalled) const;
+  // True once per session, so the stall is logged a single time.
+  bool log(std::uint32_t session);
+  // The terminate result. Returns the action that follows it.
+  Action on_close(std::uint32_t session, CloseStart start);
+
+private:
+  // Connections count generations from 1, so 0 matches none.
+  std::uint32_t closing_ = 0;
+  std::uint32_t logged_ = 0;
+};
+
+// Advert flag flips. The first published advert only sets the baseline, so
+// the boot placeholder and the logger's first real flags are no flip and the
+// boot keeps its own fast window. Counter changes are never flips.
+class FlagWatch {
+public:
+  // A published advert was applied. True when its flag byte differs from the
+  // last published one.
+  bool on_publish(std::uint8_t flags);
+
+private:
+  bool seen_ = false;
+  std::uint8_t flags_ = 0;
 };
 
 // Two stage advertising. Fast until the window ends, then slow. Each event

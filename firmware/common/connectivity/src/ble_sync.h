@@ -194,7 +194,8 @@ void publish_status(const char *json, std::size_t length);
 void publish_advert(const AdvertState &state);
 
 // Advertises fast for Options::fast_window_ms, for example after a user wake.
-// Safe from any task; a no-op until begin() succeeded.
+// Safe from any task; a no-op until begin() succeeded. A documented hook for a
+// board wake gesture (button or touch); no board calls it yet.
 void wake_advertising();
 
 // From the storage worker. Queues one response frame, waiting for a notify

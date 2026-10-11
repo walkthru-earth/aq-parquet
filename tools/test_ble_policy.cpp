@@ -1,5 +1,6 @@
-// Exercise the real BLE link policy (notify credits, advert window, interval
-// mode and parameter validation) on the host. Run with
+// Exercise the real BLE link policy (notify credits, the response queue, slow
+// peer close, advert flag flips, advert window, interval mode and parameter
+// validation) on the host. Run with
 // tools/test_ble_policy.py.
 #include <ble_policy.h>
 
@@ -9,11 +10,17 @@
 
 using aqsync::EnqueueResult;
 using ble::AdvertWindow;
+using ble::CloseStart;
 using ble::ConnParams;
+using ble::FlagWatch;
 using ble::IntervalPolicy;
 using ble::NotifyCredits;
 using ble::NotifyStatus;
 using ble::Options;
+using ble::ResponseQueue;
+using ble::StallClose;
+using ble::StreamChange;
+using ble::TxSlot;
 
 namespace {
 constexpr std::int64_t kMs = 1000;
@@ -335,6 +342,206 @@ void test_options() {
   o = Options{};
   o.slow_adv_max = 16385;
   assert(!ble::valid_options(o));
+  o = Options{};
+  o.notify_credits = ble::kMaxNotifyCredits;
+  assert(ble::valid_options(o));
+  o.notify_credits = ble::kMaxNotifyCredits + 1;
+  assert(!ble::valid_options(o));
+}
+
+ResponseQueue queue_for(std::uint32_t generation, std::uint8_t slots = 4) {
+  ResponseQueue queue;
+  queue.configure(slots, 15000);
+  queue.open(generation, 0);
+  return queue;
+}
+
+// Reserves and publishes one frame whose length tags it.
+void push(ResponseQueue &queue, std::uint32_t generation, std::uint16_t tag) {
+  const auto r = queue.reserve(generation, 0);
+  assert(r.result == EnqueueResult::Ok);
+  assert(queue.publish(r, generation, tag, 7));
+}
+
+std::uint16_t pop(ResponseQueue &queue, std::uint32_t generation) {
+  TxSlot slot;
+  std::uint8_t index = 0;
+  assert(queue.front(slot, index));
+  assert(slot.session == generation && slot.handle == 7);
+  const auto outcome = queue.on_notify_tx(generation, NotifyStatus::Sent, 0);
+  assert(outcome.current && !outcome.stalled);
+  return slot.length;
+}
+
+void test_queue_order_and_wrap() {
+  auto queue = queue_for(1, 3);
+  TxSlot slot;
+  std::uint8_t index = 0;
+  assert(!queue.front(slot, index) && queue.idle());
+  std::uint16_t next = 1, expect = 1;
+  // Ten frames through three slots, never more than three in flight, come out
+  // in order across every wrap.
+  for (int round = 0; round < 4; ++round) {
+    while (queue.queued() < 3 && next <= 10)
+      push(queue, 1, next++);
+    if (next <= 10)
+      assert(queue.reserve(1, 0).result == EnqueueResult::Full);
+    while (queue.queued())
+      assert(pop(queue, 1) == expect++);
+  }
+  assert(expect == 11 && queue.idle());
+}
+
+// The review's race: a frame is reserved while two are queued, the stream
+// closes and reopens for the same generation while the bytes are copied, and
+// the late publish must not land in the new ring.
+void test_reopen_same_generation_rejects_late_publish() {
+  auto queue = queue_for(5, 3);
+  push(queue, 5, 1);
+  push(queue, 5, 2);
+  const auto late = queue.reserve(5, 0);
+  assert(late.result == EnqueueResult::Ok && late.slot == 2);
+  const auto before = queue.epoch();
+  queue.close();
+  assert(queue.epoch() != before);
+  queue.open(5, 0);
+  assert(queue.open_for(5) && queue.idle());
+  assert(!queue.publish(late, 5, 3, 7));
+  TxSlot slot;
+  std::uint8_t index = 0;
+  assert(!queue.front(slot, index));
+  // The new stream starts at slot 0 and keeps its own order.
+  push(queue, 5, 10);
+  assert(queue.front(slot, index) && index == 0 && slot.length == 10);
+  assert(pop(queue, 5) == 10 && queue.idle());
+}
+
+void test_close_rejects_publish() {
+  auto queue = queue_for(2);
+  const auto r = queue.reserve(2, 0);
+  queue.close();
+  assert(!queue.publish(r, 2, 1, 7));
+  assert(queue.reserve(2, 0).result == EnqueueResult::Closed);
+  // A reservation for one generation never publishes into another.
+  queue.open(3, 0);
+  const auto other = queue.reserve(3, 0);
+  assert(!queue.publish(other, 2, 1, 7));
+  assert(queue.publish(other, 3, 1, 7));
+}
+
+void test_queue_refused_failed_and_foreign() {
+  auto queue = queue_for(4);
+  push(queue, 4, 1);
+  push(queue, 4, 2);
+  auto outcome = queue.on_notify_tx(4, NotifyStatus::Refused, 1 * kSec);
+  assert(outcome.current && !outcome.stalled && queue.queued() == 2);
+  // Refused until the progress timeout marks the stream stalled.
+  outcome = queue.on_notify_tx(4, NotifyStatus::Refused, 15 * kSec);
+  assert(outcome.current && outcome.stalled && queue.queued() == 2);
+  // A frame of an older generation clears without touching credits.
+  const auto epoch = queue.epoch();
+  outcome = queue.on_notify_tx(3, NotifyStatus::Sent, 15 * kSec);
+  assert(!outcome.current && queue.queued() == 0 && queue.epoch() != epoch);
+  queue.open(4, 16 * kSec);
+  push(queue, 4, 1);
+  outcome = queue.on_notify_tx(4, NotifyStatus::Failed, 16 * kSec);
+  assert(outcome.current && !outcome.stalled && queue.queued() == 0);
+  assert(!queue.open_for(4));
+  assert(queue.reserve(4, 0).result == EnqueueResult::Closed);
+}
+
+void test_configure_caps_slots() {
+  ResponseQueue queue;
+  queue.configure(200, 15000);
+  assert(queue.capacity() == ble::kMaxNotifyCredits);
+  queue.open(1, 0);
+  for (int i = 0; i < ble::kMaxNotifyCredits; ++i)
+    push(queue, 1, static_cast<std::uint16_t>(i + 1));
+  assert(queue.reserve(1, 0).result == EnqueueResult::Full);
+}
+
+void test_response_subscribe() {
+  using ble::response_subscribe;
+  // The first subscribe after connect finds the stream already open.
+  static_assert(response_subscribe(true, false, true) == StreamChange::None,
+                "first subscribe");
+  static_assert(response_subscribe(false, false, true) == StreamChange::Close,
+                "unsubscribe closes at once");
+  static_assert(response_subscribe(false, false, false) == StreamChange::Close,
+                "a second unsubscribe is harmless");
+  static_assert(response_subscribe(true, false, false) == StreamChange::Reopen,
+                "resubscribe opens a new generation");
+  static_assert(response_subscribe(false, true, true) == StreamChange::None,
+                "disconnect leaves it to DISCONNECT");
+  static_assert(response_subscribe(true, true, false) == StreamChange::None,
+                "disconnect never reopens");
+  // Unsubscribe, resubscribe: the late frame of the old stream cannot land.
+  std::uint32_t generation = 8;
+  auto queue = queue_for(generation);
+  push(queue, generation, 1);
+  const auto late = queue.reserve(generation, 0);
+  assert(response_subscribe(false, false, queue.open_for(generation)) ==
+         StreamChange::Close);
+  queue.close();
+  assert(response_subscribe(true, false, queue.open_for(generation)) ==
+         StreamChange::Reopen);
+  queue.open(++generation, 0);
+  assert(!queue.publish(late, generation - 1, 2, 7));
+  assert(!queue.publish(late, generation, 2, 7));
+  assert(queue.reserve(generation - 1, 0).result == EnqueueResult::Closed);
+  assert(queue.idle());
+}
+
+void test_classify_close() {
+  constexpr int kAlready = 2; // BLE_HS_EALREADY
+  static_assert(ble::classify_close(0, kAlready) == CloseStart::Started, "");
+  static_assert(ble::classify_close(kAlready, kAlready) ==
+                    CloseStart::AlreadyClosing,
+                "");
+  static_assert(ble::classify_close(7, kAlready) == CloseStart::Failed, "");
+}
+
+void test_stall_close() {
+  StallClose stall;
+  // Not stalled: retry, nothing logged.
+  assert(stall.on_refused(3, false) == StallClose::Action::Retry);
+  // Stalled while a reboot terminate is pending: EALREADY ends the retries
+  // and the stall is logged a single time.
+  assert(stall.on_refused(3, true) == StallClose::Action::Close);
+  assert(stall.log(3));
+  assert(stall.on_close(3, CloseStart::AlreadyClosing) ==
+         StallClose::Action::Wait);
+  for (int i = 0; i < 100; ++i) {
+    assert(stall.on_refused(3, true) == StallClose::Action::Wait);
+    assert(!stall.log(3));
+  }
+  // A failed terminate keeps retrying but never logs twice.
+  assert(stall.on_refused(4, true) == StallClose::Action::Close);
+  assert(stall.log(4));
+  assert(stall.on_close(4, CloseStart::Failed) == StallClose::Action::Retry);
+  assert(stall.on_refused(4, true) == StallClose::Action::Close);
+  assert(!stall.log(4));
+  assert(stall.on_close(4, CloseStart::Started) == StallClose::Action::Wait);
+  assert(stall.on_refused(4, true) == StallClose::Action::Wait);
+  // A new session is judged afresh.
+  assert(stall.on_refused(5, true) == StallClose::Action::Close);
+  assert(stall.log(5));
+}
+
+void test_flag_watch() {
+  FlagWatch watch;
+  // Boot: the placeholder was applied at sync without a publish; the first
+  // publish (SD present, no UTC) only sets the baseline.
+  assert(!watch.on_publish(0x05));
+  assert(!watch.on_publish(0x05));
+  // A real flip, then back.
+  assert(watch.on_publish(0x04));
+  assert(watch.on_publish(0x05));
+  assert(!watch.on_publish(0x05));
+  // A first publish equal to the placeholder is no flip either.
+  FlagWatch same;
+  assert(!same.on_publish(0x01));
+  assert(same.on_publish(0x03));
 }
 } // namespace
 
@@ -350,6 +557,15 @@ int main() {
   test_interval_policy();
   test_conn_params();
   test_options();
+  test_queue_order_and_wrap();
+  test_reopen_same_generation_rejects_late_publish();
+  test_close_rejects_publish();
+  test_queue_refused_failed_and_foreign();
+  test_configure_caps_slots();
+  test_response_subscribe();
+  test_classify_close();
+  test_stall_close();
+  test_flag_watch();
   std::printf("ble policy passed\n");
   return 0;
 }

@@ -68,13 +68,19 @@ std::atomic<std::int64_t> pairing_deadline{0};
 std::atomic<DisconnectReason> pending_reason{DisconnectReason::Unknown};
 CloseClaim close_claim;
 
-// A failed terminate leaves no stale reason to mislabel the next connection.
-bool terminate(std::uint16_t handle, DisconnectReason reason) {
-  pending_reason = reason;
-  if (ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM) == 0)
-    return true;
-  pending_reason = DisconnectReason::Unknown;
-  return false;
+// A terminate that did not start puts the previous reason back, so neither a
+// failure nor a second request while one is pending (BLE_HS_EALREADY, say a
+// slow peer close during a reboot close) relabels the close. The restore only
+// happens if DISCONNECT has not consumed the reason meanwhile.
+CloseStart terminate(std::uint16_t handle, DisconnectReason reason) {
+  const auto previous = pending_reason.exchange(reason);
+  const auto start = classify_close(
+      ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM), BLE_HS_EALREADY);
+  if (start != CloseStart::Started) {
+    auto expected = reason;
+    pending_reason.compare_exchange_strong(expected, previous);
+  }
+  return start;
 }
 config::PairMode mode = config::PairMode::Random;
 std::uint32_t fixed_passkey = 0;
@@ -100,23 +106,19 @@ Options options;
 
 // Response transmit queue ("Link parameters and notify flow" in the protocol
 // doc). One slot per notify credit. A producer, serialised by response_mutex,
-// takes a credit and reserves the slot after the queued ones, fills it outside
-// the lock and then publishes it. The host task alone sends and pops the head.
-// tx_lock guards credits, the slot metadata, tx_head and tx_queued.
-struct TxSlot {
-  std::uint16_t length = 0, handle = 0;
-  std::uint32_t session = 0;
-};
+// reserves a slot, fills its bytes outside the lock and then publishes it. The
+// host task alone sends and pops the head. tx_lock guards `responses`.
 portMUX_TYPE tx_lock = portMUX_INITIALIZER_UNLOCKED;
-NotifyCredits credits;
+ResponseQueue responses;
 std::uint8_t *tx_frames = nullptr; // capacity x kMaxFrame
-TxSlot *tx_slots = nullptr;
-std::uint8_t tx_capacity = 0, tx_head = 0, tx_queued = 0;
 // Host task only: the NOTIFY_TX status for the frame being submitted.
 bool awaiting_tx = false, notify_tx_seen = false;
 int notify_tx_status = 0;
-std::uint32_t stall_reported = 0; // generation already closed as SlowPeer
-ble_npl_callout retry_callout{}, relax_callout{}, advertise_callout{};
+StallClose stall;     // host task only
+FlagWatch flag_watch; // host task only
+std::atomic<bool> advert_published{false};
+ble_npl_callout retry_callout{}, relax_callout{}, advertise_callout{},
+    link_callout{};
 AdvertWindow adv_window; // host task only
 IntervalPolicy interval; // host task only
 std::atomic<bool> adv_fast{false};
@@ -160,22 +162,24 @@ int gap_event(ble_gap_event *event, void *);
 bool start_advertising();
 void speed_up_advertising();
 
+// Runs for every publish_advert() that changed the word, and for the first
+// one, which sets the flag baseline even when it matches the placeholder.
 void refresh_advert(ble_npl_event *) {
-  const auto previous = applied_advert.load();
-  if (desired_advert.load() == previous)
-    return;
-  if (!apply_advert_data()) {
-    aqlog.println("BLE ERROR operation=advert-refresh");
-    return;
+  if (desired_advert.load() != applied_advert.load()) {
+    if (!apply_advert_data()) {
+      aqlog.println("BLE ERROR operation=advert-refresh");
+      return;
+    }
+    touch_ui();
+    const auto word = applied_advert.load();
+    aqlog.printf("BLE ADV flags=0x%02x fin=%lu\n", unsigned(word & 0xffU),
+                 static_cast<unsigned long>(word >> 8));
   }
-  touch_ui();
-  const auto word = applied_advert.load();
-  aqlog.printf("BLE ADV flags=0x%02x fin=%lu\n", unsigned(word & 0xffU),
-               static_cast<unsigned long>(word >> 8));
   // A scanner filtering on the flag byte must see a flip within a minute, so
   // a flag change advertises fast for flag_window_ms. The counter alone does
-  // not. The first apply after boot is no flip; the boot window covers it.
-  if (previous != ~0ULL && (previous & 0xffU) != (word & 0xffU)) {
+  // not. The sync placeholder is never published, so the logger's first
+  // flags are no flip and the boot keeps its fast_window_ms.
+  if (flag_watch.on_publish(static_cast<std::uint8_t>(applied_advert.load()))) {
     adv_window.extend(esp_timer_get_time(), options.flag_window_ms);
     speed_up_advertising();
   }
@@ -261,17 +265,11 @@ NotifyStatus classify_notify(int rc) {
   return NotifyStatus::Failed;
 }
 
-// Empties the queue and wakes a waiting producer, which then sees Closed or
-// fresh credits. Caller holds tx_lock.
-void clear_queue_locked() {
-  tx_head = 0;
-  tx_queued = 0;
-}
-
+// Ends the response stream and wakes a waiting producer, which then sees
+// Closed.
 void close_responses() {
   portENTER_CRITICAL(&tx_lock);
-  credits.close();
-  clear_queue_locked();
+  responses.close();
   portEXIT_CRITICAL(&tx_lock);
   if (space_event)
     xSemaphoreGive(space_event);
@@ -280,7 +278,7 @@ void close_responses() {
 
 bool responses_idle() {
   portENTER_CRITICAL(&tx_lock);
-  const bool idle = tx_queued == 0 && credits.idle();
+  const bool idle = responses.idle();
   portEXIT_CRITICAL(&tx_lock);
   return idle;
 }
@@ -314,11 +312,7 @@ void drain_responses(ble_npl_event *) {
     TxSlot slot;
     std::uint8_t head = 0;
     portENTER_CRITICAL(&tx_lock);
-    const bool any = tx_queued != 0;
-    if (any) {
-      head = tx_head;
-      slot = tx_slots[head];
-    }
+    const bool any = responses.front(slot, head);
     portEXIT_CRITICAL(&tx_lock);
     if (!any)
       break;
@@ -339,16 +333,9 @@ void drain_responses(ble_npl_event *) {
     const auto status = classify_notify(notify_tx_seen ? notify_tx_status : rc);
     const auto now = esp_timer_get_time();
     portENTER_CRITICAL(&tx_lock);
-    const bool current = credits.on_notify_tx(slot.session, status, now);
-    if (!current || status == NotifyStatus::Failed) {
-      clear_queue_locked();
-    } else if (status == NotifyStatus::Sent) {
-      tx_head = static_cast<std::uint8_t>((tx_head + 1) % tx_capacity);
-      --tx_queued;
-    }
-    const bool stalled =
-        current && status == NotifyStatus::Refused && credits.stalled(now);
+    const auto outcome = responses.on_notify_tx(slot.session, status, now);
     portEXIT_CRITICAL(&tx_lock);
+    const bool current = outcome.current;
     if (status == NotifyStatus::Sent && current) {
       interval.on_activity(now);
       xSemaphoreGive(space_event);
@@ -367,19 +354,19 @@ void drain_responses(ble_npl_event *) {
       return;
     }
     // Refused. The host frees buffers without telling the application, so the
-    // head frame is offered again shortly, until the progress timeout.
-    if (stalled && stall_reported == slot.session)
-      return; // The close is under way; DISCONNECT clears the queue.
-    if (stalled) {
-      aqlog.printf("BLE SLOW timeout_ms=%lu\n",
-                   static_cast<unsigned long>(options.progress_timeout_ms));
-      if (terminate(slot.handle, DisconnectReason::SlowPeer)) {
-        stall_reported = slot.session;
-        return;
-      }
-      // The terminate did not start; keep retrying so the close is tried
-      // again rather than leaving the link wedged.
+    // head frame is offered again shortly, until the progress timeout. A
+    // stalled stream closes once; a terminate already pending for another
+    // reason counts, and only a failed one keeps the retries going.
+    auto action = stall.on_refused(slot.session, outcome.stalled);
+    if (action == StallClose::Action::Close) {
+      if (stall.log(slot.session))
+        aqlog.printf("BLE SLOW timeout_ms=%lu\n",
+                     static_cast<unsigned long>(options.progress_timeout_ms));
+      action = stall.on_close(
+          slot.session, terminate(slot.handle, DisconnectReason::SlowPeer));
     }
+    if (action == StallClose::Action::Wait)
+      return; // DISCONNECT clears the queue.
     ble_npl_callout_reset(&retry_callout,
                           ble_npl_time_ms_to_ticks32(options.refused_retry_ms));
     return;
@@ -400,21 +387,18 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
       !subscribed[Response].load() || generation.load() != session)
     return aqsync::EnqueueResult::Closed;
   portENTER_CRITICAL(&tx_lock);
-  const auto taken = credits.take(session, esp_timer_get_time());
-  const auto slot =
-      static_cast<std::uint8_t>((tx_head + tx_queued) % tx_capacity);
+  const auto reservation = responses.reserve(session, esp_timer_get_time());
   portEXIT_CRITICAL(&tx_lock);
-  if (taken != aqsync::EnqueueResult::Ok)
-    return taken;
+  if (reservation.result != aqsync::EnqueueResult::Ok)
+    return reservation.result;
   // The credit keeps this slot outside the queued range until it is published,
-  // so the host never reads it while it is filled.
-  std::memcpy(tx_frames + std::size_t(slot) * kMaxFrame, data, length);
+  // so the host never reads it while it is filled. A stream that closed or
+  // reopened meanwhile rejects the publish by epoch.
+  std::memcpy(tx_frames + std::size_t(reservation.slot) * kMaxFrame, data,
+              length);
   portENTER_CRITICAL(&tx_lock);
-  const bool open = credits.open_for(session);
-  if (open) {
-    tx_slots[slot] = {static_cast<std::uint16_t>(length), handle, session};
-    ++tx_queued;
-  }
+  const bool open = responses.publish(
+      reservation, session, static_cast<std::uint16_t>(length), handle);
   portEXIT_CRITICAL(&tx_lock);
   if (!open)
     return aqsync::EnqueueResult::Closed;
@@ -456,6 +440,15 @@ void relax_on_host(ble_npl_event *) {
     ble_npl_callout_reset(&relax_callout, ble_npl_time_ms_to_ticks32(rearm_ms));
 }
 
+// The active interval request at connect. A procedure in progress refuses it,
+// so it is tried again every second while the link stays up and active.
+void request_active_on_host(ble_npl_event *) {
+  if (!connected.load() || interval.relaxed())
+    return;
+  if (request_conn_params(conn_handle.load(), options.active, "active") != 0)
+    ble_npl_callout_reset(&link_callout, ble_npl_time_ms_to_ticks32(1000));
+}
+
 void request_link_parameters(std::uint16_t handle) {
   const int dle = ble_gap_set_data_len(handle, options.data_len_octets,
                                        options.data_len_time_us);
@@ -468,7 +461,8 @@ void request_link_parameters(std::uint16_t handle) {
                              unsigned(options.data_len_octets),
                              unsigned(options.data_len_time_us), dle,
                              options.prefer_2m_phy ? "2m" : "default", phy);
-  request_conn_params(handle, options.active, "active");
+  if (request_conn_params(handle, options.active, "active") != 0)
+    ble_npl_callout_reset(&link_callout, ble_npl_time_ms_to_ticks32(1000));
 }
 
 bool defer_error(Op op, Error code, const char *detail, std::uint32_t session) {
@@ -574,8 +568,7 @@ int gap_event(ble_gap_event *event, void *) {
     {
       const auto now = esp_timer_get_time();
       portENTER_CRITICAL(&tx_lock);
-      credits.open(generation.load(), now);
-      clear_queue_locked();
+      responses.open(generation.load(), now);
       portEXIT_CRITICAL(&tx_lock);
       adv_fast = false;
       interval.connect(now);
@@ -607,6 +600,7 @@ int gap_event(ble_gap_event *event, void *) {
     std::fill(std::begin(subscribed), std::end(subscribed), false);
     close_responses();
     ble_npl_callout_stop(&relax_callout);
+    ble_npl_callout_stop(&link_callout);
     aqlog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
                  disconnect_reason_name(reason), unsigned(hci & 0xff));
     // A phone that just lost the link reconnects fastest from a fast advert.
@@ -627,23 +621,34 @@ int gap_event(ble_gap_event *event, void *) {
     }
     return 0;
   case BLE_GAP_EVENT_SUBSCRIBE:
-    if (event->subscribe.conn_handle == conn_handle.load())
-      for (unsigned i = 0; i < Count; ++i)
-        if (event->subscribe.attr_handle == value_handles[i]) {
-          subscribed[i] = event->subscribe.cur_notify != 0;
-          // An unsubscribe ends the response stream and closes its credits.
-          // Subscribing again on the same link starts a fresh stream.
-          if (i == Response && event->subscribe.cur_notify &&
-              connected.load()) {
-            const auto session = generation.load();
-            portENTER_CRITICAL(&tx_lock);
-            if (!credits.open_for(session)) {
-              credits.open(session, esp_timer_get_time());
-              clear_queue_locked();
-            }
-            portEXIT_CRITICAL(&tx_lock);
-          }
-        }
+    if (event->subscribe.conn_handle != conn_handle.load())
+      return 0;
+    for (unsigned i = 0; i < Count; ++i) {
+      if (event->subscribe.attr_handle != value_handles[i])
+        continue;
+      const bool notify = event->subscribe.cur_notify != 0;
+      subscribed[i] = notify;
+      if (i != Response || !connected.load())
+        continue;
+      // Turning response notifications off ends the stream at once. On again
+      // starts a new generation, so requests and handles of the old stream
+      // end Closed or ERROR 5 instead of resuming mid stream.
+      portENTER_CRITICAL(&tx_lock);
+      const bool open = responses.open_for(generation.load());
+      portEXIT_CRITICAL(&tx_lock);
+      const auto change = response_subscribe(
+          notify, event->subscribe.reason == BLE_GAP_SUBSCRIBE_REASON_TERM,
+          open);
+      if (change == StreamChange::Close) {
+        close_responses();
+      } else if (change == StreamChange::Reopen) {
+        const auto session = ++generation;
+        portENTER_CRITICAL(&tx_lock);
+        responses.open(session, esp_timer_get_time());
+        portEXIT_CRITICAL(&tx_lock);
+        aqlog.record_only().println("BLE STREAM reopen");
+      }
+    }
     return 0;
   case BLE_GAP_EVENT_ENC_CHANGE:
     if (event->enc_change.conn_handle != conn_handle.load())
@@ -754,6 +759,7 @@ void on_reset(int reason) {
   std::fill(std::begin(subscribed), std::end(subscribed), false);
   close_responses();
   ble_npl_callout_stop(&relax_callout);
+  ble_npl_callout_stop(&link_callout);
   touch_ui();
   aqlog.printf("BLE RESET reason=%d\n", reason);
 }
@@ -846,16 +852,14 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   if (!startup_done || !response_mutex || !clear_mutex || !clear_done ||
       !immediate_errors || !space_event)
     return false;
-  tx_capacity = options.notify_credits;
-  credits.configure(tx_capacity, options.progress_timeout_ms);
-  const std::size_t frame_bytes = std::size_t(tx_capacity) * kMaxFrame;
+  responses.configure(options.notify_credits, options.progress_timeout_ms);
+  const std::size_t frame_bytes = std::size_t(responses.capacity()) * kMaxFrame;
   tx_frames = static_cast<std::uint8_t *>(
       heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!tx_frames)
     tx_frames = static_cast<std::uint8_t *>(
         heap_caps_malloc(frame_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  tx_slots = new (std::nothrow) TxSlot[tx_capacity];
-  if (!tx_frames || !tx_slots)
+  if (!tx_frames)
     return false;
   // config::load() owns NVS initialization. Do not erase settings on failure.
   const auto rc = nimble_port_init();
@@ -919,6 +923,8 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
                        relax_on_host, nullptr);
   ble_npl_callout_init(&advertise_callout, nimble_port_get_dflt_eventq(),
                        advertise_on_host, nullptr);
+  ble_npl_callout_init(&link_callout, nimble_port_get_dflt_eventq(),
+                       request_active_on_host, nullptr);
   if (xTaskCreate(error_task, "aq_ble_error", 3072, nullptr, 4, nullptr) !=
       pdPASS)
     return false;
@@ -941,7 +947,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
                name_text, kServiceUuid, unsigned(kMaxMtu),
                static_cast<unsigned long>(bonds.load()),
                config::pair_name(mode), unsigned(kAdvertVersion),
-               unsigned(boot16), unsigned(tx_capacity));
+               unsigned(boot16), unsigned(responses.capacity()));
   return true;
 }
 
@@ -1008,7 +1014,11 @@ void publish_advert(const AdvertState &state) {
   if (!enabled.load())
     return;
   const auto next = pack_advert(state);
-  if (desired_advert.exchange(next) != next || applied_advert.load() != next)
+  // The first publish always reaches the host, which takes its flags as the
+  // baseline for flips even when they match the sync placeholder.
+  const bool first = !advert_published.exchange(true);
+  if (desired_advert.exchange(next) != next || applied_advert.load() != next ||
+      first)
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &advert_event);
 }
 
@@ -1106,6 +1116,7 @@ bool send_error(Op op, Error code, const char *detail,
   return send_response(frame, length, expected_generation);
 }
 
+// Future hook for a board wake gesture, no caller yet (see ble_sync.h).
 void wake_advertising() {
   if (enabled.load())
     ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &wake_event);

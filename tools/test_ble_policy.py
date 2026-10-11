@@ -29,8 +29,9 @@ def main() -> None:
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
     print("BLE policy: credits Ok/Full/Closed, refused/failed, stale generation, "
-          "15 s stall clock, cancel, advert window, interval mode and link "
-          "limits passed")
+          "15 s stall clock, cancel, response ring order and wrap, reopen epoch "
+          "and resubscribe, EALREADY stall close, boot flag baseline, advert "
+          "window, interval mode and link limits passed")
 
 
 if __name__ == "__main__":
