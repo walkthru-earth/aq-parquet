@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 void sample_contract() {
@@ -143,6 +144,43 @@ void wire_contract() {
   assert((crc_update(0xffffffffU, nullptr, 0) ^ 0xffffffffU) == 0);
 }
 
+// CRC-32/ISO-HDLC golden vectors shared with the phone
+// (docs/shared/ble-sync-protocol.md). crc32_update is the bitwise loop on the
+// host and the ROM routine on the device; test_common.py also builds this
+// file against a host stand-in of that ROM routine.
+std::uint32_t crc_of(const std::uint8_t *data, std::size_t size,
+                     std::size_t block) {
+  std::uint32_t crc = 0xffffffffU;
+  for (std::size_t done = 0; done < size;) {
+    const std::size_t part = size - done < block ? size - done : block;
+    crc = aq::sync::crc32_update(crc, data + done, part);
+    done += part;
+  }
+  return crc ^ 0xffffffffU;
+}
+
+void crc_contract() {
+  using aq::sync::crc_update;
+  assert(crc_of(nullptr, 0, 4096) == 0);
+  const auto *check = reinterpret_cast<const std::uint8_t *>("123456789");
+  assert(crc_of(check, 9, 4096) == 0xcbf43926U);
+  assert(crc_of(check, 9, 1) == 0xcbf43926U);
+  const char *fox = "The quick brown fox jumps over the lazy dog";
+  assert(crc_of(reinterpret_cast<const std::uint8_t *>(fox), std::strlen(fox),
+                7) == 0x414fa339U);
+  // 1 MiB fixture, the largest finalized file OPEN accepts.
+  std::vector<std::uint8_t> fixture(1U << 20);
+  for (std::size_t i = 0; i < fixture.size(); ++i)
+    fixture[i] =
+        static_cast<std::uint8_t>(((i * 31 + 7) & 0xff) ^ ((i >> 12) & 0xff));
+  const auto bitwise =
+      crc_update(0xffffffffU, fixture.data(), fixture.size()) ^ 0xffffffffU;
+  assert(bitwise == 0x391e95d7U);
+  for (const std::size_t block : {std::size_t(512), std::size_t(4096),
+                                  std::size_t(65537), fixture.size()})
+    assert(crc_of(fixture.data(), fixture.size(), block) == bitwise);
+}
+
 void archive_contract() {
   using namespace aq::sync;
   assert(safe_parquet_name("station=a/year=2026/part-01.parquet"));
@@ -184,5 +222,6 @@ int main() {
   sample_contract();
   clock_contract();
   wire_contract();
+  crc_contract();
   archive_contract();
 }

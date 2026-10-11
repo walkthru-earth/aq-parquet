@@ -4,6 +4,10 @@
 #include <cstdint>
 #include <cstring>
 
+#if defined(ESP_PLATFORM) || defined(AQ_SYNC_ROM_CRC)
+#include <esp_rom_crc.h>
+#endif
+
 namespace aq {
 namespace sync {
 inline void put_u16(std::uint8_t *out, std::uint16_t value) {
@@ -43,6 +47,26 @@ inline std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t *data,
       crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
   }
   return crc;
+}
+
+// Same running state as crc_update. Device builds use the ESP32-S3 ROM table
+// routine, which inverts its state on entry and exit (esp_rom_crc.h). Host
+// builds keep the bitwise loop. tools/test_common.py pins both to the same
+// golden vectors.
+inline std::uint32_t crc32_update(std::uint32_t crc, const std::uint8_t *data,
+                                  std::size_t size) {
+#if defined(ESP_PLATFORM) || defined(AQ_SYNC_ROM_CRC)
+  while (size) {
+    const auto part = size > 0x10000 ? std::uint32_t(0x10000)
+                                     : static_cast<std::uint32_t>(size);
+    crc = ~esp_rom_crc32_le(~crc, data, part);
+    data += part;
+    size -= part;
+  }
+  return crc;
+#else
+  return crc_update(crc, data, size);
+#endif
 }
 
 // Relative finalized-file names accepted by the sync protocol. Mount roots
