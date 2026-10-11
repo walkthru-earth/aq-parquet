@@ -4,10 +4,13 @@
 
 #include <array>
 #include <cassert>
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <string>
+#include <sys/resource.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -43,6 +46,32 @@ unsigned descriptor_count() {
       ++count;
   return count;
 }
+// Fills every descriptor below the highest one in use and lowers the soft
+// limit to it, so the next open fails with EMFILE until restore().
+struct DescriptorLimit {
+  rlimit original{};
+  std::vector<int> fillers;
+  DescriptorLimit() {
+    assert(::getrlimit(RLIMIT_NOFILE, &original) == 0);
+    int highest = 0;
+    for (int descriptor = 0; descriptor < 1024; ++descriptor)
+      if (::fcntl(descriptor, F_GETFD) >= 0)
+        highest = descriptor;
+    for (int descriptor = 0; descriptor < highest; ++descriptor)
+      if (::fcntl(descriptor, F_GETFD) < 0) {
+        assert(::dup2(0, descriptor) == descriptor);
+        fillers.push_back(descriptor);
+      }
+    rlimit lowered = original;
+    lowered.rlim_cur = static_cast<rlim_t>(highest + 1);
+    assert(::setrlimit(RLIMIT_NOFILE, &lowered) == 0);
+  }
+  ~DescriptorLimit() {
+    assert(::setrlimit(RLIMIT_NOFILE, &original) == 0);
+    for (const int descriptor : fillers)
+      ::close(descriptor);
+  }
+};
 struct Frame {
   ble::Link link;
   std::uint8_t peer;
@@ -67,7 +96,13 @@ struct Fixture {
   unsigned partials = 70000;
   unsigned list_repeats = 1;
   unsigned listed = 0, progress = 0, locks = 0, lock_depth = 0;
+  unsigned checks = 0, buffer_requests = 0;
+  std::int64_t clock_us = 0;
+  std::array<std::array<char, aqsync::ArchiveSession::kReadBufferBytes>,
+             aqsync::ArchiveSession::kReadHandles>
+      buffers{};
   bool complete = true;
+  bool cache_hit = false;
   bool listing_complete = true;
   std::size_t refuse_frame = 0;
   std::size_t disconnect_frame = 0;
@@ -116,13 +151,21 @@ struct Fixture {
               std::snprintf(path, size, "%s/%s", f.directory.c_str(), name);
           return n > 0 && static_cast<std::size_t>(n) < size;
         },
-        [](void *ctx, const char *, std::uint32_t &size, std::uint32_t &crc) {
+        // Reads the stream OPEN handed over, as the device owner does on a
+        // cache miss. The session must rewind it before READ.
+        [](void *ctx, const char *, FILE *file, aqsync::FileCheck &check) {
           auto &f = *static_cast<Fixture *>(ctx);
-          size = f.bytes.size();
-          crc = crc_update(0xffffffffU, f.bytes.data(), size) ^ 0xffffffffU;
-          return f.complete &&
-                 parquet_complete(size, f.bytes.data(),
-                                  f.bytes.data() + f.bytes.size() - 8);
+          assert(f.lock_depth == 0 && file);
+          ++f.checks;
+          std::vector<std::uint8_t> data(f.bytes.size() + 1);
+          const std::size_t count =
+              std::fread(data.data(), 1, data.size(), file);
+          check.size = static_cast<std::uint32_t>(count);
+          check.crc =
+              crc32_update(0xffffffffU, data.data(), count) ^ 0xffffffffU;
+          check.cached = f.cache_hit;
+          return f.complete && count >= 12 &&
+                 parquet_complete(count, data.data(), data.data() + count - 8);
         },
         [](void *) { return std::uint32_t(123); },
         [](void *) { return std::uint32_t(45); },
@@ -138,7 +181,14 @@ struct Fixture {
         },
         [](void *ctx, const char *line) {
           static_cast<Fixture *>(ctx)->logs.push_back(line);
-        }};
+        },
+        [](void *ctx, std::size_t index) -> void * {
+          auto &f = *static_cast<Fixture *>(ctx);
+          assert(index < f.buffers.size() && f.lock_depth == 1);
+          ++f.buffer_requests;
+          return f.buffers[index].data();
+        },
+        [](void *ctx) { return static_cast<Fixture *>(ctx)->clock_us += 250; }};
   }
   aqsync::ArchiveTransport transport() {
     return {this,
@@ -389,6 +439,90 @@ void abort_cases(Fixture &f, aqsync::ArchiveSession &session) {
   f.clear();
   f.list_repeats = 1;
 }
+// READ windows reuse the descriptor OPEN created, release_files() drops
+// descriptors but keeps handles, and descriptor exhaustion is OpenFailed.
+void persistent_cases(Fixture &f, aqsync::ArchiveSession &session,
+                      unsigned idle_descriptors) {
+  const std::string path = f.directory + "/sample.parquet";
+  const std::string moved = f.directory + "/moved.parquet";
+  const unsigned checks = f.checks, buffers = f.buffer_requests;
+  const auto lan = open(f, session, ble::Link::Lan, "sample.parquet", 1);
+  const auto &handle = lan;
+  assert(f.checks == checks + 1 && f.buffer_requests == buffers + 1);
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find("crc=miss open_us=250 ") != std::string::npos);
+  // With the path gone, READ still serves every window from the open stream.
+  assert(std::rename(path.c_str(), moved.c_str()) == 0);
+  for (std::uint32_t offset = 0; offset < f.bytes.size(); offset += 4096) {
+    const std::uint32_t count =
+        f.bytes.size() - offset < 4096 ? f.bytes.size() - offset : 4096;
+    f.clear();
+    session.handle(read(f, handle, offset, count, ble::Link::Lan, 1), true);
+    verify_read(f, handle, offset, count, 1024, ble::Link::Lan, 1);
+    assert(descriptor_count() == idle_descriptors + 1);
+  }
+  // release_files() closes the stream; a READ while the path is gone fails
+  // and the handle stays valid for a retry once the path is back.
+  session.release_files();
+  assert(descriptor_count() == idle_descriptors);
+  f.clear();
+  session.handle(read(f, handle, 0, 10, ble::Link::Lan, 1), true);
+  assert(f.errors.empty() && f.frames.size() == 1 &&
+         f.frames[0].bytes[0] == ble::kFrameReadEnd &&
+         f.frames[0].bytes[7] == ble::kErrOpenFailed);
+  assert(descriptor_count() == idle_descriptors);
+  assert(std::rename(moved.c_str(), path.c_str()) == 0);
+  f.clear();
+  session.handle(read(f, handle, 333, 1500, ble::Link::Lan, 1), true);
+  verify_read(f, handle, 333, 1500, 1024, ble::Link::Lan, 1);
+  assert(descriptor_count() == idle_descriptors + 1);
+  assert(f.checks == checks + 1 && f.buffer_requests == buffers + 2);
+
+  // A cached CRC is reported in the OPEN log line.
+  f.cache_hit = true;
+  open(f, session);
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find("crc=hit open_us=250 ") != std::string::npos);
+  f.cache_hit = false;
+  assert(descriptor_count() == idle_descriptors + 2);
+
+  // A failed check and a missing path leave no descriptor behind.
+  f.clear();
+  f.complete = false;
+  auto rejected = request(f, ble::kOpOpen);
+  const char *name = "sample.parquet";
+  std::memcpy(rejected.bytes + 1, name, std::strlen(name));
+  rejected.length += std::strlen(name);
+  session.handle(rejected, true);
+  expect_error(f, ble::kErrNotFinalized);
+  f.complete = true;
+  assert(descriptor_count() == idle_descriptors + 1);
+  f.clear();
+  const unsigned before_missing = f.checks;
+  auto missing = request(f, ble::kOpOpen);
+  const char *absent = "absent.parquet";
+  std::memcpy(missing.bytes + 1, absent, std::strlen(absent));
+  missing.length += std::strlen(absent);
+  session.handle(missing, true);
+  expect_error(f, ble::kErrNotFinalized);
+  assert(f.checks == before_missing);
+  assert(descriptor_count() == idle_descriptors + 1);
+
+  // A full descriptor table is OpenFailed, not NotFinalized, and the open
+  // LAN handle keeps reading through its existing descriptor.
+  {
+    DescriptorLimit limit;
+    f.clear();
+    session.handle(rejected, true);
+    expect_error(f, ble::kErrOpenFailed);
+    assert(f.logs.size() == 1 && f.logs[0].find("BLE OPEN FAIL errno=") == 0);
+    f.clear();
+    session.handle(read(f, lan, 4000, 2000, ble::Link::Lan, 1), true);
+    verify_read(f, lan, 4000, 2000, 1024, ble::Link::Lan, 1);
+  }
+  session.close();
+  assert(descriptor_count() == idle_descriptors);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -541,16 +675,20 @@ int main(int argc, char **argv) {
 
   // All authenticated peers retain independent handles, even when their
   // requests are interleaved on the sole storage worker.
+  // Each logical handle holds exactly one descriptor until it is released.
   f.payload[0] = 517;
   const unsigned idle_descriptors = descriptor_count();
   const auto ble_handle = open(f, session);
-  assert(descriptor_count() == idle_descriptors);
+  assert(descriptor_count() == idle_descriptors + 1);
   std::array<std::uint16_t, ble::kMaxLanClients> lan_handles{};
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
     lan_handles[peer] =
         open(f, session, ble::Link::Lan, "sample.parquet", peer);
-    assert(descriptor_count() == idle_descriptors);
+    assert(descriptor_count() == idle_descriptors + 2 + peer);
   }
+  constexpr unsigned all_slots = aqsync::ArchiveSession::kReadHandles;
+  static_assert(all_slots == 1 + ble::kMaxLanClients, "one slot per peer");
+  assert(descriptor_count() == idle_descriptors + all_slots);
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
     f.clear();
     session.handle(
@@ -558,7 +696,7 @@ int main(int argc, char **argv) {
         true);
     verify_read(f, lan_handles[peer], peer * 100, 2000, 1024, ble::Link::Lan,
                 peer);
-    assert(descriptor_count() == idle_descriptors);
+    assert(descriptor_count() == idle_descriptors + all_slots);
     f.clear();
     session.handle(request(f, ble::kOpList, ble::Link::Lan, peer), true);
     assert(f.frames.size() == 2);
@@ -580,9 +718,11 @@ int main(int argc, char **argv) {
   session.handle(wrong_close, true);
   expect_error(f, ble::kErrBadHandle, ble::Link::Lan, 1);
 
-  // OPEN and CLOSE invalidate only the requesting slot.
+  // OPEN and CLOSE invalidate only the requesting slot. A re-OPEN replaces the
+  // slot's descriptor rather than adding one.
   const auto reopened = open(f, session, ble::Link::Lan, "sample.parquet", 0);
   assert(reopened != lan_handles[0]);
+  assert(descriptor_count() == idle_descriptors + all_slots);
   auto own_close = request(f, ble::kOpClose, ble::Link::Lan, 0);
   own_close.length = 3;
   put_u16(own_close.bytes + 1, reopened);
@@ -590,6 +730,7 @@ int main(int argc, char **argv) {
   session.handle(own_close, true);
   assert(f.frames.size() == 1 && f.frames[0].peer == 0 &&
          f.frames[0].bytes[0] == ble::kFrameClosed);
+  assert(descriptor_count() == idle_descriptors + all_slots - 1);
   f.clear();
   session.handle(read(f, lan_handles[1], 91, 10, ble::Link::Lan, 1), true);
   verify_read(f, lan_handles[1], 91, 10, 1024, ble::Link::Lan, 1);
@@ -604,7 +745,9 @@ int main(int argc, char **argv) {
   put_u16(stale_close.bytes + 1, lan_handles[1]);
   ++f.generation[slot(ble::Link::Lan, 1)];
   session.reconcile();
+  assert(descriptor_count() == idle_descriptors + all_slots - 2);
   const auto replacement = open(f, session, ble::Link::Lan, sample, 1);
+  assert(descriptor_count() == idle_descriptors + all_slots - 1);
   f.clear();
   session.handle(stale_open, true);
   session.handle(stale_close, true);
@@ -624,18 +767,23 @@ int main(int argc, char **argv) {
   f.disconnect_frame = 1;
   session.handle(read(f, replacement, 0, 3000, ble::Link::Lan, 1), true);
   assert(f.frames.size() == 1 && f.frames[0].bytes[0] == ble::kFrameChunk);
-  assert(descriptor_count() == idle_descriptors);
   assert(f.errors.empty());
+  // The next request reconciles the generation change and drops the stream.
   f.clear();
   session.handle(read(f, replacement, 0, 10, ble::Link::Lan, 1), true);
   expect_error(f, ble::kErrBadHandle, ble::Link::Lan, 1);
+  assert(descriptor_count() == idle_descriptors + all_slots - 2);
   f.clear();
   session.handle(read(f, lan_handles[2], 0, 10, ble::Link::Lan, 2), true);
   verify_read(f, lan_handles[2], 0, 10, 1024, ble::Link::Lan, 2);
   session.close();
   assert(f.lock_depth == 0);
+  assert(descriptor_count() == idle_descriptors);
 
+  persistent_cases(f, session, idle_descriptors);
   abort_cases(f, session);
+  session.close();
+  assert(descriptor_count() == idle_descriptors);
 
   // File sync is read-only: the synthetic archive remains byte-for-byte equal.
   FILE *file = std::fopen((f.directory + "/sample.parquet").c_str(), "rb");

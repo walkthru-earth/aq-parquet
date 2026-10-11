@@ -6,6 +6,7 @@
 #include "aq_logger_rotation.h"
 #include "aq_logger_status.h"
 #include "aq_logger_work_queue.h"
+#include "crc_cache.h"
 #include "debug_log.h"
 #include "device_config.h"
 #include "lz4_codec.h"
@@ -13,6 +14,7 @@
 #include "storage_governor.h"
 #include "wifi_link.h"
 #include <abort_signal.h>
+#include <archive_files.h>
 #include <archive_sync.h>
 #include <control_sync.h>
 #include <sync_codec.h>
@@ -60,7 +62,7 @@ std::size_t monotonic_field = 0;
 constexpr std::int32_t kClockNone = aq::utc::None;
 constexpr std::int32_t kClockHost = aq::utc::Host;
 constexpr std::int32_t kClockRtc = aq::utc::Rtc;
-using aq::sync::crc_update;
+using aq::sync::crc32_update;
 using aq::sync::get_i64;
 using aq::sync::get_u16;
 using aq::sync::get_u32;
@@ -108,12 +110,23 @@ struct OutputFile {
   std::uint64_t writer_us = 0, codec_us = 0, sync_us = 0;
   bool open() const { return file != nullptr; }
 };
+constexpr std::size_t kCrcCacheEntries = 64;
+constexpr std::size_t kCrcScratchBytes = 4096;
+static_assert(aqsync::ArchiveSession::kReadHandles <=
+                  aq::storage::kArchiveReadHandles,
+              "mount max_files must cover every archive read handle");
 struct WriterState {
   Sample rows[kMaxRows];
   Column columns[telemetry::kMaxColumns];
   OutputFile telemetry;
   OutputFile benchmark; // codec-test copies never touch the telemetry file
   Lz4Workspace lz4{};
+  // Archive reads. Finalize-time CRCs for OPEN, the CRC read block and one
+  // stdio buffer per persistent archive read handle. Worker only.
+  aq::storage::CrcCache<kCrcCacheEntries> crc_cache;
+  std::uint8_t crc_scratch[kCrcScratchBytes]{};
+  char read_buffers[aqsync::ArchiveSession::kReadHandles]
+                   [aqsync::ArchiveSession::kReadBufferBytes]{};
 };
 // Telemetry stdio staging stays in internal RAM, distinct from the PSRAM row
 // buffer. codec-test staging is PSRAM, allocated only while the test runs.
@@ -204,17 +217,26 @@ bool sink(void *context, const std::uint8_t *data, std::size_t size) {
   return true;
 }
 
-bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
-  // This is a structural completion check. PyArrow + DuckDB perform
-  // conformance.
-  FILE *file = nullptr;
+// Cache key of a finalized file. FatFs fstat reports no mtime, so stat the
+// path. f_rename keeps the entry timestamp, so the key survives finalize.
+bool crc_key(const char *path, aq::storage::CrcKey &key) {
+  struct stat info{};
   {
     BusLock lock;
-    file = std::fopen(path, "rb");
+    if (::stat(path, &info) != 0)
+      return false;
   }
-  if (!file)
-    return false;
-  std::uint8_t block[512];
+  key = {aq::storage::crc_path_hash(path),
+         static_cast<std::int64_t>(info.st_mtime),
+         static_cast<std::uint32_t>(info.st_size)};
+  return true;
+}
+
+// Structural completion check and CRC-32 of `file`, an open stream. PyArrow +
+// DuckDB perform conformance. With use_cache, an entry matching path, size
+// and mtime replaces the full read, and a computed CRC is remembered.
+bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
+                bool use_cache) {
   std::uint8_t magic[4]{}, tail[8]{};
   bool ok = false;
   {
@@ -222,37 +244,69 @@ bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
     if (std::fseek(file, 0, SEEK_END) == 0) {
       const long length = std::ftell(file);
       if (length >= 12 && length <= 1048576) {
-        size = static_cast<std::uint32_t>(length);
+        check.size = static_cast<std::uint32_t>(length);
         ok = std::fseek(file, 0, SEEK_SET) == 0 &&
              std::fread(magic, 1, 4, file) == 4 &&
              std::fseek(file, -8, SEEK_END) == 0 &&
              std::fread(tail, 1, 8, file) == 8;
-        ok = ok && aq::sync::parquet_complete(size, magic, tail) &&
+        ok = ok && aq::sync::parquet_complete(check.size, magic, tail) &&
              std::fseek(file, 0, SEEK_SET) == 0;
       }
     }
   }
-  crc = 0xffffffffU;
-  std::uint32_t read_bytes = 0;
-  while (ok && read_bytes < size) {
+  if (!ok)
+    return false;
+  aq::storage::CrcKey key;
+  const bool keyed = use_cache && crc_key(path, key) && key.size == check.size;
+  auto &cache = writer_state->crc_cache;
+  check.cached = keyed && cache.lookup(key, check.crc);
+  if (check.cached)
+    return true;
+  std::uint32_t crc = 0xffffffffU, read_bytes = 0;
+  while (read_bytes < check.size) {
     std::size_t count;
     {
       BusLock lock;
-      count = std::fread(block, 1, sizeof(block), file);
+      count = std::fread(writer_state->crc_scratch, 1, kCrcScratchBytes, file);
     }
-    if (!count) {
-      ok = false;
-      break;
-    }
-    crc = crc_update(crc, block, count);
+    if (!count)
+      return false;
+    crc = crc32_update(crc, writer_state->crc_scratch, count);
     read_bytes += count;
   }
+  if (read_bytes != check.size)
+    return false;
+  check.crc = crc ^ 0xffffffffU;
+  if (keyed)
+    cache.insert(key, check.crc);
+  return true;
+}
+
+bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
+  FILE *file = nullptr;
+  {
+    BusLock lock;
+    file = std::fopen(path, "rb");
+  }
+  if (!file)
+    return false;
+  aqsync::FileCheck check;
+  bool ok = check_file(path, file, check, false);
   {
     BusLock lock;
     ok = std::fclose(file) == 0 && ok;
   }
-  crc ^= 0xffffffffU;
-  return ok && read_bytes == size;
+  size = check.size;
+  crc = check.crc;
+  return ok;
+}
+
+// Called once a file is finalized under its ready name, so the first OPEN
+// skips the full CRC read.
+void remember_crc(const char *path, std::uint32_t size, std::uint32_t crc) {
+  aq::storage::CrcKey key;
+  if (crc_key(path, key) && key.size == size)
+    writer_state->crc_cache.insert(key, crc);
 }
 
 void prepare_columns() {
@@ -738,6 +792,8 @@ bool finalize_file(OutputFile &target) {
   }
   ++finalized;
   unlisted_files = true;
+  if (!target.benchmark)
+    remember_crc(ready, size, crc);
   aqlog.printf(
       "PARQUET READY name=%s-%lld-%lu.parquet rows=%u row_groups=%u "
       "first=%lld last=%lld bytes=%lu crc32=%08lx write_us=%lu sync_us=%llu "
@@ -1022,11 +1078,6 @@ void send_file(const char *name) {
     aqlog.println("PARQUET ERROR operation=get reason=invalid-name");
     return;
   }
-  std::uint32_t size = 0, expected_crc = 0;
-  if (!finalized_file(path, size, expected_crc)) {
-    aqlog.println("PARQUET ERROR operation=get reason=invalid-file");
-    return;
-  }
   FILE *file;
   {
     BusLock lock;
@@ -1036,6 +1087,21 @@ void send_file(const char *name) {
     aqlog.println("PARQUET ERROR operation=get reason=open");
     return;
   }
+  aqsync::FileCheck check;
+  bool rewound = check_file(path, file, check, true);
+  if (rewound) {
+    BusLock lock;
+    rewound = std::fseek(file, 0, SEEK_SET) == 0;
+  }
+  if (!rewound) {
+    {
+      BusLock lock;
+      std::fclose(file);
+    }
+    aqlog.println("PARQUET ERROR operation=get reason=invalid-file");
+    return;
+  }
+  const std::uint32_t size = check.size, expected_crc = check.crc;
   aqlog.printf("PARQUET DATA BEGIN name=%s bytes=%lu\n", name,
                static_cast<unsigned long>(size));
   std::uint8_t block[256];
@@ -1400,8 +1466,8 @@ aqsync::ArchiveSession archive_session(
      [](void *, const char *name, char *path, std::size_t size) {
        return resolve_path(name, path, size);
      },
-     [](void *, const char *path, std::uint32_t &size, std::uint32_t &crc) {
-       return finalized_file(path, size, crc);
+     [](void *, const char *path, FILE *file, aqsync::FileCheck &check) {
+       return check_file(path, file, check, true);
      },
      [](void *) { return total_kib.load(); },
      [](void *) { return used_kib.load(); },
@@ -1410,7 +1476,11 @@ aqsync::ArchiveSession archive_session(
        publish_advert();
      },
      [](void *) { lock_bus(); }, [](void *) { unlock_bus(); },
-     [](void *, const char *line) { aqlog.record_only().print(line); }},
+     [](void *, const char *line) { aqlog.record_only().print(line); },
+     [](void *, std::size_t slot) -> void * {
+       return writer_state->read_buffers[slot];
+     },
+     [](void *) { return std::int64_t(esp_timer_get_time()); }},
     {nullptr,
      [](void *, ble::Link link, std::uint8_t peer) {
        return link_generation(link, peer);
@@ -1530,7 +1600,8 @@ bool governed_commit(std::size_t &count, bool finalize) {
   return ok;
 }
 
-// No file may be open across a remount; the archive session reopens by path.
+// No file may be open across a remount. probe_storage releases the archive
+// session's read streams; their handles reopen by path on the next READ.
 bool files_closed() {
   return !writer_state->telemetry.open() && !writer_state->benchmark.open();
 }
@@ -1547,6 +1618,9 @@ void probe_storage(std::size_t &count, bool &storage_ready) {
   if (ok && hooks.storage_remount && writer_state->telemetry.open())
     finalize_file(writer_state->telemetry);
   if (ok && hooks.storage_remount && files_closed()) {
+    // A remount may follow an external card edit, so cached CRCs go too.
+    archive_session.release_files();
+    writer_state->crc_cache.clear();
     BusLock lock;
     ok = hooks.storage_remount(hooks.context) &&
          aq::logger::detail::ensure_directory(kDirectory);
@@ -1851,6 +1925,7 @@ void storage_worker(void *) {
       }
       archive_reset = true;
       archive_session.close();
+      writer_state->crc_cache.clear();
       std::uint32_t files_removed = 0, directories_removed = 0;
       bool erased;
       {
@@ -2266,14 +2341,20 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
     return false;
   }
   accepting = true;
+  // The CRC-32 check value through the ROM routine OPEN uses on the device.
+  const auto *check_bytes = reinterpret_cast<const std::uint8_t *>("123456789");
+  const char *crc_check =
+      (crc32_update(0xffffffffU, check_bytes, 9) ^ 0xffffffffU) == 0xcbf43926U
+          ? "ok"
+          : "bad";
   aqlog.printf(
       "PARQUET BEGIN schema=%s columns=%u sample_s=10 "
       "interval_s=900 max_rows=90 max_row_groups=%u psram_workspace_bytes=%u "
       "row_bytes=%u boot=%s station=%s "
-      "codec=UNCOMPRESSED\n",
+      "codec=UNCOMPRESSED crc32_check=%s\n",
       config.schema_name, unsigned(field_count), unsigned(kMaxRowGroups),
       unsigned(sizeof(WriterState)), unsigned(sizeof(Sample)), boot_text,
-      station_text);
+      station_text, crc_check);
   return true;
 }
 

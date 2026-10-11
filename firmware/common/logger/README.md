@@ -43,9 +43,14 @@ BLE or token-authenticated local LAN without any cloud service. The runtime uses
 the existing protocol UUIDs, settings, station NVS key and archive sessions.
 BLE and up to three authenticated LAN clients retain independent file handles;
 OPEN, CLOSE and disconnect affect only the requesting connection. Queued stale
-commands and responses are rejected by connection generation. Each READ briefly
-reopens its immutable file on the worker, so idle client handles use no filesystem
-descriptors and the existing card descriptor budget is preserved.
+commands and responses are rejected by connection generation. Each open handle
+keeps one read-only descriptor with a 4 KiB PSRAM stdio buffer from OPEN until
+CLOSE, a replacing OPEN or disconnect, and READ windows seek within it. Both board
+mounts reserve these four descriptors (`archive_files.h`), and a storage remount
+releases them so the next READ reopens by path. OPEN takes the CRC-32 from a
+64-entry PSRAM cache filled at finalize (path, size and mtime must match) and
+reads the whole file only on a miss. The boot `PARQUET BEGIN` line reports
+`crc32_check=ok` when the ROM CRC routine returns the standard check value.
 STATUS, LIVE and advertising retain the phone wire contract; absent/invalid LIVE
 measurements are omitted independently. PMS5003T temperature/RH use `t`/`rh`;
 CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.

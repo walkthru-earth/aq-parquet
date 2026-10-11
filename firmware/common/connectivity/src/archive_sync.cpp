@@ -2,6 +2,7 @@
 #include "abort_signal.h"
 #include <sync_codec.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 
@@ -64,20 +65,56 @@ void ArchiveSession::stop_aborted(ble::Op op) {
   abort::note_stopped(*request_, op);
 }
 
-ArchiveSession::OpenFile &ArchiveSession::file() {
-  return open_[request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0];
+std::size_t ArchiveSession::slot() const {
+  return request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0;
 }
 
+ArchiveSession::OpenFile &ArchiveSession::file() { return open_[slot()]; }
+
 bool ArchiveSession::handle_matches(std::uint16_t file_handle) const {
-  const auto &opened =
-      open_[request_link_ == ble::Link::Lan ? 1 + request_peer_ : 0];
+  const auto &opened = open_[slot()];
   return opened.handle && file_handle == opened.handle &&
          request_generation_ == opened.generation;
 }
 
-void ArchiveSession::close_current() { file() = OpenFile{}; }
+void ArchiveSession::release(OpenFile &opened) {
+  if (!opened.file)
+    return;
+  ArchiveLock lock(archive_);
+  std::fclose(opened.file);
+  opened.file = nullptr;
+}
 
-void ArchiveSession::close() { open_.fill(OpenFile{}); }
+FILE *ArchiveSession::open_input(const char *path, std::size_t index,
+                                 int &failure) {
+  ArchiveLock lock(archive_);
+  errno = 0;
+  FILE *input = std::fopen(path, "rb");
+  failure = input ? 0 : errno;
+  // A slot buffer turns each READ window into multi-sector reads.
+  void *buffer = input && archive_.read_buffer
+                     ? archive_.read_buffer(archive_.context, index)
+                     : nullptr;
+  if (buffer)
+    std::setvbuf(input, static_cast<char *>(buffer), _IOFBF, kReadBufferBytes);
+  return input;
+}
+
+void ArchiveSession::close_current() {
+  release(file());
+  file() = OpenFile{};
+}
+
+void ArchiveSession::close() {
+  for (auto &opened : open_)
+    release(opened);
+  open_.fill(OpenFile{});
+}
+
+void ArchiveSession::release_files() {
+  for (auto &opened : open_)
+    release(opened);
+}
 
 void ArchiveSession::reconcile() {
   for (std::size_t i = 0; i < open_.size(); ++i) {
@@ -86,8 +123,10 @@ void ArchiveSession::reconcile() {
     const auto peer = static_cast<std::uint8_t>(i == 0 ? 0 : i - 1);
     if (opened.handle &&
         opened.generation !=
-            transport_.generation(transport_.context, link, peer))
+            transport_.generation(transport_.context, link, peer)) {
+      release(opened);
       opened = OpenFile{};
+    }
   }
 }
 
@@ -195,24 +234,36 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
     return;
   }
   close_current();
-  std::uint32_t size = 0, crc = 0;
-  if (!archive_.finalized(archive_.context, path, size, crc)) {
+  const std::int64_t started =
+      archive_.now_us ? archive_.now_us(archive_.context) : 0;
+  // The descriptor opened here serves the check and every later READ.
+  int failure = 0;
+  FILE *input = open_input(path, slot(), failure);
+  if (!input) {
+    if (archive_.log) {
+      char line[64];
+      std::snprintf(line, sizeof(line), "BLE OPEN FAIL errno=%d\n", failure);
+      archive_.log(archive_.context, line);
+    }
+    // A missing path is not a finalized file. Other failures, such as a full
+    // descriptor table, are open failures.
+    error(ble::kOpOpen,
+          failure == ENOENT ? ble::kErrNotFinalized : ble::kErrOpenFailed,
+          name);
+    return;
+  }
+  FileCheck check;
+  if (!archive_.finalized(archive_.context, path, input, check)) {
+    {
+      ArchiveLock lock(archive_);
+      std::fclose(input);
+    }
     error(ble::kOpOpen, ble::kErrNotFinalized, name);
     return;
   }
-  bool accessible;
-  {
-    ArchiveLock lock(archive_);
-    FILE *probe = std::fopen(path, "rb");
-    accessible = probe != nullptr;
-    if (probe)
-      std::fclose(probe);
-  }
-  if (!accessible) {
-    error(ble::kOpOpen, ble::kErrOpenFailed, name);
-    return;
-  }
+  const std::uint32_t size = check.size, crc = check.crc;
   auto &opened = this->file();
+  opened.file = input;
   std::memcpy(opened.path, path, std::strlen(path) + 1);
   opened.handle = next_handle_++;
   if (next_handle_ == 0)
@@ -227,11 +278,16 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
   put_u32(frame + 7, crc);
   std::memcpy(frame + 11, name, name_length);
   if (archive_.log) {
-    char line[512];
-    std::snprintf(line, sizeof(line),
-                  "BLE OPEN handle=%u bytes=%lu crc32=%08lx name=%s\n",
-                  unsigned(opened.handle), static_cast<unsigned long>(size),
-                  static_cast<unsigned long>(crc), name);
+    const std::int64_t elapsed =
+        archive_.now_us ? archive_.now_us(archive_.context) - started : -1;
+    char line[560];
+    std::snprintf(
+        line, sizeof(line),
+        "BLE OPEN handle=%u bytes=%lu crc32=%08lx crc=%s open_us=%lld "
+        "name=%s\n",
+        unsigned(opened.handle), static_cast<unsigned long>(size),
+        static_cast<unsigned long>(crc), check.cached ? "hit" : "miss",
+        static_cast<long long>(elapsed), name);
     archive_.log(archive_.context, line);
   }
   respond(frame, 11 + name_length);
@@ -251,7 +307,7 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     error(ble::kOpRead, ble::kErrBadHandle);
     return;
   }
-  const auto &opened = file();
+  auto &opened = file();
   if (offset > opened.size) {
     error(ble::kOpRead, ble::kErrRange);
     return;
@@ -268,29 +324,20 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
   constexpr std::size_t kChunkCap = kPayloadCapacity - 7;
   const std::size_t chunk_max =
       max_payload - 7 > kChunkCap ? kChunkCap : max_payload - 7;
-  // Only the storage worker accesses files. A transient descriptor keeps the
-  // mounted filesystem's existing descriptor budget independent of peers.
-  struct ReadFile {
-    const ArchiveHooks &archive;
-    FILE *value = nullptr;
-    explicit ReadFile(const ArchiveHooks &hooks) : archive(hooks) {}
-    ReadFile(const ReadFile &) = delete;
-    ReadFile &operator=(const ReadFile &) = delete;
-    ~ReadFile() {
-      if (value) {
-        ArchiveLock lock(archive);
-        std::fclose(value);
-      }
-    }
-  } input{archive_};
-  bool seek_ok;
-  {
+  // Only the storage worker accesses files. The handle's descriptor stays
+  // open across READ windows. After release_files() or a read failure the
+  // path is reopened here.
+  if (!opened.file) {
+    int failure = 0;
+    opened.file = open_input(opened.path, slot(), failure);
+  }
+  bool seek_ok = false;
+  if (opened.file) {
     ArchiveLock lock(archive_);
-    input.value = std::fopen(opened.path, "rb");
-    seek_ok = input.value &&
-              std::fseek(input.value, static_cast<long>(offset), SEEK_SET) == 0;
+    seek_ok = std::fseek(opened.file, static_cast<long>(offset), SEEK_SET) == 0;
   }
   if (!seek_ok) {
+    release(opened);
     end(offset, ble::kErrOpenFailed);
     return;
   }
@@ -307,9 +354,11 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     std::size_t count;
     {
       ArchiveLock lock(archive_);
-      count = std::fread(frame + 7, 1, want, input.value);
+      count = std::fread(frame + 7, 1, want, opened.file);
     }
     if (count == 0) {
+      // Drop the stream so a retry starts from a fresh descriptor.
+      release(opened);
       end(offset + sent, ble::kErrOpenFailed);
       return;
     }
