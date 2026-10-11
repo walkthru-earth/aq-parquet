@@ -2201,11 +2201,11 @@ void report_runtime(std::int64_t now) {
   };
   aqlog.printf(
       "DIAG tasks %s=%u parquet-sd=%ld aq-lan=%ld aq_ble_error=%ld "
-      "nimble_host=%ld tiT=%ld uptime_s=%lld\n",
+      "nimble_host=%ld tcpip=%ld uptime_s=%lld\n",
       pcTaskGetName(nullptr), unsigned(uxTaskGetStackHighWaterMark(nullptr)),
       worker_task ? long(uxTaskGetStackHighWaterMark(worker_task)) : -1L,
       stack_free("aq-lan"), stack_free("aq_ble_error"),
-      stack_free("nimble_host"), stack_free("tiT"),
+      stack_free("nimble_host"), stack_free("tcpip"),
       static_cast<long long>(now / 1000000));
   constexpr auto kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   constexpr auto kDma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
