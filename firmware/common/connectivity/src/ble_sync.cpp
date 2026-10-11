@@ -629,8 +629,21 @@ int gap_event(ble_gap_event *event, void *) {
   case BLE_GAP_EVENT_SUBSCRIBE:
     if (event->subscribe.conn_handle == conn_handle.load())
       for (unsigned i = 0; i < Count; ++i)
-        if (event->subscribe.attr_handle == value_handles[i])
+        if (event->subscribe.attr_handle == value_handles[i]) {
           subscribed[i] = event->subscribe.cur_notify != 0;
+          // An unsubscribe ends the response stream and closes its credits.
+          // Subscribing again on the same link starts a fresh stream.
+          if (i == Response && event->subscribe.cur_notify &&
+              connected.load()) {
+            const auto session = generation.load();
+            portENTER_CRITICAL(&tx_lock);
+            if (!credits.open_for(session)) {
+              credits.open(session, esp_timer_get_time());
+              clear_queue_locked();
+            }
+            portEXIT_CRITICAL(&tx_lock);
+          }
+        }
     return 0;
   case BLE_GAP_EVENT_ENC_CHANGE:
     if (event->enc_change.conn_handle != conn_handle.load())

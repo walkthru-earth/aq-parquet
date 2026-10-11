@@ -398,7 +398,7 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | 2 | `handshake-timeout` | LAN, no complete `AQS1` + token within 5 s |
 | 3 | `auth-failed` | LAN token mismatch, or BLE encryption failed |
 | 4 | `sessions-full` | LAN, three slots taken. Sent after `ERROR` op=0 code 7, with `generation` 0 |
-| 5 | `slow-peer` | LAN peer accepted no byte for `slow_peer_ms` (15 s) while frames were queued. `err` is `EAGAIN` |
+| 5 | `slow-peer` | LAN peer accepted no byte for `slow_peer_ms` (15 s) while frames were queued, `err` is `EAGAIN`. BLE host accepted no `response` notification for `progress_timeout_ms` (15 s) while one was queued, `err` is 0 |
 | 6 | `tx-overflow` | LAN frame larger than the peer's transmit ring, the session could not be opened in it, or a `queue-full` refusal found the ring full |
 | 7 | `malformed` | LAN framing or length error |
 | 8 | `wifi-lost` | the station lost its IP |
@@ -407,7 +407,7 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | 11 | `reboot` | `REBOOT` was accepted. LAN sessions get BYE after `REBOOTING`. A BLE peer still connected when the delay ends is disconnected with this reason before the restart. The device waits up to 1 s for the close and records the event itself if the stack never reports it |
 | 12 | `peer-closed` | the phone closed. TCP EOF, or BLE HCI 0x13 |
 | 13 | `recv-error` | LAN receive failed (`err` is the errno) |
-| 14 | `send-error` | LAN send failed for another reason (`err` is the errno, `EPIPE` when nothing was written) |
+| 14 | `send-error` | LAN send failed for another reason (`err` is the errno, `EPIPE` when nothing was written). BLE `response` notification failed with an error other than a buffer refusal, `err` is 0 |
 | 15 | `server-stop` | the LAN server restarted to apply settings, or BLE stopped |
 | 16 | `keepalive-failed` | BLE supervision timeout, HCI 0x08 |
 
