@@ -34,6 +34,16 @@ struct Options {
   std::uint32_t close_flush_ms = 500;
   // One worker wait for ring space; samples are serviced between steps.
   std::uint32_t wait_step_ms = 200;
+  // LAN task. Above the storage worker (3): it never blocks on a peer, so a
+  // reply leaves as soon as the worker queues it. The stack stays internal:
+  // esp_wifi_start may store PHY calibration in NVS, a flash write.
+  unsigned task_priority = 4;
+  std::uint32_t task_stack_bytes = 8192;
+  // TCP keepalive: idle seconds, probe interval and probe count before a
+  // silent peer closes with KeepaliveFailed.
+  int keepalive_idle_s = 30;
+  int keepalive_interval_s = 5;
+  int keepalive_count = 3;
 };
 
 using TimeAnchor = aq::network_time::Anchor;

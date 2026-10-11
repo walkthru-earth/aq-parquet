@@ -8,6 +8,7 @@
 #include <esp_heap_caps.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_pm.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
@@ -36,6 +37,8 @@ constexpr std::int64_t kIdleUs = 300LL * 1000000LL;
 constexpr int kActiveWaitUs = 10000;
 constexpr std::size_t kHandshakeBytes = 4 + config::kTokenBytes;
 constexpr std::size_t kMaxScanEntries = 48;
+// A scan normally ends within about 3 s. Past this the LAN task stops it.
+constexpr std::int64_t kScanTimeoutUs = 15LL * 1000000LL;
 
 char host_label[24]{};
 ble::Identity device_identity{};
@@ -48,6 +51,12 @@ std::atomic<bool> station_has_ip{false};
 std::atomic<unsigned> disconnect_reason{0};
 std::atomic<std::uint32_t> station_ip_generation{0};
 std::uint32_t handled_ip_generation = 0;
+// Set by WIFI_EVENT_SCAN_DONE; the LAN task collects the records. The event
+// counts only while scan_armed, so the SCAN_DONE that esp_wifi_scan_stop posts
+// after a timeout cannot complete the next scan early.
+std::atomic<bool> scan_armed{false};
+std::atomic<bool> scan_done{false};
+std::atomic<std::uint32_t> scan_done_status{0};
 
 // Startup failures must release their ownership so a later begin can retry.
 // The default event loop/netif stack may be shared and remains initialized.
@@ -82,6 +91,12 @@ void station_event(void *, esp_event_base_t base, std::int32_t id, void *data) {
     station_has_ip = false;
     disconnect_reason =
         static_cast<wifi_event_sta_disconnected_t *>(data)->reason;
+  } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+    if (!scan_armed)
+      return;
+    scan_done_status =
+        data ? static_cast<wifi_event_sta_scan_done_t *>(data)->status : 0;
+    scan_done = true;
   } else if ((base == WIFI_EVENT && id == WIFI_EVENT_STA_STOP) ||
              (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP)) {
     station_has_ip = false;
@@ -270,6 +285,15 @@ std::int16_t clamp_err(int err) {
                                                   : err);
 }
 
+// lwIP aborts a peer that stopped answering keepalive probes or
+// retransmissions with ERR_ABRT, which a socket call reports as ECONNABORTED.
+// Other stacks report ETIMEDOUT. Both mean the phone went silent.
+DisconnectReason transport_reason(int err, DisconnectReason other) {
+  return err == ECONNABORTED || err == ETIMEDOUT
+             ? DisconnectReason::KeepaliveFailed
+             : other;
+}
+
 std::uint16_t clamp_u16(std::size_t value) {
   return static_cast<std::uint16_t>(value > 65535 ? 65535 : value);
 }
@@ -371,7 +395,8 @@ void begin_close(std::uint8_t peer, DisconnectReason reason, int err = 0) {
     return;
   const bool bye = reason != DisconnectReason::PeerClosed &&
                    reason != DisconnectReason::RecvError &&
-                   reason != DisconnectReason::SendError;
+                   reason != DisconnectReason::SendError &&
+                   reason != DisconnectReason::KeepaliveFailed;
   const std::int64_t now = esp_timer_get_time();
   {
     TxLock lock(client);
@@ -452,6 +477,37 @@ int listen_fd = -1;
 bool radio_on = false, connected = false, mdns_on = false;
 std::int64_t connect_started_us = 0, retry_at_us = 0;
 config::Settings settings;
+
+// Power follows LAN activity. With an authenticated peer the station leaves
+// modem sleep, so ACKs and requests are not held for a DTIM period, and a
+// CPU_FREQ_MAX lock holds the DFS maximum. An APB_FREQ_MAX lock would not:
+// on the ESP32-S3 it caps the CPU at 80 MHz, the DFS minimum. Idle, the
+// station returns to modem sleep and DFS may scale down. LAN task only.
+esp_pm_lock_handle_t active_lock = nullptr;
+bool power_active = false;
+
+wifi_ps_type_t power_save_mode() {
+  return power_active ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM;
+}
+
+void update_power() {
+  const bool active = authenticated_clients() > 0;
+  if (active == power_active)
+    return;
+  power_active = active;
+  const esp_err_t ps = radio_on ? esp_wifi_set_ps(power_save_mode()) : ESP_OK;
+  esp_err_t lock = ESP_OK;
+  if (active_lock)
+    lock = active ? esp_pm_lock_acquire(active_lock)
+                  : esp_pm_lock_release(active_lock);
+  aqlog.record_only().printf("LAN POWER mode=%s ps=%s cpu_lock=%s code=%d/%d\n",
+                             active ? "active" : "idle",
+                             active ? "none" : "min-modem",
+                             !active_lock ? "unavailable"
+                             : active     ? "held"
+                                          : "released",
+                             ps, lock);
+}
 
 void start_server() {
   if (listen_fd >= 0 || !settings.lan_on)
@@ -574,6 +630,9 @@ void radio_connect() {
   // Restart on apply so old association/IP cannot keep an old LAN alive.
   station_has_ip = false;
   aq::network_time::prepare_network();
+  // Every caller closed the sessions first; drop the active power state with
+  // them so the new association starts in modem sleep.
+  update_power();
   if (radio_on) {
     esp_wifi_disconnect();
     esp_wifi_stop();
@@ -592,7 +651,7 @@ void radio_connect() {
     result = esp_wifi_start();
   radio_on = result == ESP_OK;
   if (radio_on) {
-    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    esp_wifi_set_ps(power_save_mode());
     result = esp_wifi_connect();
   }
   connect_started_us = esp_timer_get_time();
@@ -624,8 +683,9 @@ void poll_radio() {
     apply_time_policy(settings.ntp);
     // Reconcile lan.on and invalidate old sessions even when the station
     // stays associated with the same network. A drop requested with the same
-    // settings write (token rotation, reboot) runs before poll_server, so its
-    // reason names the restart instead of ServerStop.
+    // settings write (token rotation, reboot) names the restart instead of
+    // ServerStop. When a scan defers this reapply, poll_server consumes that
+    // drop first and closes with the same reason.
     const bool lan_kept =
         settings.lan_on && settings.wifi_on && settings.ssid[0];
     const bool dropped = drop_requested.exchange(false);
@@ -736,21 +796,19 @@ bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
   return result == aqsync::EnqueueResult::Ok;
 }
 
-void run_scan() {
+// A scan runs without blocking the LAN task: start_scan asks the driver for
+// a non-blocking scan, WIFI_EVENT_SCAN_DONE sets scan_done, and poll_scan
+// collects and reports the records on a later loop. Peers keep being served
+// in between. Radio reconfiguration waits for the scan to end.
+bool scan_running = false, scan_temporary = false;
+std::int64_t scan_deadline_us = 0;
+
+void finish_scan(esp_err_t result) {
   const auto link = static_cast<ble::Link>(scan_link.load());
   const auto link_generation = scan_generation.load();
   const auto peer = scan_peer.load();
-  const bool temporary = !radio_on;
-  esp_err_t result = ESP_OK;
-  if (temporary)
-    result = esp_wifi_start();
-  aqlog.record_only().println("WIFI SCAN BEGIN");
-  wifi_scan_config_t scan{};
-  scan.show_hidden = false;
-  if (result == ESP_OK)
-    result = esp_wifi_scan_start(&scan, true);
   std::uint16_t found = kMaxScanEntries;
-  // Task-owned static storage keeps the scan list off the 8 KiB LAN stack.
+  // Task-owned static storage keeps the scan list off the LAN stack.
   static wifi_ap_record_t records[kMaxScanEntries];
   std::memset(records, 0, sizeof(records));
   if (result == ESP_OK)
@@ -800,10 +858,46 @@ void run_scan() {
     aqlog.record_only().printf("WIFI SCAN END found=%u reported=%u\n",
                                unsigned(found), unsigned(count));
   }
-  if (temporary) {
+  if (scan_temporary) {
     esp_wifi_stop();
     station_has_ip = false;
   }
+  scan_armed = false;
+  scan_running = scan_temporary = false;
+  scan_pending = false;
+}
+
+void start_scan() {
+  scan_temporary = !radio_on;
+  esp_err_t result = ESP_OK;
+  if (scan_temporary)
+    result = esp_wifi_start();
+  aqlog.record_only().println("WIFI SCAN BEGIN");
+  wifi_scan_config_t scan{};
+  scan.show_hidden = false;
+  scan_done = false;
+  scan_armed = true;
+  if (result == ESP_OK)
+    result = esp_wifi_scan_start(&scan, false);
+  if (result != ESP_OK) {
+    finish_scan(result);
+    return;
+  }
+  scan_running = true;
+  scan_deadline_us = esp_timer_get_time() + kScanTimeoutUs;
+}
+
+void poll_scan() {
+  if (!scan_running)
+    return;
+  if (scan_done.exchange(false)) {
+    finish_scan(scan_done_status.load() == 0 ? ESP_OK : ESP_FAIL);
+    return;
+  }
+  if (esp_timer_get_time() < scan_deadline_us)
+    return;
+  esp_wifi_scan_stop();
+  finish_scan(ESP_ERR_TIMEOUT);
 }
 
 bool constant_time_equal(const std::uint8_t *a, const std::uint8_t *b,
@@ -822,12 +916,21 @@ bool token_matches(const std::uint8_t *handshake) {
 
 // Non-blocking as well as MSG_DONTWAIT: some stacks block a send despite the
 // flag (macOS loopback did, measured on the host test), and nothing on the LAN
-// task may wait for a peer.
+// task may wait for a peer. Keepalive ends a phone that left the network
+// without FIN (screen off, out of range) in idle + interval * count seconds
+// instead of the five minute idle timeout.
 void configure_client_socket(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   ::fcntl(fd, F_SETFL, (flags < 0 ? 0 : flags) | O_NONBLOCK);
-  int nodelay = 1;
-  ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+  int on = 1;
+  ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+  ::setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+  ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &options.keepalive_idle_s,
+               sizeof(options.keepalive_idle_s));
+  ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &options.keepalive_interval_s,
+               sizeof(options.keepalive_interval_s));
+  ::setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &options.keepalive_count,
+               sizeof(options.keepalive_count));
 }
 
 // A refused client never gets a slot or a ring: one non-blocking send carries
@@ -955,7 +1058,8 @@ void handle_client_bytes(std::uint8_t peer) {
     if (count == 0)
       begin_close(peer, DisconnectReason::PeerClosed);
     else
-      begin_close(peer, DisconnectReason::RecvError, errno);
+      begin_close(peer, transport_reason(errno, DisconnectReason::RecvError),
+                  errno);
     return;
   }
   client.rx_length += static_cast<std::size_t>(count);
@@ -1115,7 +1219,9 @@ void poll_server(int wait_us = 0) {
         if (clients[peer].closing.load())
           finish_close(peer);
         else
-          begin_close(peer, DisconnectReason::SendError, errno);
+          begin_close(peer,
+                      transport_reason(errno, DisconnectReason::SendError),
+                      errno);
       }
     for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer)
       if (fds[peer] >= 0 && fds[peer] == clients[peer].fd.load() &&
@@ -1151,18 +1257,26 @@ void poll_server(int wait_us = 0) {
   }
 }
 
-void lan_task(void *) {
-  for (;;) {
+// One LAN task iteration. Settings and reconnects wait while a scan runs,
+// since restarting the station would abort it; peers are served throughout.
+void lan_step() {
+  if (scan_running) {
+    poll_scan();
+  } else {
     poll_radio();
-    if (scan_pending.load()) {
-      run_scan();
-      scan_pending = false;
-    }
-    if (listen_fd >= 0)
-      poll_server(100000);
-    else
-      vTaskDelay(kTick);
+    if (scan_pending.load())
+      start_scan();
   }
+  if (listen_fd >= 0)
+    poll_server(100000);
+  else
+    vTaskDelay(kTick);
+  update_power();
+}
+
+void lan_task(void *) {
+  for (;;)
+    lan_step();
 }
 } // namespace
 
@@ -1251,7 +1365,14 @@ bool begin(const char *host, const ble::Identity &identity,
   std::snprintf(current.host, sizeof(current.host), "%s", host_label);
   station_mac(current.mac, sizeof(current.mac));
   reapply = true;
-  if (xTaskCreate(lan_task, "aq-lan", 8192, nullptr, 1, nullptr) != pdPASS) {
+  if (!active_lock && esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "aq-lan",
+                                         &active_lock) != ESP_OK) {
+    // Without PM_ENABLE the CPU stays at its boot frequency; only power
+    // save follows activity.
+    active_lock = nullptr;
+  }
+  if (xTaskCreate(lan_task, "aq-lan", options.task_stack_bytes, nullptr,
+                  options.task_priority, nullptr) != pdPASS) {
     aqlog.record_only().println("LAN ERROR operation=task");
     release_station();
     return false;

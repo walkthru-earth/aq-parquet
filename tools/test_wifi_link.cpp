@@ -152,6 +152,25 @@ std::size_t count_frames(const std::vector<std::uint8_t> &stream,
   return count;
 }
 
+// Stands in for the LAN task's scan steps: start, the driver's SCAN_DONE
+// event, then collection on the next loop.
+void scan_now() {
+  lan::start_scan();
+  if (lan::scan_running) {
+    assert(!fake_scan_blocking);
+    fake_scan_done();
+    lan::poll_scan();
+  }
+  assert(!lan::scan_running && !lan::scan_pending.load());
+}
+
+int socket_option(int fd, int level, int name) {
+  int value = -1;
+  socklen_t length = sizeof(value);
+  assert(::getsockopt(fd, level, name, &value, &length) == 0);
+  return value;
+}
+
 ble::DisconnectEvent expect_event(ble::DisconnectReason reason,
                                   std::uint8_t link) {
   std::uint8_t raw[DebugLog::kFallbackEventSlots][DebugLog::kEventBytes];
@@ -184,6 +203,16 @@ int main() {
   assert(!lan::take_time_anchor(time_anchor));
   timeval actual_time{1800000000, 123456};
   std::signal(SIGPIPE, SIG_IGN);
+  auto ap = [](const char *ssid, std::int8_t rssi, wifi_auth_mode_t auth,
+               std::uint8_t channel) {
+    wifi_ap_record_t record{};
+    std::snprintf(reinterpret_cast<char *>(record.ssid), sizeof(record.ssid),
+                  "%s", ssid);
+    record.rssi = rssi;
+    record.authmode = auth;
+    record.primary = channel;
+    return record;
+  };
   const ble::Identity identity{"fixture", "device", "boot", "schema",
                                0,         "",       "test"};
   fake_init_result = ESP_FAIL;
@@ -191,6 +220,7 @@ int main() {
   assert(!lan::station_netif && !lan::wifi_initialized);
   assert(!lan::request_scan(ble::Link::Ble, 1));
   fake_init_result = ESP_OK;
+  fake_pm_create_result = ESP_ERR_NOT_SUPPORTED;
   fake_task_result = 0;
   assert(!lan::begin("aq-fixture", identity, enqueue));
   assert(!lan::station_netif && !lan::wifi_initialized &&
@@ -198,7 +228,14 @@ int main() {
   assert(!lan::request_scan(ble::Link::Ble, 1));
   fake_task_result = pdPASS;
   assert(lan::begin("aq-fixture", identity, enqueue));
+  // An image without PM_ENABLE still starts; only power save follows peers.
+  assert(!lan::active_lock);
   assert(!lan::begin("aq-fixture", identity, enqueue));
+  // Shared defaults: the LAN task outranks the storage worker (3).
+  assert(fake_task_priority == 4 && fake_task_stack == 8192);
+  fake_pm_create_result = ESP_OK;
+  assert(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "aq-lan",
+                            &lan::active_lock) == ESP_OK);
   assert(fake_wifi_storage == WIFI_STORAGE_RAM);
   assert(!fake_wifi_started);
   lan::settings = fixture_settings;
@@ -220,6 +257,16 @@ int main() {
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {
     phones[peer] = connect_phone();
     authenticate(phones[peer], peer, peer == 1);
+  }
+  // Every accepted socket probes a silent phone: 30 s idle, then 3 probes
+  // 5 s apart, so a dead peer closes in 45 s instead of the 300 s idle limit.
+  {
+    const int fd = lan::clients[0].fd.load();
+    assert(socket_option(fd, SOL_SOCKET, SO_KEEPALIVE) != 0);
+    assert(socket_option(fd, IPPROTO_TCP, TCP_KEEPIDLE) == 30);
+    assert(socket_option(fd, IPPROTO_TCP, TCP_KEEPINTVL) == 5);
+    assert(socket_option(fd, IPPROTO_TCP, TCP_KEEPCNT) == 3);
+    assert(socket_option(fd, IPPROTO_TCP, TCP_NODELAY) != 0);
   }
   assert(lan::status().clients == 3 && lan::status().authenticated);
   const auto disconnects_before = ble::disconnect_stats().count;
@@ -659,6 +706,28 @@ int main() {
   assert(lan::clients[0].fd.load() < 0);
   assert(expect_event(ble::DisconnectReason::RecvError, 1).err == ECONNRESET);
 
+  // lwIP reports expired keepalive or retransmission as ECONNABORTED, other
+  // stacks as ETIMEDOUT. Either closes KeepaliveFailed, without a BYE that
+  // the dead socket could not carry. A reset stays a receive error.
+  assert(
+      lan::transport_reason(ECONNABORTED, ble::DisconnectReason::RecvError) ==
+      ble::DisconnectReason::KeepaliveFailed);
+  assert(lan::transport_reason(ETIMEDOUT, ble::DisconnectReason::SendError) ==
+         ble::DisconnectReason::KeepaliveFailed);
+  assert(lan::transport_reason(ECONNRESET, ble::DisconnectReason::RecvError) ==
+         ble::DisconnectReason::RecvError);
+  {
+    const int silent = connect_phone();
+    authenticate(silent, 0);
+    lan::begin_close(0, ble::DisconnectReason::KeepaliveFailed, ECONNABORTED);
+    assert(lan::clients[0].fd.load() < 0);
+    std::uint8_t byte;
+    assert(::recv(silent, &byte, 1, 0) == 0);
+    ::close(silent);
+    assert(expect_event(ble::DisconnectReason::KeepaliveFailed, 1).err ==
+           ECONNABORTED);
+  }
+
   // A rotation requested between poll_server and a handshake refuses HELLO.
   // The new peer learns the rotation, not a generic send error.
   const int racing = connect_phone();
@@ -728,9 +797,107 @@ int main() {
   lan::poll_radio();
   lan::poll_radio();
   assert(lan::listen_fd >= 0);
+  // Power follows authenticated peers: modem sleep and DFS while idle, then
+  // PS NONE and the CPU_FREQ_MAX lock from the first peer to the last.
+  lan::update_power();
+  assert(fake_wifi_power_save == WIFI_PS_MIN_MODEM && fake_pm_lock.held == 0 &&
+         fake_pm_lock.type == ESP_PM_CPU_FREQ_MAX);
+  int lost = connect_phone();
+  lan::update_power();
+  assert(fake_wifi_power_save == WIFI_PS_MIN_MODEM); // not authenticated yet
+  authenticate(lost, 0);
+  lan::update_power();
+  assert(fake_wifi_power_save == WIFI_PS_NONE && fake_pm_lock.held == 1);
+  const auto power_changes = fake_power_save_changes;
+  const int second = connect_phone();
+  authenticate(second, 1);
+  lan::update_power();
+  assert(fake_power_save_changes == power_changes && fake_pm_lock.held == 1);
+
+  // A scan runs while peers are served. The driver scan is non-blocking,
+  // settings wait for it, and requests and replies keep flowing on slot 1
+  // until WIFI_EVENT_SCAN_DONE lets the next loop report to slot 0.
+  fake_scan_records = {ap("fixture-ap", -50, WIFI_AUTH_WPA2_PSK, 3)};
+  const auto scan_starts = fake_scan_starts;
+  assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
+  lan::lan_step();
+  assert(lan::scan_running && fake_scan_starts == scan_starts + 1 &&
+         !fake_scan_blocking);
+  lan::apply_settings();
+  for (int round = 0; round < 3; ++round) {
+    const auto before = requests.size();
+    const std::uint8_t bytes[] = {1, 0, ble::kOpStatus};
+    write_bytes(second, bytes, sizeof(bytes));
+    for (int step = 0; step < 50 && requests.size() == before; ++step)
+      lan::lan_step();
+    assert(requests.size() == before + 1 && requests.back().peer == 1);
+    const std::uint8_t reply[] = {ble::kFrameClosed,
+                                  static_cast<std::uint8_t>(round)};
+    assert(lan::enqueue_response(reply, sizeof(reply), 1,
+                                 requests.back().link_generation) ==
+           aqsync::EnqueueResult::Ok);
+    auto frame = read_frame(second);
+    while (frame[0] == ble::kFrameStatus || frame[0] == ble::kFrameLive)
+      frame = read_frame(second);
+    assert(frame == std::vector<std::uint8_t>(reply, reply + 2));
+    assert(lan::scan_running && lan::reapply.load());
+  }
+  fake_scan_done();
+  lan::lan_step();
+  assert(!lan::scan_running && !lan::scan_pending.load());
+  {
+    auto frame = read_frame(lost);
+    while (frame[0] == ble::kFrameStatus || frame[0] == ble::kFrameLive)
+      frame = read_frame(lost);
+    assert(frame[0] == ble::kFrameWifiAp && frame[3] == 3);
+    assert(read_frame(lost) ==
+           (std::vector<std::uint8_t>{ble::kFrameWifiScanEnd, 1, 0, 0}));
+  }
+  // The deferred reapply runs once the scan ended: unchanged settings
+  // restart the server, closing both peers, and power returns to idle.
+  lan::lan_step();
+  assert(!lan::reapply.load());
+  expect_bye(second, ble::DisconnectReason::ServerStop, 1);
+  expect_bye(lost, ble::DisconnectReason::ServerStop, 0);
+  lan::update_power();
+  assert(fake_wifi_power_save == WIFI_PS_MIN_MODEM && fake_pm_lock.held == 0);
+  lan::poll_radio();
+  lan::poll_radio();
+  assert(lan::listen_fd >= 0);
+
+  // A scan that never reports SCAN_DONE is stopped after kScanTimeoutUs and
+  // answers unavailable; a failed SCAN_DONE status answers the same.
+  ble_frames.clear();
+  assert(lan::request_scan(ble::Link::Ble, 77));
+  lan::start_scan();
+  assert(lan::scan_running);
+  lan::poll_scan();
+  assert(lan::scan_running && ble_frames.empty());
+  fake_now_us += lan::kScanTimeoutUs;
+  const auto scan_stops = fake_scan_stops;
+  lan::poll_scan();
+  assert(!lan::scan_running && fake_scan_stops == scan_stops + 1 &&
+         ble_frames ==
+             (std::vector<std::vector<std::uint8_t>>{
+                 {ble::kFrameWifiScanEnd, 0, 0, ble::kErrWifiUnavailable}}));
+  ble_frames.clear();
+  // The SCAN_DONE that the driver posts for the stopped scan arrives late and
+  // must not complete the next scan.
+  fake_scan_done(1);
+  assert(!lan::scan_done);
+  assert(lan::request_scan(ble::Link::Ble, 78));
+  lan::start_scan();
+  fake_scan_done(1);
+  lan::poll_scan();
+  assert(!lan::scan_running &&
+         ble_frames ==
+             (std::vector<std::vector<std::uint8_t>>{
+                 {ble::kFrameWifiScanEnd, 0, 0, ble::kErrWifiUnavailable}}));
+  ble_frames.clear();
+
   // Losing the station closes sessions with WifiLost; reapplying unchanged
   // LAN settings restarts the server with ServerStop.
-  const int lost = connect_phone();
+  lost = connect_phone();
   authenticate(lost, 0);
   fake_wifi_lost();
   lan::poll_radio();
@@ -809,16 +976,6 @@ int main() {
 
   // Off-radio scans start/stop temporarily, deduplicate SSIDs by strongest
   // RSSI, encode security/channel, preserve 32-byte names and skip hidden APs.
-  auto ap = [](const char *ssid, std::int8_t rssi, wifi_auth_mode_t auth,
-               std::uint8_t channel) {
-    wifi_ap_record_t record{};
-    std::snprintf(reinterpret_cast<char *>(record.ssid), sizeof(record.ssid),
-                  "%s", ssid);
-    record.rssi = rssi;
-    record.authmode = auth;
-    record.primary = channel;
-    return record;
-  };
   fake_scan_records = {
       ap("", -20, WIFI_AUTH_OPEN, 1),
       ap("fixture-ap", -85, WIFI_AUTH_WPA2_PSK, 1),
@@ -827,8 +984,7 @@ int main() {
   ble_frames.clear();
   assert(lan::request_scan(ble::Link::Ble, 123));
   assert(!lan::request_scan(ble::Link::Ble, 456));
-  lan::run_scan();
-  lan::scan_pending = false;
+  scan_now();
   assert(ble_reply_generation == 123 && ble_frames.size() == 3);
   assert(ble_frames[0][0] == ble::kFrameWifiAp &&
          static_cast<std::int8_t>(ble_frames[0][1]) == -35 &&
@@ -846,19 +1002,20 @@ int main() {
     fake_scan_records.push_back(ap(name.c_str(), -60, WIFI_AUTH_WPA2_PSK, 1));
   }
   ble_frames.clear();
-  lan::run_scan();
+  scan_now();
   assert(ble_frames.size() == lan::kMaxScanEntries + 1 &&
          ble_frames.back()[1] == lan::kMaxScanEntries &&
          fake_scan_records.empty());
   fake_scan_result = ESP_FAIL;
+  const auto clears_before_failure = fake_scan_clears;
   fake_scan_records.push_back(ap("unavailable", -50, WIFI_AUTH_OPEN, 1));
   ble_frames.clear();
-  lan::run_scan();
+  scan_now();
   assert(ble_frames ==
          (std::vector<std::vector<std::uint8_t>>{
              {ble::kFrameWifiScanEnd, 0, 0, ble::kErrWifiUnavailable}}));
-  assert(fake_scan_records.empty() && fake_scan_clears == 1 &&
-         !fake_wifi_started);
+  assert(fake_scan_records.empty() &&
+         fake_scan_clears == clears_before_failure + 1 && !fake_wifi_started);
   fake_scan_result = ESP_OK;
 
   // The driver sees credentials in RAM only; diagnostics never include PSK.

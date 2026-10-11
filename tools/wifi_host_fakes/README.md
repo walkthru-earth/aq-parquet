@@ -11,7 +11,11 @@ The fixture checks concurrent session isolation, bounded framed requests,
 response routing, handshake/idle timing and LAN settings reconciliation.
 Native lifecycle fixtures cover initialization rollback, driver RAM storage,
 mDNS records, SNTP anchors, connect/retry timing, temporary scans, strongest-AP
-deduplication, bounded result release and credential secrecy. It does not
+deduplication, bounded result release and credential secrecy. They also cover the
+asynchronous scan (`SCAN_DONE`, stop on timeout, failed status, serving a peer
+while the scan runs), the `esp_pm` CPU lock and power-save switching, task
+priority and stack, and keepalive socket options with the `KeepaliveFailed`
+close path. It does not
 measure ESP32 radio coexistence, phone background behavior, RAM, throughput or
 SD storage. The generic connectivity build and board builds remain separate
 gates. The test may require permission for localhost sockets in a restricted

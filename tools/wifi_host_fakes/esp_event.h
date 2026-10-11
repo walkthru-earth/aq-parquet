@@ -9,7 +9,8 @@ inline const char wifi_event_name[] = "WIFI_EVENT",
                   ip_event_name[] = "IP_EVENT";
 inline esp_event_base_t WIFI_EVENT = wifi_event_name, IP_EVENT = ip_event_name;
 constexpr std::int32_t ESP_EVENT_ANY_ID = -1;
-constexpr std::int32_t WIFI_EVENT_STA_DISCONNECTED = 1, WIFI_EVENT_STA_STOP = 2;
+constexpr std::int32_t WIFI_EVENT_STA_DISCONNECTED = 1, WIFI_EVENT_STA_STOP = 2,
+                       WIFI_EVENT_SCAN_DONE = 3;
 constexpr std::int32_t IP_EVENT_STA_GOT_IP = 1, IP_EVENT_STA_LOST_IP = 2;
 inline esp_event_handler_t fake_station_events = nullptr,
                            fake_ip_events = nullptr;

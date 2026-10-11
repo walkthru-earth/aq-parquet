@@ -3,20 +3,32 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 # Keep packet/TCP storage in PSRAM and bound hardware DMA buffers. Static TX
 # avoids a per-packet internal-heap burst competing with SD/display DMA.
-# RX BA 16 fits twice the eight hardware RX buffers; software RX remains 32.
+# Sixteen static RX buffers hold a whole RX BA 16 aggregate, so an A-MPDU is
+# not partly dropped and retransmitted. They cost about 12.8 KB of internal
+# RAM over eight, paid for by NimBLE pools in PSRAM and the PSRAM log ring.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
 CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
-CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_RX_BA_WIN=16
+# TCP send buffer and window of 16 x MSS (1440) keep a READ stream in flight
+# across a DTIM period. Six retransmissions end a dead peer in seconds instead
+# of minutes; per socket keepalive is set in wifi_link.cpp.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=23040
+CONFIG_LWIP_TCP_WND_DEFAULT=23040
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=18
+CONFIG_LWIP_TCP_MAXRTX=6
 # Preserve the Arduino ESP32-S3 factory-derived Bluetooth identity (base + 1).
 # IDF's default FOUR shifts it to base + 2, orphaning persisted local IRK and
 # phone bonds/Companion Device Manager associations without changing NVS.
 CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+# Host pools and buffers in PSRAM. Needs SPIRAM_USE_MALLOC, so a board
+# without PSRAM keeps the internal default.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y

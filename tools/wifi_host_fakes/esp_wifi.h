@@ -22,8 +22,13 @@ struct wifi_init_config_t {};
 #define WIFI_INIT_CONFIG_DEFAULT()                                             \
   {                                                                            \
   }
-constexpr int WIFI_STORAGE_RAM = 1, WIFI_MODE_STA = 1, WIFI_IF_STA = 0,
-              WIFI_PS_MIN_MODEM = 1;
+constexpr int WIFI_STORAGE_RAM = 1, WIFI_MODE_STA = 1, WIFI_IF_STA = 0;
+enum wifi_ps_type_t { WIFI_PS_NONE, WIFI_PS_MIN_MODEM, WIFI_PS_MAX_MODEM };
+struct wifi_event_sta_scan_done_t {
+  std::uint32_t status = 0;
+  std::uint8_t number = 0;
+  std::uint8_t scan_id = 0;
+};
 struct wifi_config_t {
   struct {
     std::uint8_t ssid[32]{};
@@ -44,7 +49,10 @@ struct wifi_scan_config_t {
 };
 inline bool fake_wifi_started = false, fake_wifi_autoconnect = true;
 inline int fake_wifi_storage = -1, fake_wifi_power_save = -1;
-inline unsigned fake_wifi_connects = 0, fake_scan_clears = 0;
+inline unsigned fake_wifi_connects = 0, fake_scan_clears = 0,
+                fake_scan_starts = 0, fake_scan_stops = 0,
+                fake_power_save_changes = 0;
+inline bool fake_scan_blocking = true;
 inline esp_err_t fake_scan_result = ESP_OK, fake_start_result = ESP_OK;
 inline wifi_config_t fake_wifi_config;
 inline std::vector<wifi_ap_record_t> fake_scan_records;
@@ -96,7 +104,9 @@ inline esp_err_t esp_wifi_disconnect() {
   fake_wifi_lost();
   return ESP_OK;
 }
-inline esp_err_t esp_wifi_set_ps(int mode) {
+inline esp_err_t esp_wifi_set_ps(wifi_ps_type_t mode) {
+  if (fake_wifi_power_save != mode)
+    ++fake_power_save_changes;
   fake_wifi_power_save = mode;
   return ESP_OK;
 }
@@ -104,8 +114,22 @@ inline esp_err_t esp_wifi_sta_get_ap_info(wifi_ap_record_t *record) {
   *record = {};
   return ESP_OK;
 }
-inline esp_err_t esp_wifi_scan_start(const wifi_scan_config_t *, bool) {
+// The driver posts WIFI_EVENT_SCAN_DONE later; a test delivers it with
+// fake_scan_done().
+inline esp_err_t esp_wifi_scan_start(const wifi_scan_config_t *, bool block) {
+  ++fake_scan_starts;
+  fake_scan_blocking = block;
   return fake_scan_result;
+}
+inline esp_err_t esp_wifi_scan_stop() {
+  ++fake_scan_stops;
+  return ESP_OK;
+}
+inline void fake_scan_done(std::uint32_t status = 0) {
+  wifi_event_sta_scan_done_t event;
+  event.status = status;
+  if (fake_station_events)
+    fake_station_events(nullptr, WIFI_EVENT, WIFI_EVENT_SCAN_DONE, &event);
 }
 inline esp_err_t esp_wifi_scan_get_ap_records(std::uint16_t *count,
                                               wifi_ap_record_t *records) {
