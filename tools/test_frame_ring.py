@@ -27,7 +27,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Frame ring: prefix, Ok/Full/Closed, wrap, partial consume, drop, "
+    print("Frame ring: prefix, Ok/Full/Closed/Rejected, wrap, partial consume, drop, "
           "24 KiB bound and differential model passed")
 
 

@@ -30,7 +30,7 @@ public:
   // True when a frame of `length` body bytes can ever fit an empty ring.
   bool fits(std::size_t length) const;
 
-  // All or nothing. Full and Closed leave the ring unchanged.
+  // All or nothing. Full, Closed and Rejected leave the ring unchanged.
   EnqueueResult try_push(const std::uint8_t *frame, std::size_t length);
   // Contiguous queued bytes from the oldest unsent byte, or 0 when empty.
   std::size_t peek(const std::uint8_t **data) const;

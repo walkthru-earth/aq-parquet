@@ -141,11 +141,11 @@ void test_refused_lengths() {
 
   const std::uint8_t one = 0;
   result = ring.try_push(&one, 0);
-  assert(result == EnqueueResult::Full);
+  assert(result == EnqueueResult::Rejected);
   assert_same(before, snapshot(ring));
   const auto huge = body(FrameRing::kMaxFrame + 1, 9);
   result = ring.try_push(huge.data(), huge.size());
-  assert(result == EnqueueResult::Full);
+  assert(result == EnqueueResult::Rejected);
   assert_same(before, snapshot(ring));
   assert(!ring.fits(0) && !ring.fits(FrameRing::kMaxFrame + 1));
   assert(ring.fits(FrameRing::kMaxFrame));

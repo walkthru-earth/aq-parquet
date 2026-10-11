@@ -38,7 +38,9 @@ EnqueueResult FrameRing::try_push(const std::uint8_t *frame,
                                   std::size_t length) {
   if (closed_ || !storage_)
     return EnqueueResult::Closed;
-  if (length == 0 || length > kMaxFrame || kPrefixBytes + length > free())
+  if (length == 0 || length > kMaxFrame)
+    return EnqueueResult::Rejected;
+  if (kPrefixBytes + length > free())
     return EnqueueResult::Full;
   const std::uint8_t prefix[kPrefixBytes] = {
       static_cast<std::uint8_t>(length & 0xff),
