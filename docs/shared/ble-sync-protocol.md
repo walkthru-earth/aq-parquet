@@ -36,10 +36,10 @@ compatibility. Mobile refuses a device that reports `proto` below 3. It adds
 typed disconnect reasons, a `BYE` frame before every device-initiated LAN close,
 `GET_DIAG`/`DIAG`, `ABORT`/`ABORTED`, a 32-bit `LIST_END.count`, STATUS `dc`
 and `dr` (next to `sd_state`), a 65535-byte `LOG_TAIL` and a persistent PSRAM log. See
-[Protocol 3 contract](#protocol-3-contract). Firmware implements the frames now
-but still reports `info.proto=2`, `HELLO.proto=2` and TXT `proto=2` until the
-proto flip in issue #2, together with the non-blocking writer, the BYE linger
-sequence and ABORT interruption of a running transfer.
+[Protocol 3 contract](#protocol-3-contract). Since issue #2 firmware reports
+`info.proto=3`, `HELLO.proto=3` and TXT `proto=3`, writes LAN frames through a
+non-blocking per peer ring, closes LAN sockets with the BYE close sequence and
+lets `ABORT` stop a running `LIST`, `READ` or `LOG_TAIL`.
 
 ## Purpose and non-goals
 
@@ -262,7 +262,7 @@ Rules:
 | `wifi.ssid` | ≤ 32 bytes | immediately | network name |
 | `wifi.psk` | ≤ 63 bytes, empty for an open network | immediately | passphrase, stored in NVS in clear (flash encryption is not used on this board by rule) |
 | `lan.on` | `0` \| `1` | immediately | TCP sync server + mDNS while Wi-Fi is connected (on by default) |
-| `lan.rotate_token` | `1` | *action* | new LAN token. Every LAN session receives a [BYE](#bye) with reason `token-rotated` (10) and closes, and phones must fetch the token again over BLE |
+| `lan.rotate_token` | `1` | *action* | new LAN token. A LAN caller reads its `CONFIG` reply first. Every LAN session then receives a [BYE](#bye) with reason `token-rotated` (10) and closes, and phones must fetch the token again over BLE |
 | `ntp.on` | `0` \| `1` (default 1) | immediately | enable automatic native SNTP when Wi-Fi has an IP lease |
 | `ntp.dhcp` | `0` \| `1` (default 1) | immediately; new DHCP options at next lease | prefer router-provided DHCP option 42 servers |
 | `ntp.public_fallback` | `0` \| `1` (default 1) | immediately | allow `time.cloudflare.com` only after router/configured servers fail |
@@ -381,8 +381,8 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | 2 | `handshake-timeout` | LAN, no complete `AQS1` + token within 5 s |
 | 3 | `auth-failed` | LAN token mismatch, or BLE encryption failed |
 | 4 | `sessions-full` | LAN, three slots taken. Sent after `ERROR` op=0 code 7, with `generation` 0 |
-| 5 | `slow-peer` | LAN send timed out or would block (`err` is the errno) |
-| 6 | `tx-overflow` | reserved for the non-blocking writer (issue #2) |
+| 5 | `slow-peer` | LAN peer accepted no byte for `slow_peer_ms` (15 s) while frames were queued. `err` is `EAGAIN` |
+| 6 | `tx-overflow` | LAN frame larger than the peer's transmit ring, the session could not be opened in it, or a `queue-full` refusal found the ring full |
 | 7 | `malformed` | LAN framing or length error |
 | 8 | `wifi-lost` | the station lost its IP |
 | 9 | `lan-disabled` | `lan.on=0`, Wi-Fi off, or radios turned off |
@@ -412,7 +412,7 @@ the persistent event ring and increments that reason's counter.
 | 8 | `reason` | u8 | [disconnect reason](#disconnect-reasons) code |
 | 9 | `link` | u8 | 0 BLE, 1 to 3 the LAN slot, 255 a refused LAN client |
 | 10 | `err` | i16 | errno or HCI code, clamped, 0 when not applicable |
-| 12 | `queued` | u16 | frames still queued for that peer, 0 until issue #2 |
+| 12 | `queued` | u16 | frames still queued for that peer when the close began, BYE excluded, saturating |
 | 14 | `boot_seq` | u16 | persistent boot sequence (see [persistent log](#persistent-log)) |
 
 Golden event `78000000070000000302ffff00000200` is uptime 120 s, generation 7,
@@ -420,13 +420,25 @@ Golden event `78000000070000000302ffff00000200` is uptime 120 s, generation 7,
 
 ### BYE
 
-The device sends one `BYE` frame immediately before it closes a LAN socket,
-then closes. It is written with `MSG_DONTWAIT`, so a full send buffer loses it.
-When a send failed after part of a frame went out (`slow-peer`, `send-error`)
-the device skips the BYE, because it would land inside that frame, and only
-records the event for `DIAG`. A phone must therefore treat EOF without BYE as
-reason `unknown`. The phone
-never sends BYE.
+Every device-initiated LAN close follows one sequence.
+
+1. The device queues `BYE` on the peer's transmit ring and closes the ring to
+   further frames. For `slow-peer` and `tx-overflow` it first drops every frame
+   that has not started on the wire, so BYE follows the frame in flight. For
+   every other reason BYE follows all frames already queued, so a terminal
+   `ERROR` or `REBOOTING` arrives before it, unless the ring is full, when
+   unstarted frames are dropped to make room for BYE.
+2. The LAN task sends what the socket accepts, then half-closes with
+   `shutdown(SHUT_WR)`, so the phone reads BYE followed by EOF.
+3. The device discards input and closes the socket when the phone closes or
+   after `close_flush_ms` (500 ms), whichever is first.
+
+There is no BYE when the phone ended the session (`peer-closed`), or when a
+receive or send failed (`recv-error`, `send-error`), because the socket can no
+longer carry it. The event is still recorded for `DIAG`. A BYE that does not
+fit before the deadline is lost, so a phone must treat EOF without BYE as reason
+`unknown`. A refused client (`sessions-full`) receives `ERROR` op=0 code 7 and
+BYE in one non-blocking send. The phone never sends BYE.
 
 | Offset | Field | Type |
 | --- | --- | --- |
@@ -461,10 +473,23 @@ event golden above).
 ### ABORT and ABORTED
 
 `ABORT` (`0x0F`) takes no body and answers `ABORTED` (`0x4D`) with the opcode
-it stopped. The storage worker runs one command at a time, so in this revision
-an `ABORT` that reaches it always finds nothing running and answers `4d00`.
-Interrupting a running `READ` or `LIST` with `ABORTED` and `ERROR` 16 is issue
-#2. Golden `4d00` (idle) and `4d03` (a stopped `READ`).
+it stopped. The transport task notes the ABORT as soon as it arrives, so the
+storage worker sees it while a request on the same link (BLE, or the same LAN
+peer) is still running or queued.
+
+- A `LIST`, `READ` or `LOG_TAIL` that is running stops at the next frame and
+  ends with `ERROR` op code 16 (`aborted`). It sends no `LIST_END`,
+  `READ_END` or `LOG_END`. Frames already sent stay valid. A `READ` resumes
+  from the last offset the phone stored.
+- A `LIST` or `READ` queued before the ABORT never starts and answers only
+  `ERROR` op code 16.
+- `ABORTED` follows those errors and names the first op the ABORT stopped, or
+  0 when nothing was running. An op stopped on an earlier connection is never
+  reported, so a new session sees `4d00`.
+- Other ops run to completion. ABORT never affects another link or LAN peer.
+- An ABORT refused with `ERROR` 7 `queue-full` stops nothing. Send it again.
+
+Golden `4d00` (idle) and `4d03` (a stopped `READ`).
 
 ### LIST_END
 
@@ -494,18 +519,19 @@ slots, `boot_seq` 0, and logs `LOG ring=internal reason=no-psram` or
 slots, 17 are used, one per [disconnect reason](#disconnect-reasons) code 0 to
 16, and slots 17 to 31 stay reserved.
 
-## LAN transport (v2)
+## LAN transport (v3)
 
 The same request bodies and response frames as BLE, carried over **one TCP connection**. Nothing about file sync changes; only the envelope, discovery and authentication differ.
 
 | Item | Value |
 | --- | --- |
-| Discovery | mDNS/DNS-SD service **`_aqsync._tcp.local.`**, instance = BLE local name (`AQ-xxxx`), host `aq-xxxx.local`, TXT records `proto=2`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
+| Discovery | mDNS/DNS-SD service **`_aqsync._tcp.local.`**, instance = BLE local name (`AQ-xxxx`), host `aq-xxxx.local`, TXT records `proto=3`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
 | Port | **47390** (unassigned at IANA; deliberately not Meshtastic's 4403). |
 | Framing | Every message in both directions is `len` u16 LE followed by exactly `len` bytes. Phone → device: a control request body (first byte = opcode), ≤ 512 bytes. Device → phone: one response or push frame, ≤ `payload_max` = **1024** bytes, so `CHUNK` carries up to 1017 bytes. |
 | Handshake | Within 5 s of connecting the phone sends `"AQS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `AQS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
 | Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. In proto 3 every device-initiated close first sends a [BYE](#bye) naming the reason. |
-| Pushes | `STATUS` (0x48) and `LIVE` (0x49) frames are pushed to every authenticated socket whenever the device would notify `status`/`live` over BLE. They may arrive **between any two response frames** (the sampling loop does not wait for a transfer); the phone dispatches on the type byte and must not assume `CHUNK`s are contiguous on the wire. Frames are never interleaved *within* a frame — the socket is written under a mutex. |
+| Pushes | `STATUS` (0x48) and `LIVE` (0x49) frames are pushed to every authenticated socket whenever the device would notify `status`/`live` over BLE. They may arrive **between any two response frames** (the sampling loop does not wait for a transfer); the phone dispatches on the type byte and must not assume `CHUNK`s are contiguous on the wire. Frames are never interleaved within a frame because each peer has one transmit ring. A peer holds at most one queued `STATUS` and one queued `LIVE`, and a newer snapshot waits until the older one was sent. |
+| Transmit | Each peer has a `ring_bytes` (24 KiB, PSRAM when present) ring of whole frames. Only the LAN task writes to sockets, with non-blocking sends, so other phones keep receiving what is queued for them while one phone stalls. While a session is open the task wakes at least every 10 ms, so a queued reply leaves within that. The worker waits in `wait_step_ms` (200 ms) steps while a ring is full and keeps taking samples between steps. A peer that accepts no byte for `slow_peer_ms` (15 s) while frames are queued is closed with `slow-peer`, which bounds that wait. Requests from other phones run after it, because the worker is serial, so a phone should allow at least 30 s for a reply. These are sync service settings with shared defaults. |
 | Token | 32 random bytes generated at first boot and kept in NVS. Obtainable **only** via `GET_TOKEN` over an authenticated BLE link (`ERROR` 13 over LAN). `lan.rotate_token=1` replaces it. The token is a bearer secret for anyone on the LAN: keep it in app-private storage, never log it. |
 | Security | The TCP stream is **not encrypted**; the token authenticates the phone, it does not protect data or the token from an active/passive LAN observer after the handshake, and there is no forward secrecy. Restrict it to a trusted WPA2/WPA3 LAN, disable `lan.on` when not needed, rotate the token after suspected exposure, and prefer BLE for provisioning/control. Do not use LAN sync for anything you would not print on the device screen. TLS requires certificate/trust provisioning and measured ESP32-S3 memory/jitter impact; it is not implemented here rather than being faked with an unverifiable self-signed endpoint. |
 
@@ -531,6 +557,8 @@ Ownership rules are unchanged: the LAN task never touches the SD card or the dis
 ## Ownership on the device
 
 BLE callbacks run on the NimBLE host task. They **never** touch the SD card or the display. A `control` write is converted into a command on the same queue the serial parser feeds; the AQLogger storage worker executes it and emits `response`/`status` notifications itself. `live` and `status` notifications after a sample come from the sampling loop, after the row has been queued. This keeps the existing rule: one storage owner, display and SD serialized through the application mutex, 10-second sampling deadline untouched. The 8-deep sample queue gives the worker ~80 s of slack; a `READ` window is capped at `max_read` so one excursion is short even on a slow link.
+
+On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 
 Notifications can be refused by the host when its buffers are full. The worker retries a bounded number of times with a short delay; a persistent refusal ends the transfer with `READ_END` status 7 rather than skipping a chunk.
 
