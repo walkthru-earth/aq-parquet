@@ -3,7 +3,7 @@
 The current [V2.0 application](../../../firmware/esp-idf-waveshare-sim7670g/README.md)
 is native **ESP-IDF 6.1**, with logger and UART/read-only TF diagnostic variants.
 The logger retains UART1 PMS5003T, one-bit SDMMC, OPI PSRAM, UART0 console,
-MAX17048 and the 52-column v2 dictionary. **Native hardware qualification is
+MAX17048 and the 56-column v3 schema with dictionary v3. **Native hardware qualification is
 pending.** Use the [native build/flash workflow](../../../firmware/esp-idf-waveshare-sim7670g/README.md#current-build-and-flash-workflow)
 and [shared development guide](../../shared/development.md).
 

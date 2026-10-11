@@ -65,12 +65,17 @@ Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
 `.partial` files are retained under `quarantine/<station>/<partition>/`, at boot
 and right after a same-boot failure; a partial whose finalized sibling exists is
-left in place as a crosslink suspect. No recovery, deletion, retention, cloud
-upload or formatting is performed.
+left in place as a crosslink suspect. Automated logging and sync never repair,
+delete or rewrite owner archives, and never format or upload. The separate
+physical serial [archive reset](../../../docs/shared/development.md#owner-maintenance)
+requires an explicitly requested destructive reset and is unavailable over radio.
 
 The SD space governor (`src/storage_governor.h`) is pure and header-only. Ready
-and degraded write; full (below a 32 MiB reserve) finalizes the open file, raises
-`PARQUET ALARM storage=full` and drops new rows; retry follows any write, close,
+and degraded write. Full finalizes the open file and raises
+`PARQUET ALARM storage=full` below the reserve, normally 32 MiB with smaller-card
+scaling. Full and retry stop normal card writes but retain a bounded RAM batch. New
+rows drop when that batch is full or a partition/window change cannot be committed.
+Retry follows any write, close,
 rename or mount failure and probes on a 10 s to 10 min backoff, remounting through
 the optional `storage_remount` hook. Boards supply `storage_free_bytes`,
 `storage_cluster_bytes` and `storage_remount`; `firmware/common/src/fat_volume.h`

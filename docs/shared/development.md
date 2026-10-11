@@ -32,10 +32,8 @@ Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.32**, mDNS **1.14.0**
 and Waveshare led_strip **3.1.0~1**; official H3 **4.5.0** is vendored with exact
 source/license hashes in `firmware/common/location/vendor/h3/manifest.json`.
 Rechecking on **2026-10-10** confirmed M5GFX **0.2.32** as the latest stable
-[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). The previous
-first-qualification exception for 0.2.31 is removed: this change upgrades the
-exact manifest pin and rebuilds CoreS3; dated device evidence records the
-remaining qualification limits. The other listed pins were the latest stable releases
+[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). Dated device
+evidence records the remaining qualification limits. The other listed pins were the latest stable releases
 observed on that date. LZ4 remains vendored **1.10.0** with checked hashes; the
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
@@ -59,10 +57,10 @@ PSRAM and partition configuration. Build output is ephemeral under
 `firmware/<board>/build/<variant>/`; retain reviewable binaries and image hashes
 in `artifacts/` before a real hardware run. The backup-gated flash wrappers
 require the checked character-device port and matching 16,777,216-byte backup,
-and flash the verified image without an implicit rebuild or erase. They use
+and flash the verified image without an implicit rebuild or full-chip erase. They use
 Pixi's pinned esptool with the validated generated `flash_args` response file;
 ESP-IDF 6.1 has no `idf.py --no-deps` option. Only bootloader, partition table,
-OTA metadata and app0 regions are written; NVS is outside this plan:
+OTA metadata and app0 regions are written. NVS is outside this plan.
 
 ```sh
 pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
@@ -85,21 +83,13 @@ interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 
 ## Native migration validation 2026-10-09
 
-| Gate | Confirmed result | Scope |
-| --- | --- | --- |
-| `cores3-build` | Passed with native ESP-IDF 6.1/M5 components | Source/link/flash-PSRAM-partition target checks; no native board flash |
-| `waveshare-build` and `waveshare-build diagnostic` | Both passed | Logger OPI PSRAM and diagnostic no-PSRAM configurations; no native hardware run |
-| `connectivity-build-test`, `logger-build-test`, `waveshare-psram-build` | Passed | Generic native shared components and PSRAM probe compilation; fixtures not flashed |
-| `fmt-check`, `lint` | Passed | Project formatting and static diagnostics |
-| `common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `wifi-link-test`, `network-time-test`, `location-test`, `debug-log-test`, `logger-status-test`, `logger-provision-test`, `logger-work-queue-test`, `ble-advert-test` | Passed with applicable sanitizer tasks | Real shared implementation logic, native platform fakes and wire/queue/log bounds |
-| `pms-frame-test`, `parquet-test --sanitize`, `telemetry-contract-test --sanitize`, `waveshare-contract-test --sanitize` | Passed | Sensor/writer/schema contracts and independent host reader checks |
-
-These results establish native build and host-contract compatibility. They do
-not establish physical USB/UART, PSRAM, display/card arbitration, SD timing,
-radio coexistence, bonded reconnect, phone transfers or power-cut durability.
+The migration passed native board and generic component builds plus host
+contracts. Those results establish compilation and logic compatibility.
 A subsequent [dated CoreS3 native flash/readback](../boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
-qualifies only its short SD/USB/sensor/network-time run. Waveshare native
-hardware remains pending; historical Arduino results keep their original scope.
+qualifies only its short SD/USB/sensor/time run. Waveshare native hardware
+remains pending. Historical Arduino results retain their original image scope.
+Proto 3 phone transfers, reconnect, coexistence, sustained arbitration and
+power-cut durability need separate device qualification.
 
 ## Dependency and shared-code policy
 
@@ -117,43 +107,61 @@ a sibling's GPIO, PSRAM or mount policy.
 
 ## Adding a board
 
-1. Create `docs/boards/<board>/README.md`, hardware/pin ownership notes, sensor notes and a `bench-verified.md`. Record the exact PCB revision and upstream sources; keep measured and source-checked claims separate.
-2. Create one justified, self-contained native `firmware/esp-idf-<board>/` adapter with README, pinned dependencies, setup/build/flash scripts, partition table and build settings. Do not include a sibling's sources. Add explicit root Pixi tasks and lint inputs.
-3. Register common component directories in CMake `EXTRA_COMPONENT_DIRS` and declare `REQUIRES common` for AQCommon; opt into AQRuntime (`firmware/common/runtime`) for settings/logging and AQLocation (`firmware/common/location`) for geometry
-(required by location configuration), AQConnectivity (`firmware/common/connectivity`) for BLE/Wi-Fi/control/file sync, and AQLogger (`firmware/common/logger`) for the sampling deadline, single worker and archive lifecycle. Select the Plantower model explicitly. Keep board services and measurement definitions in the trial; pass a board-specific `created_by` when using the shared writer.
-4. Audit GPIO/controller ownership, strapping pins, flash size, PSRAM mode, console transport and recovery before enabling peripherals. The common ESP32-S3 chip does not imply common board wiring.
-5. Follow the [identification and full-backup sequence](../../AGENTS.md#before-any-physical-flash-write) on the checked port. Extend the backup/restore scripts deliberately for another flash capacity; the current helpers accept only the two 16 MiB targets.
-6. Verify a small diagnostic, then the sensor byte contract and storage on a checked card. Add a versioned measurement schema before logging; unavailable measurements stay null. Use AQLogger with static schema/provenance descriptors, a board acquisition callback and already mounted storage capacity callbacks. Supply paired bus callbacks when borrowing a board mutex, and optional RTC callbacks on the main-loop task. AQLogger owns the nonblocking request queue, shared ArchiveSession, clock/flush/reboot/status and storage lifecycle; the board owns peripheral setup and actual measurement/RTC IO. Sharing the implementation does not prove it has run on another board.
-7. Retain captures and image/ELF files in the trial's ignored `artifacts/`, and record hashes, date, commands and limitations in that board's bench file. Add the board to the [docs router](../README.md) and root README.
+Use the [ESP32-S3 porting note](board-porting.md) for logger hooks, transport
+configuration, hardware capabilities and the qualification sequence. The
+[adapter contract](../../firmware/common/logger/README.md) owns logger lifecycle
+and callback details. Shared logic stays in `firmware/common`, with no board-name
+conditionals or sibling trial dependencies.
 
 ## Verification
 
-Run `pixi run fmt-check` and `pixi run lint` for project C/C++ changes. The formatter discovers project sources while excluding build/vendor trees. Preserve vendored source bytes and notices.
+Every firmware PR runs the baseline below and builds both boards. Use cached
+build directories and the pinned Pixi environment. Run additional gates for the
+changed subsystem. Preserve vendored bytes and licenses. Generic fixtures never
+get flashed.
 
-Shared Plantower changes require `pixi run pms-frame-test`. Writer/codec/footer changes require `pixi run parquet-test --sanitize`; measurement-contract changes require `pixi run telemetry-contract-test --sanitize`. Build every affected native board and relevant diagnostic. Host tests establish parser/format behavior; board-specific storage, timing and power-loss claims require real hardware evidence.
+```sh
+pixi run fmt-check
+pixi run lint
+pixi run common-test
+pixi run telemetry-contract-test --sanitize
+pixi run archive-sync-test
+pixi run control-sync-test
+pixi run wifi-link-test
+pixi run logger-status-test
+pixi run connectivity-build-test
+pixi run cores3-build
+pixi run waveshare-build
+```
 
-The shared module gates are `pixi run common-test`, `ltr553-test`, `config-test`, `control-sync-test`, `archive-sync-test`, `crc-cache-test`, `wifi-link-test`, `frame-ring-test`, `network-time-test`, `location-test`, `connectivity-build-test`, `logger-build-test`, `logger-work-queue-test`, `debug-log-test`, `logger-status-test`, `logger-provision-test` and `ble-policy-test`. The Waveshare dictionary also requires `pixi run waveshare-contract-test --sanitize`. See the [module map](../../firmware/common/README.md) for ownership and callbacks. The generic ESP32-S3 compile fixture never gets flashed.
+| Changed area | Additional Pixi tasks |
+| --- | --- |
+| Writer, codec, footer or schema | `parquet-test --sanitize`, `waveshare-contract-test --sanitize` |
+| Plantower or LTR553 | `pms-frame-test`, `ltr553-test` |
+| Disconnects, LAN rings or BLE policy | `disconnect-test`, `frame-ring-test`, `ble-policy-test`, `ble-advert-test`, `ble-sync-test`, `lan-concurrency-bench` |
+| Settings, time or location | `config-test`, `network-time-test`, `location-test`, `logger-provision-test` |
+| Logs and persistence | `debug-log-test`, `disconnect-test` |
+| Logger queues and lifecycle | `logger-build-test`, `logger-work-queue-test`, `logger-rotation-test`, `logger-directory-test`, `logger-archive-reset-test` |
+| Storage governor, CRC cache or DMA buffer | `storage-governor-test`, `crc-cache-test`, `sd-transfer-buffer-test` |
+| Backup tooling | `backup-test` with offline fake esptool |
+| Diagnostic or PSRAM configuration | `waveshare-build diagnostic`, `waveshare-psram-build` |
 
-`pixi run logger-directory-test` checks the native FAT mount-root behavior and
-directory creation errors/races with ASan/UBSan. Shared archive path creation
-must recognize an existing mounted root via `stat`; FatFs returns `EINVAL`
-from `mkdir` at that root. Only the storage worker calls these helpers.
+Task definitions in `pixi.toml` own exact commands and sanitizer defaults. The
+archive, transport, settings, logger and geometry host fixtures compile actual
+implementation code against platform fakes. `logger-directory-test` includes
+FatFs mount-root handling through `stat`, since `mkdir` at the mounted root can
+return `EINVAL`. `sd-transfer-buffer-test` covers the 4 KiB internal DMA buffer
+reservation, failed-mount release/retry and lifetime, rather than SD timing.
 
-`pixi run sd-transfer-buffer-test` checks the shared heap-owned SD DMA buffer
-reservation, allocation failure, reuse while further allocations are denied,
-failed-mount release/retry and final ownership cleanup with ASan/UBSan. Both
-board adapters reserve 4 KiB before radios and pass it to the pinned SDK for
-eight-sector chunks. This fixture checks ownership, not SD or radio timing.
-
-The LAN task waits for socket readiness with a 100 ms housekeeping timeout; it
-no longer sleeps after every request. The archive worker checks one sample and
-one command per pass, and waits on a binary wakeup only when idle. All sample,
-serial and radio producers copy to the bounded queues before signaling; wakeups
-may coalesce without dropping queued work. `logger-work-queue-test` covers the
-queue-check/wait race, pre-start signals, sample priority and saturation. These
-are scheduling and host-test guarantees, not measured on-board transfer speeds.
-See [LAN performance qualification](lan-performance.md) for the one-versus-two
-collector procedure and current validation limits.
+The LAN task owns non-blocking socket IO. The storage worker services samples
+between bounded ring/credit waits and consumes copied requests serially.
+`logger-work-queue-test` covers queue-before-wakeup, sample priority and
+saturation. None of these host gates proves throughput, radio coexistence,
+physical persistence or power-cut durability. Use the
+[LAN qualification procedure](lan-performance.md) and dated board evidence
+before making those claims. Shared mount assertions enforce the
+[descriptor budget](../../firmware/common/src/archive_files.h). Shared SDK
+defaults enable fast seek and board target checks enforce radio settings. Do not carry old generated sdkconfig values into a new target.
 
 ## Local provisioning and client boundaries
 
@@ -189,20 +197,6 @@ from the earlier native image. Also regenerate the logger configuration to selec
 Do not modify owner NVS or physical flash for a
 build configuration update.
 
-### Time/location validation — 2026-10-09
-
-| Gate | Result and scope |
-| --- | --- |
-| `config-test`, `control-sync-test`, `logger-provision-test` | ASan/UBSan pass for policy persistence/reload/errors, published-cell-only coarsening, additive pages and legacy secrecy/actions |
-| `network-time-test`, `wifi-link-test` | ASan/UBSan pass for DHCP/local/public priority, disabled fallback, stale DNS, bounded retry/context allocation, successful provenance and offline retention; LAN sockets use host fakes |
-| `location-test` | Official pinned H3 passes independent indexing/parent/center fixtures, malformed/pentagon cells, coordinate boundaries, ISO validation and sample/footer snapshot tests |
-| `telemetry-contract-test --sanitize`, `waveshare-contract-test --sanitize` | Eight fixtures per board, 81/56 columns, anchored/unanchored and located/unset in both codecs, exact PyArrow/DuckDB readback including H3 centers/country metadata |
-| `parquet-test --sanitize`, `archive-sync-test`, `python tools/test_ble_sync.py` | Writer/reader, immutable archive framing and paged host protocol gates pass |
-| `cores3-build`, `waveshare-build`, `waveshare-build diagnostic` | Final native images pass SDK/PSRAM/console/partition/flash-plan checks; no hardware writes |
-| `connectivity-build-test`, `logger-build-test` | Generic native builds include real NTP/H3/settings/logger without M5/Arduino dependencies |
-| Mobile `./gradlew --no-daemon --no-build-cache :core:protocol:clean :app:clean verify` | Android debug APK, lint and unit tests; shared JVM/Android/iOS tests; simulator framework link pass in `../opensensor-space-mobile/`. New location flow is code/test validated, not phone-tested |
-| `fmt-check`, `lint` | Pass |
-
 Source and host checks do not establish router option-42 behavior on a specific
 network, NTP accuracy/authenticity, physical radio coexistence, phone permission
 or location behavior, SD timing or power-cut durability. The later CoreS3
@@ -210,6 +204,8 @@ native run observed successful network UTC and a short USB file readback;
 router/local/public transitions and location provisioning remain unqualified.
 Finalized owner archives and old schemas were
 not rewritten.
+
+## Owner maintenance
 
 Physical serial `parquet erase-archive CONFIRM` (CoreS3 v6.10 / Waveshare v2.4)
 removes only `/sd/output` and historical `/sd/parquet`, including partials and

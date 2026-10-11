@@ -6,11 +6,12 @@ The device protocol, telemetry format, and offline-first data flow are shared ac
 
 | Topic | Reference |
 | --- | --- |
-| Host tooling, shared modules and adding another board | [Development workflow](shared/development.md), [shared component map](../firmware/common/README.md) |
+| Host tooling and shared modules | [Development workflow](shared/development.md), [shared component map](../firmware/common/README.md) |
+| New ESP32-S3 board hooks and capabilities | [Board porting](shared/board-porting.md), [AQLogger adapter contract](../firmware/common/logger/README.md) |
 | Shared logger worker, board measurement/RTC hooks and immutable archives | [AQLogger adapter contract](../firmware/common/logger/README.md) |
 | Sampling, nulls, Parquet, Hive partitions, and offline archives | [Telemetry pipeline](shared/telemetry-pipeline.md) |
 | Dictionary, observation semantics, and proposed Iceberg workflow | [Table and observation model](shared/table-and-observation-model.md) |
-| BLE/LAN frames, 480-byte snapshots, pairing and physical UART owner provisioning | [Sync protocol](shared/ble-sync-protocol.md) |
+| Proto 3 BLE/LAN frames, disconnect evidence, pairing and UART owner provisioning | [Sync protocol](shared/ble-sync-protocol.md) |
 | Router/local NTP, configurable H3 privacy and mobile deployment provisioning | [Time and location](shared/time-and-location.md) |
 | Phone background sync triggers | [Background sync triggers](shared/background-sync-triggers.md) |
 | Security and production-hardening boundary | [Security hardening](shared/security-hardening.md) |
@@ -19,7 +20,7 @@ The device protocol, telemetry format, and offline-first data flow are shared ac
 
 | Board | Status | Reference |
 | --- | --- | --- |
-| M5Stack CoreS3 with optional M134/PMSA003 | Native ESP-IDF logger adapter consumes AQLogger; native hardware unverified, historical Arduino SD/radio evidence in its bench record | [CoreS3 board docs](boards/m5stack-cores3/README.md), [trial](../firmware/esp-idf-cores3/README.md) |
+| M5Stack CoreS3 with optional M134/PMSA003 | Native AQLogger adapter with a short native USB/SD/sensor/time readback. Proto 3 phone transfers and endurance remain pending. Historical Arduino radio evidence stays image-specific | [CoreS3 board docs](boards/m5stack-cores3/README.md), [trial](../firmware/esp-idf-cores3/README.md) |
 | Waveshare ESP32-S3-SIM7670G-4G V2 with PMS5003T | Native ESP-IDF logger and retained diagnostic; native hardware unverified, historical Arduino evidence in its bench record | [Waveshare board docs](boards/waveshare-esp32-s3-sim7670g/README.md), [trial](../firmware/esp-idf-waveshare-sim7670g/README.md) |
 
 The five shared ESP-IDF components are AQCommon (encoding/drivers), AQRuntime (settings/logs),

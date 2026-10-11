@@ -1,39 +1,35 @@
-# Sync protocol: device ↔ phone over BLE and LAN
+# Device and phone sync over BLE and LAN
 
 
 > **Board scope:** AQCommon, AQRuntime, AQConnectivity and AQLogger implement this shared contract for the CoreS3 and Waveshare V2 logger adapters. `info` identifies the board-owned schema, dictionary and firmware; a `cores3-*` identity or CoreS3 measurement must not be relabeled as Waveshare evidence. The retained Waveshare UART/TF diagnostic does not start these services.
 
 Load when implementing or debugging BLE, the local Wi-Fi/TCP server, or a phone
-client. Protocol version **2** was defined 2026-09-17; version 1 (BLE file sync)
-is a strict subset. Revision **2.1** (2026-09-18, CoreS3 firmware `-v6.3`) adds
-[advertising](#advertising-payload-v21) and moves the UUID list to the scan
-response. The 2026-09-28 AQLogger integration raises STATUS/LIVE JSON capacity
-from 240 to 480 bytes and adds board-specific optional LIVE fields; UUIDs,
-request opcodes and `info.proto=2` remain unchanged. Clients must handle the
-larger cached values as described below. Hardware evidence and limits belong to
+client. Current firmware reports **proto 3** on BLE info, LAN HELLO and mDNS.
+Mobile rejects earlier protocols. STATUS/LIVE JSON is bounded to 480 bytes and
+BLE response frames to 512 bytes. The historical v2.1 advertising layout still
+applies, with the UUID list in the scan response. Hardware evidence and limits belong to
 the [CoreS3 bench](../boards/m5stack-cores3/bench-verified.md) and
 [Waveshare bench](../boards/waveshare-esp32-s3-sim7670g/bench-verified.md).
 CoreS3-specific radio constraints remain in its
 [wireless note](../boards/m5stack-cores3/cores3-wireless.md); the shared row/file
 contract is in [telemetry-pipeline](telemetry-pipeline.md).
-The 2026-09-30 Waveshare v2 addition extends authenticated CONFIG with sensor
-identity and an opt-in batch candidate; it keeps `info.proto=2` and raw LIVE
-values unchanged. This addition has host/build evidence only, pending a board
-flash and readback.
-
-Version 2 adds, on top of the v1 file sync: **device configuration and control** (`GET_CONFIG`/`SET_CONFIG`, Wi-Fi scan and provisioning, reboot, log tail), **pairing modes** for devices without a screen, and a **LAN transport** — the same frames over one TCP socket, discovered with mDNS, authenticated with a token the phone can only obtain over the bonded BLE link. BLE introduces, LAN accelerates. Revision 2.1 adds a way for the device to tell a phone that is *not* connected that something changed; why and how a phone uses it is in [background-sync-triggers](background-sync-triggers.md).
+Configuration/control, pairing modes and token-authenticated LAN remain part of
+the contract. Sensor identity and the opt-in batch candidate use authenticated
+CONFIG, while LIVE stays raw. See [background sync triggers](background-sync-triggers.md)
+for phone use of advertising hints.
 
 The current source uses pure **ESP-IDF 6.1** native NimBLE GATT/GAP and native
 Wi-Fi/netif/SNTP with managed mDNS. Native board and generic builds plus host
-contracts pass as of **2026-10-09**; physical native pairing, bonded reconnect,
-radio coexistence and immutable readback remain unqualified. Wire UUIDs,
-frames, archive semantics and board dictionaries are preserved. Arduino-era
+contracts establish implementation compatibility. A short native CoreS3 USB/SD
+readback has dated evidence, while proto 3 phone transfers, bonded reconnect,
+radio coexistence and durability still need image-specific qualification. Wire UUIDs,
+archive semantics and board dictionaries are preserved. Arduino-era
 bond-store compatibility is not guaranteed; qualify reconnect/re-pairing while
 retaining station/config NVS. [Migration validation](development.md#native-migration-validation-2026-10-09).
 
 **Protocol 3** (issue #1, 2026-10-11) is a breaking contract with no backward
 compatibility. Mobile refuses a device that reports `proto` below 3. It adds
-typed disconnect reasons, a `BYE` frame before every device-initiated LAN close,
+typed disconnect reasons, best-effort LAN `BYE` on usable sockets,
 `GET_DIAG`/`DIAG`, `ABORT`/`ABORTED`, a 32-bit `LIST_END.count`, STATUS `dc`
 and `dr` (next to `sd_state`), a 65535-byte `LOG_TAIL` and a persistent PSRAM log. See
 [Protocol 3 contract](#protocol-3-contract). Since issue #2 firmware reports
@@ -135,12 +131,16 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":2,"fw":"idf-cores3-parquet-v6.9","schema":"cores3-telemetry-v4","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.11","schema":"cores3-telemetry-v4","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
-`schema`, `cols`, `dict` and `fw` describe the consuming board image; the example above is CoreS3, while Waveshare advertises its own 49-column dictionary. Clients must use that identity when interpreting shortened LIVE keys. `station`, `dev` and `boot` are the same identities written into every Parquet row and Hive path. `max_read` is the largest `length` the device honours per `READ`. `proto` is 2 on firmware that implements this document; a phone that only knows v1 may ignore everything from `0x08` up.
+`schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
+is CoreS3, while Waveshare advertises its own 56-column v3 schema and dictionary
+v3. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+and `boot` match the archive identities. `max_read` is the largest `length` the
+device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
 ### `status` (read, notify)
 
@@ -438,7 +438,7 @@ Golden event `78000000070000000302ffff00000200` is uptime 120 s, generation 7,
 
 ### BYE
 
-Every device-initiated LAN close follows one sequence.
+A device-initiated LAN close on a usable socket follows this best-effort sequence.
 
 1. The device queues `BYE` on the peer's transmit ring and closes the ring to
    further frames. For `slow-peer` and `tx-overflow` it first drops every frame
@@ -452,8 +452,8 @@ Every device-initiated LAN close follows one sequence.
    after `close_flush_ms` (500 ms), whichever is first.
 
 There is no BYE when the phone ended the session (`peer-closed`), or when a
-receive or send failed (`recv-error`, `send-error`), because the socket can no
-longer carry it. The event is still recorded for `DIAG`. A BYE that does not
+receive, send or keepalive failed (`recv-error`, `send-error`,
+`keepalive-failed`), because the socket can no longer carry it. The event is still recorded for `DIAG`. A BYE that does not
 fit before the deadline is lost, so a phone must treat EOF without BYE as reason
 `unknown`. A refused client (`sessions-full`) receives `ERROR` op=0 code 7 and
 BYE in one non-blocking send. The phone never sends BYE.
@@ -547,7 +547,7 @@ The same request bodies and response frames as BLE, carried over **one TCP conne
 | Port | **47390** (unassigned at IANA; deliberately not Meshtastic's 4403). |
 | Framing | Every message in both directions is `len` u16 LE followed by exactly `len` bytes. Phone → device: a control request body (first byte = opcode), ≤ 512 bytes. Device → phone: one response or push frame, ≤ `payload_max` = **1024** bytes, so `CHUNK` carries up to 1017 bytes. |
 | Handshake | Within 5 s of connecting the phone sends `"AQS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `AQS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
-| Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. In proto 3 every device-initiated close first sends a [BYE](#bye) naming the reason. |
+| Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. Device-initiated closes on usable sockets attempt a [BYE](#bye) naming the reason. Peer close, receive/send failure and failed keepalive do not send BYE. |
 | Pushes | `STATUS` (0x48) and `LIVE` (0x49) frames are pushed to every authenticated socket whenever the device would notify `status`/`live` over BLE. They may arrive **between any two response frames** (the sampling loop does not wait for a transfer); the phone dispatches on the type byte and must not assume `CHUNK`s are contiguous on the wire. Frames are never interleaved within a frame because each peer has one transmit ring. A peer holds at most one queued `STATUS` and one queued `LIVE`, and a newer snapshot waits until the older one was sent. |
 | Transmit | Each peer has a `ring_bytes` (24 KiB, PSRAM when present) ring of whole frames. Only the LAN task writes to sockets, with non-blocking sends, so other phones keep receiving what is queued for them while one phone stalls. While a session is open the task wakes at least every 10 ms, so a queued reply leaves within that. The worker waits in `wait_step_ms` (200 ms) steps while a ring is full and keeps taking samples between steps. A peer that accepts no byte for `slow_peer_ms` (15 s) while frames are queued is closed with `slow-peer`, which bounds that wait. Requests from other phones run after it, because the worker is serial, so a phone should allow at least 30 s for a reply. These are sync service settings with shared defaults. |
 | Token | 32 random bytes generated at first boot and kept in NVS. Obtainable **only** via `GET_TOKEN` over an authenticated BLE link (`ERROR` 13 over LAN). `lan.rotate_token=1` replaces it. The token is a bearer secret for anyone on the LAN: keep it in app-private storage, never log it. |
@@ -574,7 +574,13 @@ Ownership rules are unchanged: the LAN task never touches the SD card or the dis
 
 ## Ownership on the device
 
-BLE callbacks run on the NimBLE host task. They **never** touch the SD card or the display. A `control` write is converted into a command on the same queue the serial parser feeds; the AQLogger storage worker executes it and emits `response`/`status` notifications itself. `live` and `status` notifications after a sample come from the sampling loop, after the row has been queued. This keeps the existing rule: one storage owner, display and SD serialized through the application mutex, 10-second sampling deadline untouched. The 8-deep sample queue gives the worker ~80 s of slack; a `READ` window is capped at `max_read` so one excursion is short even on a slow link.
+BLE callbacks run on the NimBLE host task and never touch the card or display.
+A `control` write copies a request to AQLogger's bounded command queue. The
+storage worker executes it, publishes cached snapshots and queues `response`
+frames. Only the NimBLE host sends BLE notifications. Samples also cross a
+bounded queue, with visible drops when full. Queue depth is a buffer bound,
+not a measured storage-stall budget. The storage worker alone accesses files,
+and board bus locking preserves display/SD ownership and monotonic sampling.
 
 On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 
@@ -607,7 +613,7 @@ Local archive identity is `(station, relative name)`; the file is immutable so `
 ## Concurrent collection validation
 
 The three-client pool and independent BLE/LAN archive handles preserve protocol
-version 2 and existing phone framing. Host fixtures establish session isolation,
+version 3 framing. Host fixtures establish session isolation,
 stale-request rejection, independent offsets and unchanged immutable bytes.
 They do not establish concurrent throughput, radio coexistence, SD timing or
 phone background behavior. Qualification requires several Android/iOS phones

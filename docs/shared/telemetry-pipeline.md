@@ -139,11 +139,11 @@ An optional spool can remain uncompressed. Measure complete Parquet bytes, CPU t
 ## Memory, tasks and backpressure
 
 - Sensor code parses into typed records and never writes the filesystem directly.
-- The 90-row batch and writer workspace reside in the verified 8 MB Quad PSRAM. An eight-row FreeRTOS queue absorbs brief storage stalls; it is allocated by FreeRTOS, not explicitly in PSRAM. Allocation failure disables logging with an error. Queue sizing is still a feasibility choice, not a qualified stall budget.
-- One storage task owns FatFS and all SD transactions. It shares the SPI2 bus with the display through one application lock and never waits for network work while holding that lock.
-- The writer streams through a 4 KiB stdio buffer on the storage task's internal stack. SD driver staging/DMA remain driver-owned; the application buffer is not advertised as a direct DMA allocation.
+- The 90-row batch and writer workspace reside in PSRAM, Quad on CoreS3 and OPI on Waveshare. The sample queue defaults to eight rows through `aqsync::ServiceConfig` and is allocated by FreeRTOS. Allocation failure disables logging with an error. Queue depth is not a qualified stall budget.
+- One storage task owns FatFs and all SD transactions. CoreS3 shares SPI2 with the display through the application bus lock. Waveshare owns one-bit SDMMC. Neither waits for network work while holding the bus lock.
+- The writer streams through a 4 KiB stdio buffer on the storage task's internal stack. Each archive read handle has a separate 4 KiB PSRAM stdio buffer. Both boards reserve a heap-owned 4 KiB internal DMA SD transfer buffer before radios and retain it for the mount. The shared mount helper and descriptor budget cover writers, transient streams and four persistent archive readers.
 - A separate later uploader will read only finalized Parquet files. No retention deletion or object-storage synchronization is implemented yet.
-- Queue overflow counts dropped rows. Since #5 an SD space governor (`firmware/common/logger/src/storage_governor.h`) classifies the card as ready, degraded, full or retry. The hard reserve is 32 MiB, the high mark is 5 percent of the volume capped at 256 MiB, and 16 MiB of hysteresis stops flapping (all scaled down on tiny cards). Below the reserve the worker finalizes the open file, logs `PARQUET ALARM storage=full`, sets STATUS `fail` and `sd_state`, and counts new rows as dropped. A write, close, rename or mount failure enters retry, which remounts the card (when the board supplies the hook) and probes after 10, 30, 60, 120, 240 and 480 s, then every 600 s. The RAM batch is kept until a probe writes it. Full is re-measured every 60 s with a remount, so space freed on a PC is seen without a reboot. No file is ever deleted automatically. There is no gap-record journal.
+- Queue overflow counts dropped rows. Since #5 an SD space governor (`firmware/common/logger/src/storage_governor.h`) classifies the card as ready, degraded, full or retry. The hard reserve is 32 MiB, the high mark is 5 percent of the volume capped at 256 MiB, and 16 MiB of hysteresis stops flapping (all scaled down on tiny cards). Below the reserve the worker finalizes the open file, logs `PARQUET ALARM storage=full`, sets STATUS `fail` and `sd_state`, and stops normal card writes. Full/retry retain a bounded RAM batch and count new rows as dropped when it fills or a partition/window change cannot be committed. A write, close, rename or mount failure enters retry, which remounts the card (when the board supplies the hook) and probes after 10, 30, 60, 120, 240 and 480 s, then every 600 s. The RAM batch is kept until a probe writes it. Full is re-measured every 60 s with a remount, so space freed on a PC is seen without a reboot. No file is ever deleted automatically. There is no gap-record journal.
 
 Record sample jitter, queue high-water mark, drops, internal and PSRAM minimum free space, writer time, file bytes/row, SD write p50/p99/max latency, sync latency, incomplete-file count and, once implemented, recovery and upload retry counts. Label measurements by firmware build, configuration, sample count and card model; keep measured results in [bench-verified](../boards/m5stack-cores3/bench-verified.md).
 
@@ -165,7 +165,15 @@ Before a real time anchor exists, rows have null UTC and files go to `output/sta
 
 Unanchored rows now follow the normal row-group cadence, so an abrupt power cut can lose up to one RAM batch (at most 90 rows, 15 minutes at the 900 s default) before UTC exists, the same bound as dated rows. Abrupt power loss can still lose the current RAM batch or leave an incomplete `.partial`, which remains quarantined rather than silently repaired. Finalized-file durability under arbitrary power cuts is not yet bench-qualified.
 
-For the later HTTPS uploader, create-only semantics such as `If-None-Match: *` make retries idempotent. After a timeout, query or retry the same finalized key; never invent a new identity for the same bytes. Stream bounded reads from SD, releasing the shared-bus lock before network waits. The ingestion endpoint should verify length, SHA-256, readable Parquet metadata/pages, sequence range and schema version before acknowledging; delete local files only after a persistent acknowledgement matches size and digest. SHA-256 and acknowledgement persistence are not implemented by the current CRC32 serial-readback helper.
+For the later HTTPS uploader, create-only semantics such as `If-None-Match: *`
+make retries idempotent. After a timeout, query or retry the same finalized key.
+Never invent a new identity for the same bytes. Stream bounded reads from SD,
+releasing the shared-bus lock before network waits. The ingestion endpoint
+should verify length, SHA-256, readable Parquet pages, sequence range and schema
+version before acknowledging. An acknowledgement never authorizes automatic
+archive deletion. Owner archives remain immutable and owner-controlled.
+SHA-256 and acknowledgement persistence are not implemented by the current
+CRC32 serial-readback helper.
 
 MQTT QoS 1 can carry live gauges, alarms and device health. It is not the durable measurement source because duplicates and reconnect gaps are normal. Deduplicate any live copy by the same row identity.
 
