@@ -96,7 +96,23 @@ Service data AD (type `0x21`) under the service UUID `c0a5e9f0-0001-…`, in the
 | 6–7 | `boot16` u16 | the last four hex digits of `info.boot`, so a phone notices a reboot (`fin` restarts at 0) |
 | 8–9 | reserved | 0. **Never an IP address or port**: advertisements are unauthenticated, and a forged one would send the phone's LAN token to an attacker's socket. Discovery stays mDNS |
 
-Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. The native interval is explicitly configured to the existing fast connectable range (30–60 ms), which sets a low-power scanner's detection latency; if it is ever slowed, keep it ≤ 200 ms for a minute after a flag flips. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
+Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. Advertising runs in two stages (see [link parameters](#link-parameters-and-notify-flow)): fast (30 to 60 ms) for 30 s after enable, disconnect or a wake, and for 60 s after any flag flips, so a low-power scanner filtering on the flag byte still sees the change within a minute. It is slow (1 to 1.28 s) otherwise. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
+
+### Link parameters and notify flow
+
+These are `ble::Options` defaults, set per board through `aqsync::ServiceConfig::ble`.
+
+| Item | Device behavior |
+| --- | --- |
+| Advertising | Fast 30 to 60 ms for `fast_window_ms` (30 s) after the stack starts, after every disconnect and after `ble::wake_advertising()`, and for `flag_window_ms` (60 s) after an advert flag byte changes. A change to `fin` alone does not speed it up. Then slow 1000 to 1280 ms with no end. The serial log records `BLE ADV mode=fast` or `mode=slow`. There is no separate pairing window, because passkey pairing happens on a connection. |
+| Data length | On connect the device requests LE data length 251 octets (2120 µs). |
+| PHY | On connect the device prefers LE 2M for TX and RX. The central decides, and 1M stays valid. |
+| Connection interval | On connect the device requests 15 to 30 ms, latency 0, 4 s supervision timeout. After 60 s with no `control` write and no `response` frame it requests 100 to 200 ms, latency 4, 4 s. The next `control` write requests the active values again. Both sets meet Apple's accessory limits. The central decides, so a phone must never assume either. |
+| MTU | Unchanged. The phone requests 517 and must not cap it below 247. A small MTU wastes the 251-octet data length. |
+| Response credits | The device holds at most `notify_credits` (4) `response` frames queued for the host. The worker takes a credit per frame and waits in 200 ms steps while none is free, taking samples between steps. A credit returns when the NimBLE host accepts the notification, not when the phone receives it. The host can refuse a frame for lack of buffers, and the device then offers the same frame again every 10 ms, so no frame is skipped or reordered. A frame outstanding with none sent for `progress_timeout_ms` (15 s) closes the link with [`slow-peer`](#disconnect-reasons) (5). Any other notify error closes it with `send-error` (14). |
+| Snapshots | `status` and `live` notifications wait until no `response` frame is queued, so they never slow a transfer. Long reads always return the latest value. |
+
+The serial log records the requests (`BLE LINK request`, `BLE CONN request`) and what the central chose (`BLE CONN itvl= lat= to=`, `BLE PHY tx= rx=`, `BLE DLE tx= rx=`). Values are in Bluetooth units: interval 1.25 ms, timeout 10 ms, PHY 1 = 1M and 2 = 2M.
 
 **Address stability.** Both the Android Companion Device Manager and per-device scan filters key on the advertised address. NimBLE uses the public address derived from the factory MAC; do not enable NimBLE privacy / resolvable private addresses on this device — every presence mechanism would silently stop matching.
 
@@ -561,7 +577,7 @@ BLE callbacks run on the NimBLE host task. They **never** touch the SD card or t
 
 On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 
-Notifications can be refused by the host when its buffers are full. The worker retries a bounded number of times with a short delay; a persistent refusal ends the transfer with `READ_END` status 7 rather than skipping a chunk.
+On BLE the worker also never waits on the radio. It queues `response` frames against notify credits, and the NimBLE host task sends them in order. A frame the host refuses for lack of buffers is offered again, never skipped. A stalled host closes the link with `slow-peer` after 15 s, which ends the transfer. See [link parameters and notify flow](#link-parameters-and-notify-flow).
 
 ## Phone sync algorithm
 
