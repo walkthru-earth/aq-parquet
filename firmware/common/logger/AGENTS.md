@@ -18,6 +18,11 @@ initialization and each board's schema/provenance remain in its own trial.
   finalized files. Keep 90-row RAM batches, eight-row-group writer bounds and
   fsync after each row group; `.partial` files are preserved/quarantined rather
   than repaired or deleted. Do not imply power-cut durability from normal resets.
+- Task priorities: board task `kBoardTaskPriority` (2) < `parquet-sd` worker
+  (`Config::worker_priority`, 3) < `aq-lan` (4). The worker stack stays in
+  internal RAM because it writes NVS. `poll()` prints `DIAG tasks` stack
+  high-water marks and `DIAG heap` (internal, DMA, PSRAM) 60 s after begin,
+  then hourly.
 - The SD space governor never deletes. A full card pauses and alarms; space
   returning or a successful probe resumes. Keep its logic pure in
   `storage_governor.h`; boards only supply the free, cluster and remount hooks.

@@ -346,7 +346,7 @@ Changing Wi-Fi settings over a LAN session is allowed but will usually drop that
 
 `LOG_TAIL` returns the newest `max_bytes` (at most 65535) of the diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies, the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API. The ring is in PSRAM (64 KiB by default, `CONFIG_AQ_LOG_PERSIST_RING_BYTES`) when the board image provides a persistent block, otherwise a 4 KiB internal ring (see [persistent log](#persistent-log)). The reply streams in `LOG` slices of at most 512 bytes over BLE or 1024 over LAN, also bounded by `payload_max`. A tail can contain lines from the previous boot after a warm reboot.
 
-`WIFI_SCAN` runs on the Wi-Fi task, not on the storage worker, and takes 2–4 s; the phone should show progress. Hidden networks are omitted; duplicate SSIDs (several access points) are reported once with the strongest RSSI.
+`WIFI_SCAN` runs on the Wi-Fi task, not on the storage worker, and takes 2–4 s; the phone should show progress. The scan is asynchronous. Other LAN sessions keep reading and receiving frames while it runs, and a scan that does not finish within 15 s ends with `WIFI_SCAN_END` status 15 (unavailable). Hidden networks are omitted; duplicate SSIDs (several access points) are reported once with the strongest RSSI.
 
 ### Physical UART owner provisioning
 
@@ -393,7 +393,7 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | 13 | `recv-error` | LAN receive failed (`err` is the errno) |
 | 14 | `send-error` | LAN send failed for another reason (`err` is the errno, `EPIPE` when nothing was written) |
 | 15 | `server-stop` | the LAN server restarted to apply settings, or BLE stopped |
-| 16 | `keepalive-failed` | BLE supervision timeout, HCI 0x08 |
+| 16 | `keepalive-failed` | BLE supervision timeout, HCI 0x08, or a LAN peer that stopped answering TCP keepalive probes or retransmissions (`err` is the errno, `ECONNABORTED` from lwIP). No BYE is sent because the peer is unreachable |
 
 BLE maps the controller reason as follows. HCI 0x13 is `peer-closed`, 0x08 is
 `keepalive-failed`, 0x16 (local host terminated) is the reason the device stored
