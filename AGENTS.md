@@ -56,10 +56,11 @@ file in `docs/README.md` after this one.
   chips in READMEs, manifests or Kconfig until a connected board passes the
   flash checklist below and a dated bench capture.
 - The writer workspace requires PSRAM. Do not add an internal RAM fallback, it
-  cannot fit next to Wi-Fi and NimBLE. Fail with a clear `PARQUET ERROR
-  operation=allocate mem=psram` line instead. Any long storage-worker walk
-  (erase, quarantine, remount, free-space scan) must stamp the worker heartbeat
-  so the stall check and task watchdog do not misread healthy work.
+  cannot fit next to Wi-Fi and NimBLE. Keep the PSRAM allocation failure
+  loud, the logger prints `PARQUET ERROR operation=allocate logging=false`
+  and stops logging. Any long storage-worker walk (erase, quarantine,
+  remount, free-space scan) must stamp the worker heartbeat so the stall check
+  and task watchdog do not misread healthy work.
 
 ## Compatibility, licensing and reviews
 
