@@ -10,7 +10,8 @@ namespace telemetry {
 namespace contract {
 // Schema v4 keeps the 56 leaves of v3 in the same order, renames the two UTC
 // instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes a
-// Parquet field_id on every leaf so Apache Iceberg v2 can register the file.
+// Parquet field_id on every leaf so an Apache Iceberg v3 table can register the
+// file.
 constexpr std::int32_t kSchemaVersion = 4;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v4";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v4";

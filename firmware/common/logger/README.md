@@ -13,7 +13,7 @@ board identity and optional board metadata. The runtime requires `sequence`,
 `monotonic_us` and `event_time_utc_us` as INT64, and `clock_epoch` as INT32. Other
 standard runtime fields are mapped by name and set only when present with the
 matching type. Field units `us_since_unix_epoch` receive TIMESTAMP(MICROS, UTC),
-which Apache Iceberg v2 maps to `timestamptz`. Every column gets Parquet
+which Apache Iceberg maps to `timestamptz` (v1, v2 and v3). Every column gets Parquet
 `field_id` = its 1-based position in the dictionary, so dictionaries are append
 only. Never reorder, remove or reuse a position.
 

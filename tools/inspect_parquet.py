@@ -39,7 +39,7 @@ def inspect(path: Path) -> bool:
     for name in ("event_time_utc_us", "clock_anchor_utc_us"):
         if name in schema.names:
             print(f"  {name}: {schema.field(name).type}")
-    # Iceberg v2 registration needs a unique positive field_id on every leaf.
+    # Iceberg registration needs a unique positive field_id on every leaf.
     ids = [element.get(footer.SCHEMA_FIELD_ID) for element in meta[footer.FILE_SCHEMA][1:]]
     if all(isinstance(i, int) and i > 0 for i in ids) and len(set(ids)) == len(ids):
         print(f"  field_id: {min(ids)}..{max(ids)} on {len(ids)} leaves")

@@ -4,7 +4,7 @@
 //
 // Decodes the Thrift Compact FileMetaData of flat files with INT32, INT64 and
 // FLOAT leaves (the shapes parquet_writer.h emits) into a caller-owned
-// FileSummary, then derives the per-column metrics an Iceberg v2 manifest
+// FileSummary, then derives the per-column metrics an Iceberg v3 manifest
 // entry needs. Manifests and catalog commits stay on the phone or host; this
 // code only reads what the footer already says, never pages.
 //

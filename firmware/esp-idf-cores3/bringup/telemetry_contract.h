@@ -11,8 +11,9 @@ namespace telemetry {
 namespace contract {
 // File schema v5 keeps the 81 leaves of v4 in the same order, renames the two
 // UTC instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes
-// a Parquet field_id on every leaf so Apache Iceberg v2 can register the file.
-// Dictionary v4 tracks the field bytes; schema v5 tracks the reader contract.
+// a Parquet field_id on every leaf so an Apache Iceberg v3 table can register
+// the file. Dictionary v4 tracks the field bytes; schema v5 tracks the reader
+// contract.
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v4";

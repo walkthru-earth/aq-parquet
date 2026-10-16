@@ -25,12 +25,13 @@ rewritten, so the app must keep reading the older shapes it has stored.
   footer key `reconciliation_anchor_utc_ns` is still nanoseconds. Column count,
   column order and all other names and types are unchanged.
 
-**Why.** Apache Iceberg v2 has no nanosecond timestamp type. A
-`TIMESTAMP(NANOS)` column only maps to Iceberg v3 `timestamptz_ns`, which most
-engines cannot read yet. Iceberg also identifies columns by field id, not by
-name. With MICROS and field ids the phone or host can register device files in
-an Iceberg v2 table without rewriting them. The firmware clock already had
-microsecond resolution, so no precision is lost.
+**Why.** The phone or host registers device files in Apache Iceberg v3 tables.
+`TIMESTAMP(MICROS, UTC)` is Iceberg `timestamptz` in every format version, so
+the files go into a v3 table (or an older v2 table) without rewriting. The
+device clock is microsecond, so NANOS would add no precision, would end in
+2262, and would map only to the v3 type `timestamptz_ns`, which Spark, Athena
+and Redshift cannot read. Iceberg identifies columns by field id, not by name,
+so every leaf now carries one.
 
 **What the app must do.**
 
@@ -39,9 +40,16 @@ microsecond resolution, so no precision is lost.
   Check the Parquet logical type (`MICROS` or `NANOS`).
 - Accept schema versions 5 (CoreS3) and 4 (Waveshare) and the new dictionary
   digests. Do not reject a file only because its schema string is newer.
-- When building an Iceberg manifest or schema, use each leaf's `field_id` as the
-  Iceberg field id. Older files have no ids. Map them by name to the same ids,
-  or keep them out of the Iceberg table.
+- Create Iceberg tables as format v3. When building a manifest or schema, use
+  each leaf's `field_id` as the Iceberg field id. Leave row lineage fields to
+  the committing library, the device does not write them.
+- Older files have no ids and store UTC as plain INT64 or NANOS. A name mapping
+  cannot change a column's type, so keep them out of the Iceberg table or
+  rewrite them on a host.
+- Commit with a library that supports v3 `add_files` style registration, for
+  example iceberg-go 0.7.0 or later, or iceberg-rust 0.9.0 or later with data
+  file entries built from the footer metrics. PyIceberg 0.12 cannot write v3
+  tables yet.
 - When reconciling unsynchronized files from footer anchors, compute
   microseconds as `reconciliation_anchor_utc_ns / 1000 + (monotonic_us -
   reconciliation_anchor_mono_us)`.

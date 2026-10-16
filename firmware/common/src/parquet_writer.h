@@ -14,8 +14,9 @@ enum class PhysicalType : uint8_t { Int32 = 1, Int64 = 2, Float = 4 };
 enum class Codec : uint8_t { Uncompressed = 0, Lz4Raw = 7 };
 // Parquet LogicalType annotation on the schema leaf. Physical bytes are
 // unchanged; readers present TIMESTAMP(MICROS, isAdjustedToUTC=true) columns as
-// instants. Only valid for Int64. MICROS (not NANOS) is what Apache Iceberg v2
-// accepts as `timestamptz`, so these files can be registered without rewrite.
+// instants. Only valid for Int64. MICROS is Apache Iceberg `timestamptz` in
+// every format version (NANOS would be the v3 only `timestamptz_ns`), so these
+// files can be registered in a v3 table without rewrite.
 enum class LogicalType : uint8_t { None = 0, TimestampMicrosUtc = 1 };
 
 // Caller owns separate raw/encoded page buffers and the codec's state. The

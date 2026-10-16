@@ -262,7 +262,7 @@ private:
 };
 
 // LogicalType union. Only TIMESTAMP(MICROS, isAdjustedToUTC=true) maps to an
-// Iceberg v2 type this reader reports; any other annotation is refused rather
+// Iceberg type this reader reports; any other annotation is refused rather
 // than silently read as a plain number.
 bool decode_logical(Decoder &in, LogicalType &logical) {
   int16_t last = 0, id = 0;
