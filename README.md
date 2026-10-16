@@ -123,7 +123,13 @@ Current boards: [M5Stack CoreS3](docs/boards/m5stack-cores3/README.md) (K128, 16
 
 Licensed under [CC BY 4.0](LICENSE), matching other Walkthru.Earth repositories.
 
-Exception: vendored [LZ4 1.10.0](firmware/common/vendor/lz4/README.md) retains its BSD-2-Clause license and upstream notices.
+The CC BY 4.0 license covers only original Walkthru.Earth work. Third-party code
+keeps its own license and notices, including vendored
+[LZ4 1.10.0](firmware/common/vendor/lz4/README.md) (BSD-2-Clause), vendored
+[Uber H3 4.5.0](firmware/common/location/vendor/h3/NOTICE) (Apache-2.0), and the
+ESP-IDF, toolchain and managed components linked into firmware images. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list and ship it
+with any firmware binary you distribute.
 
 **If you use any of this work, you must credit us visibly.** Attribution belongs
 somewhere a reader actually sees it, such as your README, your documentation, your
