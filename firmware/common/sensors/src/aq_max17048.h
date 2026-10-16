@@ -181,7 +181,9 @@ public:
   }
 
   // Clears only the STATUS reset indicator with a read-modify-write that
-  // keeps every other bit. Writes nothing when RI is already clear.
+  // keeps every other bit. Writes nothing when RI is already clear. An alert
+  // flag raised between the read and the write is cleared too. Call it once at
+  // boot, where the flags are only logged.
   Max17048ClearResult clear_reset_indicator() const {
     if (!io_.write)
       return Max17048ClearResult::WriteUnset;
