@@ -136,7 +136,7 @@ pixi run waveshare-build
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |
-| Writer, codec, footer or schema | `parquet-test --sanitize`, `waveshare-contract-test --sanitize` |
+| Writer, codec, footer or schema | `parquet-test --sanitize`, `reader-test`, `waveshare-contract-test --sanitize` |
 | Plantower or LTR553 | `pms-frame-test`, `ltr553-test` |
 | Disconnects, LAN rings or BLE policy | `disconnect-test`, `frame-ring-test`, `ble-policy-test`, `ble-advert-test`, `ble-sync-test`, `lan-concurrency-bench` |
 | Settings, time or location | `config-test`, `network-time-test`, `location-test`, `logger-provision-test` |

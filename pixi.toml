@@ -37,6 +37,8 @@ parquet-device = "python tools/parquet_device.py"
 ble-sync = "python tools/ble_sync.py"
 ble-sync-test = "python tools/test_ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
+# Footer reader and Iceberg DataFile metrics: PyArrow/DuckDB cross-check, crafted footers, fuzz loop.
+reader-test = "python tools/test_parquet_reader.py --sanitize"
 pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 

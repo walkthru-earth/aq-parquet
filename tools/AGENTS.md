@@ -7,6 +7,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Need | Tool / gate |
 | --- | --- |
 | Parquet footer/writer and reader compatibility | `parquet-test --sanitize`, `inspect_parquet.py` |
+| Footer reader and Iceberg DataFile metrics | `reader-test` (ASan + UBSan, crafted footers, fuzz loop) |
 | Telemetry dictionary, units and validity | `telemetry-contract-test --sanitize` |
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
 | Router/local/public NTP order and H3 privacy geometry | `network-time-test`, `location-test`, `config-test`, `control-sync-test` |
