@@ -2,6 +2,7 @@
 
 #include "pms5003t_identity.h"
 #include "telemetry_dictionary_digest.h"
+#include <aq_battery_health.h>
 #include <aq_logger.h>
 #include <aq_max17048.h>
 #include <cstring>
@@ -10,19 +11,23 @@
 
 namespace telemetry {
 namespace contract {
-// Schema v4 keeps the 56 leaves of v3 in the same order, renames the two UTC
-// instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes a
-// Parquet field_id on every leaf so an Apache Iceberg v3 table can register the
-// file.
-constexpr std::int32_t kSchemaVersion = 4;
-constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v4";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v4";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.6";
+// Schema v5 keeps the 56 leaves of v4 in the same order and field ids and
+// appends six battery columns (field ids 57..62): uncapped raw SOC, CRATE,
+// STATUS flags, hibernate state, the shared battery health state and a
+// minutes-to-empty estimate. v4 renamed the two UTC instants to
+// microseconds and added a Parquet field_id on every leaf for Iceberg v3.
+constexpr std::int32_t kSchemaVersion = 5;
+constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v5";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.7";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
-constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v2";
+constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v3";
+// Uncalibrated starting point. Change only with a dated discharge run and a
+// new configuration id; kConfiguration embeds the same numbers.
+constexpr aq::battery::Thresholds kBatteryThresholds{};
 constexpr std::int64_t kPmsWarmupUs = 30000000;
 constexpr std::uint32_t kPmsStaleAfterMs = 5000;
 constexpr const char *kConfiguration =
@@ -33,7 +38,13 @@ constexpr const char *kConfiguration =
     "\"battery_percent\":\"integer-percent-truncated-capped-at-100\","
     "\"snapshot\":\"latest-available-not-average\","
     "\"sensor_identity\":\"owner-provisioned-nvs-and-per-row\","
-    "\"batch_candidate\":\"off-by-default-not-cairo-validated\"}";
+    "\"batch_candidate\":\"off-by-default-not-cairo-validated\","
+    "\"battery_health\":{\"source\":\"max17048-vcell\","
+    "\"external_power_mv\":4240,\"external_power_hysteresis_mv\":20,"
+    "\"low_enter_mv\":3500,\"critical_enter_mv\":3350,"
+    "\"hysteresis_mv\":75,\"debounce_samples\":3,\"settling_minutes\":60,"
+    "\"calibration\":\"uncalibrated-defaults\","
+    "\"critical_action\":\"finalize-open-file-once\"}}";
 constexpr const char *kUnknown = "unknown";
 constexpr const char *kTimeSemantics =
     "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
@@ -89,6 +100,8 @@ constexpr const char *live_key(Field field) {
     return "bat";
   case battery_percent:
     return "pct";
+  case battery_health_state:
+    return "bstate";
   default:
     return nullptr;
   }
@@ -102,7 +115,7 @@ constexpr Definition kFields[] = {
 #include "telemetry_fields.inc"
 #undef FIELD
 };
-static_assert(field_count == 56, "Version the schema when changing fields");
+static_assert(field_count == 62, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 using Sample = aqlogger::Row;
 
@@ -247,6 +260,62 @@ inline void apply_gauge(Sample &row, const GaugeSnapshot &gauge) {
     row.integer(battery_mv, gauge.millivolts);
   if (gauge.percent >= 0 && gauge.percent <= 100)
     row.integer(battery_percent, gauge.percent);
+}
+
+static_assert(kBatteryThresholds.external_power_mv == 4240 &&
+                  kBatteryThresholds.external_power_hysteresis_mv == 20 &&
+                  kBatteryThresholds.low_enter_mv == 3500 &&
+                  kBatteryThresholds.critical_enter_mv == 3350 &&
+                  kBatteryThresholds.hysteresis_mv == 75 &&
+                  kBatteryThresholds.debounce_samples == 3 &&
+                  kBatteryThresholds.settling_minutes == 60,
+              "kConfiguration embeds these thresholds; update both");
+
+// One classifier input from the basic and extended gauge reads.
+// VCELL and SOC are trusted only when the driver's range check passed.
+inline aq::battery::Sample battery_sample(std::int64_t now_ms,
+                                          const aq::Max17048Reading &reading,
+                                          const aq::Max17048Extended &ext) {
+  aq::battery::Sample sample;
+  sample.now_ms = now_ms;
+  sample.vcell_ok = reading.valid();
+  sample.millivolts = reading.millivolts;
+  sample.soc_ok = reading.valid();
+  sample.raw_soc = reading.raw_soc;
+  sample.crate_ok = ext.crate.ok;
+  sample.crate_milli_percent_per_hour = ext.crate_milli_percent_per_hour();
+  sample.status_ok = ext.status.ok;
+  sample.reset_indicator = ext.status_bit(aq::Max17048Extended::kStatusRi);
+  return sample;
+}
+
+struct BatteryHealth {
+  bool battery_installed = false; // explicit owner configuration only
+  aq::Max17048Reading reading{};
+  aq::Max17048Extended extended{};
+  aq::battery::Assessment assessment{};
+};
+// Fields 57..62. Every column stays null when its own register failed.
+inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
+  if (!health.battery_installed)
+    return;
+  const auto &ext = health.extended;
+  if (health.reading.valid())
+    row.number(battery_soc_raw_percent,
+               static_cast<float>(
+                   aq::Max17048::raw_soc_percent(health.reading.raw_soc)));
+  if (ext.crate.ok)
+    row.number(battery_charge_rate_percent_per_h,
+               static_cast<float>(ext.crate_milli_percent_per_hour()) /
+                   1000.0F);
+  if (ext.status.ok)
+    row.integer(gauge_status_flags, ext.status_flags());
+  if (ext.mode.ok)
+    row.integer(gauge_hibernating, ext.hibernating() ? 1 : 0);
+  row.integer(battery_health_state,
+              static_cast<std::int32_t>(health.assessment.state));
+  if (health.assessment.minutes_to_empty >= 0)
+    row.integer(battery_minutes_to_empty, health.assessment.minutes_to_empty);
 }
 } // namespace contract
 } // namespace telemetry

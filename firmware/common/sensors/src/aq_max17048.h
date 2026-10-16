@@ -72,6 +72,24 @@ enum class Max17048ClearResult : std::uint8_t {
   VerifyFailed = 5, // the readback failed or RI is still set
 };
 
+constexpr const char *clear_result_name(Max17048ClearResult result) {
+  switch (result) {
+  case Max17048ClearResult::Cleared:
+    return "cleared";
+  case Max17048ClearResult::AlreadyClear:
+    return "already-clear";
+  case Max17048ClearResult::ReadFailed:
+    return "read-failed";
+  case Max17048ClearResult::WriteFailed:
+    return "write-failed";
+  case Max17048ClearResult::WriteUnset:
+    return "write-unset";
+  case Max17048ClearResult::VerifyFailed:
+    return "verify-failed";
+  }
+  return "unknown";
+}
+
 // Model-gauge calibration entry point, documented only. The values match
 // the Analog Devices default model and are not tuned to any cell. No write
 // path exists in this driver. Loading a custom model needs the unlock,

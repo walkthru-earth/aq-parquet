@@ -89,6 +89,67 @@ void assert_identity_rules() {
   assert(!batch_eligible(kVendor, kModel, "PMS5003T-202605011332"));
   assert(!batch_eligible(kVendor, "PMSA003", "PMS5003T-202604081332"));
 }
+aq::Max17048Extended extended_ok() {
+  aq::Max17048Extended ext;
+  ext.mode = {0x1000, true};
+  ext.crate = {0xfff6, true};  // -10 LSB, -2.08 %/h
+  ext.status = {0x4000, true}; // EnVr only
+  return ext;
+}
+void assert_battery_gates() {
+  assert(kBatteryThresholds.validate());
+  // Mapping from the driver into the classifier input.
+  auto ext = extended_ok();
+  ext.status.raw = 0x4100;
+  const auto reading = aq::Max17048::decode(0xc800, 0x4b80);
+  const auto sample = battery_sample(1234, reading, ext);
+  assert(sample.now_ms == 1234 && sample.vcell_ok && sample.soc_ok &&
+         sample.millivolts == 4000 && sample.raw_soc == 0x4b80 &&
+         sample.crate_ok && sample.crate_milli_percent_per_hour == -2080 &&
+         sample.status_ok && sample.reset_indicator);
+  const auto implausible =
+      battery_sample(0, aq::Max17048::decode(0xd200, 0xffff), ext);
+  assert(!implausible.vcell_ok && !implausible.soc_ok);
+  // Not installed leaves every new column null.
+  Sample absent{};
+  apply_battery_health(absent, {});
+  for (const auto field :
+       {battery_soc_raw_percent, battery_charge_rate_percent_per_h,
+        gauge_status_flags, gauge_hibernating, battery_health_state,
+        battery_minutes_to_empty})
+    assert(!absent.valid[field]);
+  // Each register keeps its own column.
+  BatteryHealth partial{true, reading, extended_ok(), {}};
+  partial.extended.crate.ok = false;
+  partial.extended.mode.ok = false;
+  Sample row{};
+  apply_battery_health(row, partial);
+  assert(row.valid[battery_soc_raw_percent] &&
+         !row.valid[battery_charge_rate_percent_per_h] &&
+         row.valid[gauge_status_flags] &&
+         row.data[gauge_status_flags] == 0x40 &&
+         !row.valid[gauge_hibernating] && row.valid[battery_health_state] &&
+         row.data[battery_health_state] == 0 &&
+         !row.valid[battery_minutes_to_empty]);
+  // An uncapped raw SOC above 100% is still written as measured.
+  Sample over{};
+  apply_battery_health(over,
+                       {true, aq::Max17048::decode(0xd5c0, 0x6bc9), {}, {}});
+  float over_percent = 0;
+  std::memcpy(&over_percent, &over.data[battery_soc_raw_percent],
+              sizeof(over_percent));
+  assert(over.valid[battery_soc_raw_percent] && over_percent > 107.7F &&
+         over_percent < 107.8F);
+  // A gauge reset at boot reports settling until the window ends.
+  aq::battery::Monitor monitor{kBatteryThresholds};
+  monitor.note_gauge_reset(0);
+  aq::battery::Assessment last;
+  for (int i = 1; i <= 3; ++i)
+    last = monitor.update(battery_sample(i * 10000, reading, extended_ok()));
+  assert(last.state == aq::battery::State::Settling && !last.soc_trusted);
+  last = monitor.update(battery_sample(3600000, reading, extended_ok()));
+  assert(last.state == aq::battery::State::Ok && last.minutes_to_empty == 2177);
+}
 void assert_gates() {
   assert_identity_rules();
   auto pms = parsed_snapshot();
@@ -171,6 +232,7 @@ void assert_gates() {
   apply_clock(unsynced, 30000000, 0, 0, 0, kClockNetwork);
   assert(unsynced.data[clock_status] == kClockNone);
   assert(!unsynced.valid[event_time_utc_us]);
+  assert_battery_gates();
 }
 } // namespace
 
@@ -186,10 +248,11 @@ int main(int argc, char **argv) {
       const auto &field = kFields[i];
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
                   "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
-                  "\"field_id\":%zu}",
+                  "\"field_id\":%zu,\"live\":\"%s\"}",
                   i ? "," : "", field.name, unsigned(field.type),
                   field.procedure, field.unit, field.validity,
-                  field.property_uri, i + 1);
+                  field.property_uri, i + 1,
+                  field.live_key ? field.live_key : "");
     }
     std::puts("]}");
     return 0;
@@ -208,6 +271,7 @@ int main(int argc, char **argv) {
   Workspace workspace{};
   Lz4Workspace lz4{};
   const auto compression = lz4.configuration();
+  aq::battery::Monitor monitor{kBatteryThresholds};
   for (std::size_t i = 0; i < 90; ++i) {
     auto &row = rows[i];
     row.location = location;
@@ -238,12 +302,22 @@ int main(int argc, char **argv) {
       pms.frame.humidity_deci_percent = 1001;
     apply_pms(row, pms, now,
               {"Plantower", "PMS5003T", "PMS5003T-202604081332", i != 5});
-    if (i == 0)
+    BatteryHealth health{};
+    if (i == 0) {
       apply_gauge(row, {}); // explicit no-battery configuration
-    else if (i == 1)
-      apply_gauge(row, {true}); // failed I2C transaction
-    else
-      apply_gauge(row, gauge_snapshot(aq::Max17048::decode(0xc800, 0x4b80)));
+    } else {
+      health.battery_installed = true;
+      if (i == 1) {
+        health.reading.io_error = true; // failed I2C transaction
+      } else {
+        health.reading = aq::Max17048::decode(0xc800, 0x4b80);
+        health.extended = extended_ok();
+      }
+      health.assessment = monitor.update(
+          battery_sample(now / 1000, health.reading, health.extended));
+      apply_gauge(row, gauge_snapshot(health.reading));
+    }
+    apply_battery_health(row, health);
   }
   prepare_columns(columns, rows);
   const aqlogger::LocationMetadata location_metadata(location);
