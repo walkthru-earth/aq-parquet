@@ -170,7 +170,7 @@ The shared [sync protocol](ble-sync-protocol.md) retains its UUIDs/opcodes and
 517 where possible; MTU 483 carries a maximum snapshot in one notification.
 Notifications exceeding negotiated MTU − 3 are omitted after the complete value
 is cached; use characteristic long reads for complete snapshots.
-Interpret LIVE `t`/`rh` through the board's advertised schema/dictionary. A board
+LIVE `t`/`rh` are ambient only and CoreS3 sends IMU temperature as `imu_t`. A board
 without an RTC hook has no retained clock anchor; UTC stays null after boot until
 automatic host SET_TIME or successful Wi-Fi SNTP. Raw unsynchronized rows remain in the `unsynced` tree; the mobile archive reconciles derived partitions from same-boot anchors.
 

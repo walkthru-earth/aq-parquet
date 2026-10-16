@@ -134,6 +134,7 @@ def main() -> None:
         executable = directory / "fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
         for include in (common, root / "firmware/common/logger/src",
+                        root / "firmware/common/connectivity/src",
                         root / "firmware/common/runtime/src", root / "firmware/common/location/src",
                         directory / "h3"):
             command += ["-I", str(include)]
@@ -142,6 +143,7 @@ def main() -> None:
         command += [*compile_h3(root, directory, args.sanitize),
                     str(root / "firmware/common/location/src/aq_location.cpp"),
                     str(root / "tools/telemetry_contract_fixture.cpp"),
+                    str(root / "firmware/common/logger/src/aq_logger_live.cpp"),
                     str(common / "parquet_writer.cpp"), str(common / "lz4_codec.cpp"),
                     "-o", str(executable)]
         subprocess.run(command, check=True)

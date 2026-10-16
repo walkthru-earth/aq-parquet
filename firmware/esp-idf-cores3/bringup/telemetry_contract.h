@@ -26,7 +26,7 @@ constexpr const char *kConfigurationId = "cores3-acquisition-v2";
 constexpr const char *kConfiguration =
     "{\"sample_interval_ms\":10000,\"pms_warmup_us\":30000000,"
     "\"pms_stale_after_ms\":5000,\"pms_uart_rx\":18,\"pms_uart_tx\":17,"
-    "\"pms_baud\":9600,\"m5unified\":\"0.2.26\",\"esp_idf\":\"6.1\",\"ltr553\":"
+    "\"pms_baud\":9600,\"m5unified\":\"0.2.25\",\"esp_idf\":\"6.1\",\"ltr553\":"
     "\"raw-v1\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
@@ -49,11 +49,70 @@ struct Definition {
   const char *unit = nullptr;
   const char *validity = nullptr;
   const char *property_uri = nullptr;
+  const char *live_key = nullptr;
 };
+// LIVE JSON key for each field, or nullptr for fields that stay out of the
+// LIVE snapshot. The shared logger emits them in field-table order.
+constexpr const char *live_key(Field field) {
+  switch (field) {
+  case sequence:
+    return "seq";
+  case monotonic_us:
+    return "mono";
+  case event_time_utc_us:
+    return "utc";
+  case pms_status:
+    return "pms";
+  case pm1_cf1_ug_m3:
+    return "c1";
+  case pm25_cf1_ug_m3:
+    return "c25";
+  case pm10_cf1_ug_m3:
+    return "c10";
+  case pm1_atmospheric_ug_m3:
+    return "pm1";
+  case pm25_atmospheric_ug_m3:
+    return "pm25";
+  case pm10_atmospheric_ug_m3:
+    return "pm10";
+  case particles_gt03_per_01l:
+    return "n03";
+  case particles_gt05_per_01l:
+    return "n05";
+  case particles_gt10_per_01l:
+    return "n1";
+  case particles_gt25_per_01l:
+    return "n25";
+  case particles_gt50_per_01l:
+    return "n5";
+  case particles_gt100_per_01l:
+    return "n10";
+  case imu_temperature_c:
+    return "imu_t";
+  case light_ch0_raw:
+    return "als";
+  case vbus_mv:
+    return "vbus";
+  case battery_mv:
+    return "bat";
+  case battery_percent:
+    return "pct";
+  case charging_status:
+    return "chg";
+  case ambient_temperature_c:
+    return "t";
+  case relative_humidity_percent:
+    return "rh";
+  default:
+    return nullptr;
+  }
+}
 constexpr Definition kFields[] = {
 #define FIELD(name, type, procedure, unit, validity)                           \
-  {#name, PhysicalType::type, #procedure,                                      \
-   unit,  #validity,          "urn:walkthru-earth:cores3:property:" #name},
+  {#name,         PhysicalType::type,                                          \
+   #procedure,    unit,                                                        \
+   #validity,     "urn:walkthru-earth:cores3:property:" #name,                 \
+   live_key(name)},
 #include "telemetry_fields.inc"
 #undef FIELD
 };

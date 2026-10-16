@@ -1,6 +1,7 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include <lz4_codec.h>
 
+#include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <array>
 #include <cassert>
@@ -48,6 +49,24 @@ PmsSnapshot parsed_snapshot() {
   return pms;
 }
 // Board-owned identity rules installed into the shared runtime policy hook.
+// Every board LIVE key must be accepted by begin(), and a row with every LIVE
+// field valid at its widest value must still fit one BLE JSON value.
+void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
+  assert(aqlogger::valid_live_keys(table, count));
+  aqlogger::Row row{};
+  for (std::size_t i = 0; i < count; ++i) {
+    if (table[i].type == telemetry::PhysicalType::Int64)
+      row.set(i, std::numeric_limits<std::int64_t>::min());
+    else if (table[i].type == telemetry::PhysicalType::Int32)
+      row.set(i, std::numeric_limits<std::int32_t>::min());
+    else
+      row.set(i, -999.9f);
+  }
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      aqlogger::format_live(table, count, row, json, sizeof(json));
+  assert(used > 0 && used <= ble::kMaxJson);
+}
 void assert_identity_rules() {
   using namespace pms5003t;
   assert(valid_serial("PMS5003T-202604081332"));
@@ -156,6 +175,7 @@ void assert_gates() {
 } // namespace
 
 int main(int argc, char **argv) {
+  assert_live_keys(kFields, field_count);
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","

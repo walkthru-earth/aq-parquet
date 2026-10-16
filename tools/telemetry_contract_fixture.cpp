@@ -1,6 +1,7 @@
 #include "../firmware/common/src/lz4_codec.h"
 #include "../firmware/esp-idf-cores3/bringup/telemetry_contract.h"
 
+#include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <cassert>
 #include <cstdio>
@@ -16,7 +17,38 @@ bool sink(void *context, const std::uint8_t *bytes, std::size_t count) {
 }
 } // namespace
 
+namespace {
+// Every board LIVE key must be accepted by begin(), and a row with every LIVE
+// field valid at its widest value must still fit one BLE JSON value.
+void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
+  assert(aqlogger::valid_live_keys(table, count));
+  aqlogger::Row row{};
+  for (std::size_t i = 0; i < count; ++i) {
+    if (table[i].type == telemetry::PhysicalType::Int64)
+      row.set(i, std::numeric_limits<std::int64_t>::min());
+    else if (table[i].type == telemetry::PhysicalType::Int32)
+      row.set(i, std::numeric_limits<std::int32_t>::min());
+    else
+      row.set(i, -999.9f);
+  }
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      aqlogger::format_live(table, count, row, json, sizeof(json));
+  assert(used > 0 && used <= ble::kMaxJson);
+}
+void assert_board_live_keys() {
+  aqlogger::Field table[field_count];
+  for (std::size_t i = 0; i < field_count; ++i)
+    table[i] = {kFields[i].name,      kFields[i].type,
+                kFields[i].procedure, kFields[i].unit,
+                kFields[i].validity,  kFields[i].property_uri,
+                kFields[i].live_key};
+  assert_live_keys(table, field_count);
+}
+} // namespace
+
 int main(int argc, char **argv) {
+  assert_board_live_keys();
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","

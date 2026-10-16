@@ -167,8 +167,9 @@ void refresh_capacity() {
 void begin_logger(bool sd_mounted) {
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = kFields[i];
-    fields[i] = {field.name, field.type,     field.procedure,
-                 field.unit, field.validity, field.property_uri};
+    fields[i] = {field.name,    field.type,     field.procedure,
+                 field.unit,    field.validity, field.property_uri,
+                 field.live_key};
   }
   logger_config = {
       .fields = fields.data(),

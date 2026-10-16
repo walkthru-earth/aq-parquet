@@ -1,6 +1,7 @@
 #include "aq_logger.h"
 #include "aq_logger_archive_reset.h"
 #include "aq_logger_directory.h"
+#include "aq_logger_live.h"
 #include "aq_logger_location.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_rotation.h"
@@ -1311,83 +1312,13 @@ void publish_status() {
   publish_advert();
 }
 
-// Builds the `live` snapshot from the row that was just queued. Keys are
-// omitted for null values; the document must stay <= kMaxJson bytes.
+// Publishes the `live` snapshot of the row that was just queued. The board's
+// field table decides which keys appear; see aq_logger_live.h.
 void publish_live(const Sample &row) {
-  char json[ble::kMaxJson + 96];
-  std::size_t used = 0;
-  auto put = [&](const char *format, auto... args) {
-    if (used >= sizeof(json))
-      return;
-    const int written =
-        std::snprintf(json + used, sizeof(json) - used, format, args...);
-    if (written > 0)
-      used += std::size_t(written);
-  };
-  put("{\"seq\":%lld,\"mono\":%lld", static_cast<long long>(row.data[sequence]),
-      static_cast<long long>(row.data[field_index("monotonic_us")]));
-  struct LiveField {
-    const char *field;
-    const char *key;
-  };
-  constexpr LiveField fields[] = {{"event_time_utc_us", "utc"},
-                                  {"pms_status", "pms"},
-                                  {"pm1_atmospheric_ug_m3", "pm1"},
-                                  {"pm25_atmospheric_ug_m3", "pm25"},
-                                  {"pm10_atmospheric_ug_m3", "pm10"},
-                                  {"pm1_cf1_ug_m3", "c1"},
-                                  {"pm25_cf1_ug_m3", "c25"},
-                                  {"pm10_cf1_ug_m3", "c10"},
-                                  {"particles_gt03_per_01l", "n03"},
-                                  {"particles_gt05_per_01l", "n05"},
-                                  {"particles_gt10_per_01l", "n1"},
-                                  {"particles_gt25_per_01l", "n25"},
-                                  {"particles_gt50_per_01l", "n5"},
-                                  {"particles_gt100_per_01l", "n10"},
-                                  {"ambient_temperature_c", "t"},
-                                  {"relative_humidity_percent", "rh"},
-                                  {"imu_temperature_c", "t"},
-                                  {"battery_mv", "bat"},
-                                  {"battery_percent", "pct"},
-                                  {"charging_status", "chg"},
-                                  {"vbus_mv", "vbus"},
-                                  {"light_ch0_raw", "als"}};
-  for (const auto &field : fields) {
-    if (std::strcmp(field.field, "imu_temperature_c") == 0 &&
-        field_index("ambient_temperature_c") < field_count &&
-        row.valid[field_index("ambient_temperature_c")])
-      continue;
-    const auto index = field_index(field.field);
-    if (index >= field_count || !row.valid[index])
-      continue;
-    switch (config.fields[index].type) {
-    case PhysicalType::Int64: {
-      // LIVE `utc` stays in nanoseconds on the wire while rows store
-      // microseconds; the stored value is exact, so the scale is lossless.
-      const long long scale =
-          std::strcmp(config.fields[index].unit, "us_since_unix_epoch") == 0
-              ? 1000
-              : 1;
-      put(",\"%s\":%lld", field.key,
-          static_cast<long long>(row.data[index]) * scale);
-      break;
-    }
-    case PhysicalType::Int32: {
-      std::int32_t value;
-      std::memcpy(&value, &row.data[index], sizeof(value));
-      put(",\"%s\":%ld", field.key, static_cast<long>(value));
-      break;
-    }
-    case PhysicalType::Float: {
-      float value;
-      std::memcpy(&value, &row.data[index], sizeof(value));
-      put(",\"%s\":%.1f", field.key, static_cast<double>(value));
-      break;
-    }
-    }
-  }
-  put("}");
-  if (used < sizeof(json) && used <= ble::kMaxJson) {
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      format_live(config.fields, field_count, row, json, sizeof(json));
+  if (used && used <= ble::kMaxJson) {
     ble::publish_live(json, used);
     lan::publish_live(json, used);
   }
@@ -2317,6 +2248,8 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       if (std::strcmp(field.name, config.fields[j].name) == 0)
         return false;
   }
+  if (!valid_live_keys(config.fields, field_count))
+    return false;
   sequence = field_index("sequence");
   event_time_utc_us = field_index("event_time_utc_us");
   clock_epoch = field_index("clock_epoch");

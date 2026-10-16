@@ -177,13 +177,13 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 ### `live` (read, notify)
 
-Notified once per sample. Keys follow the dictionary names in `telemetry_fields.inc`, shortened; absent keys mean **null** (invalid/unavailable), never zero.
+Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null** (invalid, unavailable or non-finite), never zero. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
 ```json
 {"seq":15021,"mono":150210000000,"utc":1757990410000000000,"pms":4,
- "pm1":5,"pm25":7,"pm10":9,"c1":5,"c25":7,"c10":9,
+ "c1":5,"c25":7,"c10":9,"pm1":5,"pm25":7,"pm10":9,
  "n03":900,"n05":250,"n1":30,"n25":2,"n5":0,"n10":0,
- "t":26.1,"bat":4100,"pct":80,"chg":0,"vbus":5000,"als":120}
+ "imu_t":31.4,"vbus":5000,"bat":4100,"pct":80,"chg":0,"als":120}
 ```
 
 | Key | Dictionary field |
@@ -193,10 +193,11 @@ Notified once per sample. Keys follow the dictionary names in `telemetry_fields.
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |
 | `n03`…`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |
-| `t` | Board-specific: CoreS3 `imu_temperature_c` is board temperature; Waveshare PMS5003T `ambient_temperature_c` is ambient temperature. Interpret through `info.schema`/dictionary, never the short key alone |
-| `rh` | Waveshare PMS5003T `relative_humidity_percent`; absent when unavailable |
+| `t` | `ambient_temperature_c`, ambient air temperature only. Waveshare PMS5003T reports it. CoreS3 has no resolved ambient sensor, so `t` stays absent there |
+| `rh` | `relative_humidity_percent`; absent when unavailable |
+| `imu_t` | CoreS3 `imu_temperature_c`, IMU die temperature. Never show it as air temperature |
 | `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement |
-| `als` | `light_ch0_raw` |
+| `als` | CoreS3 `light_ch0_raw` |
 
 PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
 

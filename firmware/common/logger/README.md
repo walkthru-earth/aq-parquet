@@ -56,9 +56,9 @@ releases them so the next READ reopens by path. OPEN takes the CRC-32 from a
 64-entry PSRAM cache filled at finalize (path, size and mtime must match) and
 reads the whole file only on a miss. The boot `PARQUET BEGIN` line reports
 `crc32_check=ok` when the ROM CRC routine returns the standard check value.
-STATUS, LIVE and advertising retain the phone wire contract; absent/invalid LIVE
-measurements are omitted independently. PMS5003T temperature/RH use `t`/`rh`;
-CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.
+LIVE emits the `Field::live_key` of every valid field, in field-table order,
+through `aq_logger_live.h`. `begin()` rejects malformed or duplicate keys.
+Absent, invalid and non-finite measurements are omitted independently.
 
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never

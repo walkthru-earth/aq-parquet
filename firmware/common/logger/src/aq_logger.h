@@ -16,6 +16,9 @@ struct Field {
   const char *unit = nullptr;
   const char *validity = nullptr;
   const char *property_uri = nullptr;
+  // Short JSON key for the LIVE snapshot, or nullptr to keep the field out of
+  // LIVE. Keys are [a-z0-9_]{1,15} and unique within the table.
+  const char *live_key = nullptr;
 };
 // All pointed-to descriptors and strings must outlive the runtime. The schema
 // must include INT64 sequence, monotonic_us, event_time_utc_us and INT32

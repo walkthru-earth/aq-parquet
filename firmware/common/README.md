@@ -99,8 +99,8 @@ can carry the largest JSON value in one notification. Publishers always cache
 the complete value and omit notifications exceeding negotiated MTU − 3; clients
 use characteristic long reads for complete cached snapshots. The host STATUS
 boundary test retains every key at 476 bytes even with the widest numeric values.
-LIVE `t` is board-specific (CoreS3 IMU temperature or Waveshare PMS5003T ambient
-temperature); `rh` is Waveshare ambient RH. Absent keys are null. Without an RTC,
+LIVE keys come from the `live_key` each board sets in its field table. `t` and
+`rh` are ambient only, and CoreS3 IMU temperature is `imu_t`. Absent keys are null. Without an RTC,
 `rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.
 
 AQLocation vendors unmodified official H3 4.5.0 with verified hashes. AQRuntime
