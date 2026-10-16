@@ -46,4 +46,29 @@ int main() {
   commands.capacity = 0;
   assert(!aqlogger::work::enqueue(&commands, &item, &wakeup));
   assert(!wakeup.pending && commands.depth == 0);
+
+  // Worker stall liveness: passive warnings after 5 s with 30 s cooldown, and
+  // opt-in active watchdog restart when worker_stall_restart_s is configured.
+  using aqlogger::work::check_stall;
+  using aqlogger::work::StallAction;
+  std::int64_t last_warn = 0;
+  assert(check_stall(10000000LL, 0, last_warn, 0) == StallAction::None);
+  assert(check_stall(5000000LL, 1000000LL, last_warn, 0) == StallAction::None);
+  assert(check_stall(6000001LL, 1000000LL, last_warn, 0) == StallAction::Warn);
+  assert(last_warn == 6000001LL);
+  assert(check_stall(20000000LL, 1000000LL, last_warn, 0) == StallAction::None);
+  assert(check_stall(36000002LL, 1000000LL, last_warn, 0) == StallAction::Warn);
+  assert(last_warn == 36000002LL);
+  // With restart_s = 120, stalls <= 120 s warn/throttle; > 120 s trigger
+  // Restart.
+  assert(check_stall(121000000LL, 1000000LL, last_warn, 120) ==
+         StallAction::Warn);
+  assert(check_stall(121000000LL, 1000000LL, last_warn, 120) ==
+         StallAction::None);
+  assert(check_stall(121000001LL, 1000000LL, last_warn, 120) ==
+         StallAction::Restart);
+  // Values below 5 s clamp to 5 s so short SD flushes never boot-loop.
+  assert(check_stall(5500000LL, 1000000LL, last_warn, 1) == StallAction::None);
+  assert(check_stall(6000001LL, 1000000LL, last_warn, 1) ==
+         StallAction::Restart);
 }

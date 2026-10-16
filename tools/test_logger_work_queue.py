@@ -16,7 +16,7 @@ def main() -> None:
             str(root / "tools/test_logger_work_queue.cpp"), "-o", str(executable),
         ], check=True)
         subprocess.run([str(executable)], check=True)
-    print("Archive worker: raced/pre-start wakeups, coalescing, sample priority and saturation passed")
+    print("Archive worker: raced/pre-start wakeups, coalescing, sample priority, saturation and stall checks passed")
 
 
 if __name__ == "__main__":

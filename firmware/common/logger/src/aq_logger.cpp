@@ -2349,9 +2349,9 @@ void poll() {
   {
     static std::int64_t last_stall_warning_us = 0;
     const auto heartbeat = worker_heartbeat_us.load();
-    if (heartbeat && now - heartbeat > 5000000LL &&
-        now - last_stall_warning_us > 30000000LL) {
-      last_stall_warning_us = now;
+    const auto action = work::check_stall(now, heartbeat, last_stall_warning_us,
+                                          config.worker_stall_restart_s);
+    if (action != work::StallAction::None) {
       const char *state_name = "?";
       if (worker_task) {
         switch (eTaskGetState(worker_task)) {
@@ -2374,12 +2374,20 @@ void poll() {
           break;
         }
       }
-      aqlog.printf(
-          "PARQUET ERROR operation=worker-stall seconds=%lld "
-          "state=%s stack_free=%u\n",
-          static_cast<long long>((now - heartbeat) / 1000000), state_name,
-          worker_task ? unsigned(uxTaskGetStackHighWaterMark(worker_task))
-                      : 0U);
+      const auto elapsed_s =
+          static_cast<long long>((now - heartbeat) / 1000000);
+      const unsigned stack_free =
+          worker_task ? unsigned(uxTaskGetStackHighWaterMark(worker_task)) : 0U;
+      if (action == work::StallAction::Restart) {
+        aqlog.printf(
+            "PARQUET FATAL operation=worker-stall-restart seconds=%lld "
+            "state=%s stack_free=%u\n",
+            elapsed_s, state_name, stack_free);
+        esp_restart();
+      }
+      aqlog.printf("PARQUET ERROR operation=worker-stall seconds=%lld "
+                   "state=%s stack_free=%u\n",
+                   elapsed_s, state_name, stack_free);
     }
   }
   report_runtime(now);
