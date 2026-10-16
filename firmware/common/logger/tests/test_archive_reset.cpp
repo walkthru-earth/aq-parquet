@@ -34,6 +34,8 @@ int delete_failure(const char *) {
   errno = EACCES;
   return -1;
 }
+unsigned progress_calls = 0;
+void count_progress() { ++progress_calls; }
 } // namespace
 
 int main() {
@@ -110,8 +112,13 @@ int main() {
   assert(!erase_archive("/sd/output", files, directories, io));
   assert(errno == EOVERFLOW && files == 0 && directories == 0);
   fs::remove_all(card / "output/deep");
-  assert(erase_archive("/sd/output", files, directories, io));
+  // Every visited entry reports progress in both the preflight and the
+  // delete pass, so the worker heartbeat moves through a large erase.
+  auto progress_io = io;
+  progress_io.progress = count_progress;
+  assert(erase_archive("/sd/output", files, directories, progress_io));
   assert(files == 3 && directories == 6);
+  assert(progress_calls == 2 * (3 + 6));
   assert(!fs::exists(card / "output"));
   assert(fs::exists(card / "parquet/legacy.parquet"));
   // A board without a legacy root never erases one, even at the old path.

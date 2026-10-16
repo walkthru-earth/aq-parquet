@@ -8,6 +8,18 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Storage worker watchdog (feat/multi-chip-portability-and-watchdog)
+
+- LOG_TAIL `PARQUET ERROR operation=worker-stall` gains a trailing
+  `watchdog=armed|warn|off` field. Additive.
+- New LOG_TAIL lines `PARQUET WATCHDOG mode=... timeout_s=... consecutive=...`
+  at boot and `PARQUET ERROR operation=worker-watchdog-reset consecutive=N`
+  after a stall reset. Additive.
+- A stalled storage worker now resets the device after about 60 s instead of
+  staying wedged. The app sees a normal BLE/LAN disconnect and reconnect.
+- No STATUS, LIVE, GET_DIAG, GET_CONFIG or advertising field changes. The app
+  does not parse these log lines today, so no app change is required.
+
 ## CoreS3 acquisition configuration v3 (refactor/board-neutral-logger-and-sensors)
 
 - The CoreS3 file metadata `configuration_id` changes from

@@ -55,11 +55,6 @@ struct Config {
   // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
   unsigned worker_priority = 3;
   std::size_t worker_stack_bytes = 24576;
-  // Optional worker-stall watchdog recovery threshold in seconds. 0 keeps
-  // passive PARQUET ERROR operation=worker-stall logging; a non-zero value
-  // (clamped to >= 5 s) logs PARQUET FATAL operation=worker-stall-restart into
-  // the persistent crash ring and calls esp_restart().
-  std::uint32_t worker_stall_restart_s = 0;
 };
 // Shared default for each board's sampling and UI task: above the idle
 // housekeeping, below the storage worker (3), the LAN task (4) and the BLE

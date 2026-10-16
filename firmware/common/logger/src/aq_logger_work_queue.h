@@ -25,9 +25,20 @@ inline void wait_if_idle(QueueHandle_t samples, SemaphoreHandle_t wakeup) {
     xSemaphoreTake(wakeup, pdMS_TO_TICKS(1000));
 }
 
-// Evaluates storage-worker heartbeat liveness on the main loop.
+// True when the worker heartbeat is older than timeout_s (clamped to >= 5 s).
+// No heartbeat yet means the worker has not started and is never expired.
+inline bool stall_expired(std::int64_t now_us, std::int64_t heartbeat_us,
+                          std::uint32_t timeout_s) {
+  if (heartbeat_us <= 0 || now_us <= heartbeat_us || timeout_s == 0)
+    return false;
+  const std::int64_t timeout_us =
+      static_cast<std::int64_t>(timeout_s < 5U ? 5U : timeout_s) * 1000000LL;
+  return now_us - heartbeat_us > timeout_us;
+}
+
+// Evaluates storage-worker heartbeat liveness.
 // - Returns None before the first heartbeat or within the 5 s normal window.
-// - Returns Restart when restart_s > 0 and elapsed exceeds max(restart_s, 5) s.
+// - Returns Restart when restart_s > 0 and stall_expired(restart_s).
 // - Returns Warn when elapsed > 5 s and >= 30 s have passed since the previous
 //   warning.
 inline StallAction check_stall(std::int64_t now_us, std::int64_t heartbeat_us,
@@ -35,14 +46,9 @@ inline StallAction check_stall(std::int64_t now_us, std::int64_t heartbeat_us,
                                std::uint32_t restart_s) {
   if (heartbeat_us <= 0 || now_us <= heartbeat_us)
     return StallAction::None;
-  const std::int64_t elapsed_us = now_us - heartbeat_us;
-  if (restart_s > 0) {
-    const std::int64_t restart_us =
-        static_cast<std::int64_t>(restart_s < 5U ? 5U : restart_s) * 1000000LL;
-    if (elapsed_us > restart_us)
-      return StallAction::Restart;
-  }
-  if (elapsed_us > 5000000LL &&
+  if (stall_expired(now_us, heartbeat_us, restart_s))
+    return StallAction::Restart;
+  if (now_us - heartbeat_us > 5000000LL &&
       (last_warning_us == 0 || now_us - last_warning_us > 30000000LL)) {
     last_warning_us = now_us;
     return StallAction::Warn;

@@ -1,4 +1,5 @@
 // Deterministic interleavings for the actual worker queue/wakeup helper.
+#include "aq_logger_watchdog.h"
 #include "aq_logger_work_queue.h"
 #include <cassert>
 
@@ -71,4 +72,64 @@ int main() {
   assert(check_stall(5500000LL, 1000000LL, last_warn, 1) == StallAction::None);
   assert(check_stall(6000001LL, 1000000LL, last_warn, 1) ==
          StallAction::Restart);
+  // Supervisor expiry: none before the first heartbeat or with timeout 0,
+  // strictly after the (>= 5 s) timeout, independent of the warn cooldown.
+  using aqlogger::work::stall_expired;
+  assert(!stall_expired(100000000LL, 0, 60));
+  assert(!stall_expired(100000000LL, 1000000LL, 0));
+  assert(!stall_expired(61000000LL, 1000000LL, 60));
+  assert(stall_expired(61000001LL, 1000000LL, 60));
+  assert(!stall_expired(6000000LL, 1000000LL, 1));
+  assert(stall_expired(6000001LL, 1000000LL, 1));
+  // The poll warning path never restarts with restart_s = 0, however long.
+  std::int64_t warn_only = 0;
+  assert(check_stall(4000000000LL, 1000000LL, warn_only, 0) ==
+         StallAction::Warn);
+
+  // Boot-loop guard kept in RTC no-init memory.
+  namespace wd = aqlogger::watchdog;
+  wd::Guard guard{0xdeadbeef, 7, 9, 1}; // power-on garbage
+  assert(!wd::valid(guard));
+  assert(wd::on_boot(guard, true) == wd::Mode::Armed);
+  assert(wd::valid(guard) && guard.consecutive == 0 && guard.pending == 0);
+  // A task-watchdog reset not armed by the supervisor does not count.
+  assert(wd::on_boot(guard, true) == wd::Mode::Armed);
+  assert(guard.consecutive == 0);
+  // An armed stall followed by another reset reason does not count either.
+  wd::mark_pending(guard);
+  assert(wd::on_boot(guard, false) == wd::Mode::Armed);
+  assert(guard.consecutive == 0 && guard.pending == 0);
+  // Three stall resets in a row fall back to warn-only and stay there.
+  for (std::uint32_t n = 1; n <= 3; ++n) {
+    wd::mark_pending(guard);
+    assert(guard.pending == 1);
+    const auto mode = wd::on_boot(guard, true);
+    assert(guard.consecutive == n && guard.pending == 0);
+    assert(mode == (n < 3 ? wd::Mode::Armed : wd::Mode::WarnOnly));
+  }
+  wd::mark_pending(guard);
+  assert(wd::on_boot(guard, true) == wd::Mode::WarnOnly);
+  assert(guard.consecutive == wd::kMaxConsecutive);
+  // A plain reboot keeps the count, it is not a healthy period.
+  assert(wd::on_boot(guard, false) == wd::Mode::WarnOnly);
+  // A corrupted count is rejected and starts over.
+  wd::Guard flipped = guard;
+  flipped.consecutive = 1;
+  assert(!wd::valid(flipped));
+  // Healthy period clears the count only after healthy_s of continuous
+  // liveness, measured from the last expired heartbeat.
+  assert(!wd::clear_if_healthy(guard, 3599999999LL, 0, 3600));
+  assert(wd::mode(guard) == wd::Mode::WarnOnly);
+  assert(!wd::clear_if_healthy(guard, 3700000000LL, 200000000LL, 3600));
+  assert(wd::clear_if_healthy(guard, 3600000000LL, 0, 3600));
+  assert(guard.consecutive == 0 && wd::mode(guard) == wd::Mode::Armed);
+  assert(!wd::clear_if_healthy(guard, 7200000000LL, 0, 3600)); // already 0
+  // Two stalls, a healthy hour, then two more: never reaches warn-only.
+  for (int round = 0; round < 2; ++round) {
+    for (int n = 0; n < 2; ++n) {
+      wd::mark_pending(guard);
+      assert(wd::on_boot(guard, true) == wd::Mode::Armed);
+    }
+    assert(wd::clear_if_healthy(guard, 3600000000LL, 0, 3600));
+  }
 }
