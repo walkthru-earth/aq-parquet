@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pms5003t_identity.h"
 #include "telemetry_dictionary_digest.h"
 #include <aq_logger.h>
 #include <cstring>
@@ -125,23 +126,10 @@ enum BatchCandidateStatus : std::int32_t {
   kBatchCandidate = 3,
 };
 inline std::int64_t serial_code(const SensorProfile &sensor) {
-  if (!sensor.vendor || !sensor.model || !sensor.serial ||
-      std::strcmp(sensor.vendor, "Plantower") != 0 ||
-      std::strcmp(sensor.model, "PMS5003T") != 0 ||
-      std::strlen(sensor.serial) < 18 || std::strlen(sensor.serial) > 26 ||
-      std::strncmp(sensor.serial, "PMS5003T-", 9) != 0)
-    return 0;
-  std::int64_t code = 0;
-  for (const char *p = sensor.serial + 9; *p; ++p) {
-    if (*p < '0' || *p > '9')
-      return 0;
-    code = code * 10 + (*p - '0');
-  }
-  return code;
+  return pms5003t::serial_code(sensor.vendor, sensor.model, sensor.serial);
 }
 inline bool exact_batch(const SensorProfile &sensor) {
-  return serial_code(sensor) != 0 &&
-         std::strncmp(sensor.serial, "PMS5003T-20260408", 17) == 0;
+  return pms5003t::batch_eligible(sensor.vendor, sensor.model, sensor.serial);
 }
 // Sensor stays powered: warm-up uses boot uptime. Add a sensor-start anchor
 // if sleep/reset control is introduced. Apply only to a fresh, zeroed row.

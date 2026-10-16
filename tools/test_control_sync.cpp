@@ -1,3 +1,4 @@
+#include "../firmware/esp-idf-waveshare-sim7670g/logger/pms5003t_identity.h"
 #include <abort_signal.h>
 #include <archive_sync.h>
 #include <control_sync.h>
@@ -128,7 +129,8 @@ void paged_configuration() {
 }
 
 void configuration() {
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy({pms5003t::kVendor, pms5003t::kModel,
+                             pms5003t::valid_serial, pms5003t::batch_eligible});
   assert(config::load(false));
   Peer peer;
   handle(request(ble::kOpGetConfig, ble::Link::Lan), peer);

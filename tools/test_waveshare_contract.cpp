@@ -47,7 +47,31 @@ PmsSnapshot parsed_snapshot() {
   pms.length_errors = 3;
   return pms;
 }
+// Board-owned identity rules installed into the shared runtime policy hook.
+void assert_identity_rules() {
+  using namespace pms5003t;
+  assert(valid_serial("PMS5003T-202604081332"));
+  assert(valid_serial("PMS5003T-202402291"));           // leap day
+  assert(valid_serial("PMS5003T-20260408123456789"));   // 9 unit digits
+  assert(!valid_serial("PMS5003T-202602291332"));       // not a leap year
+  assert(!valid_serial("PMS5003T-202613011332"));       // month 13
+  assert(!valid_serial("PMS5003T-202604001332"));       // day 0
+  assert(!valid_serial("PMS5003T-199912311332"));       // before 2000
+  assert(!valid_serial("PMS5003T-20260408"));           // no unit digits
+  assert(!valid_serial("PMS5003T-202604081234567890")); // too long
+  assert(!valid_serial("PMSA003-202604081332"));
+  assert(!valid_serial("PMS5003T-2026040813A2"));
+  assert(!valid_serial(nullptr));
+  assert(serial_code(kVendor, kModel, "PMS5003T-20260408123456789") ==
+         20260408123456789LL);
+  assert(serial_code("Other", kModel, "PMS5003T-202604081332") == 0);
+  assert(serial_code(kVendor, kModel, "PMS5003T-202602291332") == 0);
+  assert(batch_eligible(kVendor, kModel, "PMS5003T-2026040813327"));
+  assert(!batch_eligible(kVendor, kModel, "PMS5003T-202605011332"));
+  assert(!batch_eligible(kVendor, "PMSA003", "PMS5003T-202604081332"));
+}
 void assert_gates() {
+  assert_identity_rules();
   auto pms = parsed_snapshot();
   Sample warm{}, ready{}, stale{}, bad_model{}, bad_gauge{}, installed{};
   apply_pms(warm, pms, kPmsWarmupUs - 1);

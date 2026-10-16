@@ -33,6 +33,10 @@ constexpr std::uint8_t kGaugeAddress = 0x36;
 // The owner installed an 18650 and verified battery-only operation. A gauge
 // ACK alone cannot prove presence; set false if this image is used without it.
 constexpr bool kBatteryInstalled = true;
+// The wired PMS5003T decides which provisioned identities the runtime keeps.
+constexpr config::SensorPolicy kSensorPolicy{
+    pms5003t::kVendor, pms5003t::kModel, pms5003t::valid_serial,
+    pms5003t::batch_eligible};
 
 plantower::Parser parser{plantower::Model::Pms5003t};
 PmsSnapshot latest;
@@ -168,7 +172,7 @@ bool init_board() {
                mounted, static_cast<unsigned long long>(board::card_bytes()),
                sensor_ready, kSdClk, kSdCmd, kSdData0);
   logging = aqlogger::begin(kLoggerConfig, kHooks, mounted);
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kSensorPolicy);
   if (logging && !aqlogger::start_links(false))
     aqlog.println("AQ ERROR operation=sync-start");
   aqlog.printf("AQ READY logging=%u mounted=%u sample_ms=10000 "
