@@ -52,6 +52,35 @@ file in `docs/README.md` after this one.
   sample/file and split on changes. Never relabel finalized files.
 - Bench claims require dated board evidence with image identity and limits.
   Host tests do not prove SD, radio coexistence or power-cut durability.
+- Only ESP32-S3 on ESP-IDF 6.1 is verified. Do not claim C3, C6, P4 or other
+  chips in READMEs, manifests or Kconfig until a connected board passes the
+  flash checklist below and a dated bench capture.
+- The writer workspace requires PSRAM. Do not add an internal RAM fallback, it
+  cannot fit next to Wi-Fi and NimBLE. Fail with a clear `PARQUET ERROR
+  operation=allocate mem=psram` line instead. Any long storage-worker walk
+  (erase, quarantine, remount, free-space scan) must stamp the worker heartbeat
+  so the stall check and task watchdog do not misread healthy work.
+
+## Compatibility, licensing and reviews
+
+- No backward compatibility is kept for schema, Parquet layout, config or the
+  BLE/LAN protocol. Every change the phone can observe (columns, units, field
+  ids, LIVE keys, log lines, versions, digests) gets a newest-first entry in
+  `docs/shared/mobile-migration.md` saying what changed, why, and what the app
+  must do. Bump schema, dictionary and firmware identity strings together.
+- Parquet columns keep stable `field_id` values (1-based position in the board
+  `telemetry_fields.inc`, append only) and UTC uses `TIMESTAMP(MICROS, UTC)`
+  so files register in Iceberg v2 without rewrites.
+- Our code is CC-BY-4.0 with Walkthru.Earth attribution. Third-party code keeps
+  its own LICENSE, NOTICE and headers. When a dependency, vendored file or
+  pinned version changes, update `THIRD_PARTY_NOTICES.md` from the linker maps.
+- Ask the owner before creating a new public repository.
+- Every PR gets a CodeRabbit review. Validate each inline comment against the
+  code, fix it or explain why not, reply in that comment's thread and resolve
+  it before merging. CodeRabbit skips draft PRs, so comment
+  `@coderabbitai review` on them. Commit per major step and post progress on
+  the tracking issue.
+- No em dashes in docs, commits, PR text or replies.
 
 ## Before any physical flash write
 
