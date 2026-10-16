@@ -121,6 +121,10 @@ private:
   };
   static constexpr std::size_t kPayloadCapacity = 1024;
   ArchiveHooks archive_;
+  // Scratch for the FILE, OPENED and CHUNK frames. One request runs at a time
+  // on the storage worker and respond() copies the frame before returning, so
+  // a single buffer lives with the session instead of on the worker stack.
+  std::array<std::uint8_t, kPayloadCapacity> io_{};
   ArchiveTransport transport_;
   std::array<OpenFile, kReadHandles> open_{};
   std::uint16_t next_handle_ = 1;
