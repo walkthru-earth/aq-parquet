@@ -70,7 +70,9 @@ file in `docs/README.md` after this one.
   must do. Bump schema, dictionary and firmware identity strings together.
 - Parquet columns keep stable `field_id` values (1-based position in the board
   `telemetry_fields.inc`, append only) and UTC uses `TIMESTAMP(MICROS, UTC)`
-  so files register in Iceberg v2 without rewrites.
+  so files register in Iceberg v3 tables without rewrites. Do not switch UTC
+  to NANOS. It maps only to v3 `timestamptz_ns`, which most engines cannot
+  read. See `docs/shared/mobile-migration.md`.
 - Our code is CC-BY-4.0 with Walkthru.Earth attribution. Third-party code keeps
   its own LICENSE, NOTICE and headers. When a dependency, vendored file or
   pinned version changes, update `THIRD_PARTY_NOTICES.md` from the linker maps.
