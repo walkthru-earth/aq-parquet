@@ -16,6 +16,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Native FAT mount root and archive directory creation | `logger-directory-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
 | Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
+| Battery health states, thresholds, debounce and settling | `battery-health-test` |
 | Board-declared LIVE keys and JSON formatting | `logger-live-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
