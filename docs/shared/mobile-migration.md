@@ -8,6 +8,18 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Smaller resident writer workspace (feat/multi-chip-portability-and-watchdog)
+
+- `PARQUET BEGIN psram_workspace_bytes=` drops because the codec-test
+  benchmark file is no longer resident, 213112 to 162136 bytes on both
+  boards. Value change only.
+- LOG_TAIL `PARQUET ERROR operation=codec-test reason=no-psram` is replaced by
+  `PARQUET ERROR operation=allocate mem=psram bytes=N purpose=codec-test`.
+- A failed workspace allocation at boot now logs
+  `PARQUET ERROR operation=allocate mem=psram bytes=N purpose=writer-state
+  logging=false`. Other boot allocation failures keep the old line.
+- The app does not parse these lines, so no app change is required.
+
 ## Storage worker watchdog (feat/multi-chip-portability-and-watchdog)
 
 - LOG_TAIL `PARQUET ERROR operation=worker-stall` gains a trailing

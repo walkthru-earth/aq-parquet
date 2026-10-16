@@ -123,7 +123,9 @@ struct WriterState {
   Sample rows[kMaxRows];
   Column columns[telemetry::kMaxColumns];
   OutputFile telemetry;
-  OutputFile benchmark; // codec-test copies never touch the telemetry file
+  // codec-test copies never touch the telemetry file. The benchmark file is
+  // allocated from PSRAM only while codec-test runs and is null otherwise.
+  OutputFile *benchmark = nullptr;
   Lz4Workspace lz4{};
   // Archive reads. Finalize-time CRCs for OPEN, the CRC read block and one
   // stdio buffer per persistent archive read handle. Worker only.
@@ -854,7 +856,9 @@ bool commit(std::size_t &count, bool finalize) {
 // A one-row-group diagnostic copy of the RAM batch outside station trees;
 // the rows stay buffered for normal telemetry rotation.
 bool write_benchmark(std::size_t count, Codec codec) {
-  OutputFile &target = writer_state->benchmark;
+  if (!writer_state->benchmark)
+    return false;
+  OutputFile &target = *writer_state->benchmark;
   if (!count || target.open())
     return false;
   return create_file(target, codec, true) && append_group(target, count) &&
@@ -1561,10 +1565,39 @@ bool governed_commit(std::size_t &count, bool finalize) {
   return ok;
 }
 
+// The codec-test file and its stdio staging are borrowed from PSRAM only for
+// that command, so the resident workspace carries no benchmark OutputFile.
+bool alloc_benchmark() {
+  constexpr auto caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+  void *file = heap_caps_calloc(1, sizeof(OutputFile), caps);
+  auto *staging = static_cast<char *>(heap_caps_malloc(kStagingBytes, caps));
+  if (!file || !staging) {
+    heap_caps_free(file);
+    heap_caps_free(staging);
+    return false;
+  }
+  writer_state->benchmark = new (file) OutputFile{};
+  writer_state->benchmark->staging = staging;
+  return true;
+}
+
+void free_benchmark() {
+  OutputFile *target = writer_state->benchmark;
+  if (!target)
+    return;
+  writer_state->benchmark = nullptr;
+  if (target->file)
+    std::fclose(target->file);
+  heap_caps_free(target->staging);
+  target->~OutputFile();
+  heap_caps_free(target);
+}
+
 // No file may be open across a remount. probe_storage releases the archive
 // session's read streams; their handles reopen by path on the next READ.
 bool files_closed() {
-  return !writer_state->telemetry.open() && !writer_state->benchmark.open();
+  return !writer_state->telemetry.open() &&
+         (!writer_state->benchmark || !writer_state->benchmark->open());
 }
 
 // Remount (when the board allows it) and re-measure. Clears Retry only when
@@ -1899,8 +1932,8 @@ void storage_worker(void *) {
         BusLock lock;
         bool closed = true;
         for (auto *target :
-             {&writer_state->telemetry, &writer_state->benchmark}) {
-          if (target->file) {
+             {&writer_state->telemetry, writer_state->benchmark}) {
+          if (target && target->file) {
             closed &= std::fclose(target->file) == 0;
             target->file = nullptr;
           }
@@ -2011,18 +2044,16 @@ void storage_worker(void *) {
           governor.state() != storage::State::Ready) {
         aqlog.printf("PARQUET ERROR operation=codec-test reason=%s\n",
                      count ? storage::state_name(governor.state()) : "empty");
-      } else if (!(writer_state->benchmark.staging = static_cast<char *>(
-                       heap_caps_malloc(kStagingBytes, MALLOC_CAP_SPIRAM |
-                                                           MALLOC_CAP_8BIT)))) {
-        // Benchmark staging is borrowed from PSRAM only for this command.
+      } else if (!alloc_benchmark()) {
         ++errors;
-        aqlog.println("PARQUET ERROR operation=codec-test reason=no-psram");
+        aqlog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
+                     "purpose=codec-test\n",
+                     unsigned(sizeof(OutputFile) + kStagingBytes));
       } else {
         const auto previous = governor.state();
         const bool ok = write_benchmark(count, Codec::Uncompressed) &&
                         write_benchmark(count, Codec::Lz4Raw);
-        heap_caps_free(writer_state->benchmark.staging);
-        writer_state->benchmark.staging = nullptr;
+        free_benchmark();
         // A failed diagnostic copy does not pause telemetry; the next
         // telemetry write is the card test.
         std::uint64_t free_bytes = 0;
@@ -2420,7 +2451,12 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   writer_state = static_cast<WriterState *>(heap_caps_calloc(
       1, sizeof(WriterState), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!spi_mutex || !samples || !commands || !worker_wakeup || !writer_state) {
-    aqlog.println("PARQUET ERROR operation=allocate logging=false");
+    if (!writer_state)
+      aqlog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
+                   "purpose=writer-state logging=false\n",
+                   unsigned(sizeof(WriterState)));
+    else
+      aqlog.println("PARQUET ERROR operation=allocate logging=false");
     return false;
   }
   new (writer_state) WriterState{};
