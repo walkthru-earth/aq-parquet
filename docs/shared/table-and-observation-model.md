@@ -3,7 +3,7 @@
 
 > **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
 > observation/archive semantics. CoreS3 uses its 81-column v4 schema and
-> Waveshare V2 its 56-column PMS5003T v3 schema. Board acquisition and schema
+> Waveshare V2 its 62-column PMS5003T v5 schema. Board acquisition and schema
 > identities remain distinct. Native build/host gates pass; dated physical
 > evidence below remains scoped to historical Arduino images.
 
@@ -174,11 +174,15 @@ The clock anchor pair in each row supports auditing the UTC mapping without rely
 | `touch_present` | Nonzero touch count; first reported point |
 | `sd_mounted_cached` | Startup mount succeeded; size values are cached KiB-resolution reports, not hotplug proof |
 | `unavailable` | Intentionally null: unsupported battery current or unresolved SHT20 isolation |
+| `battery_installed` | Waveshare v5. The image declares an installed battery. `battery_health_state` is then always written, with code 0 when no valid cell voltage has been classified yet |
+| `battery_installed_gauge_read_ok_uncapped` | Waveshare v5. Battery declared and the MAX17048 VCELL/SOC read passed its range checks. The raw percentage is not capped and can exceed 100 on external power |
+| `battery_installed_crate_read_ok`, `battery_installed_status_read_ok`, `battery_installed_mode_read_ok` | Waveshare v5. Battery declared and the matching MAX17048 CRATE, STATUS or MODE register read succeeded. Each register read is independent |
+| `battery_soc_trusted_discharging_within_7_days` | Waveshare v5. SOC read is valid, at most 100%, not settling after a gauge reset, CRATE is negative and the estimate is at most 10080 minutes. A planning estimate, not a measured runtime |
 
 The `unit` strings are project labels, not a claim of universal UCUM validity. In particular `g` means standard-gravity multiples here, `deg/s` angular velocity, `count/0.1L` cumulative particle counts per 0.1 litre, and `raw_count` is not lux, distance or magnetic field. Codes/bitmasks/calendar encodings require their documented interpretation.
 
 ### Validation status
 
-The current 90-row/81-column CoreS3 and 56-column Waveshare synthetic contract fixtures pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the retained TIMESTAMP types and current `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, explicit unknown context, nullable/coarsened H3 centers and country metadata. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
+The current 90-row/81-column CoreS3 and 62-column Waveshare synthetic contract fixtures pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the retained TIMESTAMP types and current `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, explicit unknown context, nullable/coarsened H3 centers and country metadata. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
 
 The revision was then flashed with hash verification on **2026-09-08**. Real SD readbacks passed for three unsynchronized UNCOMPRESSED rows and four host-anchored LZ4 rows. Column/dictionary metadata, null anchors before synchronization, exact UTC mapping after synchronization, receipt/start/completion order and zero stored health errors were checked. `parquet schema` completed on the board. The logger was left at 15-minute rotation with LZ4 and host UTC restored. These are smoke tests, not full-window endurance, calibrated time accuracy or SensorThings/Iceberg compliance. [Artifact identities, timings and measured scope](../boards/m5stack-cores3/bench-verified.md#board-1-schema-v2-provenance-and-timing)

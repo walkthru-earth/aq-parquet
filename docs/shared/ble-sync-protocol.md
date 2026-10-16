@@ -137,8 +137,8 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
-is CoreS3, while Waveshare advertises its own 56-column schema and dictionary
-`waveshare-sim7670g-telemetry-v4` with firmware `idf-waveshare-parquet-v2.6`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+is CoreS3, while Waveshare advertises its own 62-column schema and dictionary
+`waveshare-sim7670g-telemetry-v5` with firmware `idf-waveshare-parquet-v2.7`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -197,6 +197,7 @@ Notified once per sample. Each board declares a short `live_key` next to the fie
 | `rh` | `relative_humidity_percent`; absent when unavailable |
 | `imu_t` | CoreS3 `imu_temperature_c`, IMU die temperature. Never show it as air temperature |
 | `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement |
+| `bstate` | Waveshare `battery_health_state` code: 0 unknown, 1 external power likely, 2 ok, 3 low, 4 critical, 5 settling after a gauge reset. Inferred from cell voltage only, thresholds are uncalibrated |
 | `als` | CoreS3 `light_ch0_raw` |
 
 PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.

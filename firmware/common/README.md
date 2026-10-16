@@ -10,7 +10,8 @@ own peripheral initialization and consume only the required components.
 | --- | --- | --- |
 | `sensors/src/pms_frame.*` | Plantower byte framing, checksum, model-specific decoding | UART, selected sensor model, freshness/warm-up policy |
 | `sensors/src/aq_ltr553.h` | LTR553 register setup and raw validity | Existing bus read/write and timing callbacks |
-| `sensors/src/aq_max17048.h` | MAX17048 VCELL/SOC reads, decoding and range checks | Existing bus read callback, battery-installed policy |
+| `sensors/src/aq_max17048.h` | MAX17048 VCELL/SOC and diagnostic register reads, decoding, range checks and a verified reset-indicator clear | Existing bus read callback, optional write callback, battery-installed policy |
+| `power/src/aq_battery_health.*` | Pure battery state classifier with debounce, hysteresis and post-reset settling | Validated thresholds, monotonic time, gauge samples and any load shedding |
 | `src/numeric_sample.h` | Fixed-size numeric rows with explicit validity/nulls | Board field dictionary and collection |
 | `src/utc_clock.h` | UTC anchor arithmetic, source codes, calendar conversion and supported bounds | Coherent anchor locking, host sync and optional RTC adapter |
 | `src/parquet_writer.*`, `lz4_codec.*` | Bounded Parquet encoding and pinned LZ4 | Columns, provenance, memory, file sink and rotation policy |
@@ -90,7 +91,7 @@ requires board measurements.
 
 Both current board logger adapters consume AQLogger. CoreS3 retains M5Unified,
 its 81-column v4 dictionary, SPI/display arbitration and optional BM8563 hooks.
-Waveshare supplies its 56-column PMS5003T v3 dictionary and one-bit SDMMC adapter,
+Waveshare supplies its 62-column PMS5003T v5 dictionary and one-bit SDMMC adapter,
 with no RTC hook in this image. Its retained diagnostic consumes common/runtime for the parser and physical
 console, without starting the logger or radio services. Source integration does not transfer hardware measurements between
 boards; use each board's bench record for the deployed image and tested scope.
