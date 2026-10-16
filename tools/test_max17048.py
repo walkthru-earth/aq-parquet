@@ -21,7 +21,8 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("MAX17048 decode bounds, register order, IO failures and unset IO passed")
+    print("MAX17048 decode bounds, register order, extended registers, "
+          "RI clear, IO failures and unset IO passed")
 
 
 if __name__ == "__main__":
