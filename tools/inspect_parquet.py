@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parquet_footer as footer  # noqa: E402
 
-KEY_COLUMNS = ("sequence", "monotonic_us", "event_time_utc_ns", "pm25_atmospheric_ug_m3", "accel_x_g")
+KEY_COLUMNS = ("sequence", "monotonic_us", "event_time_utc_us", "pm25_atmospheric_ug_m3", "accel_x_g")
 
 
 def inspect(path: Path) -> bool:
@@ -36,9 +36,16 @@ def inspect(path: Path) -> bool:
           f"firmware={kv.get('firmware')} compression={kv.get('compression')} rotation_interval_s={kv.get('rotation_interval_s')} "
           f"row_groups={kv.get('row_groups')} created_by={md.created_by!r}")
     schema = parquet.schema_arrow
-    for name in ("event_time_utc_ns", "clock_anchor_utc_ns"):
+    for name in ("event_time_utc_us", "clock_anchor_utc_us"):
         if name in schema.names:
             print(f"  {name}: {schema.field(name).type}")
+    # Iceberg v2 registration needs a unique positive field_id on every leaf.
+    ids = [element.get(footer.SCHEMA_FIELD_ID) for element in meta[footer.FILE_SCHEMA][1:]]
+    if all(isinstance(i, int) and i > 0 for i in ids) and len(set(ids)) == len(ids):
+        print(f"  field_id: {min(ids)}..{max(ids)} on {len(ids)} leaves")
+    else:
+        print("  !! field_id missing or duplicated on some leaves")
+        ok = False
     orders = meta.get(footer.FILE_COLUMN_ORDERS)
     print(f"  column_orders: {'TYPE_ORDER x %d' % len(orders) if orders else 'absent'}")
     names = schema.names
@@ -74,8 +81,8 @@ def inspect(path: Path) -> bool:
         duck_groups = connection.execute(
             "SELECT count(DISTINCT row_group_id) FROM parquet_metadata(?)", [str(path)]).fetchone()[0]
         utc_type = connection.execute(
-            "SELECT typeof(event_time_utc_ns) FROM read_parquet(?) LIMIT 1", [str(path)]).fetchone()
-    print(f"  DuckDB: rows={duck_rows} row_groups={duck_groups} event_time_utc_ns type={utc_type[0] if utc_type else None}")
+            "SELECT typeof(event_time_utc_us) FROM read_parquet(?) LIMIT 1", [str(path)]).fetchone()
+    print(f"  DuckDB: rows={duck_rows} row_groups={duck_groups} event_time_utc_us type={utc_type[0] if utc_type else None}")
     if duck_rows != md.num_rows or duck_groups != md.num_row_groups:
         print("  !! DuckDB disagrees with the footer")
         ok = False

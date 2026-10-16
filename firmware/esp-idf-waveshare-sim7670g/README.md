@@ -1,10 +1,13 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.5`**, with **56-column** schema
-`waveshare-sim7670g-telemetry-v3` and dictionary `waveshare-sim7670g-telemetry-v3`.
-The original 52 columns retain their names, types and order, with four nullable
-H3 location fields appended. The board has two native variants:
+**`idf-waveshare-parquet-v2.6`**, with **56-column** schema
+`waveshare-sim7670g-telemetry-v4` and dictionary `waveshare-sim7670g-telemetry-v4`.
+The original 52 columns retain their order and types, with four nullable H3
+location fields appended. Since v2.6 the UTC instants are `event_time_utc_us`
+and `clock_anchor_utc_us` with `TIMESTAMP(MICROS, UTC)`, and every leaf
+carries Parquet `field_id` = its 1-based dictionary position (see
+[mobile migration](../../docs/shared/mobile-migration.md)). The board has two native variants:
 `logger/main.cpp` for the full application and `diagnostic/main.cpp` for the
 retained UART/read-only TF fixture. `board_io.*` owns native UART, I²C, SDMMC
 and indicator adapters. There are no Arduino APIs or Arduino component.

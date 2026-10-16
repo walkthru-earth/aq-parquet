@@ -7,8 +7,8 @@ static constexpr aqlogger::Field fields[] = {
      "urn:test:sequence"},
     {"monotonic_us", telemetry::PhysicalType::Int64, "runtime", "us", "always",
      "urn:test:monotonic"},
-    {"event_time_utc_ns", telemetry::PhysicalType::Int64, "runtime",
-     "ns_since_unix_epoch", "clock", "urn:test:utc"},
+    {"event_time_utc_us", telemetry::PhysicalType::Int64, "runtime",
+     "us_since_unix_epoch", "clock", "urn:test:utc"},
     {"clock_epoch", telemetry::PhysicalType::Int32, "runtime", "count",
      "always", "urn:test:epoch"}};
 extern "C" void app_main() {

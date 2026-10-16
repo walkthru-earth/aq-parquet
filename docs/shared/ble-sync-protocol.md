@@ -131,7 +131,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.11","schema":"cores3-telemetry-v4","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.12","schema":"cores3-telemetry-v5","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
@@ -188,7 +188,7 @@ Notified once per sample. Keys follow the dictionary names in `telemetry_fields.
 
 | Key | Dictionary field |
 | --- | --- |
-| `seq`, `mono`, `utc` | `sequence`, `monotonic_us`, `event_time_utc_ns` (omitted when unsynchronized) |
+| `seq`, `mono`, `utc` | `sequence`, `monotonic_us`, `event_time_utc_us` (omitted when unsynchronized). `utc` stays in nanoseconds, the file column `event_time_utc_us` × 1000 |
 | `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid |
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |

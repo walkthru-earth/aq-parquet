@@ -133,15 +133,17 @@ def validate_file(path: Path, *, allow_nonfinite: bool = False) -> dict:
     table = parquet.read()
     if len(set(table.column_names)) != len(table.column_names):
         raise ValueError("duplicate column names cannot be compared unambiguously")
-    # Schema v3 annotates the UTC fields TIMESTAMP(NANOS, UTC). Compare them as
-    # the stored INT64 nanoseconds on both sides: exact, and independent of
-    # DuckDB's microsecond TIMESTAMPTZ conversion (which also needs pytz).
-    timestamps = [field.name for field in table.schema if pa.types.is_timestamp(field.type)]
+    # Current firmware annotates the UTC fields TIMESTAMP(MICROS, UTC); files
+    # from older firmware used NANOS. Compare them as the stored INT64 in the
+    # file's own unit on both sides: exact, and independent of DuckDB's
+    # TIMESTAMPTZ conversion to Python objects (which also needs pytz).
+    timestamps = {field.name: field.type.unit for field in table.schema if pa.types.is_timestamp(field.type)}
     table = pa.table({name: column.cast(pa.int64()) if name in timestamps else column
                       for name, column in zip(table.column_names, table.columns)})
     expected = table.to_pylist()
-    selection = ", ".join(f'epoch_ns("{name}") AS "{name}"' if name in timestamps else f'"{name}"'
-                          for name in table.column_names)
+    epoch = {"us": "epoch_us", "ns": "epoch_ns", "ms": "epoch_ms", "s": "epoch"}
+    selection = ", ".join(f'{epoch[timestamps[name]]}("{name}") AS "{name}"' if name in timestamps
+                          else f'"{name}"' for name in table.column_names)
     with duckdb.connect(":memory:") as connection:
         # Compare file columns only; Hive directory columns are query metadata.
         cursor = connection.execute(f"SELECT {selection} FROM read_parquet(?, hive_partitioning=false)",

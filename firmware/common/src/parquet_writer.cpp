@@ -356,7 +356,8 @@ void schema_element(Output &out, const Column &column) {
   leaf.number(1, kI32, static_cast<uint8_t>(column.type));
   leaf.number(3, kI32, column.valid ? 1 : 0);
   leaf.string(4, column.name);
-  if (column.logical == LogicalType::TimestampNanosUtc) {
+  leaf.number(9, kI32, static_cast<uint64_t>(column.field_id));
+  if (column.logical == LogicalType::TimestampMicrosUtc) {
     leaf.field(10, kStruct); // LogicalType union
     Struct logical(out);
     logical.field(8, kStruct); // TIMESTAMP
@@ -364,9 +365,9 @@ void schema_element(Output &out, const Column &column) {
     timestamp.boolean(1, true);  // isAdjustedToUTC
     timestamp.field(2, kStruct); // TimeUnit union
     Struct unit(out);
-    unit.field(3, kStruct); // NANOS
-    Struct nanos(out);
-    nanos.end();
+    unit.field(2, kStruct); // MICROS
+    Struct micros(out);
+    micros.end();
     unit.end();
     timestamp.end();
     logical.end();
@@ -516,13 +517,17 @@ Result Writer::begin(Sink sink, void *context, Workspace &workspace,
          column.type != PhysicalType::Float)) {
       return {false, 0, "invalid column name or type"};
     }
+    if (column.field_id <= 0)
+      return {false, 0, "invalid column field_id"};
     if (column.logical != LogicalType::None &&
-        (column.logical != LogicalType::TimestampNanosUtc ||
+        (column.logical != LogicalType::TimestampMicrosUtc ||
          column.type != PhysicalType::Int64))
       return {false, 0, "logical type does not match physical type"};
     for (size_t j = 0; j < i; ++j) {
       if (!strcmp(column.name, columns[j].name))
         return {false, 0, "duplicate column name"};
+      if (column.field_id == columns[j].field_id)
+        return {false, 0, "duplicate column field_id"};
     }
   }
   sink_ = sink;

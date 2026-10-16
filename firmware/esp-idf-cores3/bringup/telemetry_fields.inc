@@ -1,4 +1,6 @@
-// Version 2 dictionary. FIELD(name, physical_type, procedure, unit, validity).
+// FIELD(name, physical_type, procedure, unit, validity).
+// Parquet/Iceberg field_id = 1-based order of the FIELD entries below. Append
+// new fields only; never reorder, remove or reuse a position.
 // Property URI = urn:walkthru-earth:cores3:property:<name> (local vocabulary).
 // Procedure identifiers describe code paths, not instrument serial numbers.
 FIELD(schema_version, Int32, logger, "1", always)
@@ -9,7 +11,7 @@ FIELD(sequence, Int64, logger, "count", always)
 FIELD(monotonic_us, Int64, clock, "us", always)
 FIELD(scheduled_us, Int64, clock, "us", always)
 FIELD(sample_jitter_us, Int64, clock, "us", always)
-FIELD(event_time_utc_ns, Int64, clock, "ns_since_unix_epoch", clock_anchored)
+FIELD(event_time_utc_us, Int64, clock, "us_since_unix_epoch", clock_anchored)
 FIELD(clock_status, Int32, clock, "code", always)
 FIELD(pms_status, Int32, pmsa003, "code", always)
 FIELD(pms_age_ms, Int64, pmsa003, "ms", pms_present)
@@ -77,7 +79,7 @@ FIELD(clock_epoch, Int32, clock, "count", always)
 FIELD(collection_completed_mono_us, Int64, clock, "us", always)
 FIELD(pms_received_mono_us, Int64, pmsa003, "us", pms_present)
 FIELD(clock_anchor_mono_us, Int64, clock, "us", clock_anchored)
-FIELD(clock_anchor_utc_ns, Int64, clock, "ns_since_unix_epoch", clock_anchored)
+FIELD(clock_anchor_utc_us, Int64, clock, "us_since_unix_epoch", clock_anchored)
 
 // Optional owner-provisioned H3 cell; all centers derive from this published cell.
 FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_configured)

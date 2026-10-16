@@ -9,13 +9,14 @@
 
 namespace telemetry {
 namespace contract {
-// File schema v4 appends four nullable H3 location fields to the unchanged
-// original 77 leaves. UTC annotations/statistics and bounded row groups remain.
-// Dictionary v3 tracks the field bytes; schema v4 tracks the reader contract.
-constexpr std::int32_t kSchemaVersion = 4;
-constexpr const char *kSchemaName = "cores3-telemetry-v4";
-constexpr const char *kDictionaryVersion = "cores3-telemetry-v3";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.11";
+// File schema v5 keeps the 81 leaves of v4 in the same order, renames the two
+// UTC instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes
+// a Parquet field_id on every leaf so Apache Iceberg v2 can register the file.
+// Dictionary v4 tracks the field bytes; schema v5 tracks the reader contract.
+constexpr std::int32_t kSchemaVersion = 5;
+constexpr const char *kSchemaName = "cores3-telemetry-v5";
+constexpr const char *kDictionaryVersion = "cores3-telemetry-v4";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.12";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -29,7 +30,7 @@ constexpr const char *kConfiguration =
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
 constexpr const char *kTimeSemantics =
-    "event_time_utc_ns estimates snapshot start; collection_completed_mono_us "
+    "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
     "bounds sequential reads; pms_received_mono_us is last checksum-valid UART "
     "frame receipt, not sensor phenomenon time; result/ingestion time and "
     "clock uncertainty unknown; no retroactive UTC assignment";
@@ -60,23 +61,24 @@ static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
 
 using Sample = aq::NumericSample<field_count>;
 
-// Fields whose unit is nanoseconds since the Unix epoch are the UTC instants;
+// Fields whose unit is microseconds since the Unix epoch are the UTC instants;
 // the annotation changes what readers present, never the stored INT64.
-constexpr const char *kUtcNanosUnit = "ns_since_unix_epoch";
+constexpr const char *kUtcMicrosUnit = "us_since_unix_epoch";
 inline LogicalType logical_type(const Definition &field) {
   return field.type == PhysicalType::Int64 &&
-                 std::strcmp(field.unit, kUtcNanosUnit) == 0
-             ? LogicalType::TimestampNanosUtc
+                 std::strcmp(field.unit, kUtcMicrosUnit) == 0
+             ? LogicalType::TimestampMicrosUtc
              : LogicalType::None;
 }
 
 template <typename Row>
 inline void prepare_columns(Column *columns, Row *rows) {
   for (std::size_t i = 0; i < field_count; ++i)
-    columns[i] = Column{kFields[i].name,         kFields[i].type,
-                        &rows[0].data[i],        sizeof(Row),
-                        &rows[0].valid[i],       sizeof(Row),
-                        logical_type(kFields[i])};
+    columns[i] = Column{
+        kFields[i].name,          kFields[i].type,
+        &rows[0].data[i],         sizeof(Row),
+        &rows[0].valid[i],        sizeof(Row),
+        logical_type(kFields[i]), static_cast<std::int32_t>(i + 1)}; // field_id
 }
 
 // `clock_status` codes. The anchor pairs an external UTC estimate with a
@@ -103,10 +105,10 @@ inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
   row.integer(clock_status, generation ? source : kClockNone);
   row.integer(clock_epoch, generation);
   if (generation) {
-    row.counter(event_time_utc_ns,
-                aq::utc::estimate_ns(now, mono_anchor, utc_anchor));
+    row.counter(event_time_utc_us,
+                aq::utc::estimate_us(now, mono_anchor, utc_anchor));
     row.counter(clock_anchor_mono_us, mono_anchor);
-    row.counter(clock_anchor_utc_ns, utc_anchor);
+    row.counter(clock_anchor_utc_us, aq::utc::ns_to_us(utc_anchor));
   }
 }
 } // namespace contract

@@ -13,9 +13,10 @@ constexpr size_t kMaxRowGroups = 8;
 enum class PhysicalType : uint8_t { Int32 = 1, Int64 = 2, Float = 4 };
 enum class Codec : uint8_t { Uncompressed = 0, Lz4Raw = 7 };
 // Parquet LogicalType annotation on the schema leaf. Physical bytes are
-// unchanged; readers present TIMESTAMP(NANOS, isAdjustedToUTC=true) columns as
-// instants. Only valid for Int64.
-enum class LogicalType : uint8_t { None = 0, TimestampNanosUtc = 1 };
+// unchanged; readers present TIMESTAMP(MICROS, isAdjustedToUTC=true) columns as
+// instants. Only valid for Int64. MICROS (not NANOS) is what Apache Iceberg v2
+// accepts as `timestamptz`, so these files can be registered without rewrite.
+enum class LogicalType : uint8_t { None = 0, TimestampMicrosUtc = 1 };
 
 // Caller owns separate raw/encoded page buffers and the codec's state. The
 // callback returns compressed byte count, or zero on failure; no silent codec
@@ -34,6 +35,10 @@ struct Compression {
 // A null valid pointer makes the field required. Otherwise each strided byte is
 // zero for null, nonzero for present. Buffers must remain immutable while a
 // row group is being written; between row groups the caller may refill them.
+// field_id is written as SchemaElement.field_id on every leaf. It must be
+// positive and unique within the file; Apache Iceberg uses it, not the name,
+// to map Parquet columns to table columns. Callers derive it from a stable
+// table (the board telemetry dictionaries use 1-based append-only position).
 struct Column {
   const char *name = nullptr;
   PhysicalType type = PhysicalType::Int32;
@@ -42,6 +47,7 @@ struct Column {
   const uint8_t *valid = nullptr;
   size_t valid_stride = 1;
   LogicalType logical = LogicalType::None;
+  int32_t field_id = 0;
 };
 
 struct KeyValue {

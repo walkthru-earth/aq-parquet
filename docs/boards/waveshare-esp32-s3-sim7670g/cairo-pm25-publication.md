@@ -24,7 +24,7 @@ also stores provisioned sticker digits per row, plus an optional count-based
 batch candidate and explicit status. It does not replace the atmospheric PM2.5
 word; `calibration_id` remains `unknown`.
 
-`event_time_utc_ns` is null until a host supplies a clock anchor, and becomes
+`event_time_utc_us` is null until a host supplies a clock anchor, and becomes
 null again after a Waveshare reboot until another anchor. Never assign upload
 time or a guessed timestamp to these rows. Keep the original file and columns
 even after a quality filter or correction is introduced.

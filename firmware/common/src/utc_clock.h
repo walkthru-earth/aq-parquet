@@ -30,6 +30,16 @@ constexpr std::int64_t estimate_ns(std::int64_t now_mono_us,
   return anchor_utc_ns + (now_mono_us - anchor_mono_us) * 1000;
 }
 
+// Telemetry rows store UTC as microseconds (Parquet TIMESTAMP(MICROS, UTC),
+// the Iceberg v2 timestamptz unit). Anchors are built from whole microseconds,
+// so dividing the nanosecond clock is exact and loses nothing.
+constexpr std::int64_t ns_to_us(std::int64_t utc_ns) { return utc_ns / 1000; }
+constexpr std::int64_t estimate_us(std::int64_t now_mono_us,
+                                   std::int64_t anchor_mono_us,
+                                   std::int64_t anchor_utc_ns) {
+  return ns_to_us(estimate_ns(now_mono_us, anchor_mono_us, anchor_utc_ns));
+}
+
 // Whole-second legacy host requests and transport latency can make harmless
 // refreshes differ slightly. Keep the discontinuity threshold below the
 // ten-second sampling period; each future row still records its exact anchor.

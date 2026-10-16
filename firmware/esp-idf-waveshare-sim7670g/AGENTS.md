@@ -32,8 +32,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   still cannot prove battery presence. Read failures leave battery fields null.
   Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
-- Current firmware is `idf-waveshare-parquet-v2.5`, schema v3/dictionary v3
-  with 56 fields. Preserve the original 52-field prefix. Shared H3 helpers
+- Current firmware is `idf-waveshare-parquet-v2.6`, schema v4/dictionary v4
+  with 56 fields. Preserve the original 52-field order. Field ids are the
+  1-based `telemetry_fields.inc` position, so only append fields. Shared H3 helpers
   publish only the owner-configured coarsened station cell and its center;
   country is optional and owner-declared. Do not turn on modem GNSS for this.
 - Fixed pairing PIN is random per device. Retrieve it only through the

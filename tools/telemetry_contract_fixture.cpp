@@ -27,9 +27,10 @@ int main(int argc, char **argv) {
       const auto &f = kFields[i];
       // Dictionary tokens are compile-time literals, validated by the host.
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
-                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\"}",
+                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
+                  "\"field_id\":%zu}",
                   i ? "," : "", f.name, unsigned(f.type), f.procedure, f.unit,
-                  f.validity, f.property_uri);
+                  f.validity, f.property_uri, i + 1);
     }
     std::puts("]}");
     return 0;
@@ -76,11 +77,11 @@ int main(int argc, char **argv) {
   }
   // A new anchor must not change a previously captured row.
   Sample corrected{};
-  const auto old_utc = rows[1].data[event_time_utc_ns];
+  const auto old_utc = rows[1].data[event_time_utc_us];
   apply_clock(corrected, 30000000, 25000000, 1788889000000000000LL, 2);
   assert(corrected.data[clock_epoch] == 2);
-  assert(corrected.data[event_time_utc_ns] == 1788889005000000000LL);
-  assert(rows[1].data[event_time_utc_ns] == old_utc);
+  assert(corrected.data[event_time_utc_us] == 1788889005000000LL);
+  assert(rows[1].data[event_time_utc_us] == old_utc);
   // An RTC-restored anchor is dated like a host one but carries code 2; with
   // no anchor the source code is ignored and the status stays 0.
   Sample restored{}, unanchored{};
@@ -88,18 +89,18 @@ int main(int argc, char **argv) {
               kClockRtc);
   assert(restored.data[clock_status] == kClockRtc);
   assert(restored.data[clock_epoch] == 1);
-  assert(restored.data[event_time_utc_ns] == 1788889005000000000LL);
+  assert(restored.data[event_time_utc_us] == 1788889005000000LL);
   Sample network{};
   apply_clock(network, 30000000, 25000000, 1788889000123456000LL, 2,
               kClockNetwork);
   assert(network.data[clock_status] == kClockNetwork);
-  assert(network.valid[event_time_utc_ns] &&
-         network.data[event_time_utc_ns] == 1788889005123456000LL);
+  assert(network.valid[event_time_utc_us] &&
+         network.data[event_time_utc_us] == 1788889005123456LL);
   assert(network.valid[clock_anchor_mono_us] &&
-         network.valid[clock_anchor_utc_ns]);
+         network.valid[clock_anchor_utc_us]);
   apply_clock(unanchored, 30000000, 0, 0, 0, kClockRtc);
   assert(unanchored.data[clock_status] == kClockNone);
-  assert(!unanchored.valid[event_time_utc_ns]);
+  assert(!unanchored.valid[event_time_utc_us]);
   prepare_columns(columns, rows);
   const aqlogger::LocationMetadata location_metadata(location);
   KeyValue metadata[18] = {{"schema_version", kSchemaName},

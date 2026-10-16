@@ -10,9 +10,12 @@ versions are pinned by the shared toolchain lock and component manifests.
 Include `aq_logger.h`. Define a static `aqlogger::Field[]` dictionary and fill
 `Config` with its schema/dictionary identity, digest, acquisition configuration,
 board identity and optional board metadata. The runtime requires `sequence`,
-`monotonic_us` and `event_time_utc_ns` as INT64, and `clock_epoch` as INT32. Other
+`monotonic_us` and `event_time_utc_us` as INT64, and `clock_epoch` as INT32. Other
 standard runtime fields are mapped by name and set only when present with the
-matching type. Field units `ns_since_unix_epoch` receive TIMESTAMP(NANOS, UTC).
+matching type. Field units `us_since_unix_epoch` receive TIMESTAMP(MICROS, UTC),
+which Apache Iceberg v2 maps to `timestamptz`. Every column gets Parquet
+`field_id` = its 1-based position in the dictionary, so dictionaries are append
+only. Never reorder, remove or reuse a position.
 
 Call `begin(config, hooks, sd_mounted)` once after board/storage initialization,
 then `start_links(display_detected)` and `poll()` on every main-loop pass.

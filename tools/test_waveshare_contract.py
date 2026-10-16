@@ -32,12 +32,14 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     fields = dictionary["fields"]
     require(table.num_rows == 90, "row count")
     require(table.column_names == [field["name"] for field in fields], "dictionary order")
-    utc_fields = {field["name"] for field in fields if field["unit"] == "ns_since_unix_epoch"}
-    require(utc_fields == {"event_time_utc_ns", "clock_anchor_utc_ns"}, "UTC annotation scope")
+    utc_fields = {field["name"] for field in fields if field["unit"] == "us_since_unix_epoch"}
+    require(utc_fields == {"event_time_utc_us", "clock_anchor_utc_us"}, "UTC annotation scope")
     types = {1: pa.int32(), 2: pa.int64(), 4: pa.float32()}
-    for field, definition in zip(table.schema, fields, strict=True):
-        expected = pa.timestamp("ns", tz="UTC") if field.name in utc_fields else types[definition["type"]]
+    for field, definition in zip(parquet.schema_arrow, fields, strict=True):
+        expected = pa.timestamp("us", tz="UTC") if field.name in utc_fields else types[definition["type"]]
         require(field.type == expected and field.nullable, f"schema: {field.name}")
+        require(field.metadata[b"PARQUET:field_id"] == str(definition["field_id"]).encode(),
+                f"Iceberg field_id: {field.name}")
     metadata = parquet.metadata.metadata
     require(metadata[b"country_iso3166_1_alpha2"] == (b"US" if located else b"unknown"), "declared country")
     require(metadata[b"country_source"] == b"owner-declared", "country provenance")
@@ -47,7 +49,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
     require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] ==
-            "waveshare-sim7670g-telemetry-v3", "schema identity")
+            "waveshare-sim7670g-telemetry-v4", "schema identity")
     require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"], "dictionary identity")
     require(metadata[b"dictionary_uri"].decode() == dictionary["uri"], "dictionary URI")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
@@ -69,7 +71,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     ambient = group.column(by_name["ambient_temperature_c"]).statistics
     require(ambient.null_count == 5 and abs(ambient.min + 3.7) < 1e-6 and
             abs(ambient.max + 3.7) < 1e-6, "signed temperature bounds")
-    utc = group.column(by_name["event_time_utc_ns"]).statistics
+    utc = group.column(by_name["event_time_utc_us"]).statistics
     require(utc.null_count == (0 if anchored else 90) and utc.has_min_max == anchored, "UTC bounds")
     for name, expected in (("battery_mv", 4000), ("battery_percent", 75)):
         stats = group.column(by_name[name]).statistics
@@ -84,7 +86,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
                             ("h3_center_lat_e7", 373457934), ("h3_center_lon_e7", -1219763760)):
             require(row[name] == (value if located else None), f"nullable published location: {name}")
         now = 10000000 + i * 10000000
-        require(row["schema_version"] == 3 and row["sequence"] == i, "row identity")
+        require(row["schema_version"] == 4 and row["sequence"] == i, "row identity")
         require(row["monotonic_us"] == now and row["scheduled_us"] == now - 123 and
                 row["sample_jitter_us"] == 123, "synthetic cadence")
         require(row["collection_completed_mono_us"] == now + 1234, "collection completion")
@@ -114,13 +116,13 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
                 "absent, read-error and valid gauge values")
         require(row["clock_status"] == row["clock_epoch"] == int(anchored), "clock provenance")
         require(row["clock_anchor_mono_us"] == (15000000 if anchored else None) and
-                row["clock_anchor_utc_ns"] == (1788890000000000000 if anchored else None), "anchor")
-        require(row["event_time_utc_ns"] ==
-                (1788890000000000000 + (now - 15000000) * 1000 if anchored else None), "UTC estimate")
+                row["clock_anchor_utc_us"] == (1788890000000000 if anchored else None), "anchor")
+        require(row["event_time_utc_us"] ==
+                (1788890000000000 + (now - 15000000) if anchored else None), "UTC estimate")
     with duckdb.connect() as connection:
         other = connection.execute(
-            "SELECT * REPLACE (epoch_ns(event_time_utc_ns) AS event_time_utc_ns, "
-            "epoch_ns(clock_anchor_utc_ns) AS clock_anchor_utc_ns) "
+            "SELECT * REPLACE (epoch_us(event_time_utc_us) AS event_time_utc_us, "
+            "epoch_us(clock_anchor_utc_us) AS clock_anchor_utc_us) "
             "FROM read_parquet(?, hive_partitioning=false)", [str(path)]).to_arrow_table()
     require(table.equals(other, check_metadata=False), "PyArrow/DuckDB values and nulls")
 
@@ -155,14 +157,15 @@ def main() -> None:
         names = {field["name"] for field in fields}
         require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:52]],
                                          separators=(",", ":")).encode()).hexdigest()
-                == "e16aa3c0e0927c2751757ce3fd4075cc84ac196d5fb89d24ce238b1ec99bf0e6",
+                == "01c9db4e628e33367f0bfd594afa10f088d5b1c75d3d64c8616fccdd23654209",
                 "original 52-column prefix changed")
         require(len(fields) == len(names) == 56, "unique versioned fields")
+        require([f["field_id"] for f in fields] == list(range(1, 57)), "append-only 1-based field ids")
         require(len({field["property"] for field in fields}) == len(fields), "property identifiers")
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.5", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.6", "firmware identity")
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")

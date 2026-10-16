@@ -111,23 +111,23 @@ void assert_gates() {
   assert(!decode_max17048(0xd200, 0xffff).read_ok);
   Sample earlier{}, corrected{};
   apply_clock(earlier, 30000000, 15000000, 1788890000000000000LL, 1);
-  const auto utc = earlier.data[event_time_utc_ns];
+  const auto utc = earlier.data[event_time_utc_us];
   apply_clock(corrected, 40000000, 35000000, 1788889000000000000LL, 2);
   assert(corrected.data[clock_epoch] == 2);
-  assert(corrected.data[event_time_utc_ns] == 1788889005000000000LL);
-  assert(earlier.data[event_time_utc_ns] == utc);
+  assert(corrected.data[event_time_utc_us] == 1788889005000000LL);
+  assert(earlier.data[event_time_utc_us] == utc);
   Sample network{};
   apply_clock(network, 40000000, 35000000, 1788889000123456000LL, 3,
               kClockNetwork);
   assert(network.data[clock_status] == kClockNetwork);
-  assert(network.valid[event_time_utc_ns] &&
-         network.data[event_time_utc_ns] == 1788889005123456000LL);
+  assert(network.valid[event_time_utc_us] &&
+         network.data[event_time_utc_us] == 1788889005123456LL);
   assert(network.valid[clock_anchor_mono_us] &&
-         network.valid[clock_anchor_utc_ns]);
+         network.valid[clock_anchor_utc_us]);
   Sample unsynced{};
   apply_clock(unsynced, 30000000, 0, 0, 0, kClockNetwork);
   assert(unsynced.data[clock_status] == kClockNone);
-  assert(!unsynced.valid[event_time_utc_ns]);
+  assert(!unsynced.valid[event_time_utc_us]);
 }
 } // namespace
 
@@ -141,10 +141,11 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < field_count; ++i) {
       const auto &field = kFields[i];
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
-                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\"}",
+                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
+                  "\"field_id\":%zu}",
                   i ? "," : "", field.name, unsigned(field.type),
                   field.procedure, field.unit, field.validity,
-                  field.property_uri);
+                  field.property_uri, i + 1);
     }
     std::puts("]}");
     return 0;

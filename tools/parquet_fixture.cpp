@@ -93,9 +93,9 @@ int main(int argc, char **argv) {
                 sizeof(Row),        &first.alternating,  sizeof(Row)};
   columns[7] = {"all_present", PhysicalType::Float, &first.temperature,
                 sizeof(Row),   &first.present,      sizeof(Row)};
-  // time_ms doubles as a TIMESTAMP(NANOS, UTC) leaf; the value is just an
+  // time_ms doubles as a TIMESTAMP(MICROS, UTC) leaf; the value is just an
   // INT64 to the writer, the annotation is what readers see.
-  columns[0].logical = telemetry::LogicalType::TimestampNanosUtc;
+  columns[0].logical = telemetry::LogicalType::TimestampMicrosUtc;
   std::array<std::array<char, 32>, telemetry::kMaxColumns> names{};
   for (size_t i = 8; i < column_count; ++i) {
     snprintf(names[i].data(), names[i].size(), "extra_%02zu", i);
@@ -105,6 +105,10 @@ int main(int argc, char **argv) {
   if (column_count > 8)
     columns[8] = {"positive_zero", PhysicalType::Float, &first.positive_zero,
                   sizeof(Row)};
+  // Every leaf carries a stable Iceberg field id; the boards use the 1-based
+  // position in their append-only field table, and so does this fixture.
+  for (size_t i = 0; i < column_count; ++i)
+    columns[i].field_id = static_cast<int32_t>(i + 1);
   telemetry::Workspace workspace{};
   telemetry::Lz4Workspace lz4{};
   // Fixed-capacity adapter checks include incompressible/empty/short blocks.
@@ -197,12 +201,22 @@ int main(int argc, char **argv) {
       return 7;
     // A logical annotation on the wrong physical type is refused up front.
     auto wrong = columns;
-    wrong[1].logical = telemetry::LogicalType::TimestampNanosUtc;
+    wrong[1].logical = telemetry::LogicalType::TimestampMicrosUtc;
     failure.calls = 0;
     const auto mismatched = telemetry::write_parquet(
         fail_sink, &failure, wrong.data(), column_count, count, workspace);
     if (mismatched.ok || mismatched.bytes_written || failure.calls)
       return 10;
+    // Missing and duplicate field ids are refused before any byte is written.
+    for (const int32_t bad_id : {0, -1, 2}) {
+      auto ids = columns;
+      ids[column_count - 1].field_id = bad_id;
+      failure.calls = 0;
+      const auto refused = telemetry::write_parquet(
+          fail_sink, &failure, ids.data(), column_count, count, workspace);
+      if (refused.ok || refused.bytes_written || failure.calls)
+        return 12;
+    }
     // Row-group capacity is enforced, and a failed writer stays inert.
     telemetry::Writer capacity;
     failure.calls = 0;

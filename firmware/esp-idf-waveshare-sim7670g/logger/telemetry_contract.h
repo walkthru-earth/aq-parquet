@@ -8,10 +8,13 @@
 
 namespace telemetry {
 namespace contract {
-constexpr std::int32_t kSchemaVersion = 3;
-constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v3";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v3";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.5";
+// Schema v4 keeps the 56 leaves of v3 in the same order, renames the two UTC
+// instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes a
+// Parquet field_id on every leaf so Apache Iceberg v2 can register the file.
+constexpr std::int32_t kSchemaVersion = 4;
+constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v4";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v4";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.6";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -30,7 +33,7 @@ constexpr const char *kConfiguration =
     "\"batch_candidate\":\"off-by-default-not-cairo-validated\"}";
 constexpr const char *kUnknown = "unknown";
 constexpr const char *kTimeSemantics =
-    "event_time_utc_ns estimates snapshot start; collection_completed_mono_us "
+    "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
     "bounds sequential reads; pms_received_mono_us is last checksum-valid UART "
     "frame receipt, not sensor phenomenon time; result/ingestion time and "
     "clock uncertainty unknown; no RTC anchor and no retroactive UTC "
@@ -57,17 +60,18 @@ using Sample = aqlogger::Row;
 
 inline LogicalType logical_type(const Definition &field) {
   return field.type == PhysicalType::Int64 &&
-                 std::strcmp(field.unit, "ns_since_unix_epoch") == 0
-             ? LogicalType::TimestampNanosUtc
+                 std::strcmp(field.unit, "us_since_unix_epoch") == 0
+             ? LogicalType::TimestampMicrosUtc
              : LogicalType::None;
 }
 template <typename Row>
 inline void prepare_columns(Column *columns, Row *rows) {
   for (std::size_t i = 0; i < field_count; ++i)
-    columns[i] = Column{kFields[i].name,         kFields[i].type,
-                        &rows[0].data[i],        sizeof(Row),
-                        &rows[0].valid[i],       sizeof(Row),
-                        logical_type(kFields[i])};
+    columns[i] = Column{
+        kFields[i].name,          kFields[i].type,
+        &rows[0].data[i],         sizeof(Row),
+        &rows[0].valid[i],        sizeof(Row),
+        logical_type(kFields[i]), static_cast<std::int32_t>(i + 1)}; // field_id
 }
 
 enum ClockSource : std::int32_t {
@@ -83,10 +87,10 @@ inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
   row.integer(clock_status, generation ? source : kClockNone);
   row.integer(clock_epoch, generation);
   if (generation) {
-    row.counter(event_time_utc_ns,
-                aq::utc::estimate_ns(now, mono_anchor, utc_anchor));
+    row.counter(event_time_utc_us,
+                aq::utc::estimate_us(now, mono_anchor, utc_anchor));
     row.counter(clock_anchor_mono_us, mono_anchor);
-    row.counter(clock_anchor_utc_ns, utc_anchor);
+    row.counter(clock_anchor_utc_us, aq::utc::ns_to_us(utc_anchor));
   }
 }
 
