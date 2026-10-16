@@ -31,6 +31,17 @@ transactions; complete display DMA before unlocking. No filesystem mounting,
 formatting, peripheral or controller initialization happens here. Output defaults
 to `/sd/output`; `legacy_directory` is opt-in for previous archives.
 
+Battery health is optional. A board that runs `aq::battery::Monitor` from
+`firmware/common/power` calls `report_battery(state, mv)` from its collect
+hook. The runtime prints `POWER STATE state=<name> mv=<n>` once per change and,
+on the first critical report after any non-unknown state, appends
+` action=finalize`, prints `PARQUET FLUSH reason=power-critical` on the worker
+and finishes the open file through the same path as `parquet flush`. Rows
+still queued go to the next file. Unknown readings do not re-arm the
+finalize. `Hooks::power_shed` is an optional no-op by default, called on
+the main loop after each change. Nothing here resets, sleeps or turns off
+radios.
+
 Optional RTC callbacks run only in `begin()` and `poll()` on the calling main
 task. Read returns UTC seconds only after rejecting invalid/unset/voltage-low
 state; write must verify readback. With no RTC, state is 2 (unusable/absent), UTC
@@ -128,6 +139,50 @@ secret-free `AQ CONFIG ok=1 reboot_required=<0/1>` acknowledgement. Errors expos
 only allowlisted key identifiers. Embedded NULs, invalid hex, oversize input and
 invalid settings are rejected. Hosts must handle credential output in memory and
 exclude it from captures and artifacts.
+
+## Worker watchdog
+
+The `parquet-sd` worker stamps a heartbeat on every loop pass, at each BLE/LAN
+frame, per directory entry in every archive walk (startup scan, partial
+quarantine, `parquet list`, ERASE_ARCHIVE preflight and delete), on both sides
+of the board free-space, capacity and remount hooks, and once per second while
+paused after an erase. Each stamp also feeds the worker's task watchdog user.
+
+- `poll()` keeps the passive warning. After 5 s without a stamp it logs
+  `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
+  watchdog=armed|warn|off`, at most every 30 s.
+- With `CONFIG_AQ_LOGGER_WORKER_WDT=y` (default) `begin()` registers the worker
+  with the ESP-IDF task watchdog through `esp_task_wdt_add_user("parquet-sd")`.
+  The task watchdog has one period for all users and the idle tasks
+  (`CONFIG_ESP_TASK_WDT_TIMEOUT_S`, 5 s), so a 1 s `esp_timer` supervisor also
+  feeds the user on the worker's behalf while the heartbeat is younger than
+  `CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S` (default 60 s). A single SD call
+  between two stamps, such as a first FAT free-cluster count or a remount, may
+  therefore take up to that timeout without a false reset.
+- When the heartbeat is older than the timeout, the supervisor stops feeding,
+  marks a pending stall in RTC no-init memory and switches the task watchdog to
+  panic. Within one more watchdog period the IDF prints
+  `task_wdt: ... - parquet-sd (user)`, panics, saves the core dump (both board
+  tables reserve the 64 KiB `coredump` partition and the shared defaults enable
+  `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`) and resets with reason `TASK_WDT`.
+  Idle tasks keep their print-only behavior until a worker stall is declared.
+- The next boot logs `PARQUET ERROR operation=worker-watchdog-reset
+  consecutive=N`. Every boot logs one `PARQUET WATCHDOG mode=armed|warn
+  timeout_s=... consecutive=... max_consecutive=3 healthy_s=... supervised=1`.
+  After three stall resets without a healthy period in between, the worker is
+  warn-only: no reset, only the `worker-stall` warnings. A plain reboot does not
+  clear the count. `CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S` (default 3600 s) of
+  continuous liveness clears it, re-arms a warn-only worker and logs
+  `PARQUET WATCHDOG mode=armed consecutive=0 reason=healthy`. Power loss also
+  clears the RTC record.
+- The guard logic (`aq_logger_watchdog.h`) and the expiry rule
+  (`work::stall_expired`) are pure and covered by `pixi run
+  logger-work-queue-test`. A forced stall on a bench board is still required
+  before claiming the reset and core dump on hardware.
+
+Read a saved core dump with `tools/idf.sh -C <trial> -B <build dir>
+coredump-info` against the ELF that was flashed. Reading the partition does not
+write the board.
 
 ## Verification
 

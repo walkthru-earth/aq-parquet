@@ -136,6 +136,7 @@ def main() -> None:
         for include in (common, root / "firmware/common/logger/src",
                         root / "firmware/common/connectivity/src",
                         root / "firmware/common/runtime/src", root / "firmware/common/location/src",
+                        root / "firmware/common/power/src",
                         directory / "h3"):
             command += ["-I", str(include)]
         if args.sanitize:

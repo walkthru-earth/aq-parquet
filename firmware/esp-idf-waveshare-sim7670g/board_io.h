@@ -22,6 +22,10 @@ bool start_gauge();
 // be the device address bound in start_gauge. Keeps the last esp_err_t.
 bool gauge_read(void *context, std::uint8_t address, std::uint8_t reg,
                 std::uint8_t *data, std::size_t size);
+// Max17048Io::write adapter, same device and error tracking. Only the
+// shared driver's reset-indicator clear uses it.
+bool gauge_write(void *context, std::uint8_t address, std::uint8_t reg,
+                 const std::uint8_t *data, std::size_t size);
 int gauge_last_error();
 bool start_indicator();
 void indicator(std::uint8_t red, std::uint8_t green, std::uint8_t blue);

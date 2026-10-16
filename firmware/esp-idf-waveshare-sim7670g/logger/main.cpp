@@ -43,21 +43,59 @@ PmsSnapshot latest;
 bool logging = false;
 bool storage_mounted = false;
 bool gauge_bus_ready = false;
-const aq::Max17048 gauge{{nullptr, board::gauge_read}};
+const aq::Max17048 gauge{{nullptr, board::gauge_read, board::gauge_write}};
+aq::battery::Monitor battery_monitor{kBatteryThresholds};
 
-GaugeSnapshot read_gauge() {
+// Main loop only. Reads VCELL/SOC, then the diagnostic registers, feeds the
+// shared classifier and reports the state to the logger runtime.
+BatteryHealth read_gauge(std::int64_t now) {
+  BatteryHealth health;
   if (!kBatteryInstalled)
-    return {};
-  if (!gauge_bus_ready)
-    return GaugeSnapshot{true};
-  const auto reading = gauge.read();
+    return health;
+  health.battery_installed = true;
+  if (gauge_bus_ready) {
+    health.reading = gauge.read();
+    // Skip the diagnostic registers when the basic read already failed, so a
+    // hung bus costs two timeouts per sample instead of nine.
+    if (!health.reading.io_error)
+      health.extended = gauge.read_extended();
+  } else {
+    health.reading.io_error = true;
+  }
+  health.assessment = battery_monitor.update(
+      battery_sample(now / 1000, health.reading, health.extended));
   static unsigned diagnostics = 0;
-  if (diagnostics++ < 6)
-    aqlog.printf("AQ GAUGE read io_error=%u error=%d vcell_raw=%u soc_raw=%u "
-                 "plausible=%u\n",
-                 reading.io_error, board::gauge_last_error(), reading.raw_vcell,
-                 reading.raw_soc, reading.plausible);
-  return gauge_snapshot(reading);
+  if (gauge_bus_ready && diagnostics++ < 6)
+    aqlog.printf(
+        "AQ GAUGE read io_error=%u error=%d vcell_raw=%u soc_raw=%u "
+        "plausible=%u crate_raw=%d status=0x%04x mode=0x%04x\n",
+        health.reading.io_error, board::gauge_last_error(),
+        health.reading.raw_vcell, health.reading.raw_soc,
+        health.reading.plausible,
+        static_cast<int>(static_cast<std::int16_t>(health.extended.crate.raw)),
+        health.extended.status.raw, health.extended.mode.raw);
+  aqlogger::report_battery(health.assessment.state,
+                           health.reading.valid() ? health.reading.millivolts
+                                                  : -1);
+  return health;
+}
+
+// Boot only, before logging starts. A set reset indicator means the gauge
+// lost power or reset, so its SOC needs the settling window. Clear it once
+// so a later reset is visible again.
+void check_gauge_reset() {
+  const auto ext = gauge.read_extended();
+  const bool ri = ext.status_bit(aq::Max17048Extended::kStatusRi);
+  aqlog.printf("AQ GAUGE status=0x%04x status_ok=%u ri=%u version=0x%04x "
+               "hibrt=0x%04x config=0x%04x\n",
+               ext.status.raw, ext.status.ok, ri, ext.version.raw,
+               ext.hibrt.raw, ext.config.raw);
+  if (!ri)
+    return;
+  battery_monitor.note_gauge_reset(esp_timer_get_time() / 1000);
+  const auto result = gauge.clear_reset_indicator();
+  aqlog.printf("AQ GAUGE ri_clear=%s error=%d\n", aq::clear_result_name(result),
+               board::gauge_last_error());
 }
 
 void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
@@ -69,7 +107,10 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
   apply_pms(row, snapshot, now,
             {settings.sensor_vendor, settings.sensor_model,
              settings.sensor_serial, settings.sensor_batch_candidate});
-  apply_gauge(row, read_gauge());
+  const auto health = read_gauge(now);
+  apply_gauge(row, !health.battery_installed ? GaugeSnapshot{}
+                                             : gauge_snapshot(health.reading));
+  apply_battery_health(row, health);
 }
 
 const telemetry::KeyValue kMetadata[] = {
@@ -78,8 +119,18 @@ const telemetry::KeyValue kMetadata[] = {
     {"gauge_status",
      "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid"},
     {"unavailable",
-     "charging and USB input status unknown; no onboard external "
+     "charger STAT and USB VBUS are not wired to the ESP32-S3; external power "
+     "is inferred from VCELL only; no battery current; no onboard external "
      "RTC; modem/GNSS/camera not sampled"},
+    {"battery_health_state",
+     "0=unknown,1=external-power-likely,2=ok,3=low,4=critical,5=settling; "
+     "VCELL thresholds in acquisition_config are uncalibrated"},
+    {"gauge_status_flags",
+     "MAX17048 STATUS high byte: bit0=RI,bit1=VH,bit2=VL,bit3=VR,bit4=HD,"
+     "bit5=SC,bit6=EnVr"},
+    {"battery_minutes_to_empty",
+     "raw SOC divided by discharge CRATE; null when charging, settling, "
+     "external power likely or above 7 days; not a validated runtime"},
     {"battery_presence",
      kBatteryInstalled ? "owner-confirmed-installed" : "configured-absent"},
     {"sensor_model", "PMS5003T"},
@@ -157,6 +208,10 @@ bool init_board() {
     gauge_bus_ready = board::start_gauge();
     aqlog.printf("AQ GAUGE bus_ready=%u sda=%d scl=%d addr=0x%02x\n",
                  gauge_bus_ready, kGaugeSda, kGaugeScl, aq::Max17048::kAddress);
+    if (gauge_bus_ready)
+      check_gauge_reset();
+    if (!battery_monitor.configured())
+      aqlog.println("AQ ERROR operation=battery-thresholds reason=invalid");
   }
   const bool sensor_ready = board::start_sensor();
   const bool mounted = board::mount_card();

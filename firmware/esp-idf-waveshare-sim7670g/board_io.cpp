@@ -152,6 +152,23 @@ bool gauge_read(void *, std::uint8_t address, std::uint8_t reg,
           : i2c_master_transmit_receive(gauge, &reg, 1, data, size, 20);
   return gauge_error == ESP_OK;
 }
+bool gauge_write(void *, std::uint8_t address, std::uint8_t reg,
+                 const std::uint8_t *data, std::size_t size) {
+  // Register address plus at most one 16-bit word.
+  std::uint8_t frame[3]{};
+  if (!gauge)
+    gauge_error = ESP_ERR_INVALID_STATE;
+  else if (address != kGaugeAddress || !data || size == 0 ||
+           size > sizeof(frame) - 1)
+    gauge_error = ESP_ERR_INVALID_ARG;
+  else {
+    frame[0] = reg;
+    for (std::size_t i = 0; i < size; ++i)
+      frame[i + 1] = data[i];
+    gauge_error = i2c_master_transmit(gauge, frame, size + 1, 20);
+  }
+  return gauge_error == ESP_OK;
+}
 int gauge_last_error() { return gauge_error; }
 bool start_indicator() {
   if (led)

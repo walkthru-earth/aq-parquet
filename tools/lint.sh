@@ -24,6 +24,7 @@ cppcheck "${options[@]}" \
   firmware/common/src/parquet_reader.cpp \
   firmware/common/src/lz4_codec.cpp \
   firmware/common/sensors/src/pms_frame.cpp \
+  firmware/common/power/src/aq_battery_health.cpp \
   firmware/common/logger/src/aq_logger.cpp \
   firmware/common/logger/src/aq_logger_status.cpp \
   firmware/common/logger/src/aq_logger_provision.cpp \

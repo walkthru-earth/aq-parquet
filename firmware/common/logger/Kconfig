@@ -1,0 +1,37 @@
+menu "AQ logger storage worker"
+
+config AQ_LOGGER_WORKER_WDT
+    bool "Reset the chip when the storage worker stalls"
+    depends on ESP_TASK_WDT_EN
+    default y
+    help
+        Registers the parquet-sd worker as a task watchdog user. The worker
+        feeds it at every heartbeat stamp, and a 1 s supervisor timer feeds it
+        on the worker's behalf while the heartbeat is younger than
+        AQ_LOGGER_WORKER_WDT_TIMEOUT_S. After that the task watchdog panics,
+        names parquet-sd and resets with a core dump when the image enables
+        one. Three such resets without a healthy period in between switch the
+        worker to warn-only until it stays healthy again.
+
+config AQ_LOGGER_WORKER_WDT_TIMEOUT_S
+    int "Storage worker stall timeout (seconds)"
+    depends on AQ_LOGGER_WORKER_WDT
+    range 15 600
+    default 60
+    help
+        Heartbeat age that counts as a stall. The reset follows within one
+        more ESP_TASK_WDT_TIMEOUT_S period. A single SD call between two
+        heartbeat stamps, such as the first free-cluster count of a large
+        FAT volume, must finish within this time.
+
+config AQ_LOGGER_WORKER_WDT_HEALTHY_S
+    int "Healthy period that clears the stall reset count (seconds)"
+    depends on AQ_LOGGER_WORKER_WDT
+    range 60 86400
+    default 3600
+    help
+        Continuous time without an expired heartbeat after which the
+        consecutive stall reset count returns to zero and a warn-only worker
+        is armed again.
+
+endmenu

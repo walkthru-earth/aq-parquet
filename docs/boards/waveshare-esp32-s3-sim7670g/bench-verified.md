@@ -319,3 +319,20 @@ idle bonded link, so repeated app reopen cycles and a full iPad archive
 transfer on the new image are not established by this entry. The CoreS3 has
 not received this image yet. Logs are in ignored
 `firmware/esp-idf-waveshare-sim7670g/artifacts/ble-ipad-20261012/`.
+
+## Integration branch reflash, archive reset and schema v4 readback (2026-10-16)
+
+Image `idf-waveshare-parquet-v2.6`, app version 285cf22 on branch
+`integration/waveshare-bench` (merges of #22, #20 and #21). Board ESP32-S3 MAC
+a4:cb:8f:d7:75:00, 16 MB flash, 8 MB PSRAM, no security eFuses. Full flash
+backup `waveshare-sim7670g-v2-flash-20261016T114219Z.bin`, 16,777,216 bytes,
+SHA-256 `c55e75174914270dac199f4634ba6e6e3b6206c83a6171d446a654541b62612b`.
+Flashed with `pixi run waveshare-flash`, NVS untouched, hash verified.
+
+| Check | Result |
+| :--- | :--- |
+| Boot | `PARQUET WATCHDOG mode=armed timeout_s=60 consecutive=0 max_consecutive=3 healthy_s=3600 supervised=1`, `PARQUET BEGIN schema=waveshare-sim7670g-telemetry-v4 columns=56 psram_workspace_bytes=162520` |
+| Archive reset (owner requested) | `parquet erase-archive CONFIRM` returned `ok=1 files=1589 directories=71 reboot_required=1`. After reboot `PARQUET SCAN files=0`. Card not formatted |
+| Readback | Host time sync, 4 rows, manual flush, serial fetch. File `data_1215_07f07ae4..._1-4-1.parquet`, 10,782 bytes, SHA-256 `c3a1e7f76b41fdde1aa7142883c6ce3565e566dce3932311a982b2fed359a8c2`, CRC-32 `768fa99e`. Cadence deviation at most 1,007 us |
+| Schema | PyArrow 25 reads `event_time_utc_us` and `clock_anchor_utc_us` as `timestamp[us, tz=UTC]`. All 56 leaves carry field ids 1 to 56 (DuckDB `parquet_schema`), for example `sequence`=5, `event_time_utc_us`=9, `clock_anchor_utc_us`=52. DuckDB reads `TIMESTAMP WITH TIME ZONE`, values 2026-10-16 12:17:47 UTC onward, matching host UTC |
+| Not verified | LIVE keys over BLE (macOS pairing needs the owner to enter the device passkey, the attempt ended `BLE AUTH result=failed`, logging continued). Forced worker stall and watchdog reset not exercised |

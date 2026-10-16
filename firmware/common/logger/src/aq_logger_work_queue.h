@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
 namespace aqlogger::work {
+enum class StallAction : std::uint8_t { None, Warn, Restart };
+
 // Copy first, then signal. The binary wakeup may coalesce several enqueues;
 // the queues retain every item and the worker checks them before sleeping.
 inline bool enqueue(QueueHandle_t queue, const void *item,
@@ -20,5 +23,36 @@ inline void wait_if_idle(QueueHandle_t samples, SemaphoreHandle_t wakeup) {
     // An enqueue between the queue check and this take leaves a pending signal.
     // Periodic wakeup also keeps worker-heartbeat monitoring bounded.
     xSemaphoreTake(wakeup, pdMS_TO_TICKS(1000));
+}
+
+// True when the worker heartbeat is older than timeout_s (clamped to >= 5 s).
+// No heartbeat yet means the worker has not started and is never expired.
+inline bool stall_expired(std::int64_t now_us, std::int64_t heartbeat_us,
+                          std::uint32_t timeout_s) {
+  if (heartbeat_us <= 0 || now_us <= heartbeat_us || timeout_s == 0)
+    return false;
+  const std::int64_t timeout_us =
+      static_cast<std::int64_t>(timeout_s < 5U ? 5U : timeout_s) * 1000000LL;
+  return now_us - heartbeat_us > timeout_us;
+}
+
+// Evaluates storage-worker heartbeat liveness.
+// - Returns None before the first heartbeat or within the 5 s normal window.
+// - Returns Restart when restart_s > 0 and stall_expired(restart_s).
+// - Returns Warn when elapsed > 5 s and >= 30 s have passed since the previous
+//   warning.
+inline StallAction check_stall(std::int64_t now_us, std::int64_t heartbeat_us,
+                               std::int64_t &last_warning_us,
+                               std::uint32_t restart_s) {
+  if (heartbeat_us <= 0 || now_us <= heartbeat_us)
+    return StallAction::None;
+  if (stall_expired(now_us, heartbeat_us, restart_s))
+    return StallAction::Restart;
+  if (now_us - heartbeat_us > 5000000LL &&
+      (last_warning_us == 0 || now_us - last_warning_us > 30000000LL)) {
+    last_warning_us = now_us;
+    return StallAction::Warn;
+  }
+  return StallAction::None;
 }
 } // namespace aqlogger::work

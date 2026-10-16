@@ -26,6 +26,8 @@ struct ArchiveResetIo {
   int (*close)(DIR *) = ::closedir;
   int (*remove_file)(const char *) = ::unlink;
   int (*remove_directory)(const char *) = ::rmdir;
+  // Optional liveness callback, called once per visited entry.
+  void (*progress)() = nullptr;
 };
 
 namespace archive_reset {
@@ -44,6 +46,8 @@ inline bool visit(const char *path, unsigned depth, bool remove,
     errno = EOVERFLOW;
     return false;
   }
+  if (io.progress)
+    io.progress();
   struct stat info{};
   if (io.inspect(path, &info) != 0)
     return depth == 0 && errno == ENOENT;
