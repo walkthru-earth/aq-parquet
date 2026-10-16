@@ -250,6 +250,11 @@ void reset_indicator_clear() {
   }
 }
 
+static_assert(aq::clear_result_name(aq::Max17048ClearResult::Cleared)[0] ==
+              'c');
+static_assert(aq::clear_result_name(aq::Max17048ClearResult::VerifyFailed)[0] ==
+              'v');
+
 // The calibration entry point carries the default model only.
 static_assert(aq::Max17048ModelCalibration{}.rcomp0 == 0x97);
 static_assert(!aq::Max17048ModelCalibration{}.loaded);

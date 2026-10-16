@@ -61,3 +61,11 @@ FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_configured)
 FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_configured)
 FIELD(h3_center_lat_e7, Int64, h3_grid_center, "1e-7_degree_latitude", location_configured)
 FIELD(h3_center_lon_e7, Int64, h3_grid_center, "1e-7_degree_longitude", location_configured)
+
+// Schema v5: MAX17048 diagnostics and the shared battery health classifier.
+FIELD(battery_soc_raw_percent, Float, max17048, "%", battery_installed_gauge_read_ok_uncapped)
+FIELD(battery_charge_rate_percent_per_h, Float, max17048, "%/h", battery_installed_crate_read_ok)
+FIELD(gauge_status_flags, Int32, max17048, "bitmask", battery_installed_status_read_ok)
+FIELD(gauge_hibernating, Int32, max17048, "boolean", battery_installed_mode_read_ok)
+FIELD(battery_health_state, Int32, battery_health, "code", battery_installed)
+FIELD(battery_minutes_to_empty, Int32, battery_health, "min", battery_soc_trusted_discharging_within_7_days)
