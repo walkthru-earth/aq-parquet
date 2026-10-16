@@ -31,6 +31,17 @@ transactions; complete display DMA before unlocking. No filesystem mounting,
 formatting, peripheral or controller initialization happens here. Output defaults
 to `/sd/output`; `legacy_directory` is opt-in for previous archives.
 
+Battery health is optional. A board that runs `aq::battery::Monitor` from
+`firmware/common/power` calls `report_battery(state, mv)` from its collect
+hook. The runtime prints `POWER STATE state=<name> mv=<n>` once per change and,
+on the first critical report after any non-unknown state, appends
+` action=finalize`, prints `PARQUET FLUSH reason=power-critical` on the worker
+and finishes the open file through the same path as `parquet flush`. Rows
+still queued go to the next file. Unknown readings do not re-arm the
+finalize. `Hooks::power_shed` is an optional no-op by default, called on
+the main loop after each change. Nothing here resets, sleeps or turns off
+radios.
+
 Optional RTC callbacks run only in `begin()` and `poll()` on the calling main
 task. Read returns UTC seconds only after rejecting invalid/unset/voltage-low
 state; write must verify readback. With no RTC, state is 2 (unusable/absent), UTC

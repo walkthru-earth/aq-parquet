@@ -3,6 +3,7 @@
 #include "aq_logger_directory.h"
 #include "aq_logger_live.h"
 #include "aq_logger_location.h"
+#include "aq_logger_power.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_rotation.h"
 #include "aq_logger_status.h"
@@ -140,7 +141,7 @@ struct WriterState {
 constexpr std::size_t kStagingBytes = 4096;
 char staging_telemetry[kStagingBytes];
 struct Command {
-  enum class Source : std::uint8_t { Serial, Control, Network };
+  enum class Source : std::uint8_t { Serial, Control, Network, Power };
   Source source = Source::Serial;
   char text[2 * ble::kMaxControlBytes + 32]{};
   std::int64_t received_mono_us = 0;
@@ -1710,6 +1711,18 @@ bool storage_writable(std::size_t &count, bool &storage_ready) {
   return storage_ready && governor.writable();
 }
 
+// Shared by `parquet flush` and the critical battery finalize. Finishes the
+// open file with the buffered rows. Never resets or sleeps.
+void flush_batch(std::size_t &count, bool &storage_ready) {
+  if (!count && !writer_state->telemetry.open())
+    aqlog.println("PARQUET ERROR operation=flush reason=empty");
+  else if (!storage_writable(count, storage_ready))
+    aqlog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
+                 storage::state_name(governor.state()));
+  else
+    governed_commit(count, true);
+}
+
 struct WorkerState {
   std::size_t &count;
   bool &storage_ready;
@@ -1934,6 +1947,14 @@ void storage_worker(void *) {
       }
       continue;
     }
+    if (command.source == Command::Source::Power) {
+      // The battery reached critical: finish the open file now so the rows
+      // already buffered survive a brownout. Rows still queued go to the
+      // next file.
+      aqlog.println("PARQUET FLUSH reason=power-critical");
+      flush_batch(count, storage_ready);
+      continue;
+    }
     if (command.source == Command::Source::Control) {
       WorkerState state{count, storage_ready};
       current_request = &command.control;
@@ -2110,13 +2131,7 @@ void storage_worker(void *) {
       aqlog.printf("PARQUET CONFIG codec=%s persistent=false\n",
                    codec_name(selected_codec));
     } else if (std::strcmp(command.text, "parquet flush") == 0) {
-      if (!count && !writer_state->telemetry.open())
-        aqlog.println("PARQUET ERROR operation=flush reason=empty");
-      else if (!storage_writable(count, storage_ready))
-        aqlog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
-                     storage::state_name(governor.state()));
-      else
-        governed_commit(count, true);
+      flush_batch(count, storage_ready);
     } else if (std::strncmp(command.text, "parquet interval ", 17) == 0 &&
                (std::strcmp(command.text + 17, "600") == 0 ||
                 std::strcmp(command.text + 17, "900") == 0 ||
@@ -2155,6 +2170,10 @@ void storage_worker(void *) {
       aqlog.println("PARQUET ERROR operation=command reason=unknown-command");
   }
 }
+
+// Main loop only, written by report_battery() and read by collect().
+power::Tracker power_tracker;
+bool power_flush_pending = false;
 
 void collect(std::int64_t now, std::int64_t scheduled) {
   Sample row{};
@@ -2209,6 +2228,15 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   counter(row, "collection_completed_mono_us", esp_timer_get_time());
   if (!work::enqueue(samples, &row, worker_wakeup))
     ++dropped;
+  // Queued after the row that reported critical. A full command queue
+  // retries on the next sample.
+  if (power_flush_pending) {
+    static Command power_command{};
+    power_command.source = Command::Source::Power;
+    power_command.received_mono_us = now;
+    if (work::enqueue(commands, &power_command, worker_wakeup))
+      power_flush_pending = false;
+  }
   const auto depth =
       static_cast<std::uint32_t>(uxQueueMessagesWaiting(samples));
   if (depth > queue_peak.load())
@@ -2689,6 +2717,20 @@ bool enqueue_request(const ble::ControlRequest &request) {
   command.received_mono_us = request.received_mono_us;
   command.control = request;
   return work::enqueue(commands, &command, worker_wakeup);
+}
+
+void report_battery(aq::battery::State state, std::int32_t millivolts) {
+  const auto change = power_tracker.observe(state);
+  if (change.finalize)
+    power_flush_pending = true;
+  if (!change.changed)
+    return;
+  char line[80];
+  if (power::format_line(line, sizeof(line), state, millivolts,
+                         change.finalize))
+    aqlog.println(line);
+  if (hooks.power_shed)
+    hooks.power_shed(state, hooks.context);
 }
 
 const char *station_text_id() { return station_text; }

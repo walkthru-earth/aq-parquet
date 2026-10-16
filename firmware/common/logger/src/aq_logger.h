@@ -1,5 +1,6 @@
 #pragma once
 
+#include <aq_battery_health.h>
 #include <ble_sync.h>
 #include <cstddef>
 #include <cstdint>
@@ -83,10 +84,19 @@ struct Hooks {
   // write must verify readback. Values are UTC seconds, never local time.
   bool (*rtc_read)(std::int64_t &utc_seconds, void *) = nullptr;
   bool (*rtc_write)(std::int64_t utc_seconds, void *) = nullptr;
+  // Optional, main loop only. Called once per battery state change reported
+  // through report_battery(), after the POWER STATE line. The default is no
+  // action. A board may switch off loads here. It must not block, reset or
+  // sleep; the runtime already finalizes the open file on a critical entry.
+  void (*power_shed)(aq::battery::State, void *) = nullptr;
 };
 // One singleton per firmware image; call once after hardware/storage setup.
 bool begin(const Config &, const Hooks &, bool sd_mounted);
 void poll();
+// Main loop only, normally from the collect hook. Prints one POWER STATE
+// line per change and, once per critical entry, queues a finalize of the
+// open file through the storage worker. Never resets or sleeps.
+void report_battery(aq::battery::State state, std::int32_t millivolts);
 bool start_links(bool display_detected);
 bool enqueue_request(const ble::ControlRequest &);
 void lock_bus();
