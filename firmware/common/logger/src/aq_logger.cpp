@@ -284,6 +284,7 @@ bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
       return false;
     crc = crc32_update(crc, writer_state->crc_scratch, count);
     read_bytes += count;
+    stamp_heartbeat(); // a 1 MiB CRC pass is progress, not a stall
   }
   if (read_bytes != check.size)
     return false;
@@ -1137,6 +1138,9 @@ void send_file(const char *name) {
     aqlog.printf("PARQUET DATA offset=%lu hex=%s\n",
                  static_cast<unsigned long>(offset), hex);
     offset += count;
+    // A 1 MiB file is about 3 minutes of hex at 115200 baud, longer than the
+    // stall timeout. Each sent block is progress, not a stall.
+    stamp_heartbeat();
     vTaskDelay(pdMS_TO_TICKS(1) > 0 ? pdMS_TO_TICKS(1) : 1);
   }
   {

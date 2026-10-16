@@ -29,6 +29,8 @@ the older shapes it has stored, or the owner clears them.
   after a stall reset. Additive.
 - A stalled storage worker now resets the device after about 60 s instead of
   staying wedged. The app sees a normal BLE/LAN disconnect and reconnect.
+- A serial `parquet get` and its CRC pass count as worker progress, so a
+  large USB export no longer logs `worker-stall` or trips the watchdog.
 - No STATUS, LIVE, GET_DIAG, GET_CONFIG or advertising field changes. The app
   does not parse these log lines today, so no app change is required.
 
