@@ -8,6 +8,32 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Battery health columns and LIVE `bstate` (Waveshare v2.7, feat/battery-health-entry-points)
+
+- Waveshare writes schema and dictionary `waveshare-sim7670g-telemetry-v5`
+  (row value 5), firmware `idf-waveshare-parquet-v2.7`, configuration
+  `waveshare-sim7670g-acquisition-v3`, 62 columns. The dictionary SHA-256
+  changes. CoreS3 is unchanged.
+- Six columns are appended, field ids 57 to 62.
+  `battery_soc_raw_percent` (FLOAT, uncapped gauge SOC),
+  `battery_charge_rate_percent_per_h` (FLOAT, MAX17048 CRATE, negative while
+  discharging), `gauge_status_flags` (INT32, bit0 RI, bit1 VH, bit2 VL, bit3 VR,
+  bit4 HD, bit5 SC, bit6 EnVr), `gauge_hibernating` (INT32, 0 or 1),
+  `battery_health_state` (INT32 code) and `battery_minutes_to_empty` (INT32,
+  null unless the SOC is trusted and discharging within 7 days).
+- `battery_health_state` codes are 0 unknown, 1 external power likely, 2 ok,
+  3 low, 4 critical, 5 settling after a gauge reset. External power is inferred
+  from cell voltage only, and the thresholds are uncalibrated.
+- LIVE gains the additive key `bstate` with the same codes. It is absent when
+  no battery is configured.
+- New LOG_TAIL lines `POWER STATE state=<name> mv=<n|null>` on each state
+  change, with ` action=finalize` once per critical entry, then
+  `PARQUET FLUSH reason=power-critical`. Boot adds `AQ GAUGE status=...` and,
+  after a gauge reset, `AQ GAUGE ri_clear=<result>`. Additive.
+- No STATUS, GET_DIAG, GET_CONFIG or advertising field changes.
+- The app must accept schema 5 and dictionary v5 for Waveshare files, may show
+  `bstate` as a battery badge and should keep reading v4 files already stored.
+
 ## Smaller resident writer workspace (feat/multi-chip-portability-and-watchdog)
 
 - `PARQUET BEGIN psram_workspace_bytes=` drops because the codec-test

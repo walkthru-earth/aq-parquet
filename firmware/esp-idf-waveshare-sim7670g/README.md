@@ -1,10 +1,15 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.6`**, with **56-column** schema
-`waveshare-sim7670g-telemetry-v4` and dictionary `waveshare-sim7670g-telemetry-v4`.
+**`idf-waveshare-parquet-v2.7`**, with **62-column** schema
+`waveshare-sim7670g-telemetry-v5` and dictionary `waveshare-sim7670g-telemetry-v5`.
 The original 52 columns retain their order and types, with four nullable H3
-location fields appended. Since v2.6 the UTC instants are `event_time_utc_us`
+location fields and, since v2.7, six battery health columns appended (raw SOC,
+CRATE, gauge STATUS flags, hibernation, `battery_health_state` and
+`battery_minutes_to_empty`). The shared `power/` classifier reports
+unknown, external power likely, ok, low, critical or settling. A critical
+entry finalizes the open file once. It never resets or sleeps. Thresholds are
+uncalibrated and have no bench evidence yet. Since v2.6 the UTC instants are `event_time_utc_us`
 and `clock_anchor_utc_us` with `TIMESTAMP(MICROS, UTC)`, and every leaf
 carries Parquet `field_id` = its 1-based dictionary position (see
 [mobile migration](../../docs/shared/mobile-migration.md)). The board has two native variants:

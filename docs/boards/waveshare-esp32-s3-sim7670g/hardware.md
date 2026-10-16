@@ -10,7 +10,7 @@ Source-checked 2026-09-28 for PCB revision **V2.0**, as confirmed by the owner. 
 | Function | V2 pins / source status | Ownership rule |
 | --- | --- | --- |
 | PMS5003T UART | Host RX GPIO1, TX GPIO2, per owner's four-wire connection | Dedicated native `UART_NUM_1`, 9600 8N1; sensor TX crosses to host RX |
-| TF slot | SDMMC CLK GPIO5, CMD GPIO4, DATA0 GPIO6, card detect GPIO46 | One storage worker; use SDMMC one-bit mode, not CoreS3 SPI pins |
+| TF slot | SDMMC CLK GPIO5, CMD GPIO4, DATA0 GPIO6. The vendor example calls GPIO46 card detect, but the schematic routes it to camera U13 pin 8 (unverified on the board) | One storage worker; use SDMMC one-bit mode, not CoreS3 SPI pins |
 | Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Logger adapter owns this I²C bus with explicit installed-battery configuration; V1 GPIO3/GPIO2 mapping is wrong here. A bounded USB-attached readback succeeded on 2026-09-30. |
 | Camera | V2 mapping includes XCLK GPIO39 and PCLK GPIO46 | Camera and TF card detect need a conflict check before use together |
 | RGB LED | GPIO38 | Logger implements startup/card/sensor state; visual operation unverified; no file-copy or durability claim |
@@ -25,6 +25,18 @@ The board's UART download and BOOT+RESET recovery are described in the [Waveshar
 The pictured PMS power connection uses the exposed 5 V and GND. Confirm the selected 5 V rail is present under the board's chosen USB/battery supply mode before attributing absent UART frames to the sensor. No board power measurement has been made here.
 
 The current logger has no external RTC adapter. UTC stays null after boot until an explicit host anchor or successful native Wi-Fi SNTP response arrives; GNSS/modem time is not substituted. The owner subsequently installed an 18650 and verified battery-only boot. The logger explicitly configures it as installed and samples MAX17048 cell voltage and estimated SOC; an I²C acknowledgement alone still would not establish battery presence. The V2 schematic routes ETA6098 `STAT` and solar-charger `CHRG` to indicator circuits without a verified ESP32 input, so the logger does not infer charging from voltage or USB attachment.
+
+### Battery health inputs (schematic reading, unverified on the board)
+
+A 2026-10-16 schematic review, not yet confirmed with a meter, found the following.
+
+- ETA6098 `STAT` ends in an unconnected stub. It does not drive an LED or an ESP32 pin.
+- CN3791 solar charger `CHRG` drives LED2 only.
+- MAX17048 `ALRT` is tied to ground through R45, so gauge alerts cannot reach the ESP32. The logger polls STATUS instead.
+- GPIO46 reaches camera connector U13 pin 8. It is not a confirmed TF card detect line.
+- On USB, the SY8105 path holds VBAT near 4.267 V, so VCELL reads the rail, not the resting cell.
+
+The logger therefore classifies battery state from VCELL alone. `battery_health_state` 1 (external power likely) means VCELL is at or above 4240 mV, a heuristic, not a measured USB or charger signal. Low enters at 3500 mV and critical at 3350 mV with 75 mV hysteresis and three-sample debounce. These thresholds are uncalibrated, with no dated discharge run yet.
 
 ## Power slider and DIP switches
 
