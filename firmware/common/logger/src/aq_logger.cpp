@@ -1591,8 +1591,12 @@ void free_benchmark() {
   if (!target)
     return;
   writer_state->benchmark = nullptr;
-  if (target->file)
+  // Normally already closed by finalize_file or close_failed. A leftover
+  // handle is closed under the bus lock like every other SD call.
+  if (target->file) {
+    BusLock lock;
     std::fclose(target->file);
+  }
   heap_caps_free(target->staging);
   target->~OutputFile();
   heap_caps_free(target);

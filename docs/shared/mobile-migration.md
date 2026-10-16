@@ -36,9 +36,9 @@ the older shapes it has stored, or the owner clears them.
 
 ## Smaller resident writer workspace (feat/multi-chip-portability-and-watchdog)
 
-- `PARQUET BEGIN psram_workspace_bytes=` drops because the codec-test
-  benchmark file is no longer resident, 213112 to 162136 bytes on both
-  boards. Value change only.
+- `PARQUET BEGIN psram_workspace_bytes=` drops by about 51 KB because the
+  codec-test benchmark file is no longer resident. Waveshare V2 at schema v4
+  measured 162520 bytes on 2026-10-16. Value change only.
 - LOG_TAIL `PARQUET ERROR operation=codec-test reason=no-psram` is replaced by
   `PARQUET ERROR operation=allocate mem=psram bytes=N purpose=codec-test`.
 - A failed workspace allocation at boot now logs
