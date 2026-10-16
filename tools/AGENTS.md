@@ -15,6 +15,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Full-flash backup publication (offline fake esptool) | `backup-test` |
 | Native FAT mount root and archive directory creation | `logger-directory-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
+| Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`

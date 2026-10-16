@@ -139,7 +139,7 @@ def main() -> None:
         directory = Path(temporary)
         executable = directory / "fixture"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
-        for include in ("src", "logger/src", "connectivity/src", "runtime/src", "location/src"):
+        for include in ("src", "sensors/src", "logger/src", "connectivity/src", "runtime/src", "location/src"):
             command += ["-I", str(common / include)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
@@ -148,7 +148,7 @@ def main() -> None:
                     str(common / "location/src/aq_location.cpp"),
                     str(root / "tools/test_waveshare_contract.cpp"),
                     str(common / "src/parquet_writer.cpp"), str(common / "src/lz4_codec.cpp"),
-                    str(common / "src/pms_frame.cpp"), "-o", str(executable)]
+                    str(common / "sensors/src/pms_frame.cpp"), "-o", str(executable)]
         subprocess.run(command, check=True)
         dictionary = json.loads(subprocess.check_output([str(executable), "dictionary"], text=True))
         require(dictionary["sha256"] == hashlib.sha256((firmware / "telemetry_fields.inc").read_bytes()).hexdigest(),

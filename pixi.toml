@@ -39,7 +39,7 @@ ble-sync-test = "python tools/test_ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
 # Footer reader and Iceberg DataFile metrics: PyArrow/DuckDB cross-check, crafted footers, fuzz loop.
 reader-test = "python tools/test_parquet_reader.py --sanitize"
-pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
+pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
 # --- native ESP-IDF: one pinned SDK, independent board applications ---
@@ -88,6 +88,7 @@ ble-policy-test = "python tools/test_ble_policy.py --sanitize"
 config-test = "python tools/test_device_config.py --sanitize"
 common-test = "python tools/test_common.py --sanitize"
 ltr553-test = "python tools/test_ltr553.py --sanitize"
+max17048-test = "python tools/test_max17048.py --sanitize"
 connectivity-build-test = "tools/build_connectivity_fixture.sh"
 waveshare-psram-build = "tools/idf.sh -C tools/fixtures/waveshare_psram_probe -B tools/fixtures/waveshare_psram_probe/build build"
 compression-bench = "python tools/benchmark_compression.py"

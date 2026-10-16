@@ -3,6 +3,7 @@
 #include "pms5003t_identity.h"
 #include "telemetry_dictionary_digest.h"
 #include <aq_logger.h>
+#include <aq_max17048.h>
 #include <cstring>
 #include <pms_frame.h>
 #include <utc_clock.h>
@@ -186,17 +187,10 @@ struct GaugeSnapshot {
   std::int32_t millivolts = 0;
   std::int32_t percent = 0; // whole percent, truncated and capped at 100
 };
-// MAX17048 VCELL (0x02) is 78.125 uV/LSB; SOC (0x04) is 1/256 %/LSB.
-// The gauge can estimate above 100% near full charge; cap the UI value while
-// rejecting a clearly implausible raw result. This board read 107.8% on USB;
-// the 120% rejection threshold is a project heuristic, not a datasheet limit.
-inline GaugeSnapshot decode_max17048(std::uint16_t vcell, std::uint16_t soc) {
-  const auto millivolts = static_cast<std::int32_t>(vcell) * 5 / 64;
-  const bool plausible =
-      millivolts >= 2500 && millivolts <= 4500 && soc <= 120 * 256;
-  const auto percent =
-      soc >= 100 * 256 ? 100 : static_cast<std::int32_t>(soc) / 256;
-  return {true, plausible, millivolts, percent};
+// Decoding and range checks live in the shared aq::Max17048 driver. This
+// board only adds the explicit battery-installed configuration.
+inline GaugeSnapshot gauge_snapshot(const aq::Max17048Reading &reading) {
+  return {true, reading.valid(), reading.millivolts, reading.percent};
 }
 inline void apply_gauge(Sample &row, const GaugeSnapshot &gauge) {
   row.integer(gauge_status, !gauge.battery_installed ? 0

@@ -123,16 +123,16 @@ void assert_gates() {
   assert(!bad_model.valid[ambient_temperature_c]);
   apply_gauge(bad_gauge, {true, false, 4200, 100});
   assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv]);
-  const auto decoded = decode_max17048(0xd200, 0x6400);
+  const auto decoded = gauge_snapshot(aq::Max17048::decode(0xd200, 0x6400));
   assert(decoded.read_ok && decoded.millivolts == 4200 &&
          decoded.percent == 100);
   apply_gauge(installed, decoded);
   assert(installed.valid[battery_mv] && installed.valid[battery_percent]);
-  assert(!decode_max17048(0, 0x5000).read_ok);
-  const auto over_full = decode_max17048(0xd5c0, 0x6bc9);
+  assert(!gauge_snapshot(aq::Max17048::decode(0, 0x5000)).read_ok);
+  const auto over_full = gauge_snapshot(aq::Max17048::decode(0xd5c0, 0x6bc9));
   assert(over_full.read_ok && over_full.millivolts == 4275 &&
          over_full.percent == 100);
-  assert(!decode_max17048(0xd200, 0xffff).read_ok);
+  assert(!gauge_snapshot(aq::Max17048::decode(0xd200, 0xffff)).read_ok);
   Sample earlier{}, corrected{};
   apply_clock(earlier, 30000000, 15000000, 1788890000000000000LL, 1);
   const auto utc = earlier.data[event_time_utc_us];
@@ -223,7 +223,7 @@ int main(int argc, char **argv) {
     else if (i == 1)
       apply_gauge(row, {true}); // failed I2C transaction
     else
-      apply_gauge(row, decode_max17048(0xc800, 0x4b80));
+      apply_gauge(row, gauge_snapshot(aq::Max17048::decode(0xc800, 0x4b80)));
   }
   prepare_columns(columns, rows);
   const aqlogger::LocationMetadata location_metadata(location);

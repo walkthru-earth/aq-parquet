@@ -1,4 +1,5 @@
 #include "board_io.h"
+#include <aq_max17048.h>
 #include <driver/i2c_master.h>
 #include <driver/sdmmc_host.h>
 #include <driver/uart.h>
@@ -15,6 +16,8 @@ sdmmc_card_t *card = nullptr;
 aq::storage::SdTransferBuffer sd_transfer_buffer;
 i2c_master_bus_handle_t gauge_bus = nullptr;
 i2c_master_dev_handle_t gauge = nullptr;
+constexpr std::uint8_t kGaugeAddress = aq::Max17048::kAddress;
+esp_err_t gauge_error = ESP_OK;
 led_strip_handle_t led = nullptr;
 bool sensor_ready = false;
 std::uint64_t cached_total_bytes = 0;
@@ -128,7 +131,7 @@ bool start_gauge() {
     return false;
   i2c_device_config_t device{};
   device.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-  device.device_address = 0x36;
+  device.device_address = kGaugeAddress;
   device.scl_speed_hz = 100000;
   i2c_master_dev_handle_t created_gauge = nullptr;
   if (i2c_master_bus_add_device(created_bus, &device, &created_gauge) !=
@@ -140,15 +143,16 @@ bool start_gauge() {
   gauge = created_gauge;
   return true;
 }
-bool read_gauge_word(std::uint8_t reg, std::uint16_t &value, int &error) {
-  std::uint8_t data[2]{};
-  error = gauge ? i2c_master_transmit_receive(gauge, &reg, 1, data, 2, 20)
-                : ESP_ERR_INVALID_STATE;
-  if (error != ESP_OK)
-    return false;
-  value = (static_cast<std::uint16_t>(data[0]) << 8) | data[1];
-  return true;
+bool gauge_read(void *, std::uint8_t address, std::uint8_t reg,
+                std::uint8_t *data, std::size_t size) {
+  gauge_error =
+      !gauge ? ESP_ERR_INVALID_STATE
+      : address != kGaugeAddress || !data
+          ? ESP_ERR_INVALID_ARG
+          : i2c_master_transmit_receive(gauge, &reg, 1, data, size, 20);
+  return gauge_error == ESP_OK;
 }
+int gauge_last_error() { return gauge_error; }
 bool start_indicator() {
   if (led)
     return true;

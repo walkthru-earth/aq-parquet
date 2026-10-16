@@ -18,7 +18,11 @@ std::uint64_t card_bytes();
 std::uint64_t storage_total_bytes();
 std::uint64_t storage_used_bytes();
 bool start_gauge();
-bool read_gauge_word(std::uint8_t reg, std::uint16_t &value, int &error);
+// Max17048Io::read adapter for the gauge device on I2C_NUM_0. `address` must
+// be the device address bound in start_gauge. Keeps the last esp_err_t.
+bool gauge_read(void *context, std::uint8_t address, std::uint8_t reg,
+                std::uint8_t *data, std::size_t size);
+int gauge_last_error();
 bool start_indicator();
 void indicator(std::uint8_t red, std::uint8_t green, std::uint8_t blue);
 } // namespace board
