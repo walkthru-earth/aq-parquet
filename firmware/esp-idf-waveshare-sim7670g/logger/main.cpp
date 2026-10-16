@@ -55,7 +55,10 @@ BatteryHealth read_gauge(std::int64_t now) {
   health.battery_installed = true;
   if (gauge_bus_ready) {
     health.reading = gauge.read();
-    health.extended = gauge.read_extended();
+    // Skip the diagnostic registers when the basic read already failed, so a
+    // hung bus costs two timeouts per sample instead of nine.
+    if (!health.reading.io_error)
+      health.extended = gauge.read_extended();
   } else {
     health.reading.io_error = true;
   }
