@@ -130,12 +130,14 @@ def check_footer(path: Path, rows: int, columns: int, groups: int, codec: int) -
     require(meta[footer.FILE_CREATED_BY] == CREATED_BY.encode(), "footer: created_by with build")
     schema = meta[footer.FILE_SCHEMA]
     require(len(schema) == columns + 1 and schema[0][footer.SCHEMA_CHILDREN] == columns, "footer: schema root")
-    for element, name in zip(schema[1:], names, strict=True):
+    require(footer.SCHEMA_FIELD_ID not in schema[0], "footer: root has no field_id")
+    for index, (element, name) in enumerate(zip(schema[1:], names, strict=True), start=1):
         require(element[footer.SCHEMA_NAME] == name.encode(), "footer: leaf name")
+        require(element.get(footer.SCHEMA_FIELD_ID) == index, f"footer: field_id on {name}")
         logical = element.get(footer.SCHEMA_LOGICAL)
         if name == "time_ms":
-            # LogicalType.TIMESTAMP{isAdjustedToUTC=true, unit=NANOS}
-            require(logical == {footer.LOGICAL_TIMESTAMP: {1: True, 2: {3: {}}}}, "footer: TIMESTAMP(NANOS, UTC)")
+            # LogicalType.TIMESTAMP{isAdjustedToUTC=true, unit=MICROS}
+            require(logical == {footer.LOGICAL_TIMESTAMP: {1: True, 2: {2: {}}}}, "footer: TIMESTAMP(MICROS, UTC)")
         else:
             require(logical is None, f"footer: no annotation on {name}")
     orders = meta[footer.FILE_COLUMN_ORDERS]
@@ -191,7 +193,9 @@ def check_file(path: Path, rows: int, columns: int, groups: int = 1, codec: str 
     total = rows * groups
     require(table.num_rows == total and table.num_columns == columns, "Arrow table dimensions")
     require(table.column_names == names, "Arrow schema names/order")
-    require(table.schema.field(0).type == pa.timestamp("ns", tz="UTC"), "Arrow reads the TIMESTAMP annotation")
+    require(table.schema.field(0).type == pa.timestamp("us", tz="UTC"), "Arrow reads the TIMESTAMP annotation")
+    for index, field in enumerate(parquet.schema_arrow, start=1):
+        require(field.metadata and field.metadata.get(b"PARQUET:field_id") == str(index).encode(), f"Arrow field_id: {field.name}")
     for field, name, data_type in zip(list(table.schema)[1:], names[1:], types[1:], strict=True):
         require(field.type == data_type, f"Arrow type: {name}")
         require(field.nullable == (name in OPTIONAL_NAMES), f"Arrow nullability: {name}")
@@ -228,9 +232,9 @@ def check_file(path: Path, rows: int, columns: int, groups: int = 1, codec: str 
     for index, row in enumerate(zip(*arrays, strict=True)):
         check_row(row, index, rows, columns, "PyArrow")
     with duckdb.connect() as connection:
-        # DuckDB presents TIMESTAMP(NANOS, UTC) as TIMESTAMPTZ; recover the integer.
+        # DuckDB presents TIMESTAMP(MICROS, UTC) as TIMESTAMPTZ; recover the integer.
         result = connection.execute(
-            "SELECT * REPLACE (epoch_ns(time_ms) AS time_ms) FROM read_parquet(?)", [str(path)])
+            "SELECT * REPLACE (epoch_us(time_ms) AS time_ms) FROM read_parquet(?)", [str(path)])
         require([column[0] for column in result.description] == names, "DuckDB schema names/order")
         duck_rows = result.fetchall()
         if rows:
@@ -239,7 +243,7 @@ def check_file(path: Path, rows: int, columns: int, groups: int = 1, codec: str 
                 "WHERE path_in_schema = 'all_null'", [str(path)]).fetchone()
             require(duck_groups == (groups, total), "DuckDB sees every row group and its null statistics")
             later = connection.execute(
-                "SELECT count(*) FROM read_parquet(?) WHERE epoch_ns(time_ms) >= ?",
+                "SELECT count(*) FROM read_parquet(?) WHERE epoch_us(time_ms) >= ?",
                 [str(path), 1700000000000 + rows * 10000]).fetchone()[0]
             require(later == rows * (groups - 1), "DuckDB range query across row groups")
     require(len(duck_rows) == total, "DuckDB row count")

@@ -1,6 +1,7 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include <lz4_codec.h>
 
+#include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <array>
 #include <cassert>
@@ -47,7 +48,49 @@ PmsSnapshot parsed_snapshot() {
   pms.length_errors = 3;
   return pms;
 }
+// Board-owned identity rules installed into the shared runtime policy hook.
+// Every board LIVE key must be accepted by begin(), and a row with every LIVE
+// field valid at its widest value must still fit one BLE JSON value.
+void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
+  assert(aqlogger::valid_live_keys(table, count));
+  aqlogger::Row row{};
+  for (std::size_t i = 0; i < count; ++i) {
+    if (table[i].type == telemetry::PhysicalType::Int64)
+      row.set(i, std::numeric_limits<std::int64_t>::min());
+    else if (table[i].type == telemetry::PhysicalType::Int32)
+      row.set(i, std::numeric_limits<std::int32_t>::min());
+    else
+      row.set(i, -999.9f);
+  }
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      aqlogger::format_live(table, count, row, json, sizeof(json));
+  assert(used > 0 && used <= ble::kMaxJson);
+}
+void assert_identity_rules() {
+  using namespace pms5003t;
+  assert(valid_serial("PMS5003T-202604081332"));
+  assert(valid_serial("PMS5003T-202402291"));           // leap day
+  assert(valid_serial("PMS5003T-20260408123456789"));   // 9 unit digits
+  assert(!valid_serial("PMS5003T-202602291332"));       // not a leap year
+  assert(!valid_serial("PMS5003T-202613011332"));       // month 13
+  assert(!valid_serial("PMS5003T-202604001332"));       // day 0
+  assert(!valid_serial("PMS5003T-199912311332"));       // before 2000
+  assert(!valid_serial("PMS5003T-20260408"));           // no unit digits
+  assert(!valid_serial("PMS5003T-202604081234567890")); // too long
+  assert(!valid_serial("PMSA003-202604081332"));
+  assert(!valid_serial("PMS5003T-2026040813A2"));
+  assert(!valid_serial(nullptr));
+  assert(serial_code(kVendor, kModel, "PMS5003T-20260408123456789") ==
+         20260408123456789LL);
+  assert(serial_code("Other", kModel, "PMS5003T-202604081332") == 0);
+  assert(serial_code(kVendor, kModel, "PMS5003T-202602291332") == 0);
+  assert(batch_eligible(kVendor, kModel, "PMS5003T-2026040813327"));
+  assert(!batch_eligible(kVendor, kModel, "PMS5003T-202605011332"));
+  assert(!batch_eligible(kVendor, "PMSA003", "PMS5003T-202604081332"));
+}
 void assert_gates() {
+  assert_identity_rules();
   auto pms = parsed_snapshot();
   Sample warm{}, ready{}, stale{}, bad_model{}, bad_gauge{}, installed{};
   apply_pms(warm, pms, kPmsWarmupUs - 1);
@@ -99,39 +142,40 @@ void assert_gates() {
   assert(!bad_model.valid[ambient_temperature_c]);
   apply_gauge(bad_gauge, {true, false, 4200, 100});
   assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv]);
-  const auto decoded = decode_max17048(0xd200, 0x6400);
+  const auto decoded = gauge_snapshot(aq::Max17048::decode(0xd200, 0x6400));
   assert(decoded.read_ok && decoded.millivolts == 4200 &&
          decoded.percent == 100);
   apply_gauge(installed, decoded);
   assert(installed.valid[battery_mv] && installed.valid[battery_percent]);
-  assert(!decode_max17048(0, 0x5000).read_ok);
-  const auto over_full = decode_max17048(0xd5c0, 0x6bc9);
+  assert(!gauge_snapshot(aq::Max17048::decode(0, 0x5000)).read_ok);
+  const auto over_full = gauge_snapshot(aq::Max17048::decode(0xd5c0, 0x6bc9));
   assert(over_full.read_ok && over_full.millivolts == 4275 &&
          over_full.percent == 100);
-  assert(!decode_max17048(0xd200, 0xffff).read_ok);
+  assert(!gauge_snapshot(aq::Max17048::decode(0xd200, 0xffff)).read_ok);
   Sample earlier{}, corrected{};
   apply_clock(earlier, 30000000, 15000000, 1788890000000000000LL, 1);
-  const auto utc = earlier.data[event_time_utc_ns];
+  const auto utc = earlier.data[event_time_utc_us];
   apply_clock(corrected, 40000000, 35000000, 1788889000000000000LL, 2);
   assert(corrected.data[clock_epoch] == 2);
-  assert(corrected.data[event_time_utc_ns] == 1788889005000000000LL);
-  assert(earlier.data[event_time_utc_ns] == utc);
+  assert(corrected.data[event_time_utc_us] == 1788889005000000LL);
+  assert(earlier.data[event_time_utc_us] == utc);
   Sample network{};
   apply_clock(network, 40000000, 35000000, 1788889000123456000LL, 3,
               kClockNetwork);
   assert(network.data[clock_status] == kClockNetwork);
-  assert(network.valid[event_time_utc_ns] &&
-         network.data[event_time_utc_ns] == 1788889005123456000LL);
+  assert(network.valid[event_time_utc_us] &&
+         network.data[event_time_utc_us] == 1788889005123456LL);
   assert(network.valid[clock_anchor_mono_us] &&
-         network.valid[clock_anchor_utc_ns]);
+         network.valid[clock_anchor_utc_us]);
   Sample unsynced{};
   apply_clock(unsynced, 30000000, 0, 0, 0, kClockNetwork);
   assert(unsynced.data[clock_status] == kClockNone);
-  assert(!unsynced.valid[event_time_utc_ns]);
+  assert(!unsynced.valid[event_time_utc_us]);
 }
 } // namespace
 
 int main(int argc, char **argv) {
+  assert_live_keys(kFields, field_count);
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","
@@ -141,10 +185,11 @@ int main(int argc, char **argv) {
     for (std::size_t i = 0; i < field_count; ++i) {
       const auto &field = kFields[i];
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
-                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\"}",
+                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
+                  "\"field_id\":%zu}",
                   i ? "," : "", field.name, unsigned(field.type),
                   field.procedure, field.unit, field.validity,
-                  field.property_uri);
+                  field.property_uri, i + 1);
     }
     std::puts("]}");
     return 0;
@@ -198,7 +243,7 @@ int main(int argc, char **argv) {
     else if (i == 1)
       apply_gauge(row, {true}); // failed I2C transaction
     else
-      apply_gauge(row, decode_max17048(0xc800, 0x4b80));
+      apply_gauge(row, gauge_snapshot(aq::Max17048::decode(0xc800, 0x4b80)));
   }
   prepare_columns(columns, rows);
   const aqlogger::LocationMetadata location_metadata(location);

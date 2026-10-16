@@ -1,15 +1,16 @@
 # Reusable firmware modules
 
-The common tree contains five opt-in native ESP-IDF components: **AQCommon**,
-**AQRuntime**, **AQConnectivity**, **AQLogger** and **AQLocation**. The target is ESP32-S3 with
+The common tree contains six opt-in native ESP-IDF components: **AQCommon**,
+**AQSensors**, **AQRuntime**, **AQConnectivity**, **AQLogger** and **AQLocation**. The target is ESP32-S3 with
 ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
 math plus the actual status/provisioning helpers remain host-testable. Boards
 own peripheral initialization and consume only the required components.
 
 | Module | Shared responsibility | Consumer supplies |
 | --- | --- | --- |
-| `src/pms_frame.*` | Plantower byte framing, checksum, model-specific decoding | UART, selected sensor model, freshness/warm-up policy |
-| `src/aq_ltr553.h` | LTR553 register setup and raw validity | Existing bus read/write and timing callbacks |
+| `sensors/src/pms_frame.*` | Plantower byte framing, checksum, model-specific decoding | UART, selected sensor model, freshness/warm-up policy |
+| `sensors/src/aq_ltr553.h` | LTR553 register setup and raw validity | Existing bus read/write and timing callbacks |
+| `sensors/src/aq_max17048.h` | MAX17048 VCELL/SOC reads, decoding and range checks | Existing bus read callback, battery-installed policy |
 | `src/numeric_sample.h` | Fixed-size numeric rows with explicit validity/nulls | Board field dictionary and collection |
 | `src/utc_clock.h` | UTC anchor arithmetic, source codes, calendar conversion and supported bounds | Coherent anchor locking, host sync and optional RTC adapter |
 | `src/parquet_writer.*`, `lz4_codec.*` | Bounded Parquet encoding and pinned LZ4 | Columns, provenance, memory, file sink and rotation policy |
@@ -47,8 +48,9 @@ flowchart TD
 ## Consumption
 
 Board projects list the common paths in `EXTRA_COMPONENT_DIRS`; their component
-`CMakeLists.txt` declares `REQUIRES common runtime connectivity logger` for a
-logger or `common runtime` for the retained Waveshare diagnostic’s parser and physical console. Use the root Pixi
+`CMakeLists.txt` declares `REQUIRES common sensors runtime connectivity logger`
+for a logger or `common sensors runtime` for the retained Waveshare
+diagnostic, whose Plantower parser now lives in `sensors`. Use the root Pixi
 build tasks rather than Arduino CLI:
 
 ```sh
@@ -98,8 +100,8 @@ can carry the largest JSON value in one notification. Publishers always cache
 the complete value and omit notifications exceeding negotiated MTU − 3; clients
 use characteristic long reads for complete cached snapshots. The host STATUS
 boundary test retains every key at 476 bytes even with the widest numeric values.
-LIVE `t` is board-specific (CoreS3 IMU temperature or Waveshare PMS5003T ambient
-temperature); `rh` is Waveshare ambient RH. Absent keys are null. Without an RTC,
+LIVE keys come from the `live_key` each board sets in its field table. `t` and
+`rh` are ambient only, and CoreS3 IMU temperature is `imu_t`. Absent keys are null. Without an RTC,
 `rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.
 
 AQLocation vendors unmodified official H3 4.5.0 with verified hashes. AQRuntime

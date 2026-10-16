@@ -21,11 +21,13 @@ cppcheck "${options[@]}" \
   firmware/common/runtime/src/aq_console.cpp \
   firmware/esp-idf-waveshare-sim7670g/board_io.cpp \
   firmware/common/src/parquet_writer.cpp \
+  firmware/common/src/parquet_reader.cpp \
   firmware/common/src/lz4_codec.cpp \
-  firmware/common/src/pms_frame.cpp \
+  firmware/common/sensors/src/pms_frame.cpp \
   firmware/common/logger/src/aq_logger.cpp \
   firmware/common/logger/src/aq_logger_status.cpp \
   firmware/common/logger/src/aq_logger_provision.cpp \
+  firmware/common/logger/src/aq_logger_live.cpp \
   firmware/esp-idf-waveshare-sim7670g/diagnostic/main.cpp
 # The diagnostic explicitly rejects PSRAM; the application explicitly needs it.
 # Check each sketch in the configuration it is actually compiled with.

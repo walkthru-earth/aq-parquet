@@ -19,7 +19,10 @@ import pyarrow.parquet as pq
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parquet_footer as footer  # noqa: E402
 
-KEY_COLUMNS = ("sequence", "monotonic_us", "event_time_utc_ns", "pm25_atmospheric_ug_m3", "accel_x_g")
+KEY_COLUMNS = ("sequence", "monotonic_us", "event_time_utc_us", "event_time_utc_ns", "pm25_atmospheric_ug_m3",
+               "accel_x_g")
+# Files from before CoreS3 v6.12 and Waveshare v2.6 keep UTC in nanoseconds.
+UTC_COLUMNS = ("event_time_utc_us", "event_time_utc_ns")
 
 
 def inspect(path: Path) -> bool:
@@ -36,9 +39,19 @@ def inspect(path: Path) -> bool:
           f"firmware={kv.get('firmware')} compression={kv.get('compression')} rotation_interval_s={kv.get('rotation_interval_s')} "
           f"row_groups={kv.get('row_groups')} created_by={md.created_by!r}")
     schema = parquet.schema_arrow
-    for name in ("event_time_utc_ns", "clock_anchor_utc_ns"):
+    for name in ("event_time_utc_us", "clock_anchor_utc_us", "event_time_utc_ns", "clock_anchor_utc_ns"):
         if name in schema.names:
             print(f"  {name}: {schema.field(name).type}")
+    # Iceberg registration needs a unique positive field_id on every leaf.
+    # Older schemas carry none, which is reported but still a valid file.
+    ids = [element.get(footer.SCHEMA_FIELD_ID) for element in meta[footer.FILE_SCHEMA][1:]]
+    if all(i is None for i in ids):
+        print("  field_id: absent (older schema, not Iceberg registrable)")
+    elif all(isinstance(i, int) and i > 0 for i in ids) and len(set(ids)) == len(ids):
+        print(f"  field_id: {min(ids)}..{max(ids)} on {len(ids)} leaves")
+    else:
+        print("  !! field_id missing, invalid or duplicated on some leaves")
+        ok = False
     orders = meta.get(footer.FILE_COLUMN_ORDERS)
     print(f"  column_orders: {'TYPE_ORDER x %d' % len(orders) if orders else 'absent'}")
     names = schema.names
@@ -73,9 +86,11 @@ def inspect(path: Path) -> bool:
         duck_rows = connection.execute("SELECT count(*) FROM read_parquet(?)", [str(path)]).fetchone()[0]
         duck_groups = connection.execute(
             "SELECT count(DISTINCT row_group_id) FROM parquet_metadata(?)", [str(path)]).fetchone()[0]
+        utc_name = next((name for name in UTC_COLUMNS if name in names), None)
         utc_type = connection.execute(
-            "SELECT typeof(event_time_utc_ns) FROM read_parquet(?) LIMIT 1", [str(path)]).fetchone()
-    print(f"  DuckDB: rows={duck_rows} row_groups={duck_groups} event_time_utc_ns type={utc_type[0] if utc_type else None}")
+            f'SELECT typeof("{utc_name}") FROM read_parquet(?) LIMIT 1', [str(path)]).fetchone() if utc_name else None
+    print(f"  DuckDB: rows={duck_rows} row_groups={duck_groups} {utc_name or 'utc column absent'} "
+          f"type={utc_type[0] if utc_type else None}")
     if duck_rows != md.num_rows or duck_groups != md.num_row_groups:
         print("  !! DuckDB disagrees with the footer")
         ok = False

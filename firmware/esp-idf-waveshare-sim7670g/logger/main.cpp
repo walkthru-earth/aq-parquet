@@ -2,6 +2,7 @@
 #include "telemetry_contract.h"
 #include <aq_console.h>
 #include <aq_logger.h>
+#include <aq_max17048.h>
 #include <debug_log.h>
 #include <device_config.h>
 #include <esp_flash.h>
@@ -29,37 +30,34 @@ constexpr int kSdCmd = 4;
 constexpr int kSdData0 = 6;
 constexpr int kGaugeSda = 15;
 constexpr int kGaugeScl = 16;
-constexpr std::uint8_t kGaugeAddress = 0x36;
 // The owner installed an 18650 and verified battery-only operation. A gauge
 // ACK alone cannot prove presence; set false if this image is used without it.
 constexpr bool kBatteryInstalled = true;
+// The wired PMS5003T decides which provisioned identities the runtime keeps.
+constexpr config::SensorPolicy kSensorPolicy{
+    pms5003t::kVendor, pms5003t::kModel, pms5003t::valid_serial,
+    pms5003t::batch_eligible};
 
 plantower::Parser parser{plantower::Model::Pms5003t};
 PmsSnapshot latest;
 bool logging = false;
 bool storage_mounted = false;
 bool gauge_bus_ready = false;
+const aq::Max17048 gauge{{nullptr, board::gauge_read}};
 
 GaugeSnapshot read_gauge() {
   if (!kBatteryInstalled)
     return {};
-  GaugeSnapshot unavailable{true};
   if (!gauge_bus_ready)
-    return unavailable;
-  std::uint16_t vcell = 0;
-  std::uint16_t soc = 0;
-  int vcell_error = 0;
-  int soc_error = 0;
-  const bool vcell_ok = board::read_gauge_word(0x02, vcell, vcell_error);
-  const bool soc_ok = vcell_ok && board::read_gauge_word(0x04, soc, soc_error);
+    return GaugeSnapshot{true};
+  const auto reading = gauge.read();
   static unsigned diagnostics = 0;
   if (diagnostics++ < 6)
-    aqlog.printf("AQ GAUGE read vcell_ok=%u vcell_error=%d vcell_raw=%u "
-                 "soc_ok=%u soc_error=%d soc_raw=%u\n",
-                 vcell_ok, vcell_error, vcell, soc_ok, soc_error, soc);
-  if (!vcell_ok || !soc_ok)
-    return unavailable;
-  return decode_max17048(vcell, soc);
+    aqlog.printf("AQ GAUGE read io_error=%u error=%d vcell_raw=%u soc_raw=%u "
+                 "plausible=%u\n",
+                 reading.io_error, board::gauge_last_error(), reading.raw_vcell,
+                 reading.raw_soc, reading.plausible);
+  return gauge_snapshot(reading);
 }
 
 void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
@@ -158,7 +156,7 @@ bool init_board() {
   if (kBatteryInstalled) {
     gauge_bus_ready = board::start_gauge();
     aqlog.printf("AQ GAUGE bus_ready=%u sda=%d scl=%d addr=0x%02x\n",
-                 gauge_bus_ready, kGaugeSda, kGaugeScl, kGaugeAddress);
+                 gauge_bus_ready, kGaugeSda, kGaugeScl, aq::Max17048::kAddress);
   }
   const bool sensor_ready = board::start_sensor();
   const bool mounted = board::mount_card();
@@ -168,7 +166,7 @@ bool init_board() {
                mounted, static_cast<unsigned long long>(board::card_bytes()),
                sensor_ready, kSdClk, kSdCmd, kSdData0);
   logging = aqlogger::begin(kLoggerConfig, kHooks, mounted);
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kSensorPolicy);
   if (logging && !aqlogger::start_links(false))
     aqlog.println("AQ ERROR operation=sync-start");
   aqlog.printf("AQ READY logging=%u mounted=%u sample_ms=10000 "

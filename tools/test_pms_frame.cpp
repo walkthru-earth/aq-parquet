@@ -1,4 +1,4 @@
-#include "../firmware/common/src/pms_frame.h"
+#include "../firmware/common/sensors/src/pms_frame.h"
 
 #include <array>
 #include <cassert>

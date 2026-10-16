@@ -71,9 +71,23 @@ struct Actions {
 // case defaults are used and nothing persists.
 bool load(bool display_detected);
 
-// Board adapter declares the physically wired sensor before load/start_links.
-// An unset board refuses sensor identity provisioning.
-void set_sensor_hardware(const char *vendor, const char *model);
+// Board-owned sensor identity rules. The runtime stores whatever identity the
+// owner provisions, but only the board knows which vendor and model are wired,
+// what a valid sticker serial looks like and which batches the board can
+// compute a candidate for. Strings and callbacks must have static lifetime.
+// A null `valid_serial` refuses any non-empty serial and a null
+// `batch_eligible` refuses the batch opt-in. Vendor and model are compared
+// exactly. An unset policy therefore refuses all sensor identity provisioning.
+struct SensorPolicy {
+  const char *vendor = nullptr;
+  const char *model = nullptr;
+  bool (*valid_serial)(const char *serial) = nullptr;
+  bool (*batch_eligible)(const char *vendor, const char *model,
+                         const char *serial) = nullptr;
+};
+
+// Board adapter installs its policy before load/start_links.
+void set_sensor_policy(const SensorPolicy &policy);
 
 Settings get();
 // Runtime view for JSON/UI: whether a `ble.*` change is waiting for a reboot.

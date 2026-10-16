@@ -22,8 +22,7 @@ portMUX_TYPE settings_mutex = portMUX_INITIALIZER_UNLOCKED;
 Settings current;
 Settings booted; // pair/pin the running BLE stack was started with
 bool persistent = false;
-char hardware_vendor[16]{};
-char hardware_model[16]{};
+SensorPolicy sensor_policy; // installed by the board before load()
 
 std::uint32_t random_pin() { return esp_random() % 1000000U; }
 
@@ -57,31 +56,22 @@ bool sensor_serial_chars(const char *value) {
   return true;
 }
 
-bool valid_pms5003t_serial(const char *serial) {
-  const auto length = std::strlen(serial);
-  if (length < 18 || length > 26 || std::strncmp(serial, "PMS5003T-", 9) != 0)
-    return false;
-  for (const char *p = serial + 9; *p; ++p)
-    if (*p < '0' || *p > '9')
-      return false;
-  const int year = (serial[9] - '0') * 1000 + (serial[10] - '0') * 100 +
-                   (serial[11] - '0') * 10 + serial[12] - '0';
-  const int month = (serial[13] - '0') * 10 + serial[14] - '0';
-  const int day = (serial[15] - '0') * 10 + serial[16] - '0';
-  if (year < 2000 || month < 1 || month > 12)
-    return false;
-  constexpr int days[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-  const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-  return day >= 1 && day <= days[month] + (month == 2 && leap ? 1 : 0);
+const char *hardware_vendor() {
+  return sensor_policy.vendor ? sensor_policy.vendor : "";
 }
-
-bool exact_batch_candidate(const Settings &settings) {
-  if (std::strcmp(settings.sensor_vendor, "Plantower") != 0 ||
-      std::strcmp(settings.sensor_model, "PMS5003T") != 0 ||
-      !valid_pms5003t_serial(settings.sensor_serial) ||
-      std::strncmp(settings.sensor_serial, "PMS5003T-20260408", 17) != 0)
-    return false;
-  return true;
+const char *hardware_model() {
+  return sensor_policy.model ? sensor_policy.model : "";
+}
+// Empty clears the serial. Without a board rule no serial is accepted.
+bool serial_allowed(const char *serial) {
+  return !*serial ||
+         (sensor_policy.valid_serial && sensor_policy.valid_serial(serial));
+}
+bool batch_allowed(const Settings &settings) {
+  return sensor_policy.batch_eligible &&
+         sensor_policy.batch_eligible(settings.sensor_vendor,
+                                      settings.sensor_model,
+                                      settings.sensor_serial);
 }
 
 // Sensor identity and opt-in share one NVS value so a failed multi-key save
@@ -111,12 +101,11 @@ bool decode_sensor(char *value, Settings &settings) {
   if (std::strchr(third, '|') ||
       std::strlen(vendor) >= sizeof(settings.sensor_vendor) ||
       std::strlen(model) >= sizeof(settings.sensor_model) ||
-      !sensor_serial_chars(serial) ||
-      (*serial && !valid_pms5003t_serial(serial)) ||
+      !sensor_serial_chars(serial) || !serial_allowed(serial) ||
       (std::strcmp(third, "0") != 0 && std::strcmp(third, "1") != 0))
     return false;
-  if (*vendor && (std::strcmp(vendor, hardware_vendor) != 0 ||
-                  std::strcmp(model, hardware_model) != 0))
+  if (*vendor && (std::strcmp(vendor, hardware_vendor()) != 0 ||
+                  std::strcmp(model, hardware_model()) != 0))
     return false;
   if ((*vendor == '\0') != (*model == '\0') || (*serial && !*vendor))
     return false;
@@ -124,7 +113,7 @@ bool decode_sensor(char *value, Settings &settings) {
   std::memcpy(settings.sensor_model, model, std::strlen(model) + 1);
   std::memcpy(settings.sensor_serial, serial, std::strlen(serial) + 1);
   settings.sensor_batch_candidate = std::strcmp(third, "1") == 0;
-  if (settings.sensor_batch_candidate && !exact_batch_candidate(settings))
+  if (settings.sensor_batch_candidate && !batch_allowed(settings))
     return false;
   return true;
 }
@@ -536,12 +525,7 @@ std::size_t json_escape(char *out, std::size_t size, const char *text) {
 }
 } // namespace
 
-void set_sensor_hardware(const char *vendor, const char *model) {
-  std::snprintf(hardware_vendor, sizeof(hardware_vendor), "%s",
-                vendor ? vendor : "");
-  std::snprintf(hardware_model, sizeof(hardware_model), "%s",
-                model ? model : "");
-}
+void set_sensor_policy(const SensorPolicy &policy) { sensor_policy = policy; }
 
 const char *pair_name(PairMode mode) {
   switch (mode) {
@@ -761,7 +745,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
                     value);
     } else if (std::strcmp(key, "sensor.vendor") == 0) {
       if (std::strlen(value) >= sizeof(next.sensor_vendor) ||
-          (value[0] && std::strcmp(value, hardware_vendor) != 0))
+          (value[0] && std::strcmp(value, hardware_vendor()) != 0))
         return reject();
       sensor_identity_changed = sensor_identity_changed ||
                                 std::strcmp(value, next.sensor_vendor) != 0;
@@ -769,7 +753,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
                     value);
     } else if (std::strcmp(key, "sensor.model") == 0) {
       if (std::strlen(value) >= sizeof(next.sensor_model) ||
-          (value[0] && std::strcmp(value, hardware_model) != 0))
+          (value[0] && std::strcmp(value, hardware_model()) != 0))
         return reject();
       sensor_identity_changed =
           sensor_identity_changed || std::strcmp(value, next.sensor_model) != 0;
@@ -806,11 +790,11 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
     std::snprintf(bad_key, bad_key_size, "sensor.identity");
     return false;
   }
-  if (next.sensor_serial[0] && !valid_pms5003t_serial(next.sensor_serial)) {
+  if (!serial_allowed(next.sensor_serial)) {
     std::snprintf(bad_key, bad_key_size, "sensor.serial");
     return false;
   }
-  if (next.sensor_batch_candidate && !exact_batch_candidate(next)) {
+  if (next.sensor_batch_candidate && !batch_allowed(next)) {
     std::snprintf(bad_key, bad_key_size, "sensor.batch_candidate");
     return false;
   }

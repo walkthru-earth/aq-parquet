@@ -10,9 +10,12 @@ versions are pinned by the shared toolchain lock and component manifests.
 Include `aq_logger.h`. Define a static `aqlogger::Field[]` dictionary and fill
 `Config` with its schema/dictionary identity, digest, acquisition configuration,
 board identity and optional board metadata. The runtime requires `sequence`,
-`monotonic_us` and `event_time_utc_ns` as INT64, and `clock_epoch` as INT32. Other
+`monotonic_us` and `event_time_utc_us` as INT64, and `clock_epoch` as INT32. Other
 standard runtime fields are mapped by name and set only when present with the
-matching type. Field units `ns_since_unix_epoch` receive TIMESTAMP(NANOS, UTC).
+matching type. Field units `us_since_unix_epoch` receive TIMESTAMP(MICROS, UTC),
+which Apache Iceberg maps to `timestamptz` (v1, v2 and v3). Every column gets Parquet
+`field_id` = its 1-based position in the dictionary, so dictionaries are append
+only. Never reorder, remove or reuse a position.
 
 Call `begin(config, hooks, sd_mounted)` once after board/storage initialization,
 then `start_links(display_detected)` and `poll()` on every main-loop pass.
@@ -53,9 +56,9 @@ releases them so the next READ reopens by path. OPEN takes the CRC-32 from a
 64-entry PSRAM cache filled at finalize (path, size and mtime must match) and
 reads the whole file only on a miss. The boot `PARQUET BEGIN` line reports
 `crc32_check=ok` when the ROM CRC routine returns the standard check value.
-STATUS, LIVE and advertising retain the phone wire contract; absent/invalid LIVE
-measurements are omitted independently. PMS5003T temperature/RH use `t`/`rh`;
-CoreS3 IMU temperature uses `t` when ambient temperature is unavailable.
+LIVE emits the `Field::live_key` of every valid field, in field-table order,
+through `aq_logger_live.h`. `begin()` rejects malformed or duplicate keys.
+Absent, invalid and non-finite measurements are omitted independently.
 
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never

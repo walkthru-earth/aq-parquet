@@ -136,7 +136,7 @@ pixi run waveshare-build
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |
-| Writer, codec, footer or schema | `parquet-test --sanitize`, `waveshare-contract-test --sanitize` |
+| Writer, codec, footer or schema | `parquet-test --sanitize`, `reader-test`, `waveshare-contract-test --sanitize` |
 | Plantower or LTR553 | `pms-frame-test`, `ltr553-test` |
 | Disconnects, LAN rings or BLE policy | `disconnect-test`, `frame-ring-test`, `ble-policy-test`, `ble-advert-test`, `ble-sync-test`, `lan-concurrency-bench` |
 | Settings, time or location | `config-test`, `network-time-test`, `location-test`, `logger-provision-test` |
@@ -170,7 +170,7 @@ The shared [sync protocol](ble-sync-protocol.md) retains its UUIDs/opcodes and
 517 where possible; MTU 483 carries a maximum snapshot in one notification.
 Notifications exceeding negotiated MTU − 3 are omitted after the complete value
 is cached; use characteristic long reads for complete snapshots.
-Interpret LIVE `t`/`rh` through the board's advertised schema/dictionary. A board
+LIVE `t`/`rh` are ambient only and CoreS3 sends IMU temperature as `imu_t`. A board
 without an RTC hook has no retained clock anchor; UTC stays null after boot until
 automatic host SET_TIME or successful Wi-Fi SNTP. Raw unsynchronized rows remain in the `unsynced` tree; the mobile archive reconciles derived partitions from same-boot anchors.
 

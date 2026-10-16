@@ -1,6 +1,7 @@
 #include "aq_logger.h"
 #include "aq_logger_archive_reset.h"
 #include "aq_logger_directory.h"
+#include "aq_logger_live.h"
 #include "aq_logger_location.h"
 #include "aq_logger_provision.h"
 #include "aq_logger_rotation.h"
@@ -57,7 +58,7 @@ using Sample = LocationSample<Row>;
 Config config;
 Hooks hooks;
 std::size_t field_count = 0;
-std::size_t sequence = 0, event_time_utc_ns = 0, clock_epoch = 0;
+std::size_t sequence = 0, event_time_utc_us = 0, clock_epoch = 0;
 std::size_t monotonic_field = 0;
 constexpr std::int32_t kClockNone = aq::utc::None;
 constexpr std::int32_t kClockHost = aq::utc::Host;
@@ -305,16 +306,15 @@ void prepare_columns() {
     const auto &field = config.fields[i];
     const auto logical =
         field.type == PhysicalType::Int64 &&
-                std::strcmp(field.unit, "ns_since_unix_epoch") == 0
-            ? LogicalType::TimestampNanosUtc
+                std::strcmp(field.unit, "us_since_unix_epoch") == 0
+            ? LogicalType::TimestampMicrosUtc
             : LogicalType::None;
-    writer_state->columns[i] = Column{field.name,
-                                      field.type,
-                                      &writer_state->rows[0].data[i],
-                                      sizeof(Sample),
-                                      &writer_state->rows[0].valid[i],
-                                      sizeof(Sample),
-                                      logical};
+    writer_state->columns[i] = Column{
+        field.name, field.type, &writer_state->rows[0].data[i], sizeof(Sample),
+        &writer_state->rows[0].valid[i], sizeof(Sample), logical,
+        // 1-based dictionary position, see
+        // aqlogger::Config::fields.
+        static_cast<std::int32_t>(i + 1)};
   }
 }
 
@@ -392,9 +392,8 @@ std::size_t rows_per_group() {
 // Dated rows rotate on UTC, unsynced rows on monotonic time of this boot.
 std::int64_t window_index(const Sample &row) {
   const auto rotation = static_cast<std::int64_t>(rotation_seconds.load());
-  return row.valid[event_time_utc_ns]
-             ? rotation_window(row.data[event_time_utc_ns] / 1000000000,
-                               rotation)
+  return row.valid[event_time_utc_us]
+             ? rotation_window(row.data[event_time_utc_us] / 1000000, rotation)
              : rotation_window(row.data[monotonic_field] / 1000000, rotation);
 }
 
@@ -403,7 +402,7 @@ std::int64_t window_index(const Sample &row) {
 // clock correction).
 bool same_window(const Sample &row, std::int32_t epoch, bool dated,
                  std::int64_t window) {
-  const bool row_dated = row.valid[event_time_utc_ns] != 0;
+  const bool row_dated = row.valid[event_time_utc_us] != 0;
   return same_rotation_window(static_cast<std::int32_t>(row.data[clock_epoch]),
                               row_dated, window_index(row), epoch, dated,
                               window);
@@ -540,8 +539,8 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
     partition_length =
         std::snprintf(partition, sizeof(partition), "boot=%s", boot_text);
     std::strcpy(prefix, codec == Codec::Lz4Raw ? "lz4_raw" : "uncompressed");
-  } else if (first_row.valid[event_time_utc_ns]) {
-    const std::int64_t seconds = first_row.data[event_time_utc_ns] / 1000000000;
+  } else if (first_row.valid[event_time_utc_us]) {
+    const std::int64_t seconds = first_row.data[event_time_utc_us] / 1000000;
     const std::time_t window =
         (seconds / rotation_seconds.load()) * rotation_seconds.load();
     std::tm utc{};
@@ -1313,75 +1312,13 @@ void publish_status() {
   publish_advert();
 }
 
-// Builds the `live` snapshot from the row that was just queued. Keys are
-// omitted for null values; the document must stay <= kMaxJson bytes.
+// Publishes the `live` snapshot of the row that was just queued. The board's
+// field table decides which keys appear; see aq_logger_live.h.
 void publish_live(const Sample &row) {
-  char json[ble::kMaxJson + 96];
-  std::size_t used = 0;
-  auto put = [&](const char *format, auto... args) {
-    if (used >= sizeof(json))
-      return;
-    const int written =
-        std::snprintf(json + used, sizeof(json) - used, format, args...);
-    if (written > 0)
-      used += std::size_t(written);
-  };
-  put("{\"seq\":%lld,\"mono\":%lld", static_cast<long long>(row.data[sequence]),
-      static_cast<long long>(row.data[field_index("monotonic_us")]));
-  struct LiveField {
-    const char *field;
-    const char *key;
-  };
-  constexpr LiveField fields[] = {{"event_time_utc_ns", "utc"},
-                                  {"pms_status", "pms"},
-                                  {"pm1_atmospheric_ug_m3", "pm1"},
-                                  {"pm25_atmospheric_ug_m3", "pm25"},
-                                  {"pm10_atmospheric_ug_m3", "pm10"},
-                                  {"pm1_cf1_ug_m3", "c1"},
-                                  {"pm25_cf1_ug_m3", "c25"},
-                                  {"pm10_cf1_ug_m3", "c10"},
-                                  {"particles_gt03_per_01l", "n03"},
-                                  {"particles_gt05_per_01l", "n05"},
-                                  {"particles_gt10_per_01l", "n1"},
-                                  {"particles_gt25_per_01l", "n25"},
-                                  {"particles_gt50_per_01l", "n5"},
-                                  {"particles_gt100_per_01l", "n10"},
-                                  {"ambient_temperature_c", "t"},
-                                  {"relative_humidity_percent", "rh"},
-                                  {"imu_temperature_c", "t"},
-                                  {"battery_mv", "bat"},
-                                  {"battery_percent", "pct"},
-                                  {"charging_status", "chg"},
-                                  {"vbus_mv", "vbus"},
-                                  {"light_ch0_raw", "als"}};
-  for (const auto &field : fields) {
-    if (std::strcmp(field.field, "imu_temperature_c") == 0 &&
-        field_index("ambient_temperature_c") < field_count &&
-        row.valid[field_index("ambient_temperature_c")])
-      continue;
-    const auto index = field_index(field.field);
-    if (index >= field_count || !row.valid[index])
-      continue;
-    switch (config.fields[index].type) {
-    case PhysicalType::Int64:
-      put(",\"%s\":%lld", field.key, static_cast<long long>(row.data[index]));
-      break;
-    case PhysicalType::Int32: {
-      std::int32_t value;
-      std::memcpy(&value, &row.data[index], sizeof(value));
-      put(",\"%s\":%ld", field.key, static_cast<long>(value));
-      break;
-    }
-    case PhysicalType::Float: {
-      float value;
-      std::memcpy(&value, &row.data[index], sizeof(value));
-      put(",\"%s\":%.1f", field.key, static_cast<double>(value));
-      break;
-    }
-    }
-  }
-  put("}");
-  if (used < sizeof(json) && used <= ble::kMaxJson) {
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      format_live(config.fields, field_count, row, json, sizeof(json));
+  if (used && used <= ble::kMaxJson) {
     ble::publish_live(json, used);
     lan::publish_live(json, used);
   }
@@ -1697,7 +1634,7 @@ bool fits_batch(const Sample &row, std::size_t count) {
     return true;
   const auto &previous = writer_state->rows[0];
   return same_window(row, previous.data[clock_epoch],
-                     previous.valid[event_time_utc_ns] != 0,
+                     previous.valid[event_time_utc_us] != 0,
                      window_index(previous)) &&
          config::same_location(row.location, previous.location);
 }
@@ -2152,10 +2089,10 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   integer(row, "clock_status", generation ? source : kClockNone);
   integer(row, "clock_epoch", generation);
   if (generation) {
-    counter(row, "event_time_utc_ns",
-            aq::utc::estimate_ns(now, mono_anchor, utc_anchor));
+    counter(row, "event_time_utc_us",
+            aq::utc::estimate_us(now, mono_anchor, utc_anchor));
     counter(row, "clock_anchor_mono_us", mono_anchor);
-    counter(row, "clock_anchor_utc_ns", utc_anchor);
+    counter(row, "clock_anchor_utc_us", aq::utc::ns_to_us(utc_anchor));
   }
   counter(row, "heap_free_bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   counter(row, "heap_min_free_bytes",
@@ -2311,14 +2248,16 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       if (std::strcmp(field.name, config.fields[j].name) == 0)
         return false;
   }
+  if (!valid_live_keys(config.fields, field_count))
+    return false;
   sequence = field_index("sequence");
-  event_time_utc_ns = field_index("event_time_utc_ns");
+  event_time_utc_us = field_index("event_time_utc_us");
   clock_epoch = field_index("clock_epoch");
   const auto monotonic = field_index("monotonic_us");
-  if (sequence == field_count || event_time_utc_ns == field_count ||
+  if (sequence == field_count || event_time_utc_us == field_count ||
       clock_epoch == field_count || monotonic == field_count ||
       config.fields[sequence].type != telemetry::PhysicalType::Int64 ||
-      config.fields[event_time_utc_ns].type != telemetry::PhysicalType::Int64 ||
+      config.fields[event_time_utc_us].type != telemetry::PhysicalType::Int64 ||
       config.fields[monotonic].type != telemetry::PhysicalType::Int64 ||
       config.fields[clock_epoch].type != telemetry::PhysicalType::Int32)
     return false;

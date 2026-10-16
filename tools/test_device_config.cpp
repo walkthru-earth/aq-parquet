@@ -1,3 +1,6 @@
+// The shared runtime is board neutral. These fixtures borrow the Waveshare
+// PMS5003T rules as a realistic board policy.
+#include "../firmware/esp-idf-waveshare-sim7670g/logger/pms5003t_identity.h"
 #include <aq_location.h>
 #include <debug_log.h>
 #include <device_config.h>
@@ -10,6 +13,10 @@
 #include <vector>
 
 namespace {
+
+constexpr config::SensorPolicy kPms5003t{pms5003t::kVendor, pms5003t::kModel,
+                                         pms5003t::valid_serial,
+                                         pms5003t::batch_eligible};
 
 // Pinned `cfg` blob contract. A layout change must bump the version.
 constexpr std::size_t kHeaderBytes = 12;
@@ -263,8 +270,27 @@ void credentials() {
   std::puts(json); // runner parses this synthetic, secret-free CONFIG document
 }
 
+bool any_serial(const char *) { return true; }
+bool no_batch(const char *, const char *, const char *) { return false; }
+
+// The runtime holds no sensor rule of its own. It defers to the board hook.
+void board_policy_hooks() {
+  accept("sensor.vendor=\nsensor.model=\nsensor.serial=");
+  config::set_sensor_policy({"Vendor", "Model", nullptr, nullptr});
+  accept("sensor.vendor=Vendor\nsensor.model=Model");
+  reject("sensor.serial=ANY-1", "sensor.serial");
+  reject("sensor.batch_candidate=1", "sensor.batch_candidate");
+  config::set_sensor_policy({"Vendor", "Model", any_serial, no_batch});
+  accept("sensor.serial=ANY-1");
+  reject("sensor.batch_candidate=1", "sensor.batch_candidate");
+  accept("sensor.vendor=\nsensor.model=\nsensor.serial=");
+  config::set_sensor_policy({});
+  reject("sensor.vendor=Plantower\nsensor.model=PMS5003T", "sensor.vendor");
+  config::set_sensor_policy(kPms5003t);
+}
+
 void sensor_identity() {
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kPms5003t);
   assert(config::load(false));
   reject("sensor.vendor=Other\nsensor.model=PMS5003T", "sensor.vendor");
   reject("sensor.vendor=Plantower\nsensor.model=PMSA003", "sensor.model");
@@ -316,6 +342,7 @@ void sensor_identity() {
   assert(!apply("sensor.serial=PMS5003T-202604081332", actions, bad_key));
   assert(std::strcmp(bad_key, "nvs") == 0 && same(before, config::get()));
   fake_platform::nvs.fail_write_key.clear();
+  board_policy_hooks();
 }
 
 void persistence_failure() {
@@ -458,7 +485,7 @@ void time_and_location() {
 }
 
 void blob_round_trip() {
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kPms5003t);
   assert(config::load(false));
   const auto writes = fake_platform::nvs.writes;
   const auto commits = fake_platform::nvs.commits;
@@ -491,7 +518,7 @@ void blob_round_trip() {
 }
 
 void legacy_migration() {
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kPms5003t);
   seed_legacy(true);
   const fake_platform::Values legacy = fake_platform::nvs;
   assert(config::load(true));
@@ -537,7 +564,7 @@ void legacy_migration() {
 }
 
 void torn_blob() {
-  config::set_sensor_hardware("Plantower", "PMS5003T");
+  config::set_sensor_policy(kPms5003t);
   seed_legacy(true);
   assert(config::load(false));
   accept("wifi.ssid=blob-net\nwifi.psk=blob-password");

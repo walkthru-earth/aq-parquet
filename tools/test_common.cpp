@@ -64,6 +64,9 @@ void clock_contract() {
   const auto anchor = kMinEpochSeconds * 1000000000LL;
   assert(estimate_ns(1000020, 1000000, anchor) == anchor + 20000);
   assert(estimate_ns(999980, 1000000, anchor) == anchor - 20000);
+  assert(estimate_us(1000020, 1000000, anchor_ns(1800000000LL, 123456)) ==
+         1800000000123476LL);
+  assert(ns_to_us(anchor_ns(1800000000LL, 999999)) == 1800000000999999LL);
   assert(starts_new_epoch(None, Host, 0));
   assert(starts_new_epoch(None, Rtc, 0));
   assert(starts_new_epoch(Rtc, Host, 0));

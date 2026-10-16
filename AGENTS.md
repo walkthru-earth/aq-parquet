@@ -112,7 +112,7 @@ Before choosing or changing SDK/component versions, check the latest stable rele
 
 Use the pinned pixi environment (`pixi install`, `pixi run <task>`), not ad hoc
 pip packages. Run `pixi run fmt-check` and `pixi run lint`. For writer/schema or
-archive changes run the relevant `pixi run parquet-test --sanitize`,
+archive changes run the relevant `pixi run parquet-test --sanitize`, `reader-test`,
 `telemetry-contract-test --sanitize`, `archive-sync-test` and board contract
 gates. Every firmware PR builds both boards. Perform proportional real-device readback
 before claiming hardware behavior. Keep captures/exports/binaries in ignored

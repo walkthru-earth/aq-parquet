@@ -37,7 +37,12 @@ parquet-device = "python tools/parquet_device.py"
 ble-sync = "python tools/ble_sync.py"
 ble-sync-test = "python tools/test_ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
-pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
+# Footer reader and Iceberg DataFile metrics: PyArrow/DuckDB cross-check, crafted footers, fuzz loop.
+reader-test = "python tools/test_parquet_reader.py --sanitize"
+# Device file sizes, footers and host encoding/compaction variants, see docs/shared/parquet-small-files.md.
+size-survey = "python tools/parquet_size_survey.py"
+size-survey-test = "python tools/test_parquet_size_survey.py"
+pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
 # --- native ESP-IDF: one pinned SDK, independent board applications ---
@@ -66,6 +71,7 @@ crc-cache-test = "python tools/test_crc_cache.py --sanitize"
 sd-transfer-buffer-test = "python tools/test_sd_transfer_buffer.py --sanitize"
 logger-archive-reset-test = "python tools/test_logger_archive_reset.py --sanitize"
 logger-provision-test = "python tools/test_logger_provision.py --sanitize"
+logger-live-test = "python tools/test_logger_live.py --sanitize"
 # Destructive: requires the checked port and exact full-backup file.
 waveshare-flash = "firmware/esp-idf-waveshare-sim7670g/flash.sh"
 
@@ -86,6 +92,7 @@ ble-policy-test = "python tools/test_ble_policy.py --sanitize"
 config-test = "python tools/test_device_config.py --sanitize"
 common-test = "python tools/test_common.py --sanitize"
 ltr553-test = "python tools/test_ltr553.py --sanitize"
+max17048-test = "python tools/test_max17048.py --sanitize"
 connectivity-build-test = "tools/build_connectivity_fixture.sh"
 waveshare-psram-build = "tools/idf.sh -C tools/fixtures/waveshare_psram_probe -B tools/fixtures/waveshare_psram_probe/build build"
 compression-bench = "python tools/benchmark_compression.py"

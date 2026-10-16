@@ -161,7 +161,8 @@ void ArchiveSession::emit_file(void *context, const char *name,
     list.failure_detail = "mtu";
     return;
   }
-  std::uint8_t frame[5 + 400];
+  static_assert(5 + 400 <= kPayloadCapacity, "FILE frame exceeds scratch");
+  std::uint8_t *frame = session.io_.data();
   frame[0] = ble::kFrameFile;
   put_u32(frame + 1, bytes);
   std::memcpy(frame + 5, name, name_length);
@@ -271,7 +272,8 @@ void ArchiveSession::open(const std::uint8_t *name_bytes,
   opened.size = size;
   opened.crc = crc;
   opened.generation = request_generation_;
-  std::uint8_t frame[11 + 400];
+  static_assert(11 + 400 <= kPayloadCapacity, "OPENED frame exceeds scratch");
+  std::uint8_t *frame = io_.data();
   frame[0] = ble::kFrameOpened;
   put_u16(frame + 1, opened.handle);
   put_u32(frame + 3, size);
@@ -341,7 +343,8 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
     end(offset, ble::kErrOpenFailed);
     return;
   }
-  std::uint8_t frame[7 + kChunkCap];
+  static_assert(7 + kChunkCap <= kPayloadCapacity, "CHUNK exceeds scratch");
+  std::uint8_t *frame = io_.data();
   std::uint32_t sent = 0;
   while (sent < length) {
     // An aborted READ ends with ERROR aborted and no READ_END.

@@ -16,10 +16,16 @@ struct Field {
   const char *unit = nullptr;
   const char *validity = nullptr;
   const char *property_uri = nullptr;
+  // Short JSON key for the LIVE snapshot, or nullptr to keep the field out of
+  // LIVE. Keys are [a-z0-9_]{1,15} and unique within the table.
+  const char *live_key = nullptr;
 };
 // All pointed-to descriptors and strings must outlive the runtime. The schema
-// must include INT64 sequence, monotonic_us, event_time_utc_ns and INT32
+// must include INT64 sequence, monotonic_us, event_time_utc_us and INT32
 // clock_epoch. UTC values remain null until a supported clock anchor exists.
+// INT64 fields with unit "us_since_unix_epoch" are written as
+// TIMESTAMP(MICROS, UTC). Each leaf's Parquet field_id is its 1-based position
+// in `fields`, so a board appends new fields and never reorders them.
 struct Config {
   const Field *fields = nullptr;
   std::size_t column_count = 0;
