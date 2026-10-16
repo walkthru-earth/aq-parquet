@@ -48,8 +48,9 @@ flowchart TD
 ## Consumption
 
 Board projects list the common paths in `EXTRA_COMPONENT_DIRS`; their component
-`CMakeLists.txt` declares `REQUIRES common runtime connectivity logger` for a
-logger or `common runtime` for the retained Waveshare diagnostic’s parser and physical console. Use the root Pixi
+`CMakeLists.txt` declares `REQUIRES common sensors runtime connectivity logger`
+for a logger or `common sensors runtime` for the retained Waveshare
+diagnostic, whose Plantower parser now lives in `sensors`. Use the root Pixi
 build tasks rather than Arduino CLI:
 
 ```sh

@@ -22,11 +22,11 @@ constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
 // Version the acquisition procedure separately from the physical file codec.
-constexpr const char *kConfigurationId = "cores3-acquisition-v2";
+constexpr const char *kConfigurationId = "cores3-acquisition-v3";
 constexpr const char *kConfiguration =
     "{\"sample_interval_ms\":10000,\"pms_warmup_us\":30000000,"
     "\"pms_stale_after_ms\":5000,\"pms_uart_rx\":18,\"pms_uart_tx\":17,"
-    "\"pms_baud\":9600,\"m5unified\":\"0.2.25\",\"esp_idf\":\"6.1\",\"ltr553\":"
+    "\"pms_baud\":9600,\"m5unified\":\"0.2.26\",\"esp_idf\":\"6.1\",\"ltr553\":"
     "\"raw-v1\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";

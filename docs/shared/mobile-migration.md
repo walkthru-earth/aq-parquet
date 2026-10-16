@@ -8,6 +8,16 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## CoreS3 acquisition configuration v3 (refactor/board-neutral-logger-and-sensors)
+
+- The CoreS3 file metadata `configuration_id` changes from
+  `cores3-acquisition-v2` to `cores3-acquisition-v3`, and the `configuration`
+  JSON now records `"m5unified":"0.2.26"`, the version the firmware is built
+  with. It said 0.2.25 since the dependency moved in #19.
+- Schema, dictionary, columns and firmware identity are unchanged.
+- The app does not need to change unless it pins `configuration_id`. If it
+  does, accept `cores3-acquisition-v3`.
+
 ## LIVE keys come from each board's field table
 
 **What changed.** The `live` notification and the LAN `LIVE` push no longer
