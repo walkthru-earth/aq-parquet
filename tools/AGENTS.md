@@ -18,6 +18,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
 | Battery health states, thresholds, debounce and settling | `battery-health-test` |
 | Board-declared LIVE keys and JSON formatting | `logger-live-test` |
+| POWER STATE lines and one finalize per critical entry | `logger-power-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`

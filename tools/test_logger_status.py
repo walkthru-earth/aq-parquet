@@ -17,7 +17,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-logger-status-") as directory:
         executable = Path(directory) / "status-test"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
-        for library in ["src", "runtime/src", "connectivity/src", "logger/src"]:
+        for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_status.cpp"),
                     str(common / "logger/src/aq_logger_status.cpp"),

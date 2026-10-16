@@ -27,6 +27,11 @@ initialization and each board's schema/provenance remain in its own trial.
   Any new loop or walk on the worker calls `stamp_heartbeat()` per entry, and
   any new blocking board hook is stamped on both sides. Keep the boot-loop guard
   pure in `aq_logger_watchdog.h`. See the README section Worker watchdog.
+- Battery power policy stays pure in `aq_logger_power.h` and
+  `firmware/common/power`. `report_battery()` runs on the main loop and only
+  logs, calls the optional `power_shed` hook and queues a `Source::Power`
+  finalize that reuses the `parquet flush` path. Never reset, sleep or drop
+  rows from a power state.
 - The SD space governor never deletes. A full card pauses and alarms; space
   returning or a successful probe resumes. Keep its logic pure in
   `storage_governor.h`; boards only supply the free, cluster and remount hooks.

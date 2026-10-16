@@ -19,7 +19,7 @@ def main() -> None:
         executable = Path(directory) / "provision-test"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
                    "-I", str(root / "tools/host_fakes/config")]
-        for library in ["src", "runtime/src", "connectivity/src", "logger/src"]:
+        for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_provision.cpp"),
                     str(common / "logger/src/aq_logger_provision.cpp"),
