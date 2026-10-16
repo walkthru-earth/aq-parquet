@@ -84,17 +84,16 @@ firmware under any license.
 ## 5. Managed components from the ESP Component Registry
 
 Versions are pinned in each board's `dependencies.lock` and component
-`idf_component.yml`. They describe builds from current source. The qualified
-CoreS3 image `idf-cores3-parquet-v6.9` was built with M5GFX 0.2.31, so match the
-component version to the image when you distribute an older qualified binary.
-The license and copyright terms are the same for both M5GFX versions.
+`idf_component.yml` and track the latest stable releases. They describe builds
+from current source. Older images may contain earlier versions of the same
+components, which carry the same licenses and copyright notices.
 
 | Component | Version | Used by | License | Copyright |
 | :--- | :--- | :--- | :--- | :--- |
 | `espressif/mdns` | 1.14.0 | CoreS3, Waveshare SIM7670G | Apache-2.0 | Copyright Espressif Systems (Shanghai) CO LTD |
 | `espressif/led_strip` | 3.1.0~1 | Waveshare SIM7670G | Apache-2.0 | Copyright Espressif Systems (Shanghai) CO LTD |
-| `m5stack/m5unified` | 0.2.25 | CoreS3 | MIT | Copyright (c) 2021 M5Stack |
-| `m5stack/m5gfx` | 0.2.32 (current source), 0.2.31 (qualified v6.9 image) | CoreS3 | MIT, with bundled third-party parts listed below | Copyright (c) 2021 M5Stack |
+| `m5stack/m5unified` | 0.2.26 | CoreS3 | MIT | Copyright (c) 2021 M5Stack |
+| `m5stack/m5gfx` | 0.2.33 | CoreS3 | MIT, with bundled third-party parts listed below | Copyright (c) 2021 M5Stack |
 
 M5GFX bundles code and fonts under their own licenses, as listed in its README.
 LovyanGFX (BSD-2-Clause FreeBSD, lovyan03), TJpgDec (ChaN), Pngle (MIT,

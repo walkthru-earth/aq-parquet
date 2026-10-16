@@ -28,13 +28,13 @@ pixi run waveshare-build diagnostic
 | [Waveshare V2](../../firmware/esp-idf-waveshare-sim7670g/README.md) | `logger/main.cpp` or `diagnostic/main.cpp`, board IO adapter | 16 MB flash, OPI PSRAM for logger, no PSRAM for diagnostic, UART0 console and one-bit SDMMC | Native qualification pending; historical Arduino images in the board bench record |
 
 `tools/idf-dependencies.lock` pins ESP-IDF 6.1 and its exact source commit.
-Component manifests pin M5Unified **0.2.25**, M5GFX **0.2.32**, mDNS **1.14.0**
+Component manifests pin M5Unified **0.2.26**, M5GFX **0.2.33**, mDNS **1.14.0**
 and Waveshare led_strip **3.1.0~1**; official H3 **4.5.0** is vendored with exact
 source/license hashes in `firmware/common/location/vendor/h3/manifest.json`.
-Rechecking on **2026-10-10** confirmed M5GFX **0.2.32** as the latest stable
-[release](https://github.com/m5stack/M5GFX/releases/tag/0.2.32). Dated device
-evidence records the remaining qualification limits. The other listed pins were the latest stable releases
-observed on that date. LZ4 remains vendored **1.10.0** with checked hashes; the
+Policy is to pin the latest stable release of every dependency. Rechecking on
+**2026-10-16** confirmed M5Unified **0.2.26**, M5GFX **0.2.33**, mDNS **1.14.0**,
+led_strip **3.1.0~1**, ESP-IDF **6.1** and H3 **4.5.0** as latest. Dated device
+evidence records which component versions each qualified image used. LZ4 remains vendored **1.10.0** with checked hashes; the
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
 Commit each board’s generated `dependencies.lock` to pin transitive component
