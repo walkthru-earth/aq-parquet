@@ -186,6 +186,12 @@ def main() -> None:
             ("battery_health_state", 1, "bstate"), ("battery_minutes_to_empty", 1, "")],
                 "schema v5 battery columns")
         require(len(fields) == len(names) == 62, "unique versioned fields")
+        require([f["live"] for f in fields if f["live"]] == [
+            "seq", "mono", "utc", "pms", "c1", "c25", "c10", "pm1", "pm25", "pm10", "n03", "n05", "n1", "n25",
+            "t", "rh", "bat", "pct", "bstate"], "LIVE keys in field order")
+        inc = (firmware / "telemetry_fields.inc").read_text()
+        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)"\)$', inc, re.M)
+        require(rows == [(f["name"], f["live"]) for f in fields], "dictionary carries every LIVE key")
         require([f["field_id"] for f in fields] == list(range(1, 63)), "append-only 1-based field ids")
         require(len({field["property"] for field in fields}) == len(fields), "property identifiers")
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",

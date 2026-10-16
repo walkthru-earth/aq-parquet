@@ -38,7 +38,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   `telemetry_contract.h` (`kBatteryThresholds`) and are uncalibrated until a
   dated discharge run. VCELL senses the VBAT rail, so external power is only
   inferred. The gauge ALRT pin is tied to ground, so never rely on alerts. Preserve the original 52-field order. Field ids are the
-  1-based `telemetry_fields.inc` position, so only append fields. Shared H3 helpers
+  1-based `telemetry_fields.inc` position, so only append fields. LIVE keys are
+  the last `FIELD` argument ("" stays off LIVE), so the dictionary digest covers
+  them and any change needs a matching mobile app release. Shared H3 helpers
   publish only the owner-configured coarsened station cell and its center;
   country is optional and owner-declared. Do not turn on modem GNSS for this.
 - Fixed pairing PIN is random per device. Retrieve it only through the

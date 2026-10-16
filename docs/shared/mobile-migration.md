@@ -33,6 +33,16 @@ the older shapes it has stored, or the owner clears them.
 - No STATUS, GET_DIAG, GET_CONFIG or advertising field changes.
 - The app must accept schema 5 and dictionary v5 for Waveshare files, may show
   `bstate` as a battery badge and should keep reading v4 files already stored.
+- Waveshare LIVE keys now live in `telemetry_fields.inc` as the last `FIELD`
+  argument, so the v5 dictionary SHA-256 covers them. The v5 digest is
+  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`. The
+  LIVE keys and their order are unchanged, `seq`, `mono`, `utc`, `pms`, `c1`,
+  `c25`, `c10`, `pm1`, `pm25`, `pm10`, `n03`, `n05`, `n1`, `n25`, `t`, `rh`,
+  `bat`, `pct`, `bstate`.
+- The app keeps one LIVE profile per dictionary digest. Any change to a board's
+  `telemetry_fields.inc`, including a live key, changes that digest, so it needs
+  a matching app release before boards are reflashed. CoreS3 still maps its
+  LIVE keys in its contract header and is unchanged here.
 
 ## READ after a storage remount can answer bad handle (fix/34-remount-archive-handles)
 

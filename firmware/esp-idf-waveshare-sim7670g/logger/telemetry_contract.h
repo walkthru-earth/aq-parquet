@@ -54,64 +54,27 @@ constexpr const char *kTimeSemantics =
     "assignment";
 
 enum Field : std::size_t {
-#define FIELD(name, type, procedure, unit, validity) name,
+#define FIELD(name, type, procedure, unit, validity, live) name,
 #include "telemetry_fields.inc"
 #undef FIELD
   field_count
 };
 using Definition = aqlogger::Field;
-// LIVE JSON key for each field, or nullptr for fields that stay out of the
-// LIVE snapshot. The shared logger emits them in field-table order.
-constexpr const char *live_key(Field field) {
-  switch (field) {
-  case sequence:
-    return "seq";
-  case monotonic_us:
-    return "mono";
-  case event_time_utc_us:
-    return "utc";
-  case pms_status:
-    return "pms";
-  case pm1_cf1_ug_m3:
-    return "c1";
-  case pm25_cf1_ug_m3:
-    return "c25";
-  case pm10_cf1_ug_m3:
-    return "c10";
-  case pm1_atmospheric_ug_m3:
-    return "pm1";
-  case pm25_atmospheric_ug_m3:
-    return "pm25";
-  case pm10_atmospheric_ug_m3:
-    return "pm10";
-  case particles_gt03_per_01l:
-    return "n03";
-  case particles_gt05_per_01l:
-    return "n05";
-  case particles_gt10_per_01l:
-    return "n1";
-  case particles_gt25_per_01l:
-    return "n25";
-  case ambient_temperature_c:
-    return "t";
-  case relative_humidity_percent:
-    return "rh";
-  case battery_mv:
-    return "bat";
-  case battery_percent:
-    return "pct";
-  case battery_health_state:
-    return "bstate";
-  default:
-    return nullptr;
-  }
+// The dictionary carries each LIVE key, so the digest covers it. "" keeps a
+// field out of the LIVE snapshot. The shared logger emits keys in
+// field-table order.
+constexpr const char *live_or_null(const char *key) {
+  return key[0] == '\0' ? nullptr : key;
 }
 constexpr Definition kFields[] = {
-#define FIELD(name, type, procedure, unit, validity)                           \
-  {#name,         PhysicalType::type,                                          \
-   #procedure,    unit,                                                        \
-   #validity,     "urn:walkthru-earth:waveshare-sim7670g:property:" #name,     \
-   live_key(name)},
+#define FIELD(name, type, procedure, unit, validity, live)                     \
+  {#name,                                                                      \
+   PhysicalType::type,                                                         \
+   #procedure,                                                                 \
+   unit,                                                                       \
+   #validity,                                                                  \
+   "urn:walkthru-earth:waveshare-sim7670g:property:" #name,                    \
+   live_or_null(live)},
 #include "telemetry_fields.inc"
 #undef FIELD
 };
