@@ -495,6 +495,9 @@ def crafted(tools: Tools, directory: Path) -> None:
     accept("8-groups", build_file(BASE_COLUMNS, base_groups(8)))
     refuse("9-groups", build_file(BASE_COLUMNS, base_groups(9)))
     accept("no-groups", build_file(BASE_COLUMNS, []))
+    # Two INT64_MAX groups plus 2 rows wrap a uint64 sum to num_rows 0.
+    wrap = [{"rows": 2**63 - 1}, {"rows": 2**63 - 1}, {"rows": 2}]
+    refuse("rows-wrap", build_file(BASE_COLUMNS, wrap, num_rows=0))
     long_name = [{"name": "n" * 63, "type": 1, "field_id": 1}]
     accept("name-63", build_file(long_name, [{"rows": 1}]))
     refuse("name-64", build_file([{"name": "n" * 64, "type": 1, "field_id": 1}], [{"rows": 1}]))

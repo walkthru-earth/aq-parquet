@@ -651,9 +651,15 @@ Result decode_footer(const uint8_t *footer, size_t length, uint64_t file_size,
   constexpr uint32_t required = (1U << 1) | (1U << 2) | (1U << 3) | (1U << 4);
   if ((seen & required) != required || in.pos() != length)
     return fail("incomplete footer or trailing bytes");
+  // Bound each partial sum by num_rows so crafted groups cannot wrap the
+  // total. Per-column value, null and NaN counts are bounded by it too.
   uint64_t rows = 0;
-  for (size_t g = 0; g < summary.row_group_count; ++g)
-    rows += summary.row_groups[g].num_rows; // each <= INT64_MAX, at most 8
+  for (size_t g = 0; g < summary.row_group_count; ++g) {
+    const uint64_t group_rows = summary.row_groups[g].num_rows;
+    if (group_rows > summary.num_rows - rows)
+      return fail("row group rows do not sum to num_rows");
+    rows += group_rows;
+  }
   if (rows != summary.num_rows)
     return fail("row group rows do not sum to num_rows");
   return {true, length, nullptr};

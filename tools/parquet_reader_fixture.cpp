@@ -172,6 +172,8 @@ bool consistent(const FileSummary &file, size_t file_size) {
   }
   for (size_t g = 0; g < file.row_group_count; ++g) {
     const auto &group = file.row_groups[g];
+    if (group.num_rows > file.num_rows - rows)
+      return false;
     rows += group.num_rows;
     for (size_t c = 0; c < file.column_count; ++c) {
       const auto &chunk = group.columns[c];
