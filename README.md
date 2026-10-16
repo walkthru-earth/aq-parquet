@@ -15,7 +15,7 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 | Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
 | [CoreS3 v6.9](firmware/esp-idf-cores3/README.md) | 81 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified; phone transfers/endurance remain unqualified; [bench record](docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback) |
-| [Waveshare logger v2.3](firmware/esp-idf-waveshare-sim7670g/README.md) | 56 columns; native UART PMS5003T, I²C gauge, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
+| [Waveshare logger v2.7](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns; native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
 Both source adapters implement the existing offline archive, configuration, BLE
 and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields; new schemas
