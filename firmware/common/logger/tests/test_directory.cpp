@@ -211,8 +211,8 @@ struct TreeIO {
   int inspect(const char *path, struct stat *info) {
     const std::string full(path);
     const auto slash = full.rfind('/');
-    const auto &names = directories.at(full.substr(0, slash) +
-                                       (slash == 3 ? "/" : ""));
+    const auto &names =
+        directories.at(full.substr(0, slash) + (slash == 3 ? "/" : ""));
     const std::string leaf = full.substr(slash + 1);
     for (const auto &name : names)
       if (name == leaf || name == leaf + "/") {
@@ -231,11 +231,13 @@ struct TreeIO {
     directories["/sd/"] = {"a.parquet", "station=x/", "huge/", "z.parquet"};
     directories["/sd/station=x"] = {"year=2026/", "b.partial", ".hidden"};
     directories["/sd/station=x/year=2026"] = {"month=01/", "month=02/"};
-    directories["/sd/station=x/year=2026/month=01"] = {"c.parquet", "d.parquet"};
+    directories["/sd/station=x/year=2026/month=01"] = {"c.parquet",
+                                                       "d.parquet"};
     directories["/sd/station=x/year=2026/month=02"] = {};
     auto &flat = directories["/sd/huge"];
     for (unsigned i = 0; i < huge; ++i)
-      flat.push_back("f" + std::to_string(i) + (i % 10 ? ".parquet" : ".partial"));
+      flat.push_back("f" + std::to_string(i) +
+                     (i % 10 ? ".parquet" : ".partial"));
   }
 };
 
@@ -285,7 +287,9 @@ void check_resumable_walk() {
   {
     TreeIO io(10000);
     unsigned visits = 0;
-    auto visit = [&](const char *, const struct stat &) { return ++visits < 3; };
+    auto visit = [&](const char *, const struct stat &) {
+      return ++visits < 3;
+    };
     DirectoryWalk<TreeIO> walk;
     assert(walk.begin(io, "/sd"));
     assert(walk.step(100000, visit) == Status::Stopped);

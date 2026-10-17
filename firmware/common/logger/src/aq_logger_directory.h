@@ -107,9 +107,8 @@ public:
       if (entry->d_name[0] == '.')
         continue;
       const std::size_t parent = lengths_[open_ - 1];
-      int length =
-          std::snprintf(relative_ + parent, sizeof(relative_) - parent, "%s%s",
-                        parent ? "/" : "", entry->d_name);
+      int length = std::snprintf(relative_ + parent, sizeof(relative_) - parent,
+                                 "%s%s", parent ? "/" : "", entry->d_name);
       if (length < 0 ||
           parent + static_cast<std::size_t>(length) >= sizeof(relative_)) {
         relative_[parent] = '\0';

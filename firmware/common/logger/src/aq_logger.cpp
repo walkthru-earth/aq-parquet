@@ -891,41 +891,114 @@ bool write_benchmark(std::size_t count, Codec codec) {
 bool safe_name(const char *name) { return aq::sync::safe_parquet_name(name); }
 
 // One finalized-file entry from a listing. `name` already carries the export
-// prefix ("legacy-parquet/" for the pre-Hive directory).
-using FileEmitter = void (*)(void *context, const char *name,
-                             std::uint32_t bytes);
+// prefix ("legacy-parquet/" for the pre-Hive directory). False stops the walk.
+using FileEmitter = aqsync::FileEmitter;
 
-void emit_file_serial(void *, const char *name, std::uint32_t bytes) {
+bool emit_file_serial(void *, const char *name, std::uint32_t bytes) {
   aqlog.printf("PARQUET FILE name=%s bytes=%lu\n", name,
                static_cast<unsigned long>(bytes));
+  return true;
 }
 
-bool list_directory(unsigned &partials, FileEmitter emit, void *context,
-                    const char *base = kDirectory,
-                    const char *export_prefix = "") {
-  ArchiveDirectoryIO io;
-  auto visit = [&](const char *name, const struct stat &info) {
-    if (S_ISREG(info.st_mode) && safe_name(name)) {
-      if (info.st_size < 0 ||
-          static_cast<std::uint64_t>(info.st_size) > UINT32_MAX) {
-        errno = EOVERFLOW;
-        return false;
-      }
-      char exported[400];
-      const int length = std::snprintf(exported, sizeof(exported), "%s%s",
-                                       export_prefix, name);
-      if (length < 0 || static_cast<std::size_t>(length) >= sizeof(exported)) {
-        errno = ENAMETOOLONG;
-        return false;
-      }
-      emit(context, exported, static_cast<std::uint32_t>(info.st_size));
-    } else if (std::strstr(name, ".partial") && partials != UINT32_MAX) {
-      ++partials;
+// Walks the main archive tree, then the legacy tree, in bounded steps. Only a
+// complete scan replaces the partial counter. Holds its directories open
+// between steps until it ends or cancel() runs.
+class ArchiveList {
+public:
+  aqsync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
+                          void *context, unsigned &partials) {
+    if (start) {
+      cancel();
+      if (!walk_.begin(io_, kDirectory))
+        return fail();
     }
-    return true;
-  };
-  return aq::logger::detail::walk_directory(io, base, "", 0, visit);
-}
+    const char *prefix = legacy_ ? "legacy-parquet/" : "";
+    bool bad_entry = false;
+    auto visit = [&](const char *name, const struct stat &info) {
+      if (S_ISREG(info.st_mode) && safe_name(name)) {
+        if (info.st_size < 0 ||
+            static_cast<std::uint64_t>(info.st_size) > UINT32_MAX) {
+          errno = EOVERFLOW;
+          bad_entry = true;
+          return false;
+        }
+        char exported[400];
+        const int length =
+            std::snprintf(exported, sizeof(exported), "%s%s", prefix, name);
+        if (length < 0 ||
+            static_cast<std::size_t>(length) >= sizeof(exported)) {
+          errno = ENAMETOOLONG;
+          bad_entry = true;
+          return false;
+        }
+        return emit(context, exported,
+                    static_cast<std::uint32_t>(info.st_size));
+      }
+      if (std::strstr(name, ".partial") && partials != UINT32_MAX)
+        ++partials;
+      return true;
+    };
+    using Walk = aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>;
+    const auto status = walk_.step(budget, visit);
+    if (status == Walk::Status::More)
+      return aqsync::ListStatus::More;
+    if (status == Walk::Status::Failed || bad_entry)
+      return fail();
+    if (status == Walk::Status::Stopped) {
+      cancel();
+      return aqsync::ListStatus::Stopped;
+    }
+    if (!legacy_ && config.legacy_directory) {
+      legacy_ = true;
+      struct stat legacy{};
+      int stat_result;
+      int stat_error;
+      {
+        BusLock lock;
+        stat_result = ::stat(config.legacy_directory, &legacy);
+        stat_error = errno;
+      }
+      if (stat_result == 0) {
+        if (!S_ISDIR(legacy.st_mode)) {
+          errno = ENOTDIR;
+          return fail();
+        }
+        // The legacy tree starts on the next step.
+        if (!walk_.begin(io_, config.legacy_directory))
+          return fail();
+        return aqsync::ListStatus::More;
+      }
+      if (stat_error != ENOENT) {
+        errno = stat_error;
+        return fail();
+      }
+    }
+    cancel();
+    partials_seen = partials;
+    return aqsync::ListStatus::Complete;
+  }
+
+  void cancel() {
+    walk_.cancel();
+    legacy_ = false;
+  }
+
+private:
+  aqsync::ListStatus fail() {
+    const int failure = errno;
+    cancel();
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=list errno=%d\n", failure);
+    return aqsync::ListStatus::Failed;
+  }
+
+  aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO> walk_;
+  ArchiveDirectoryIO io_;
+  bool legacy_ = false;
+};
+
+// The radio LIST job's walk. Only the storage worker touches it.
+ArchiveList archive_list;
 
 bool partial_name(const char *name) {
   const std::size_t length = std::strlen(name);
@@ -1027,40 +1100,15 @@ unsigned quarantine_partials() {
   return quarantined;
 }
 
-// Walk every configured archive tree; only a complete scan replaces counters.
-aqsync::ListResult list_all(FileEmitter emit, void *context) {
-  aqsync::ListResult result;
-  result.complete = list_directory(result.partials, emit, context);
-  if (result.complete && config.legacy_directory) {
-    struct stat legacy{};
-    int stat_result;
-    int stat_error;
-    {
-      BusLock lock;
-      stat_result = ::stat(config.legacy_directory, &legacy);
-      stat_error = errno;
-    }
-    if (stat_result == 0) {
-      if (S_ISDIR(legacy.st_mode)) {
-        result.complete =
-            list_directory(result.partials, emit, context,
-                           config.legacy_directory, "legacy-parquet/");
-      } else {
-        errno = ENOTDIR;
-        result.complete = false;
-      }
-    } else if (stat_error != ENOENT) {
-      errno = stat_error;
-      result.complete = false;
-    }
-  }
-  if (result.complete) {
-    partials_seen = result.partials;
-  } else {
-    ++errors;
-    aqlog.printf("PARQUET ERROR operation=list errno=%d\n", errno);
-  }
-  return result;
+// Walks every configured archive tree in one call, for the serial listing
+// and the startup scan. True only for a complete scan.
+bool list_all(FileEmitter emit, void *context, unsigned &partials) {
+  ArchiveList list;
+  constexpr unsigned kBudget = 1024;
+  auto status = list.step(true, kBudget, emit, context, partials);
+  while (status == aqsync::ListStatus::More)
+    status = list.step(false, kBudget, emit, context, partials);
+  return status == aqsync::ListStatus::Complete;
 }
 
 void list_files(bool emit_serial = true) {
@@ -1070,13 +1118,12 @@ void list_files(bool emit_serial = true) {
     auto &files = *static_cast<std::uint32_t *>(context);
     if (files != UINT32_MAX)
       ++files;
+    return true;
   };
-  const aqsync::ListResult result =
-      list_all(emit_serial ? emit_file_serial : count_file,
-               emit_serial ? nullptr : &count);
-  if (!result.complete)
+  unsigned partials = 0;
+  if (!list_all(emit_serial ? emit_file_serial : count_file,
+                emit_serial ? nullptr : &count, partials))
     return;
-  const unsigned partials = result.partials;
   if (!emit_serial) {
     // Startup must not wait for a USB reader to drain an archive-sized dump.
     // Enumeration/stats still run on this worker with the same bus ownership.
@@ -1388,6 +1435,9 @@ void publish_live(const Sample &row) {
 
 // The request being executed; handlers answer on its link, peer and generation.
 const ble::ControlRequest *current_request = nullptr;
+// The ABORT stamp of the request or LIST step being executed, or nullptr. A
+// LIST step has no request, only the job's stamp.
+const aqsync::abort::Tag *current_abort = nullptr;
 
 std::uint32_t link_generation(ble::Link link, std::uint8_t peer = 0) {
   return link == ble::Link::Lan ? lan::connection_generation(peer)
@@ -1421,8 +1471,8 @@ void *wait_context(const std::uint8_t *frame, std::size_t length) {
 bool data_wait_step(void *context) {
   error_wait_step(context);
   return power::keep_waiting(emergency_close,
-                             current_request &&
-                                 aqsync::abort::pending(*current_request),
+                             current_abort &&
+                                 aqsync::abort::pending(*current_abort),
                              context != nullptr, uptime_ms());
 }
 bool lan_deliver(const std::uint8_t *frame, std::size_t length,
@@ -1462,8 +1512,9 @@ bool respond_error(ble::Op op, ble::Error code, const char *detail) {
 // frames are shared across boards and BLE/LAN transports.
 aqsync::ArchiveSession archive_session(
     {nullptr,
-     [](void *, aqsync::FileEmitter emit, void *context) {
-       return list_all(emit, context);
+     [](void *, bool start, unsigned budget, aqsync::FileEmitter emit,
+        void *context, unsigned &partials) {
+       return archive_list.step(start, budget, emit, context, partials);
      },
      [](void *, const char *name, char *path, std::size_t size) {
        return resolve_path(name, path, size);
@@ -1482,7 +1533,8 @@ aqsync::ArchiveSession archive_session(
      [](void *, std::size_t slot) -> void * {
        return writer_state->read_buffers[slot];
      },
-     [](void *) { return std::int64_t(esp_timer_get_time()); }},
+     [](void *) { return std::int64_t(esp_timer_get_time()); },
+     [](void *) { archive_list.cancel(); }},
     {nullptr,
      [](void *, ble::Link link, std::uint8_t peer) {
        return link_generation(link, peer);
@@ -2015,7 +2067,26 @@ void storage_worker(void *) {
     // otherwise drop every later sample. A failed commit leaves writable().
     if (count >= rows_per_group() && storage_ready && governor.writable())
       governed_commit(count, false);
-    if (xQueueReceive(commands, &command, 0) != pdTRUE) {
+    // One bounded LIST step per pass, after samples and commits, so a large
+    // card never holds the worker for a whole walk. The walk's reads stamp
+    // the heartbeat, a stuck peer is bounded by its deliver wait.
+    if (archive_session.listing()) {
+      WorkerState state{count, storage_ready};
+      active_state = &state;
+      current_abort = archive_session.list_tag();
+      archive_session.step(storage_ready);
+      current_abort = nullptr;
+      active_state = nullptr;
+    }
+    if (archive_session.listing()) {
+      // No idle sleep while a walk runs. A request the walk holds back stays
+      // at the head of the queue, together with everything behind it.
+      if (xQueuePeek(commands, &command, 0) != pdTRUE ||
+          (command.source == Command::Source::Control &&
+           archive_session.must_wait_for_list(command.control)))
+        continue;
+      xQueueReceive(commands, &command, 0);
+    } else if (xQueueReceive(commands, &command, 0) != pdTRUE) {
       // Drain pending samples before sleeping. Queue-then-signal also covers
       // an enqueue racing this check: the signal remains pending until taken.
       work::wait_if_idle(samples, worker_wakeup);
@@ -2035,10 +2106,13 @@ void storage_worker(void *) {
     }
     if (command.source == Command::Source::Control) {
       WorkerState state{count, storage_ready};
+      const auto stamp = aqsync::abort::tag(command.control);
       current_request = &command.control;
+      current_abort = &stamp;
       active_state = &state;
       handle_control_request(command.control, state);
       active_state = nullptr;
+      current_abort = nullptr;
       current_request = nullptr;
       continue;
     }
