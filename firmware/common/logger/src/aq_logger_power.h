@@ -1,5 +1,7 @@
 #pragma once
 
+#include "aq_logger_emergency_close.h"
+
 #include <aq_battery_health.h>
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +20,8 @@ struct Change {
 // it, Ok (the cell rose past the low threshold plus hysteresis) or external
 // power. A rebound to Low, an Unknown read or a Settling gauge does not, so
 // a cell hovering near the critical threshold cannot cut many tiny files.
+// Settling also covers a gauge reset seen while running, so a recovery in
+// that window re-arms only once settling ends and Ok is reported.
 class Tracker {
 public:
   static bool rearms(aq::battery::State state) {
@@ -46,6 +50,20 @@ private:
   bool seen_ = false;
   bool armed_ = true;
 };
+
+// The main loop side of report_battery(). A critical entry raises the
+// storage worker's close intent and then wakes the worker. It never touches
+// the card and there is no queue to fill.
+template <class Wake>
+Change report(Tracker &tracker, EmergencyClose &close, aq::battery::State state,
+              Wake &&wake) {
+  const Change change = tracker.observe(state);
+  if (change.finalize) {
+    close.request();
+    wake();
+  }
+  return change;
+}
 
 // `POWER STATE state=<name> mv=<n>` with ` action=finalize` when a
 // finalize was requested. A negative mV prints as `mv=null`. Returns the

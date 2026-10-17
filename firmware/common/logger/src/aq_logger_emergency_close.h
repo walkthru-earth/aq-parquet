@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 // Emergency close of the open Parquet file on a critical battery. Any task
 // may raise the intent, only the storage worker runs it, so the card keeps
@@ -122,5 +124,76 @@ private:
   std::uint8_t attempts_ = 0;
   std::int64_t retry_at_ms_ = 0;
 };
+
+// What one worker pass did.
+struct Pass {
+  bool attempted = false;
+  CloseOutcome outcome = CloseOutcome::NothingOpen;
+  Next next = Next::Done;
+};
+
+// Worker only. Runs the attempt when one is due, against the worker's view
+// of the card.
+template <class Storage>
+Pass service(EmergencyClose &close, Storage &storage, std::int64_t now_ms) {
+  Pass pass;
+  if (!close.due(now_ms))
+    return pass;
+  pass.attempted = true;
+  pass.outcome = attempt_close(storage);
+  pass.next = close.finish(pass.outcome, now_ms);
+  return pass;
+}
+
+// The log line for a pass, after finish(). `files` counts the telemetry
+// files finalized during the attempt, including one a storage probe in
+// writable() finalized before the close itself wrote.
+//   closed     PARQUET FLUSH reason=power-critical result=closed attempt=<n>
+//              files=<f>
+//   retry      PARQUET FLUSH reason=power-critical result=<outcome>
+//              storage=<state> attempt=<n> files=<f> retry_ms=<ms>
+//   gave up    PARQUET ERROR operation=power-close reason=<outcome>
+//              attempts=<n> files=<f> closed=0
+// nothing-open is quiet on a first attempt. After a retry it logs
+// result=nothing-open, because an earlier probe may have closed the file.
+// Returns the length without the NUL, zero when nothing is logged or the
+// line does not fit.
+inline std::size_t format_pass(char *out, std::size_t capacity,
+                               const Pass &pass, const EmergencyClose &close,
+                               const char *storage_state, unsigned files,
+                               std::int64_t now_ms) {
+  if (!out || capacity == 0)
+    return 0;
+  out[0] = '\0';
+  if (!pass.attempted)
+    return 0;
+  const unsigned attempts = close.attempts();
+  const char *outcome = outcome_name(pass.outcome);
+  int written = 0;
+  if (pass.next == Next::GaveUp) {
+    written = std::snprintf(out, capacity,
+                            "PARQUET ERROR operation=power-close reason=%s "
+                            "attempts=%u files=%u closed=0",
+                            outcome, attempts, files);
+  } else if (pass.next == Next::Retry) {
+    written = std::snprintf(
+        out, capacity,
+        "PARQUET FLUSH reason=power-critical result=%s storage=%s "
+        "attempt=%u files=%u retry_ms=%lld",
+        outcome, storage_state ? storage_state : "unknown", attempts, files,
+        static_cast<long long>(close.retry_at_ms() - now_ms));
+  } else if (pass.outcome == CloseOutcome::Closed ||
+             (pass.outcome == CloseOutcome::NothingOpen && attempts > 1)) {
+    written = std::snprintf(out, capacity,
+                            "PARQUET FLUSH reason=power-critical result=%s "
+                            "attempt=%u files=%u",
+                            outcome, attempts, files);
+  }
+  if (written <= 0 || static_cast<std::size_t>(written) >= capacity) {
+    out[0] = '\0';
+    return 0;
+  }
+  return static_cast<std::size_t>(written);
+}
 
 } // namespace aqlogger::power

@@ -94,8 +94,9 @@ struct Hooks {
 bool begin(const Config &, const Hooks &, bool sd_mounted);
 void poll();
 // Main loop only, normally from the collect hook. Prints one POWER STATE
-// line per change and, once per critical entry, queues a finalize of the
-// open file through the storage worker. Never resets or sleeps.
+// line per change and, once per critical entry, raises the emergency close
+// intent and wakes the storage worker, which closes the open file. Never
+// touches the card, resets or sleeps.
 void report_battery(aq::battery::State state, std::int32_t millivolts);
 bool start_links(bool display_detected);
 bool enqueue_request(const ble::ControlRequest &);

@@ -2,6 +2,7 @@
 // task creation are faked; framing, authentication, routing and sockets are
 // not.
 #include "../firmware/common/connectivity/src/wifi_link.cpp"
+#include "aq_logger_transfer_gate.h"
 #include "sync_codec.h"
 #include <esp_netif_sntp.h>
 
@@ -655,6 +656,53 @@ int main() {
   assert(fake_now_us - frozen_at >= 2 * lan::slow_peer_us);
   assert(lan::payload_max(0) == lan::kPayloadMax);
   fake_now_us = frozen_at;
+  // A due battery close ends a data frame's wait at the next step through
+  // the logger's own gate, long before the slow peer bound, while the peer
+  // still never drains.
+  struct CloseWait {
+    aqlogger::power::EmergencyClose close;
+    const std::vector<std::uint8_t> *frame = nullptr;
+    unsigned steps = 0;
+    unsigned raise_at = 0;
+  };
+  std::vector<std::uint8_t> chunk_frame = bulk;
+  chunk_frame[0] = ble::kFrameChunk;
+  const auto gate_step = [](void *context) {
+    auto &wait = *static_cast<CloseWait *>(context);
+    if (++wait.steps == wait.raise_at)
+      wait.close.request();
+    const auto &frame = *wait.frame;
+    return aqlogger::power::keep_waiting(
+        wait.close, false,
+        aqlogger::power::data_frame(frame.data(), frame.size()),
+        fake_now_us / 1000);
+  };
+  for (const unsigned raise_at : {1u, 2u}) {
+    CloseWait wait;
+    wait.frame = &chunk_frame;
+    wait.raise_at = raise_at;
+    const auto started = std::chrono::steady_clock::now();
+    assert(!lan::deliver(chunk_frame.data(), chunk_frame.size(), 0,
+                         lan::connection_generation(0), gate_step, &wait));
+    assert(wait.steps == raise_at);
+    assert(
+        std::chrono::steady_clock::now() - started <
+        std::chrono::milliseconds(raise_at * lan::options.wait_step_ms + 200));
+    assert(fake_now_us == frozen_at);
+  }
+  // A terminal frame is never cut short by the close, only by ABORT or the
+  // slow peer bound.
+  {
+    CloseWait wait;
+    std::vector<std::uint8_t> end_frame = bulk;
+    end_frame[0] = ble::kFrameReadEnd;
+    wait.frame = &end_frame;
+    wait.close.request();
+    assert(aqlogger::power::keep_waiting(
+        wait.close, false,
+        aqlogger::power::data_frame(end_frame.data(), end_frame.size()), 0));
+    assert(!aqlogger::power::keep_waiting(wait.close, true, false, 0));
+  }
   const std::uint8_t to_fast[] = {ble::kFrameClosed, 7};
   assert(lan::enqueue_response(to_fast, sizeof(to_fast), 1) ==
          aqsync::EnqueueResult::Ok);

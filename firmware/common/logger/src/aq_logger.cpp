@@ -8,6 +8,7 @@
 #include "aq_logger_provision.h"
 #include "aq_logger_rotation.h"
 #include "aq_logger_status.h"
+#include "aq_logger_transfer_gate.h"
 #include "aq_logger_watchdog.h"
 #include "aq_logger_watchdog_apply.h"
 #include "aq_logger_work_queue.h"
@@ -1404,20 +1405,30 @@ std::uint16_t link_payload_max() {
 }
 void service_samples_while_waiting();
 // Between ring-space waits: the worker is alive and keeps taking samples. A
-// data frame stops waiting once an ABORT arrived; a terminal ERROR does not,
-// and the slow peer rule bounds that wait.
+// frame stops waiting once an ABORT arrived, and a data frame also once a
+// critical battery close is due (aq_logger_transfer_gate.h). A terminal
+// ERROR does not, and the slow peer rule bounds that wait.
 bool error_wait_step(void *) {
   stamp_heartbeat();
   service_samples_while_waiting();
   return true;
 }
+// The wait context marks a data frame, null for any other frame.
+void *wait_context(const std::uint8_t *frame, std::size_t length) {
+  static bool data_tag = true;
+  return power::data_frame(frame, length) ? &data_tag : nullptr;
+}
 bool data_wait_step(void *context) {
   error_wait_step(context);
-  return !(current_request && aqsync::abort::pending(*current_request));
+  return power::keep_waiting(emergency_close,
+                             current_request &&
+                                 aqsync::abort::pending(*current_request),
+                             context != nullptr, uptime_ms());
 }
 bool lan_deliver(const std::uint8_t *frame, std::size_t length,
                  std::uint8_t peer, std::uint32_t generation) {
-  return lan::deliver(frame, length, peer, generation, data_wait_step, nullptr);
+  return lan::deliver(frame, length, peer, generation, data_wait_step,
+                      wait_context(frame, length));
 }
 bool lan_error(ble::Op op, ble::Error code, const char *detail,
                std::uint8_t peer, std::uint32_t generation) {
@@ -1436,7 +1447,7 @@ bool respond(const std::uint8_t *frame, std::size_t length) {
              : ble::deliver(frame, length,
                             current_request ? current_request->link_generation
                                             : 0,
-                            data_wait_step, nullptr);
+                            data_wait_step, wait_context(frame, length));
 }
 bool respond_error(ble::Op op, ble::Error code, const char *detail) {
   return current_request && current_request->link == ble::Link::Lan
@@ -1485,14 +1496,12 @@ aqsync::ArchiveSession archive_session(
        // A due critical battery close stops a LIST or READ at its next data
        // frame. The session ends it with the existing busy error and the
        // client retries after the worker has closed the file.
-       if (length &&
-           (frame[0] == ble::kFrameChunk || frame[0] == ble::kFrameFile) &&
-           emergency_close.preempt(uptime_ms()))
+       if (power::refuses_frame(emergency_close, frame, length, uptime_ms()))
          return false;
        return link == ble::Link::Lan
                   ? lan_deliver(frame, length, peer, generation)
                   : ble::deliver(frame, length, generation, data_wait_step,
-                                 nullptr);
+                                 wait_context(frame, length));
      },
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         ble::Op op, ble::Error code, const char *detail) {
@@ -1595,10 +1604,16 @@ void publish_storage(storage::State previous) {
 }
 
 // Every telemetry write passes here so the governor sees each result. A
-// failure never retries in place; the probe schedule owns recovery.
-bool governed_commit(std::size_t &count, bool finalize) {
+// failure never retries in place; the probe schedule owns recovery. The
+// result is false when the write or the free space reading failed.
+// `written`, when given, reports the write alone, so a caller can tell a
+// good finalize from a card that then failed to report its free space.
+bool governed_commit(std::size_t &count, bool finalize,
+                     bool *written = nullptr) {
   const auto previous = governor.state();
   bool ok = commit(count, finalize);
+  if (written)
+    *written = ok;
   std::uint64_t free_bytes = 0;
   if (ok && measure_free(free_bytes)) {
     governor.observe_free(free_bytes, uptime_seconds());
@@ -1735,13 +1750,32 @@ bool storage_writable(std::size_t &count, bool &storage_ready) {
   return storage_ready && governor.writable();
 }
 
-// The worker's view of the card for power::attempt_close().
+// The worker's view of the card for power::attempt_close(). writable()
+// requests a storage probe. In Retry with a remount hook that probe may
+// finalize the open file, remount the card and commit the waiting rows to a
+// new file, and the remount marks every open READ handle for the recheck
+// (archive_sync.h). finalize() then closes whatever is open. It reports the
+// write alone, so a free space reading that fails after a good finalize
+// leaves the governor in Retry but is not logged as a failed close.
+// The worker's view of the card for attempt_close(). In Retry, writable()
+// runs the governor probe, which finalizes the open telemetry file,
+// remounts, reports remounted() and mounted() to the archive session and
+// commits the buffered rows to a new file. Open READ handles are rechecked
+// before their next CHUNK (#41). finalize() then closes whatever is left,
+// and the caller counts every finalized file, so result=closed with files=1
+// can mean the probe already closed it. finalize() reports only the write,
+// a failed free space reading after a good finalize still counts as closed
+// while the governor records the failure.
 struct CloseStorage {
   std::size_t &count;
   bool &storage_ready;
   bool has_data() const { return count || writer_state->telemetry.open(); }
   bool writable() { return storage_writable(count, storage_ready); }
-  bool finalize() { return governed_commit(count, true); }
+  bool finalize() {
+    bool written = false;
+    governed_commit(count, true, &written);
+    return written;
+  }
 };
 
 // `parquet flush`. Finishes the open file with the buffered rows. Never
@@ -1758,32 +1792,20 @@ void flush_batch(std::size_t &count, bool &storage_ready) {
 
 // The critical battery close, run at the top of each worker pass so it
 // never waits behind queued commands. Rows already buffered survive a
-// brownout, rows still queued go to the next file. Nothing to close is a
-// quiet success. Busy or failed attempts back off until the card recovers
-// or the retry bound is spent, which is logged as a preservation failure.
+// brownout, rows still queued go to the next file. Busy or failed attempts
+// back off until the card recovers or the retry bound is spent. The pass
+// and its log line live in aq_logger_emergency_close.h. `files` counts every
+// file finalized during the attempt, including one the storage probe closed.
 void service_emergency_close(std::size_t &count, bool &storage_ready) {
   const auto now = uptime_ms();
-  if (!emergency_close.due(now))
-    return;
+  const std::uint32_t finalized_before = finalized.load();
   CloseStorage storage{count, storage_ready};
-  const auto outcome = power::attempt_close(storage);
-  const auto next = emergency_close.finish(outcome, now);
-  const unsigned attempts = emergency_close.attempts();
-  if (next == power::Next::GaveUp) {
-    aqlog.printf("PARQUET ERROR operation=power-close reason=%s attempts=%u "
-                 "preserved=0\n",
-                 power::outcome_name(outcome), attempts);
-  } else if (next == power::Next::Retry) {
-    aqlog.printf("PARQUET FLUSH reason=power-critical result=%s storage=%s "
-                 "attempt=%u retry_ms=%lld\n",
-                 power::outcome_name(outcome),
-                 storage::state_name(governor.state()), attempts,
-                 static_cast<long long>(emergency_close.retry_at_ms() - now));
-  } else if (outcome == power::CloseOutcome::Closed) {
-    aqlog.printf("PARQUET FLUSH reason=power-critical result=closed "
-                 "attempt=%u\n",
-                 attempts);
-  }
+  const auto pass = power::service(emergency_close, storage, now);
+  char line[160];
+  if (power::format_pass(line, sizeof(line), pass, emergency_close,
+                         storage::state_name(governor.state()),
+                         unsigned(finalized.load() - finalized_before), now))
+    aqlog.println(line);
 }
 
 struct WorkerState {
@@ -2766,13 +2788,11 @@ bool enqueue_request(const ble::ControlRequest &request) {
 }
 
 void report_battery(aq::battery::State state, std::int32_t millivolts) {
-  const auto change = power_tracker.observe(state);
   // The worker owns the close. Raising the intent never touches the card.
-  if (change.finalize) {
-    emergency_close.request();
+  const auto change = power::report(power_tracker, emergency_close, state, [] {
     if (worker_wakeup)
       xSemaphoreGive(worker_wakeup);
-  }
+  });
   if (!change.changed)
     return;
   char line[80];

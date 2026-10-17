@@ -21,6 +21,7 @@ def main() -> None:
             "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
             "-I", str(root / "firmware/common/src"), "-I", str(root / "firmware/common/runtime/src"),
             "-I", str(root / "firmware/common/connectivity/src"),
+            "-I", str(root / "firmware/common/logger/src"),
             str(root / "tools/test_archive_sync.cpp"),
             str(root / "firmware/common/connectivity/src/archive_sync.cpp"),
             "-o", str(executable),
@@ -29,7 +30,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable), directory], check=True)
-    print("Shared BLE/LAN archive framing, bounds, generations, ABORT of LIST and READ, stale markers, 70000-entry u32 LIST_END, persistent read descriptors, lazy reopen, remount recheck, EMFILE and read-only tests passed")
+    print("Shared BLE/LAN archive framing, bounds, generations, ABORT of LIST and READ, stale markers, 70000-entry u32 LIST_END, persistent read descriptors, lazy reopen, remount recheck, battery close preempt of LIST and READ with the Retry remount, EMFILE and read-only tests passed")
 
 
 if __name__ == "__main__":

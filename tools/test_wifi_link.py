@@ -21,6 +21,7 @@ def main() -> None:
             "-I", str(root / "firmware/common/runtime/src"),
             "-I", str(root / "firmware/common/src"),
             "-I", str(root / "firmware/common/connectivity/src"),
+            "-I", str(root / "firmware/common/logger/src"),
             str(root / "tools/test_wifi_link.cpp"),
             str(root / "firmware/common/runtime/src/debug_log.cpp"),
             str(root / "firmware/common/connectivity/src/network_time.cpp"),
@@ -32,7 +33,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation, the worker wait bound and ABORT stamping passed")
+    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation, the worker wait bound, the battery close wait preempt and ABORT stamping passed")
 
 
 if __name__ == "__main__":

@@ -237,6 +237,100 @@ void cut_before_ack() {
   FakeStorage card;
   assert(close.finish(attempt_close(card), 0) == Next::Done);
 }
+
+// The report_battery() path. A critical entry raises the intent and wakes
+// the worker once, and a repeat does neither, so the main loop never touches
+// the card.
+void report_wakes_worker() {
+  Tracker tracker;
+  EmergencyClose close;
+  int wakes = 0;
+  const auto wake = [&] { ++wakes; };
+  assert(!aqlogger::power::report(tracker, close, State::Ok, wake).finalize);
+  assert(wakes == 0 && !close.preempt(0));
+  assert(
+      aqlogger::power::report(tracker, close, State::Critical, wake).finalize);
+  assert(wakes == 1 && close.preempt(0));
+  assert(
+      !aqlogger::power::report(tracker, close, State::Critical, wake).finalize);
+  assert(wakes == 1);
+  assert(close.due(0) && close.finish(CloseOutcome::Closed, 0) == Next::Done);
+  // Settling never re-arms, Ok does.
+  aqlogger::power::report(tracker, close, State::Settling, wake);
+  aqlogger::power::report(tracker, close, State::Critical, wake);
+  assert(wakes == 1 && !close.preempt(1));
+  aqlogger::power::report(tracker, close, State::Ok, wake);
+  aqlogger::power::report(tracker, close, State::Critical, wake);
+  assert(wakes == 2 && close.preempt(1));
+}
+
+// The worker pass and its serial line, as service_emergency_close() runs it.
+// files counts telemetry files finalized during the attempt.
+void pass_lines() {
+  using aqlogger::power::format_pass;
+  using aqlogger::power::Pass;
+  using aqlogger::power::service;
+  char line[160];
+  EmergencyClose close;
+  FakeStorage card;
+  // Not due, no attempt and no line.
+  Pass pass = service(close, card, 0);
+  assert(!pass.attempted && card.probes == 0);
+  assert(format_pass(line, sizeof(line), pass, close, "ready", 0, 0) == 0);
+  // A first attempt with nothing open is quiet.
+  card.data = false;
+  close.request();
+  pass = service(close, card, 0);
+  assert(pass.attempted && pass.outcome == CloseOutcome::NothingOpen &&
+         pass.next == Next::Done);
+  assert(format_pass(line, sizeof(line), pass, close, "ready", 0, 0) == 0 &&
+         line[0] == '\0');
+  // Closed on the first attempt.
+  card.data = true;
+  close.request();
+  pass = service(close, card, 100);
+  assert(pass.outcome == CloseOutcome::Closed && pass.next == Next::Done);
+  format_pass(line, sizeof(line), pass, close, "ready", 1, 100);
+  assert(std::strcmp(line, "PARQUET FLUSH reason=power-critical "
+                           "result=closed attempt=1 files=1") == 0);
+  // Storage in Retry. The probe inside writable() may already finalize the
+  // telemetry file, and files reports it on the retry line.
+  card.data = true;
+  card.can_write = false;
+  close.request();
+  pass = service(close, card, 200);
+  assert(pass.outcome == CloseOutcome::BusyRetry && pass.next == Next::Retry);
+  format_pass(line, sizeof(line), pass, close, "retry", 1, 200);
+  assert(std::strcmp(line, "PARQUET FLUSH reason=power-critical "
+                           "result=busy-retry storage=retry attempt=1 "
+                           "files=1 retry_ms=1000") == 0);
+  // Backoff not over, no attempt.
+  assert(!service(close, card, 1199).attempted);
+  // Nothing left after that probe. A later nothing-open logs, so the file
+  // the probe closed is not reported as lost.
+  card.data = false;
+  pass = service(close, card, 1200);
+  assert(pass.outcome == CloseOutcome::NothingOpen && pass.next == Next::Done);
+  format_pass(line, sizeof(line), pass, close, "ready", 0, 1200);
+  assert(std::strcmp(line, "PARQUET FLUSH reason=power-critical "
+                           "result=nothing-open attempt=2 files=0") == 0);
+  // Giving up reports closed=0 and any file a probe finalized meanwhile.
+  RetryPolicy one;
+  one.max_attempts = 1;
+  EmergencyClose last(one);
+  FakeStorage broken;
+  broken.commit_ok = false;
+  last.request();
+  pass = service(last, broken, 0);
+  assert(pass.outcome == CloseOutcome::Failed && pass.next == Next::GaveUp);
+  format_pass(line, sizeof(line), pass, last, "ready", 0, 0);
+  assert(std::strcmp(line, "PARQUET ERROR operation=power-close "
+                           "reason=failed attempts=1 files=0 closed=0") == 0);
+  // A buffer too small for the line yields nothing rather than a cut line.
+  char tiny[16];
+  assert(format_pass(tiny, sizeof(tiny), pass, last, "ready", 0, 0) == 0 &&
+         tiny[0] == '\0');
+}
 } // namespace
 
 int main() {
@@ -248,5 +342,7 @@ int main() {
   gives_up();
   preempts_transfers();
   cut_before_ack();
+  report_wakes_worker();
+  pass_lines();
   return 0;
 }

@@ -27,8 +27,8 @@ def main() -> None:
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
     print("Logger power tracker: one finalize per discharge, Ok or external "
-          "power re-arms, emergency close outcomes, retry, preempt and "
-          "POWER STATE lines passed")
+          "power re-arms, the report wake, emergency close outcomes, retry, "
+          "preempt, close pass lines and POWER STATE lines passed")
 
 
 if __name__ == "__main__":

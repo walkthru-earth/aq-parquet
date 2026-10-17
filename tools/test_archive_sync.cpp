@@ -1,4 +1,5 @@
 #include "abort_signal.h"
+#include "aq_logger_transfer_gate.h"
 #include "archive_sync.h"
 #include "sync_codec.h"
 
@@ -113,6 +114,11 @@ struct Fixture {
   ble::Link abort_link = ble::Link::Ble;
   std::uint8_t abort_peer = 0;
   std::vector<std::string> logs;
+  // The logger's battery close gate, run in front of the transport as the
+  // firmware deliver hook does. The intent is raised once raise_close_after
+  // frames were delivered, so 0 raises it before the first frame.
+  aqlogger::power::EmergencyClose *close = nullptr;
+  std::size_t raise_close_after = 0;
 
   explicit Fixture(const char *path) : directory(path), bytes(20000) {
     for (std::size_t i = 0; i < bytes.size(); ++i)
@@ -208,6 +214,11 @@ struct Fixture {
                std::uint32_t generation, const std::uint8_t *data,
                std::size_t size) {
               auto &f = *static_cast<Fixture *>(ctx);
+              if (f.close && f.frames.size() == f.raise_close_after)
+                f.close->request();
+              if (f.close &&
+                  aqlogger::power::refuses_frame(*f.close, data, size, 0))
+                return false;
               if (generation != f.generation[slot(link, peer)])
                 return false;
               f.frames.push_back({link, peer, {data, data + size}});
@@ -784,6 +795,46 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   expect_error(f, ble::kErrBadHandle);
   assert(f.checks == ++checks);
   write_file(path, f.bytes);
+
+  // A close raised while a READ is open, with storage in Retry. The READ
+  // ends busy at its first CHUNK, then the worker's writable() probe
+  // finalizes, remounts and reports remounted() and mounted(). The retried
+  // READ rechecks before any byte instead of serving the old stream, so
+  // unchanged bytes serve and a changed file ends the handle.
+  for (const bool changed : {false, true}) {
+    aqlogger::power::EmergencyClose close;
+    handle = open(f, session);
+    assert(f.checks == ++checks);
+    f.clear();
+    f.close = &close;
+    f.raise_close_after = 0;
+    session.handle(read(f, handle, 0, 3000), true);
+    assert(f.errors.empty() && f.frames.size() == 1);
+    {
+      const auto &end = f.frames[0].bytes;
+      assert(end.size() == 8 && end[0] == ble::kFrameReadEnd &&
+             get_u32(end.data() + 3) == 0 && end[7] == ble::kErrBusy);
+    }
+    assert(f.checks == checks);
+    assert(close.due(0));
+    remount(session); // the Retry probe inside writable()
+    assert(close.finish(aqlogger::power::CloseOutcome::Closed, 0) ==
+           aqlogger::power::Next::Done);
+    f.close = nullptr;
+    if (changed) {
+      write_file(path, other_parquet(f.bytes.size()));
+      expect_bad_handle_read(f, session, handle);
+      assert(f.checks == ++checks);
+      write_file(path, f.bytes);
+    } else {
+      f.clear();
+      session.handle(read(f, handle, 0, 3000), true);
+      verify_read(f, handle, 0, 3000, 512);
+      assert(f.checks == ++checks);
+      assert(f.logs.size() == 2 &&
+             f.logs[0].find(" result=same check_us=") != std::string::npos);
+    }
+  }
   session.close();
   assert(descriptor_count() == idle_descriptors);
 }
@@ -848,6 +899,34 @@ int main(int argc, char **argv) {
          f.frames.back().bytes.size() == 15 &&
          get_u32(f.frames.back().bytes.data() + 1) == 70000);
   f.list_repeats = 1;
+  // A critical battery close raised mid LIST stops it at the next FILE
+  // through the logger's gate, with the same terminal ERROR busy. The worker
+  // runs the close, then a retried LIST completes.
+  {
+    aqlogger::power::EmergencyClose close;
+    f.clear();
+    f.list_repeats = 3;
+    f.close = &close;
+    f.raise_close_after = 1;
+    session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
+    assert(f.frames.size() == 1 && f.frames[0].bytes[0] == ble::kFrameFile);
+    assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpList &&
+           f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].detail == "refused" &&
+           f.errors[0].link == ble::Link::Lan);
+    const unsigned listed_before = f.listed;
+    assert(close.due(0) && close.finish(aqlogger::power::CloseOutcome::Closed,
+                                        0) == aqlogger::power::Next::Done);
+    f.clear();
+    f.raise_close_after = static_cast<std::size_t>(-1);
+    session.handle(request(f, ble::kOpList, ble::Link::Lan), true);
+    assert(f.frames.size() == 4 && f.errors.empty() &&
+           f.listed == listed_before + 1 &&
+           f.frames.back().bytes[0] == ble::kFrameListEnd);
+    f.close = nullptr;
+    f.raise_close_after = 0;
+    f.list_repeats = 1;
+  }
 
   auto handle = open(f, session);
   f.clear();
