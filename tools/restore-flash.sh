@@ -25,7 +25,7 @@ case "${board}:$(basename "${image}")" in
   m5stack-cores3:m5stack-cores3-flash-*.bin|m5stack-cores3:cores3-flash-*.bin|waveshare-sim7670g-v2:waveshare-sim7670g-v2-flash-*.bin) ;;
   *) printf 'backup name does not match board %s: %s\n' "${board}" "${image}" >&2; exit 2 ;;
 esac
-if [[ ! -f "${image}" || "$(stat -f %z "${image}")" != 16777216 ]]; then
+if [[ ! -f "${image}" || "$(wc -c <"${image}" | tr -d " ")" != 16777216 ]]; then
   printf 'expected a complete 16777216-byte image: %s\n' "${image}" >&2
   exit 2
 fi

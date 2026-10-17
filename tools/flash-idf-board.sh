@@ -16,7 +16,7 @@ case "$(basename "${backup}")" in
   "${backup_board}"-flash-*.bin) ;;
   *) printf 'backup does not match selected board\n' >&2; exit 2 ;;
 esac
-if [[ "$(stat -f %z "${backup}")" != 16777216 ]]; then
+if [[ "$(wc -c <"${backup}" | tr -d " ")" != 16777216 ]]; then
   printf 'backup must be exactly 16777216 bytes\n' >&2; exit 2
 fi
 case "${board}/${variant}" in
