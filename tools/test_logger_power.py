@@ -1,4 +1,4 @@
-"""Exercise the shared logger power tracker and POWER STATE line formatter."""
+"""Exercise the logger power tracker, emergency close intent and POWER STATE lines."""
 from __future__ import annotations
 
 import argparse
@@ -26,8 +26,9 @@ def main() -> None:
                         "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Logger power tracker: one finalize per discharge, only Ok or "
-          "external power re-arms, POWER STATE lines and exact capacity passed")
+    print("Logger power tracker: one finalize per discharge, Ok or external "
+          "power re-arms, emergency close outcomes, retry, preempt and "
+          "POWER STATE lines passed")
 
 
 if __name__ == "__main__":
