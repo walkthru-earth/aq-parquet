@@ -59,6 +59,38 @@
         }
       ]
     },
+    "d0d0129440e04108d8ca1f9b9555f1b45316ee0ccf3af0fcf7c3a88c8c0796b8": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v5 before the LIVE key fold, first v2.7 build from PR #24 (0a568bf through 9698536, and again at ae96634 and b439711). The digest does not cover the LIVE keys. Its live_key switch gives the same key set and order as 67688d0f.",
+      "builds": [
+        {
+          "commit": "9698536",
+          "firmware": "idf-waveshare-parquet-v2.7",
+          "emitter": "board field table through aqlogger::format_live, keys from the live_key switch in telemetry_contract.h",
+          "keys": [
+            "seq",
+            "mono",
+            "utc",
+            "pms",
+            "c1",
+            "c25",
+            "c10",
+            "pm1",
+            "pm25",
+            "pm10",
+            "n03",
+            "n05",
+            "n1",
+            "n25",
+            "t",
+            "rh",
+            "bat",
+            "pct",
+            "bstate"
+          ],
+          "note": "Reconstructed from source. An iPhone build paired with this image and showed live readings (opensensor-space-mobile #90)."
+        }
+      ]
+    },
     "67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff": {
       "note": "Dictionary waveshare-sim7670g-telemetry-v5 from PR #24. The LIVE key is the last FIELD argument, so this digest covers the key map.",
       "builds": [
