@@ -13,11 +13,18 @@ struct Change {
   bool finalize = false; // close the open file once for this critical entry
 };
 
-// Tracks reported battery states. A critical entry asks for one finalize.
-// Unknown readings do not re-arm it, so a flapping gauge read cannot turn
-// one low cell into many tiny files. Any other state re-arms it.
+// Tracks reported battery states. A critical entry asks for one finalize,
+// so one discharge closes the open file once. Only a real recovery re-arms
+// it, Ok (the cell rose past the low threshold plus hysteresis) or external
+// power. A rebound to Low, an Unknown read or a Settling gauge does not, so
+// a cell hovering near the critical threshold cannot cut many tiny files.
 class Tracker {
 public:
+  static bool rearms(aq::battery::State state) {
+    using aq::battery::State;
+    return state == State::Ok || state == State::ExternalPowerLikely;
+  }
+
   Change observe(aq::battery::State state) {
     using aq::battery::State;
     Change change;
@@ -25,7 +32,7 @@ public:
     if (state == State::Critical) {
       change.finalize = armed_;
       armed_ = false;
-    } else if (state != State::Unknown) {
+    } else if (rearms(state)) {
       armed_ = true;
     }
     seen_ = true;

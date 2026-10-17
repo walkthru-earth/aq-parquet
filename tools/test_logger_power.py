@@ -26,8 +26,8 @@ def main() -> None:
                         "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Logger power tracker: one finalize per critical entry, unknown does "
-          "not re-arm, POWER STATE lines and exact capacity passed")
+    print("Logger power tracker: one finalize per discharge, only Ok or "
+          "external power re-arms, POWER STATE lines and exact capacity passed")
 
 
 if __name__ == "__main__":

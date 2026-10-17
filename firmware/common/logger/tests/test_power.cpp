@@ -28,14 +28,27 @@ void tracker() {
   assert(tracker.observe(State::Unknown).changed);
   change = tracker.observe(State::Critical);
   assert(change.changed && !change.finalize);
-  // Recovery re-arms, the next entry finalizes again.
+  // A rebound to Low is not a recovery. One discharge closes once (#28).
+  for (int i = 0; i < 3; ++i) {
+    assert(!tracker.observe(State::Low).finalize);
+    change = tracker.observe(State::Critical);
+    assert(change.changed && !change.finalize);
+  }
+  // A settling gauge does not re-arm either.
+  assert(!tracker.observe(State::Settling).finalize);
+  assert(!tracker.observe(State::Critical).finalize);
+  // Ok, past the low threshold plus hysteresis, re-arms.
+  assert(!tracker.observe(State::Ok).finalize);
   assert(!tracker.observe(State::Low).finalize);
   assert(tracker.observe(State::Critical).finalize);
+  // External power (a charge session) re-arms.
   assert(!tracker.observe(State::ExternalPowerLikely).finalize);
   assert(tracker.observe(State::Critical).finalize);
-  assert(!tracker.observe(State::Settling).finalize);
-  assert(tracker.observe(State::Critical).finalize);
   assert(tracker.last() == State::Critical);
+  assert(Tracker::rearms(State::Ok) &&
+         Tracker::rearms(State::ExternalPowerLikely));
+  assert(!Tracker::rearms(State::Low) && !Tracker::rearms(State::Critical) &&
+         !Tracker::rearms(State::Unknown) && !Tracker::rearms(State::Settling));
 
   // Booting straight into critical finalizes once.
   Tracker boot;
