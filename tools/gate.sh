@@ -6,6 +6,11 @@
 # a LAN peer, the network or the ESP-IDF SDK are deliberately absent. The SDK
 # builds run in the CI board job instead.
 #
+# Each task runs under GNU timeout from the pixi coreutils pin. A task that
+# outlives AQ_GATE_TASK_TIMEOUT seconds (default 300) is stopped, reported as
+# TIMEOUT by name, and killed 10 s later if it ignores SIGTERM. Anything left
+# in the task's process group is then killed, so no stray process outlives it.
+#
 # Usage: tools/gate.sh [--keep-going]
 #   --keep-going  run every task and report all failures at the end
 set -uo pipefail
@@ -48,6 +53,7 @@ tasks=(
   # Logger lifecycle, storage and persistence
   "debug-log-test"
   "logger-work-queue-test"
+  "logger-watchdog-test"
   "logger-status-test"
   "logger-rotation-test"
   "logger-directory-test"
@@ -61,6 +67,18 @@ tasks=(
   "backup-test"
 )
 
+task_timeout=${AQ_GATE_TASK_TIMEOUT:-300}
+group=""
+# The task group is not the terminal's foreground group, so Ctrl-C and a CI
+# cancel reach only this script. Pass them on to the running task.
+stop() {
+  if [[ -n "${group}" ]]; then
+    kill -TERM -- "-${group}" 2>/dev/null || true
+  fi
+  printf '\n!!! gate interrupted\n' >&2
+  exit 130
+}
+trap stop INT TERM
 passed=()
 failed=()
 started=${SECONDS}
@@ -68,11 +86,24 @@ for entry in "${tasks[@]}"; do
   read -r -a task <<<"${entry}"
   printf '\n==> pixi run %s\n' "${entry}"
   task_start=${SECONDS}
-  if pixi run "${task[@]}"; then
+  # GNU timeout leads its own process group, so its PID is the group ID.
+  timeout --kill-after=10 "${task_timeout}" pixi run "${task[@]}" &
+  group=$!
+  wait "${group}"
+  status=$?
+  # timeout exits as soon as pixi does. A grandchild forked while SIGTERM was
+  # in flight would outlive it, so sweep the whole group before moving on.
+  kill -KILL -- "-${group}" 2>/dev/null || true
+  if [[ ${status} -eq 0 ]]; then
     passed+=("${entry} ($((SECONDS - task_start))s)")
   else
-    failed+=("${entry}")
-    printf '\n!!! FAILED: pixi run %s\n' "${entry}" >&2
+    # GNU timeout exits 124 after SIGTERM and 137 after the follow-up SIGKILL.
+    if [[ ${status} -eq 124 || ${status} -eq 137 ]]; then
+      failed+=("${entry} (TIMEOUT after ${task_timeout}s)")
+    else
+      failed+=("${entry} (exit ${status})")
+    fi
+    printf '\n!!! FAILED: pixi run %s, %s\n' "${entry}" "${failed[${#failed[@]}-1]}" >&2
     if [[ ${keep_going} -eq 0 ]]; then
       break
     fi
