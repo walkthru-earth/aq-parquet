@@ -53,6 +53,10 @@ static_assert(aq::Max17048::decode(0xd200, 0x6400).millivolts == 4200);
 static_assert(aq::Max17048::decode(0xd200, 0x6400).percent == 100);
 static_assert(aq::Max17048::decode(0xd200, 0x6400).valid());
 static_assert(!aq::Max17048::decode(0, 0x5000).valid());
+static_assert(!aq::Max17048::decode(0, 0x5000).vcell_valid());
+static_assert(aq::Max17048::decode(0, 0x5000).soc_valid());
+static_assert(aq::Max17048::decode(0xd200, 0xffff).vcell_valid());
+static_assert(!aq::Max17048::decode(0xd200, 0xffff).soc_valid());
 
 void decode_bounds() {
   using aq::Max17048;
@@ -73,7 +77,18 @@ void decode_bounds() {
   assert(!Max17048::decode(0xd200, 120 * 256 + 1).valid());
   assert(!Max17048::decode(0xd200, 0xffff).valid());
   assert(Max17048::decode(0xd200, 0x00ff).percent == 0); // truncated
-  assert(!Max17048::decode(0xd200, 0x6400).io_error);
+  const auto both = Max17048::decode(0xd200, 0x6400);
+  assert(both.vcell_ok && both.soc_ok && both.vcell_plausible &&
+         both.soc_plausible);
+  // Plausibility is per field. A bad SOC keeps a good VCELL and the reverse.
+  const auto bad_soc = Max17048::decode(0xa500, 0xffff); // 3300 mV
+  assert(bad_soc.vcell_valid() && bad_soc.millivolts == 3300 &&
+         !bad_soc.soc_valid() && bad_soc.soc_ok && !bad_soc.soc_plausible &&
+         !bad_soc.valid());
+  const auto bad_vcell = Max17048::decode(57613, 0x4b80);
+  assert(!bad_vcell.vcell_valid() && bad_vcell.vcell_ok &&
+         bad_vcell.soc_valid() && bad_vcell.percent == 75 &&
+         !bad_vcell.valid());
 }
 
 void bus_reads() {
@@ -89,23 +104,49 @@ void bus_reads() {
   std::uint16_t version = 0;
   assert(gauge.read_version(version) && version == 0x0012);
 
-  // A failed VCELL read skips SOC. A failed SOC read keeps the VCELL word.
+  // Each basic register fails on its own. SOC is still read after a failed
+  // VCELL, and a failed SOC keeps the decoded VCELL.
   bus.reads.clear();
   bus.fail_reg = aq::Max17048::kRegVcell;
   const auto no_vcell = gauge.read();
-  assert(no_vcell.io_error && !no_vcell.valid());
-  assert((bus.reads == std::vector<std::uint8_t>{0x02}));
+  assert(!no_vcell.vcell_ok && !no_vcell.vcell_valid() && !no_vcell.valid());
+  assert(no_vcell.raw_vcell == 0 && no_vcell.millivolts == 0);
+  assert(no_vcell.soc_valid() && no_vcell.raw_soc == 0x3280 &&
+         no_vcell.percent == 50);
+  assert((bus.reads == std::vector<std::uint8_t>{0x02, 0x04}));
   bus.fail_reg = aq::Max17048::kRegSoc;
   const auto no_soc = gauge.read();
-  assert(no_soc.io_error && !no_soc.valid() && no_soc.raw_vcell == 0xd200 &&
-         no_soc.millivolts == 0 && no_soc.percent == 0);
+  assert(no_soc.vcell_valid() && no_soc.raw_vcell == 0xd200 &&
+         no_soc.millivolts == 4200);
+  assert(!no_soc.soc_ok && !no_soc.soc_valid() && !no_soc.valid() &&
+         no_soc.raw_soc == 0 && no_soc.percent == 0);
+  bus.fail_reg = -1;
+  bus.fail_mask =
+      (1u << aq::Max17048::kRegVcell) | (1u << aq::Max17048::kRegSoc);
+  const auto neither = gauge.read();
+  assert(!neither.vcell_ok && !neither.soc_ok && !neither.valid());
+  bus.fail_mask = 0;
+  // SOC 0xFFFF reads fine but is implausible. VCELL stays valid.
+  bus.registers[aq::Max17048::kRegSoc] = 0xffff;
+  const auto wild_soc = gauge.read();
+  assert(wild_soc.vcell_valid() && wild_soc.millivolts == 4200 &&
+         wild_soc.soc_ok && !wild_soc.soc_valid() &&
+         wild_soc.raw_soc == 0xffff);
+  bus.registers[aq::Max17048::kRegSoc] = 0x3280;
+  // A VCELL word outside the range keeps a good SOC.
+  bus.registers[aq::Max17048::kRegVcell] = 0xffff;
+  const auto wild_vcell = gauge.read();
+  assert(wild_vcell.vcell_ok && !wild_vcell.vcell_valid() &&
+         wild_vcell.soc_valid() && wild_vcell.percent == 50);
+  bus.registers[aq::Max17048::kRegVcell] = 0xd200;
   bus.fail_reg = aq::Max17048::kRegVersion;
   version = 0x7777;
   assert(!gauge.read_version(version) && version == 0x7777);
 
   // Unset IO never dereferences a null callback.
   const aq::Max17048 unwired{aq::Max17048Io{}};
-  assert(unwired.read().io_error);
+  const auto none = unwired.read();
+  assert(!none.vcell_ok && !none.soc_ok && !none.valid());
   assert(!unwired.read_version(version));
 }
 void extended_reads() {
@@ -119,6 +160,8 @@ void extended_reads() {
   bus.registers[Max17048::kRegValrt] = 0x00ff;
   bus.registers[Max17048::kRegCrate] = 0x0005;
   bus.registers[Max17048::kRegStatus] = 0x0102;
+  bus.registers[Max17048::kRegVcell] = 0xd200;
+  bus.registers[Max17048::kRegSoc] = 0x3280;
   const Max17048 gauge{bus.callbacks()};
   auto ext = gauge.read_extended();
   assert((bus.reads ==
@@ -177,6 +220,9 @@ void extended_reads() {
       assert(!partial.hibernating() && partial.mode.raw == 0);
     if (reg == Max17048::kRegStatus)
       assert(!partial.status_bit(Ext::kStatusRi));
+    // A failed diagnostic register never nulls mV or percent.
+    const auto basic = gauge.read();
+    assert(basic.valid() && basic.millivolts == 4200 && basic.percent == 50);
   }
   bus.fail_mask = 0;
 

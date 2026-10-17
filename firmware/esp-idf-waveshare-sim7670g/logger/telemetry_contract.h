@@ -204,24 +204,28 @@ inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now,
 
 struct GaugeSnapshot {
   bool battery_installed = false; // explicit owner configuration only
-  bool read_ok = false;
+  bool vcell_ok = false;          // VCELL read and in range
+  bool soc_ok = false;            // SOC read and in range
   std::int32_t millivolts = 0;
   std::int32_t percent = 0; // whole percent, truncated and capped at 100
 };
 // Decoding and range checks live in the shared aq::Max17048 driver. This
 // board only adds the explicit battery-installed configuration.
 inline GaugeSnapshot gauge_snapshot(const aq::Max17048Reading &reading) {
-  return {true, reading.valid(), reading.millivolts, reading.percent};
+  return {true, reading.vcell_valid(), reading.soc_valid(), reading.millivolts,
+          reading.percent};
 }
+// gauge_status 2 needs both words. A good VCELL with a failed or implausible
+// SOC still writes battery_mv under status 1 and leaves battery_percent null.
 inline void apply_gauge(Sample &row, const GaugeSnapshot &gauge) {
-  row.integer(gauge_status, !gauge.battery_installed ? 0
-                            : !gauge.read_ok         ? 1
-                                                     : 2);
-  if (!gauge.battery_installed || !gauge.read_ok)
+  row.integer(gauge_status, !gauge.battery_installed            ? 0
+                            : !(gauge.vcell_ok && gauge.soc_ok) ? 1
+                                                                : 2);
+  if (!gauge.battery_installed)
     return;
-  if (gauge.millivolts > 0)
+  if (gauge.vcell_ok && gauge.millivolts > 0)
     row.integer(battery_mv, gauge.millivolts);
-  if (gauge.percent >= 0 && gauge.percent <= 100)
+  if (gauge.soc_ok && gauge.percent >= 0 && gauge.percent <= 100)
     row.integer(battery_percent, gauge.percent);
 }
 
@@ -234,16 +238,17 @@ static_assert(kBatteryThresholds.external_power_mv == 4240 &&
                   kBatteryThresholds.settling_minutes == 60,
               "kConfiguration embeds these thresholds; update both");
 
-// One classifier input from the basic and extended gauge reads.
-// VCELL and SOC are trusted only when the driver's range check passed.
+// One classifier input from the basic and extended gauge reads. VCELL and
+// SOC are each trusted only when their own read and range check passed, so
+// a bad SOC never hides a low cell voltage.
 inline aq::battery::Sample battery_sample(std::int64_t now_ms,
                                           const aq::Max17048Reading &reading,
                                           const aq::Max17048Extended &ext) {
   aq::battery::Sample sample;
   sample.now_ms = now_ms;
-  sample.vcell_ok = reading.valid();
+  sample.vcell_ok = reading.vcell_valid();
   sample.millivolts = reading.millivolts;
-  sample.soc_ok = reading.valid();
+  sample.soc_ok = reading.soc_valid();
   sample.raw_soc = reading.raw_soc;
   sample.crate_ok = ext.crate.ok;
   sample.crate_milli_percent_per_hour = ext.crate_milli_percent_per_hour();
@@ -259,11 +264,13 @@ struct BatteryHealth {
   aq::battery::Assessment assessment{};
 };
 // Fields 57..62. Every column stays null when its own register failed.
+// Raw SOC and minutes to empty need a valid SOC. The health state comes from
+// VCELL alone and is always written, Unknown when no voltage is classified.
 inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
   if (!health.battery_installed)
     return;
   const auto &ext = health.extended;
-  if (health.reading.valid())
+  if (health.reading.soc_valid())
     row.number(battery_soc_raw_percent,
                static_cast<float>(
                    aq::Max17048::raw_soc_percent(health.reading.raw_soc)));

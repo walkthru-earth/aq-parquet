@@ -55,28 +55,28 @@ BatteryHealth read_gauge(std::int64_t now) {
   health.battery_installed = true;
   if (gauge_bus_ready) {
     health.reading = gauge.read();
-    // Skip the diagnostic registers when the basic read already failed, so a
-    // hung bus costs two timeouts per sample instead of nine.
-    if (!health.reading.io_error)
+    // Skip the diagnostic registers when both basic reads failed, so a hung
+    // bus costs two timeouts per sample instead of nine.
+    if (health.reading.vcell_ok || health.reading.soc_ok)
       health.extended = gauge.read_extended();
-  } else {
-    health.reading.io_error = true;
   }
   health.assessment = battery_monitor.update(
       battery_sample(now / 1000, health.reading, health.extended));
   static unsigned diagnostics = 0;
   if (gauge_bus_ready && diagnostics++ < 6)
     aqlog.printf(
-        "AQ GAUGE read io_error=%u error=%d vcell_raw=%u soc_raw=%u "
-        "plausible=%u crate_raw=%d status=0x%04x mode=0x%04x\n",
-        health.reading.io_error, board::gauge_last_error(),
-        health.reading.raw_vcell, health.reading.raw_soc,
-        health.reading.plausible,
+        "AQ GAUGE read vcell_ok=%u soc_ok=%u error=%d vcell_raw=%u "
+        "soc_raw=%u vcell_plausible=%u soc_plausible=%u crate_raw=%d "
+        "status=0x%04x mode=0x%04x\n",
+        health.reading.vcell_ok, health.reading.soc_ok,
+        board::gauge_last_error(), health.reading.raw_vcell,
+        health.reading.raw_soc, health.reading.vcell_plausible,
+        health.reading.soc_plausible,
         static_cast<int>(static_cast<std::int16_t>(health.extended.crate.raw)),
         health.extended.status.raw, health.extended.mode.raw);
-  aqlogger::report_battery(health.assessment.state,
-                           health.reading.valid() ? health.reading.millivolts
-                                                  : -1);
+  aqlogger::report_battery(
+      health.assessment.state,
+      health.reading.vcell_valid() ? health.reading.millivolts : -1);
   return health;
 }
 
@@ -117,7 +117,8 @@ const telemetry::KeyValue kMetadata[] = {
     {"pms_status", "0=missing,1=warming,2=stale,3=sensor-error,4=valid,"
                    "5=model-mismatch"},
     {"gauge_status",
-     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid"},
+     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
+     "battery_mv is kept under 1 when VCELL alone is valid"},
     {"unavailable",
      "charger STAT and USB VBUS are not wired to the ESP32-S3; external power "
      "is inferred from VCELL only; no battery current; no onboard external "

@@ -6,15 +6,21 @@
 namespace aq {
 
 // One MAX17048 VCELL/SOC snapshot. Raw words are kept for diagnostics.
-// `valid()` is authoritative; encode an invalid reading as null.
+// VCELL and SOC each carry their own read and range flags, so a failed or
+// implausible SOC never hides a good cell voltage, and the reverse. Encode
+// a value as null when its own `*_valid()` is false. `valid()` needs both.
 struct Max17048Reading {
-  std::uint16_t raw_vcell = 0;
-  std::uint16_t raw_soc = 0;
-  std::int32_t millivolts = 0; // cell voltage, truncated to whole mV
-  std::int32_t percent = 0;    // whole percent, truncated and capped at 100
-  bool io_error = false;       // a bus transaction failed or IO is unset
-  bool plausible = false;      // decoded values pass the range check
-  constexpr bool valid() const { return !io_error && plausible; }
+  std::uint16_t raw_vcell = 0;  // 0 when the VCELL read failed
+  std::uint16_t raw_soc = 0;    // 0 when the SOC read failed
+  std::int32_t millivolts = 0;  // cell voltage, truncated to whole mV
+  std::int32_t percent = 0;     // whole percent, truncated and capped at 100
+  bool vcell_ok = false;        // the VCELL transaction succeeded
+  bool soc_ok = false;          // the SOC transaction succeeded
+  bool vcell_plausible = false; // millivolts passes the range check
+  bool soc_plausible = false;   // raw SOC passes the range check
+  constexpr bool vcell_valid() const { return vcell_ok && vcell_plausible; }
+  constexpr bool soc_valid() const { return soc_ok && soc_plausible; }
+  constexpr bool valid() const { return vcell_valid() && soc_valid(); }
 };
 
 // One 16-bit register read with its own success flag. `raw` is only
@@ -126,13 +132,13 @@ struct Max17048Io {
 // 16-bit big-endian. VCELL (0x02) is 78.125 uV/LSB (5/64 mV). SOC (0x04) is
 // 1/256 %/LSB. CRATE (0x16) is signed, 0.208 %/h per LSB. The gauge can
 // estimate above 100% near full charge, so the percent is capped while a
-// clearly implausible raw word is rejected (outside 2500..4500 mV or above
-// 120% raw SOC). The 120% threshold is a project heuristic, not a datasheet
-// limit. Battery presence is a board policy: an I2C ACK alone cannot prove
-// that a cell is installed.
-// The only write is clear_reset_indicator(). Quick start, power-on reset,
-// model, RCOMP, HIBRT and alert thresholds are never written.
-// No heap, no blocking waits, no controller initialization.
+// clearly implausible raw word is rejected. Each word is checked on its own,
+// VCELL against 2500..4500 mV and SOC against 120% raw. The 120% threshold is a
+// project heuristic, not a datasheet limit. Battery presence is a board policy:
+// an I2C ACK alone cannot prove that a cell is installed. The only write is
+// clear_reset_indicator(). Quick start, power-on reset, model, RCOMP, HIBRT and
+// alert thresholds are never written. No heap, no blocking waits, no controller
+// initialization.
 class Max17048 {
 public:
   static constexpr std::uint8_t kAddress = 0x36; // 7-bit
@@ -151,15 +157,16 @@ public:
 
   explicit constexpr Max17048(const Max17048Io &io) : io_(io) {}
 
-  // Reads VCELL then SOC. SOC is not attempted after a failed VCELL read.
+  // Reads VCELL then SOC. SOC is attempted even after a failed VCELL read,
+  // and each result keeps its own flags.
   Max17048Reading read() const {
     Max17048Reading result;
-    if (!read_word(kRegVcell, result.raw_vcell) ||
-        !read_word(kRegSoc, result.raw_soc)) {
-      result.io_error = true;
-      return result;
-    }
-    return decode(result.raw_vcell, result.raw_soc);
+    std::uint16_t raw = 0;
+    if (read_word(kRegVcell, raw))
+      set_vcell(result, raw);
+    if (read_word(kRegSoc, raw))
+      set_soc(result, raw);
+    return result;
   }
 
   // Reads MODE, VERSION, HIBRT, CONFIG, VALRT, CRATE and STATUS in that
@@ -205,16 +212,12 @@ public:
     return Max17048ClearResult::Cleared;
   }
 
+  // Decodes two words that were both read. Plausibility is per field.
   static constexpr Max17048Reading decode(std::uint16_t vcell,
                                           std::uint16_t soc) {
     Max17048Reading result;
-    result.raw_vcell = vcell;
-    result.raw_soc = soc;
-    result.millivolts = static_cast<std::int32_t>(vcell) * 5 / 64;
-    result.percent =
-        soc >= 100 * 256 ? 100 : static_cast<std::int32_t>(soc) / 256;
-    result.plausible = result.millivolts >= kMinMillivolts &&
-                       result.millivolts <= kMaxMillivolts && soc <= kMaxRawSoc;
+    set_vcell(result, vcell);
+    set_soc(result, soc);
     return result;
   }
 
@@ -224,6 +227,22 @@ public:
   }
 
 private:
+  static constexpr void set_vcell(Max17048Reading &result,
+                                  std::uint16_t vcell) {
+    result.vcell_ok = true;
+    result.raw_vcell = vcell;
+    result.millivolts = static_cast<std::int32_t>(vcell) * 5 / 64;
+    result.vcell_plausible = result.millivolts >= kMinMillivolts &&
+                             result.millivolts <= kMaxMillivolts;
+  }
+  static constexpr void set_soc(Max17048Reading &result, std::uint16_t soc) {
+    result.soc_ok = true;
+    result.raw_soc = soc;
+    result.percent =
+        soc >= 100 * 256 ? 100 : static_cast<std::int32_t>(soc) / 256;
+    result.soc_plausible = soc <= kMaxRawSoc;
+  }
+
   bool read_word(std::uint8_t reg, std::uint16_t &value) const {
     std::uint8_t data[2]{};
     if (!io_.read || !io_.read(io_.context, kAddress, reg, data, sizeof(data)))
