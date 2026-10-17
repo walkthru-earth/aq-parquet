@@ -1,0 +1,175 @@
+# Host gate and pinned ESP-IDF board builds for every pull request and main.
+#
+# The host job runs `pixi run gate`, the same entry point developers run, so
+# CI and local checks cannot drift. Tasks that need a board, serial port,
+# Bluetooth or a LAN peer stay manual and dated in each board bench record.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  host-gate:
+    name: Host gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          pixi-version: v0.82.0
+          locked: true
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Show pinned host tool versions
+        run: |
+          pixi run clang++ --version
+          pixi run clang-format --version
+          pixi run cppcheck --version
+      - name: Run host gate
+        run: pixi run gate --keep-going
+
+  board-build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # Read the latest main run's size artifact for the delta summary.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cores3
+            task: cores3-build
+            project: firmware/esp-idf-cores3
+            variant: bringup
+          - name: waveshare-logger
+            task: waveshare-build logger
+            project: firmware/esp-idf-waveshare-sim7670g
+            variant: logger
+          # Generic component fixtures. They prove the shared components build
+          # without Arduino or M5 dependencies and have no image to size.
+          - name: component-fixtures
+            task: connectivity-build-test
+            extra_task: logger-build-test
+    env:
+      IDF_CCACHE_ENABLE: "1"
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          pixi-version: v0.82.0
+          locked: true
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Read pinned ESP-IDF identity
+        id: idf
+        run: |
+          source tools/idf-dependencies.lock
+          echo "version=${ESP_IDF_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "commit=${ESP_IDF_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "CCACHE_DIR=${HOME}/.ccache" >> "$GITHUB_ENV"
+      # The SDK comes from the repo's own `pixi run idf-setup`, not the
+      # espressif/idf container. setup-idf.sh clones the pinned tag, refuses any
+      # checkout whose HEAD differs from ESP_IDF_COMMIT, verifies submodules with
+      # check_idf_target.py and installs the esp32s3 tools with Pixi's Python.
+      # That is the exact identity and code path developers use. A container
+      # tag can move, carries its own Python and tool set, and would bypass
+      # these checks. The cache only skips downloads, setup-idf.sh still runs
+      # and re-verifies the commit on every job.
+      - name: Restore ESP-IDF SDK and tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ~/.espressif
+            !~/.espressif/dist
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}
+      - name: Install pinned ESP-IDF
+        run: pixi run idf-setup
+      - name: Restore ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.name }}-${{ steps.idf.outputs.commit }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.name }}-${{ steps.idf.outputs.commit }}-
+      - name: Build
+        env:
+          TASK: ${{ matrix.task }}
+          EXTRA_TASK: ${{ matrix.extra_task }}
+        run: |
+          read -r -a task <<<"${TASK}"
+          pixi run "${task[@]}"
+          if [[ -n "${EXTRA_TASK}" ]]; then
+            pixi run "${EXTRA_TASK}"
+          fi
+      - name: ccache statistics
+        if: always()
+        run: pixi run ccache --show-stats
+      - name: Measure image size
+        if: matrix.project
+        env:
+          PROJECT: ${{ matrix.project }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p size
+          pixi run idf -C "${PROJECT}" -B "${PROJECT}/build/${VARIANT}" \
+            size --format json2 --output-file "${PWD}/size/size.json"
+          cp "${PROJECT}/build/${VARIANT}/aq-build-sha256.json" size/
+      - name: Fetch main size baseline
+        if: matrix.project
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ matrix.name }}
+        run: |
+          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+            --branch main --event push --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')"
+          if [[ -n "${run_id}" ]] && gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" \
+              --name "size-${NAME}" --dir baseline; then
+            echo "Baseline from main run ${run_id}"
+          else
+            echo "No main baseline available"
+          fi
+      - name: Write size summary
+        if: matrix.project
+        env:
+          NAME: ${{ matrix.name }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          baseline=()
+          if [[ -f baseline/size.json ]]; then
+            baseline=(--baseline baseline/size.json)
+          fi
+          pixi run python tools/size_report.py --label "${NAME} (${VARIANT})" \
+            size/size.json ${baseline[@]+"${baseline[@]}"} >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload size report
+        if: matrix.project
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: size-${{ matrix.name }}
+          path: size/
+          if-no-files-found: error
+          retention-days: 90
