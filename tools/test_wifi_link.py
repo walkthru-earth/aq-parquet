@@ -27,13 +27,14 @@ def main() -> None:
             str(root / "firmware/common/connectivity/src/network_time.cpp"),
             str(root / "firmware/common/connectivity/src/disconnect.cpp"),
             str(root / "firmware/common/connectivity/src/frame_ring.cpp"),
+            str(root / "firmware/common/connectivity/src/archive_sync.cpp"),
             "-o", str(executable),
         ]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation, the worker wait bound, the battery close wait preempt and ABORT stamping passed")
+    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation, the worker wait bound, the battery close wait preempt, ABORT of a LIST job on a full ring and ABORT stamping passed")
 
 
 if __name__ == "__main__":

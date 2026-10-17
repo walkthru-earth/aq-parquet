@@ -29,6 +29,20 @@ ArchiveSession::ArchiveSession(const ArchiveHooks &archive,
                                const ArchiveTransport &transport)
     : archive_(archive), transport_(transport) {}
 
+ArchiveSession::~ArchiveSession() {
+  cancel_list(false);
+  release_files();
+}
+
+// Points the reply helpers and the ABORT check at one request or job.
+void ArchiveSession::serve(const abort::Tag &tag) {
+  request_link_ = tag.link;
+  request_peer_ = tag.peer;
+  request_generation_ = tag.generation;
+  request_tag_ = tag;
+  request_ = &request_tag_;
+}
+
 std::size_t ArchiveSession::payload_max() const {
   const auto raw =
       transport_.payload_max(transport_.context, request_link_, request_peer_);
@@ -106,6 +120,7 @@ void ArchiveSession::close_current() {
 }
 
 void ArchiveSession::close() {
+  cancel_list(true);
   for (auto &opened : open_)
     release(opened);
   open_.fill(OpenFile{});
@@ -117,6 +132,7 @@ void ArchiveSession::release_files() {
 }
 
 void ArchiveSession::remounted() {
+  cancel_list(true);
   mounted_ = false;
   for (auto &opened : open_) {
     release(opened);
@@ -171,21 +187,21 @@ void ArchiveSession::reconcile() {
   }
 }
 
-void ArchiveSession::emit_file(void *context, const char *name,
+bool ArchiveSession::emit_file(void *context, const char *name,
                                std::uint32_t bytes) {
-  auto &list = *static_cast<ListContext *>(context);
+  auto &session = *static_cast<ArchiveSession *>(context);
+  auto &list = session.list_;
   if (!list.ok)
-    return;
-  auto &session = *list.session;
+    return false;
   if (session.aborted()) {
     list.ok = false;
     list.aborted = true;
-    return;
+    return false;
   }
   if (list.count == UINT32_MAX) {
     list.ok = false;
     list.failure_detail = "count";
-    return;
+    return false;
   }
   const std::size_t name_length = std::strlen(name);
   const std::size_t payload_max = session.payload_max();
@@ -200,7 +216,7 @@ void ArchiveSession::emit_file(void *context, const char *name,
     // An incomplete listing must not look like an empty archive to a client.
     list.ok = false;
     list.failure_detail = "mtu";
-    return;
+    return false;
   }
   static_assert(5 + 400 <= kPayloadCapacity, "FILE frame exceeds scratch");
   std::uint8_t *frame = session.io_.data();
@@ -210,14 +226,96 @@ void ArchiveSession::emit_file(void *context, const char *name,
   if (!session.respond(frame, 5 + name_length)) {
     list.ok = false;
     list.aborted = session.aborted();
-    return;
+    return false;
   }
   ++list.count;
+  return true;
 }
 
-void ArchiveSession::list() {
-  ListContext list{this};
-  const ListResult result = archive_.list(archive_.context, emit_file, &list);
+bool ArchiveSession::list_connected() const {
+  return list_.tag.generation == transport_.generation(transport_.context,
+                                                       list_.tag.link,
+                                                       list_.tag.peer);
+}
+
+bool ArchiveSession::must_wait_for_list(
+    const ble::ControlRequest &request) const {
+  if (!list_.active || !request.length)
+    return false;
+  if (request.bytes[0] == ble::kOpList)
+    return true;
+  return request.link == list_.tag.link && request.peer == list_.tag.peer;
+}
+
+// Ends the job outside step(), for an erase or a remount. The request being
+// served, if any, keeps its reply route.
+void ArchiveSession::cancel_list(bool notify) {
+  if (!list_.active)
+    return;
+  if (list_.begun && archive_.list_cancel)
+    archive_.list_cancel(archive_.context);
+  list_.active = false;
+  if (!notify || !list_connected())
+    return;
+  const auto link = request_link_;
+  const auto peer = request_peer_;
+  const auto generation = request_generation_;
+  const auto *request = request_;
+  const auto tag = request_tag_;
+  serve(list_.tag);
+  if (archive_.log) {
+    char line[96];
+    std::snprintf(line, sizeof(line),
+                  "LIST ABORT link=%s after=%lu reason=%s\n",
+                  request_link_ == ble::Link::Lan ? "lan" : "ble",
+                  static_cast<unsigned long>(list_.count), "storage");
+    archive_.log(archive_.context, line);
+  }
+  error(ble::kOpList, ble::kErrStorage);
+  request_link_ = link;
+  request_peer_ = peer;
+  request_generation_ = generation;
+  request_tag_ = tag;
+  request_ = request ? &request_tag_ : nullptr;
+}
+
+void ArchiveSession::step(bool storage_ready) {
+  if (!list_.active)
+    return;
+  serve(list_.tag);
+  // A peer that left, or was replaced, gets no frames. Its walk just ends.
+  if (!list_connected()) {
+    cancel_list(false);
+    request_ = nullptr;
+    return;
+  }
+  ListStatus status;
+  if (aborted()) {
+    // Checked before any directory read, so ABORT stops the walk within
+    // one step even when no entry of the last step was a finalized file.
+    list_.ok = false;
+    list_.aborted = true;
+    status = ListStatus::Stopped;
+  } else if (!storage_ready) {
+    status = ListStatus::Failed;
+  } else {
+    const bool begin = !list_.begun;
+    list_.begun = true;
+    status = archive_.list(archive_.context, begin, kListStepEntries, emit_file,
+                           this, list_.partials);
+  }
+  if (status != ListStatus::More)
+    finish_list(status);
+  request_ = nullptr;
+}
+
+void ArchiveSession::finish_list(ListStatus status) {
+  // The hook closes its walk itself unless this job ended it early. The
+  // cancel hook is safe either way.
+  if (list_.begun && archive_.list_cancel)
+    archive_.list_cancel(archive_.context);
+  list_.active = false;
+  const auto &list = list_;
   if (!list.ok && archive_.log) {
     char line[96];
     std::snprintf(line, sizeof(line),
@@ -229,16 +327,16 @@ void ArchiveSession::list() {
                                         : "refused");
     archive_.log(archive_.context, line);
   }
-  // An ABORT wins over a walk error: the client asked to stop.
+  // An ABORT wins over a walk error, since the client asked to stop.
   if (list.aborted) {
     stop_aborted(ble::kOpList);
     return;
   }
-  if (!result.complete) {
+  if (status == ListStatus::Failed) {
     error(ble::kOpList, ble::kErrStorage);
     return;
   }
-  if (!list.ok) {
+  if (!list.ok || status == ListStatus::Stopped) {
     // Always try a terminal ERROR so the client never waits for LIST_END.
     const char *detail = list.failure_detail ? list.failure_detail : "refused";
     error(ble::kOpList, ble::kErrBusy,
@@ -249,7 +347,7 @@ void ArchiveSession::list() {
   frame[0] = ble::kFrameListEnd;
   put_u32(frame + 1, list.count);
   put_u16(frame + 5, static_cast<std::uint16_t>(
-                         result.partials > 65535 ? 65535 : result.partials));
+                         list.partials > 65535 ? 65535 : list.partials));
   put_u32(frame + 7, archive_.total_kib(archive_.context));
   put_u32(frame + 11, archive_.used_kib(archive_.context));
   // A failed terminal delivery leaves the client without a complete snapshot.
@@ -477,9 +575,9 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   if (request_generation_ !=
       transport_.generation(transport_.context, request_link_, request_peer_))
     return true;
-  // Set only here, so every later return clears it and no stale pointer
+  // Set only here, so every later return clears it and no stale stamp
   // outlives the request.
-  request_ = &request;
+  serve(abort::tag(request));
   const std::uint8_t *body = request.bytes + 1;
   const std::size_t length = request.length - 1;
   // A LIST or READ queued before an ABORT on its link never starts.
@@ -490,10 +588,17 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   }
   switch (op) {
   case ble::kOpList:
-    if (!storage_ready)
+    if (!storage_ready) {
       error(op, ble::kErrStorage);
-    else
-      list();
+    } else if (list_.active) {
+      // The worker holds a second LIST back until the first ends.
+      error(op, ble::kErrBusy, payload_max() >= 7 ? "list" : nullptr);
+    } else {
+      // step() walks it, one bounded step per worker pass.
+      list_ = ListJob{};
+      list_.active = true;
+      list_.tag = abort::tag(request);
+    }
     break;
   case ble::kOpOpen:
     if (!storage_ready)

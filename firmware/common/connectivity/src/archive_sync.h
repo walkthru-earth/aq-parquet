@@ -1,5 +1,6 @@
 #pragma once
 
+#include "abort_signal.h"
 #include "ble_sync.h"
 
 #include <array>
@@ -8,7 +9,9 @@
 #include <cstdio>
 
 namespace aqsync {
-using FileEmitter = void (*)(void *context, const char *name,
+// Receives one finalized file of a listing. Returning false stops the walk at
+// once, for a refused frame or a pending ABORT.
+using FileEmitter = bool (*)(void *context, const char *name,
                              std::uint32_t bytes);
 
 // Result of the finalized check behind OPEN. cached is true when the CRC came
@@ -22,10 +25,12 @@ struct FileCheck {
   bool io_error = false;
 };
 
-struct ListResult {
-  unsigned partials = 0;
-  bool complete = false;
-};
+// One step of a resumable LIST walk. More: entries remain and the walk holds
+// its directories open until the next step or list_cancel. Complete: every
+// configured archive tree was read. Failed: a filesystem call failed, so the
+// FILE frames already emitted are an incomplete snapshot. Stopped: the
+// emitter returned false. Only More leaves anything open.
+enum class ListStatus : std::uint8_t { More, Complete, Failed, Stopped };
 
 // Board/archive policy: enumerating and resolving the mounted archive,
 // checking finalized Parquet files, storage statistics and its bus mutex.
@@ -37,9 +42,12 @@ struct ListResult {
 // session.
 struct ArchiveHooks {
   void *context = nullptr;
-  // complete is true only after every configured archive tree was read. FILE
-  // frames already emitted during a failed walk are an incomplete snapshot.
-  ListResult (*list)(void *, FileEmitter, void *) = nullptr;
+  // Resumable LIST walk. begin is true on the first step of a walk and drops
+  // any walk left open. Each call reads at most `budget` directory entries
+  // (at least one, so every step makes progress), emits each finalized file
+  // and adds each retained .partial to `partials`.
+  ListStatus (*list)(void *, bool begin, unsigned budget, FileEmitter, void *,
+                     unsigned &partials) = nullptr;
   bool (*resolve)(void *, const char *, char *, std::size_t) = nullptr;
   // Checks the file OPEN just opened (positioned at 0) and fills size and
   // CRC-32. Called without the lock held; it takes lock/unlock itself around
@@ -57,6 +65,9 @@ struct ArchiveHooks {
   void *(*read_buffer)(void *, std::size_t slot) = nullptr;
   // Monotonic microseconds for the OPEN latency log field.
   std::int64_t (*now_us)(void *) = nullptr;
+  // Closes a walk that list left at More. Must be safe to call when nothing
+  // is open. Optional when list holds nothing open between steps.
+  void (*list_cancel)(void *) = nullptr;
 };
 
 // Transport adapters are independent of the filesystem and may be faked in
@@ -77,6 +88,14 @@ struct ArchiveTransport {
   void (*progress)(void *) = nullptr;
 };
 
+// LIST runs as a job of bounded steps. handle() only starts it. The storage
+// worker then calls step() once per loop pass, after it took samples and
+// committed, so a large card never holds the worker for a whole walk. Each
+// step reads at most kListStepEntries directory entries and checks ABORT
+// first, so an ABORT stops the walk within one step. One LIST runs at a
+// time. While it runs the worker holds back every request that
+// must_wait_for_list() names and serves the others between steps.
+//
 // Independent immutable logical file handles for BLE and each LAN peer, bound
 // to their connection generations. Each open handle keeps one read-only FILE
 // until CLOSE, a re-OPEN on its slot, a generation change, close(),
@@ -89,29 +108,50 @@ class ArchiveSession {
 public:
   static constexpr std::size_t kReadHandles = 1 + ble::kMaxLanClients;
   static constexpr std::size_t kReadBufferBytes = 4096;
+  // Directory entries one LIST step may read. Each is a readdir and a stat,
+  // plus a FILE frame for a finalized file.
+  static constexpr unsigned kListStepEntries = 32;
 
   ArchiveSession(const ArchiveHooks &archive,
                  const ArchiveTransport &transport);
-  ~ArchiveSession() { release_files(); }
+  ~ArchiveSession();
   ArchiveSession(const ArchiveSession &) = delete;
   ArchiveSession &operator=(const ArchiveSession &) = delete;
 
   // Returns true for LIST/OPEN/READ/CLOSE (including error responses), false
   // for other operations so the board's clock/config/logger handler can run.
   bool handle(const ble::ControlRequest &request, bool storage_ready);
+  // True while a LIST job is in progress.
+  bool listing() const { return list_.active; }
+  // Runs one bounded step of the LIST job. The last step sends LIST_END or
+  // a terminal ERROR. A job whose connection changed ends without a frame.
+  // Storage that is no longer ready ends the job with ERROR storage.
+  void step(bool storage_ready);
+  // The job's link, peer, generation and ABORT stamp, for the worker's wait
+  // hooks while step() runs. nullptr when no LIST job is active.
+  const abort::Tag *list_tag() const {
+    return list_.active ? &list_.tag : nullptr;
+  }
+  // True when `request` must wait for the LIST job to end. That is any
+  // request on the job's link and peer, ABORT markers included, so replies
+  // keep their order and ABORTED follows ERROR aborted, and any LIST, since
+  // one walk runs at a time.
+  bool must_wait_for_list(const ble::ControlRequest &request) const;
   void reconcile();
-  // Drops every logical handle and closes its descriptor.
+  // Drops every logical handle and closes its descriptor. Ends a LIST job
+  // with ERROR storage.
   void close();
   // Closes descriptors but keeps logical handles. The next READ reopens the
   // path without checking it again, so the card must stay mounted.
   void release_files();
-  // Call before a storage remount. Like release_files(), but the card may be
-  // edited or swapped meanwhile, so the next READ on each handle runs the
-  // finalized check again. Same size and CRC keep the handle. A different
-  // file, or a missing or no longer finalized one on the mounted volume,
-  // drops it and READ answers ERROR bad handle. Until mounted() is called, or
-  // when the check hits an I/O error, READ answers READ_END status 4 and the
-  // recheck stays pending.
+  // Call before a storage remount. Ends a LIST job with ERROR storage, since
+  // its open directories cannot outlive the mount. Like release_files(), but
+  // the card may be edited or swapped meanwhile, so the next READ on each
+  // handle runs the finalized check again. Same size and CRC keep the handle. A
+  // different file, or a missing or no longer finalized one on the mounted
+  // volume, drops it and READ answers ERROR bad handle. Until mounted() is
+  // called, or when the check hits an I/O error, READ answers READ_END status 4
+  // and the recheck stays pending.
   void remounted();
   // Call after the volume remounted successfully.
   void mounted() { mounted_ = true; }
@@ -128,11 +168,14 @@ private:
     bool verify = false;
   };
   enum class Recheck { Same, Changed, Unreadable };
-  struct ListContext {
-    ArchiveSession *session;
-    std::uint32_t count = 0;
+  struct ListJob {
+    bool active = false;
+    bool begun = false;
     bool ok = true;
     bool aborted = false;
+    abort::Tag tag;
+    std::uint32_t count = 0;
+    unsigned partials = 0;
     const char *failure_detail = nullptr;
   };
   static constexpr std::size_t kPayloadCapacity = 1024;
@@ -150,7 +193,10 @@ private:
   ble::Link request_link_ = ble::Link::Ble;
   std::uint8_t request_peer_ = 0;
   std::uint32_t request_generation_ = 0;
-  const ble::ControlRequest *request_ = nullptr;
+  // The ABORT stamp of the request or LIST step being served, or nullptr.
+  const abort::Tag *request_ = nullptr;
+  abort::Tag request_tag_;
+  ListJob list_;
 
   std::size_t slot() const;
   OpenFile &file();
@@ -166,8 +212,11 @@ private:
   // op then ends with ERROR aborted and the marker's ABORTED names it.
   bool aborted() const;
   void stop_aborted(ble::Op op);
-  static void emit_file(void *context, const char *name, std::uint32_t bytes);
-  void list();
+  static bool emit_file(void *context, const char *name, std::uint32_t bytes);
+  void serve(const abort::Tag &tag);
+  bool list_connected() const;
+  void finish_list(ListStatus status);
+  void cancel_list(bool notify);
   void open(const std::uint8_t *name_bytes, std::size_t name_length);
   void read(std::uint16_t file_handle, std::uint32_t offset,
             std::uint32_t length);

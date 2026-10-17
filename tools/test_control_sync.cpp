@@ -446,9 +446,10 @@ void aborts() {
   reset_abort();
   Peer lan;
   aqsync::ArchiveHooks hooks{};
-  hooks.list = [](void *, aqsync::FileEmitter, void *) -> aqsync::ListResult {
+  hooks.list = [](void *, bool, unsigned, aqsync::FileEmitter, void *,
+                  unsigned &) {
     assert(false && "an aborted LIST must not walk the archive");
-    return {};
+    return aqsync::ListStatus::Failed;
   };
   aqsync::ArchiveTransport transport{};
   transport.context = &lan;
@@ -486,6 +487,49 @@ void aborts() {
   Peer idle;
   handle(stamped(abort), idle);
   assert(aborted_reply(idle, 0));
+
+  // ABORT while a LIST job runs. The marker waits for the job, the next step
+  // reads nothing more and ends with ERROR aborted, then the marker answers
+  // ABORTED LIST.
+  reset_abort();
+  static unsigned walk_reads;
+  walk_reads = 0;
+  lan = Peer{};
+  hooks.list = [](void *, bool, unsigned budget, aqsync::FileEmitter emit,
+                  void *out, unsigned &) {
+    // An endless directory, so only ABORT can end this walk.
+    for (unsigned read = 0; read < budget; ++read) {
+      ++walk_reads;
+      if (!emit(out, "a.parquet", 1))
+        return aqsync::ListStatus::Stopped;
+    }
+    return aqsync::ListStatus::More;
+  };
+  aqsync::ArchiveSession walking(hooks, transport);
+  auto long_list = request(ble::kOpList, ble::Link::Lan);
+  long_list.peer = 1;
+  long_list.link_generation = 3;
+  long_list = stamped(long_list);
+  assert(walking.handle(long_list, true) && walking.listing());
+  walking.step(true);
+  walking.step(true);
+  assert(walk_reads == 2 * aqsync::ArchiveSession::kListStepEntries);
+  assert(lan.errors.empty() &&
+         lan.successful.size() == 2 * aqsync::ArchiveSession::kListStepEntries);
+  auto mid_abort = request(ble::kOpAbort, ble::Link::Lan);
+  mid_abort.peer = 1;
+  mid_abort.link_generation = 3;
+  mid_abort = stamped(mid_abort);
+  assert(walking.must_wait_for_list(mid_abort));
+  const unsigned reads = walk_reads;
+  walking.step(true);
+  assert(!walking.listing() && walk_reads == reads);
+  assert(lan.errors.size() == 1 && lan.errors[0].op == ble::kOpList &&
+         lan.errors[0].code == ble::kErrAborted);
+  assert(!walking.must_wait_for_list(mid_abort));
+  Peer stopped;
+  handle(mid_abort, stopped);
+  assert(aborted_reply(stopped, ble::kOpList));
   reset_abort();
 }
 

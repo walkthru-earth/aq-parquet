@@ -40,7 +40,7 @@ def main() -> None:
                     *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Shared control: configuration secrecy/actions, BLE-only token, 65535-byte log slices, GET_DIAG, idle ABORT and ABORT of LIST/LOG_TAIL with stale-marker and per-link checks passed")
+    print("Shared control: configuration secrecy/actions, BLE-only token, 65535-byte log slices, GET_DIAG, idle ABORT, ABORT of a running LIST job and of LIST/LOG_TAIL with stale-marker and per-link checks passed")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,20 @@ struct Stopped {
   std::uint8_t op = 0; // first op stopped since the last ABORTED, 0 for none
 };
 
+// The parts of a request ABORT needs, so a job that outlives its request can
+// keep checking without holding the whole request.
+struct Tag {
+  ble::Link link = ble::Link::Ble;
+  std::uint8_t peer = 0;
+  std::uint32_t generation = 0;
+  std::uint32_t sequence = 0;
+};
+
+inline Tag tag(const ble::ControlRequest &request) {
+  return {request.link, request.peer, request.link_generation,
+          request.abort_seq};
+}
+
 inline std::atomic<std::uint32_t> sequences[kSlots]{};
 inline Stopped stopped[kSlots]{};
 
@@ -49,19 +63,24 @@ inline void commit(const ble::ControlRequest &request) {
 }
 
 // Worker. True once an ABORT arrived after this request was received.
+inline bool pending(const Tag &request) {
+  return sequences[slot(request.link, request.peer)].load() != request.sequence;
+}
 inline bool pending(const ble::ControlRequest &request) {
-  return sequences[slot(request.link, request.peer)].load() !=
-         request.abort_seq;
+  return pending(tag(request));
 }
 
 // Worker. Remembers the first op an ABORT stopped on this connection; the
 // following ABORT marker names it in ABORTED.
-inline void note_stopped(const ble::ControlRequest &request, ble::Op op) {
+inline void note_stopped(const Tag &request, ble::Op op) {
   auto &entry = stopped[slot(request.link, request.peer)];
-  if (entry.op && entry.generation == request.link_generation)
+  if (entry.op && entry.generation == request.generation)
     return;
-  entry.generation = request.link_generation;
+  entry.generation = request.generation;
   entry.op = static_cast<std::uint8_t>(op);
+}
+inline void note_stopped(const ble::ControlRequest &request, ble::Op op) {
+  note_stopped(tag(request), op);
 }
 
 // Worker, for the ABORT marker. Returns the stopped op, or 0 when nothing was

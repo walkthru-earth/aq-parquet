@@ -3,6 +3,7 @@
 // not.
 #include "../firmware/common/connectivity/src/wifi_link.cpp"
 #include "aq_logger_transfer_gate.h"
+#include "archive_sync.h"
 #include "sync_codec.h"
 #include <esp_netif_sntp.h>
 
@@ -43,6 +44,92 @@ int connect_phone() {
                    sizeof(address)) == 0);
   lan::accept_client();
   return fd;
+}
+
+// A LIST job meets a full LAN ring and the LAN task accepts an ABORT while
+// the worker waits for space. The worker's wait step checks the job's stamp,
+// as the logger's does, so deliver gives up within one wait step and the
+// job ends with ERROR aborted after one directory entry.
+struct ListJobProbe {
+  aqsync::ArchiveSession *session = nullptr;
+  unsigned waits = 0, reads = 0;
+  std::vector<ble::Error> errors;
+};
+ListJobProbe list_probe;
+
+void list_job_abort_on_full_ring() {
+  const std::uint32_t sequence = aqsync::abort::sequences[1].load();
+  list_probe = ListJobProbe{};
+  // Fill what the bulk frames left, down to a FILE frame's size.
+  const std::uint8_t filler[14] = {ble::kFrameFile};
+  while (lan::enqueue_response(filler, sizeof(filler), 0) ==
+         aqsync::EnqueueResult::Ok) {
+  }
+  aqsync::ArchiveHooks hooks{};
+  hooks.list = [](void *, bool, unsigned budget, aqsync::FileEmitter emit,
+                  void *out, unsigned &) {
+    for (unsigned read = 0; read < budget; ++read) {
+      ++list_probe.reads;
+      if (!emit(out, "a.parquet", 1))
+        return aqsync::ListStatus::Stopped;
+    }
+    return aqsync::ListStatus::More;
+  };
+  aqsync::ArchiveTransport transport{};
+  transport.generation = [](void *, ble::Link, std::uint8_t peer) {
+    return lan::connection_generation(peer);
+  };
+  transport.payload_max = [](void *, ble::Link, std::uint8_t peer) {
+    return lan::payload_max(peer);
+  };
+  transport.respond = [](void *, ble::Link, std::uint8_t peer,
+                         std::uint32_t generation, const std::uint8_t *frame,
+                         std::size_t length) {
+    return lan::deliver(
+        frame, length, peer, generation,
+        [](void *) {
+          if (list_probe.waits++ == 0) {
+            ble::ControlRequest marker;
+            marker.link = ble::Link::Lan;
+            marker.peer = 0;
+            marker.bytes[0] = ble::kOpAbort;
+            marker.length = 1;
+            aqsync::abort::stamp(marker);
+            aqsync::abort::commit(marker);
+          }
+          const auto *tag = list_probe.session->list_tag();
+          return !(tag && aqsync::abort::pending(*tag));
+        },
+        nullptr);
+  };
+  transport.error = [](void *, ble::Link, std::uint8_t, std::uint32_t,
+                       ble::Op op, ble::Error code, const char *) {
+    assert(op == ble::kOpList);
+    list_probe.errors.push_back(code);
+    return true;
+  };
+  aqsync::ArchiveSession session(hooks, transport);
+  list_probe.session = &session;
+  ble::ControlRequest list;
+  list.link = ble::Link::Lan;
+  list.peer = 0;
+  list.link_generation = lan::connection_generation(0);
+  list.bytes[0] = ble::kOpList;
+  list.length = 1;
+  aqsync::abort::stamp(list);
+  assert(session.handle(list, true) && session.listing());
+  const auto started = std::chrono::steady_clock::now();
+  session.step(true);
+  const auto waited = std::chrono::steady_clock::now() - started;
+  assert(!session.listing() && list_probe.reads == 1 && list_probe.waits == 1);
+  assert(list_probe.errors.size() == 1 &&
+         list_probe.errors[0] == ble::kErrAborted);
+  assert(waited < std::chrono::milliseconds(lan::options.wait_step_ms + 200));
+  ble::ControlRequest marker;
+  marker.link = ble::Link::Lan;
+  marker.link_generation = list.link_generation;
+  assert(aqsync::abort::take_stopped(marker) == ble::kOpList);
+  aqsync::abort::sequences[1].store(sequence);
 }
 
 // Client sockets are non-blocking, as the LAN task's select loop expects, so
@@ -638,6 +725,7 @@ int main() {
   const auto waited = std::chrono::steady_clock::now() - wait_started;
   assert(steps == 1 &&
          waited < std::chrono::milliseconds(lan::options.wait_step_ms + 200));
+  list_job_abort_on_full_ring();
   // A LAN task that stops draining never runs the slow peer rule, and the
   // worker's wait step keeps its heartbeat fresh. The wait still gives up
   // after 2 * slow_peer_ms without a space wake, and the peer stays open.
