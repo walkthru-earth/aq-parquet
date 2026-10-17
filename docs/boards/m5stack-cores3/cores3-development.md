@@ -36,8 +36,9 @@ belong to each board adapter.
   `$AQ_IDF_TOOLS_PATH` overrides that directory. The wrapper keeps the SDK
   Python/compiler environment separate from Pixi host validators.
 - C++ `app_main` has C linkage. Use native FreeRTOS tasks, `esp_timer`, UART,
-  NVS and VFS APIs. Board components request at least C++20 and common components
-  C++17; ESP-IDF 6.1's default dialect may be newer. Exceptions/RTTI remain off.
+  NVS and VFS APIs. Every repo component builds as C++23, see the
+  [C++ dialect pin](../../shared/development.md#c-dialect). Exceptions and RTTI
+  remain off.
   [C++ constraints](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-guides/cplusplus.html).
 - Initialize M5 board services once. Disable unused services through `M5.config()`
   before `M5.begin(cfg)`. M5Unified owns internal I²C; never create another
