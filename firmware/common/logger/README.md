@@ -207,7 +207,8 @@ discharge calibration in issue #28.
 
 The `parquet-sd` worker stamps a heartbeat on every loop pass, at each BLE/LAN
 frame, per directory entry in every archive walk (startup scan, partial
-quarantine, `parquet list`, ERASE_ARCHIVE preflight and delete), on both sides
+quarantine, `parquet list`, each bounded step of a BLE or LAN `LIST`,
+ERASE_ARCHIVE preflight and delete), on both sides
 of the board free-space, capacity and remount hooks, and once per second while
 paused after an erase. The writer stamps only on confirmed progress, after each
 block its output sink writes, after each encoded row group and after each

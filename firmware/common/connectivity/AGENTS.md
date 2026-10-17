@@ -9,6 +9,7 @@ remains tied to each board image and is historical until native readback.
 - Never include a board trial or its telemetry logger. Firmware passes stable identity strings and a request handler before tasks/radios start.
 - A request handler must copy/enqueue synchronously without filesystem, display, sensor or power access. BLE and LAN invoke it concurrently; queue saturation returns false and becomes a busy response on the originating link.
 - The board storage worker calls shared `ArchiveSession` and common configuration/log/token control handlers, then executes runtime-specific clock/flush/reboot/status operations. It publishes status/live/advertising snapshots. Keep session generation, frame limits, authentication, token secrecy, and callback threading behavior intact.
+- `ArchiveSession` runs LIST as a job. `handle()` starts it, the worker calls `step()` once per pass, and each step reads at most `kListStepEntries` entries through the resumable `ArchiveHooks::list` hook, checking ABORT first. The worker holds back requests `must_wait_for_list()` names. Keep long archive work in bounded steps like this, never one call that walks the whole card.
 - Native NimBLE owns pairing, bonding and GATT/GAP. Preserve encrypted and
   authenticated characteristic permissions in random/fixed modes, callback
   delivery of per-attempt random or per-device fixed PINs, the public address,

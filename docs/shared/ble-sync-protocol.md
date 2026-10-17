@@ -92,7 +92,7 @@ Service data AD (type `0x21`) under the service UUID `c0a5e9f0-0001-…`, in the
 | 6–7 | `boot16` u16 | the last four hex digits of `info.boot`, so a phone notices a reboot (`fin` restarts at 0) |
 | 8–9 | reserved | 0. **Never an IP address or port**: advertisements are unauthenticated, and a forged one would send the phone's LAN token to an attacker's socket. Discovery stays mDNS |
 
-Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. Advertising runs in two stages (see [link parameters](#link-parameters-and-notify-flow)): fast (30 to 60 ms) for 30 s after enable, disconnect or a wake, and for 60 s after any flag flips, so a low-power scanner filtering on the flag byte still sees the change within a minute. It is slow (1 to 1.28 s) otherwise. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
+Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and cleared when a `LIST` has been answered on any link and no file finalized during its walk (that phone now knows the file exists; a phone that then fails its download is covered by its own periodic run). `no_utc` and `clk_restored` are mutually exclusive; both clear after a host `SET_TIME`. Advertising runs in two stages (see [link parameters](#link-parameters-and-notify-flow)): fast (30 to 60 ms) for 30 s after enable, disconnect or a wake, and for 60 s after any flag flips, so a low-power scanner filtering on the flag byte still sees the change within a minute. It is slow (1 to 1.28 s) otherwise. `pixi run ble-sync scan` prints the decoded payload (`adv_ver= flags= fin= boot16=`).
 
 ### Link parameters and notify flow
 
@@ -505,6 +505,10 @@ peer) is still running or queued.
   from the last offset the phone stored.
 - A `LIST` or `READ` queued before the ABORT never starts and answers only
   `ERROR` op code 16.
+- A running `LIST` walks the card in steps of at most 32 directory entries.
+  The worker checks for ABORT before each step and before each `FILE`, so
+  the walk stops within one step, also in a large directory with no
+  finalized file left to send.
 - `ABORTED` follows those errors and names the first op the ABORT stopped, or
   0 when nothing was running. An op stopped on an earlier connection is never
   reported, so a new session sees `4d00`.
@@ -585,6 +589,16 @@ frames. Only the NimBLE host sends BLE notifications. Samples also cross a
 bounded queue, with visible drops when full. Queue depth is a buffer bound,
 not a measured storage-stall budget. The storage worker alone accesses files,
 and board bus locking preserves display/SD ownership and monotonic sampling.
+
+`LIST` runs as a job of bounded steps, at most 32 directory entries each,
+so a large card never holds the worker for a whole walk. Between steps the
+worker takes samples, commits finished batches and serves requests from other
+links and LAN peers. Requests from the link or LAN peer that sent the `LIST`,
+`ABORT` included, and a second `LIST` from any link wait until the `LIST`
+ends, so replies keep their order and `ABORTED` follows the `LIST` error.
+A file finalized during the walk may or may not be in that listing, and
+`new_files` then stays set. A storage remount or an archive erase during the
+walk ends it with `ERROR` 8. No frame or opcode changed.
 
 On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 

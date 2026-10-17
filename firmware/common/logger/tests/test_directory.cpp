@@ -176,7 +176,7 @@ void check_archive_walk() {
   assert(errno == ENAMETOOLONG);
 }
 // An in-memory tree for the resumable walk. Directories map to their entry
-// names; a trailing '/' marks a subdirectory.
+// names. A trailing '/' marks a subdirectory.
 struct TreeIO {
   struct Cursor {
     std::string path;

@@ -175,8 +175,9 @@ std::atomic<std::uint8_t> sd_state{
     static_cast<std::uint8_t>(storage::State::Retry)};
 std::uint32_t quarantine_counter = 0; // unique per boot
 // Advertising bit `new_files`: set when a file finalizes, cleared when a LIST
-// has been answered on any link (that phone now knows; a phone that then fails
-// its download is covered by its periodic run).
+// has been answered on any link and no file finalized during its walk (that
+// phone now knows, and a phone that then fails its download is covered by its
+// periodic run).
 // docs/shared/ble-sync-protocol.md.
 std::atomic<bool> unlisted_files{false};
 std::int64_t boot_hi = 0, boot_lo = 0, device = 0, next_sample_us = 0;
@@ -909,6 +910,7 @@ public:
                           void *context, unsigned &partials) {
     if (start) {
       cancel();
+      finalized_at_start_ = finalized.load();
       if (!walk_.begin(io_, kDirectory))
         return fail();
     }
@@ -983,6 +985,12 @@ public:
     legacy_ = false;
   }
 
+  // True when no file finalized since the walk started. Steps let commits
+  // run mid walk, and a file finalized then may sit behind the walk's cursor.
+  bool saw_every_finalized() const {
+    return finalized.load() == finalized_at_start_;
+  }
+
 private:
   aqsync::ListStatus fail() {
     const int failure = errno;
@@ -994,6 +1002,7 @@ private:
 
   aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO> walk_;
   ArchiveDirectoryIO io_;
+  std::uint32_t finalized_at_start_ = 0;
   bool legacy_ = false;
 };
 
@@ -1525,7 +1534,10 @@ aqsync::ArchiveSession archive_session(
      [](void *) { return total_kib.load(); },
      [](void *) { return used_kib.load(); },
      [](void *) {
-       unlisted_files = false;
+       // A file finalized during the walk keeps new_files set, since this
+       // listing may not include it.
+       if (archive_list.saw_every_finalized())
+         unlisted_files = false;
        publish_advert();
      },
      [](void *) { lock_bus(); }, [](void *) { unlock_bus(); },
