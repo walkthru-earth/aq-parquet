@@ -80,7 +80,9 @@ now reads NimBLE's live security state, so that `LIST` is served. Code 7 is
 never sent for an authentication reason any more. An unpaired phone still
 sees what it saw before. NimBLE refuses its unencrypted Control write with an
 ATT Insufficient Encryption, Encryption Key Size or Authentication error, which
-starts pairing, and it cannot subscribe to `response`. `ERROR` 14 with
+starts pairing. It can still subscribe to `response`, because the CCCD has
+no security flag, but receives nothing there except a possible `ERROR` 14.
+`ERROR` 14 with
 `detail="auth"` over BLE is only a guarded fallback, for a Control write that
 passes ATT but fails the firmware check. In this configuration both apply
 the same rule, so an app should not expect to see it.
