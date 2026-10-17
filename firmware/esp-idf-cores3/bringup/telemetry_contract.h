@@ -12,12 +12,13 @@ namespace contract {
 // File schema v5 keeps the 81 leaves of v4 in the same order, renames the two
 // UTC instants to microseconds (`*_utc_us`, TIMESTAMP(MICROS, UTC)) and writes
 // a Parquet field_id on every leaf so an Apache Iceberg v3 table can register
-// the file. Dictionary v4 tracks the field bytes; schema v5 tracks the reader
-// contract.
+// the file. The dictionary version tracks the field bytes and schema v5 tracks
+// the reader contract. Dictionary v5 (firmware v6.13) adds each LIVE key to the
+// field table so the digest covers it. Columns are unchanged from v4.
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
-constexpr const char *kDictionaryVersion = "cores3-telemetry-v4";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.12";
+constexpr const char *kDictionaryVersion = "cores3-telemetry-v5";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.13";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -37,7 +38,7 @@ constexpr const char *kTimeSemantics =
     "clock uncertainty unknown; no retroactive UTC assignment";
 
 enum Field : std::size_t {
-#define FIELD(name, type, procedure, unit, validity) name,
+#define FIELD(name, type, procedure, unit, validity, live) name,
 #include "telemetry_fields.inc"
 #undef FIELD
   field_count
@@ -51,68 +52,21 @@ struct Definition {
   const char *property_uri = nullptr;
   const char *live_key = nullptr;
 };
-// LIVE JSON key for each field, or nullptr for fields that stay out of the
-// LIVE snapshot. The shared logger emits them in field-table order.
-constexpr const char *live_key(Field field) {
-  switch (field) {
-  case sequence:
-    return "seq";
-  case monotonic_us:
-    return "mono";
-  case event_time_utc_us:
-    return "utc";
-  case pms_status:
-    return "pms";
-  case pm1_cf1_ug_m3:
-    return "c1";
-  case pm25_cf1_ug_m3:
-    return "c25";
-  case pm10_cf1_ug_m3:
-    return "c10";
-  case pm1_atmospheric_ug_m3:
-    return "pm1";
-  case pm25_atmospheric_ug_m3:
-    return "pm25";
-  case pm10_atmospheric_ug_m3:
-    return "pm10";
-  case particles_gt03_per_01l:
-    return "n03";
-  case particles_gt05_per_01l:
-    return "n05";
-  case particles_gt10_per_01l:
-    return "n1";
-  case particles_gt25_per_01l:
-    return "n25";
-  case particles_gt50_per_01l:
-    return "n5";
-  case particles_gt100_per_01l:
-    return "n10";
-  case imu_temperature_c:
-    return "imu_t";
-  case light_ch0_raw:
-    return "als";
-  case vbus_mv:
-    return "vbus";
-  case battery_mv:
-    return "bat";
-  case battery_percent:
-    return "pct";
-  case charging_status:
-    return "chg";
-  case ambient_temperature_c:
-    return "t";
-  case relative_humidity_percent:
-    return "rh";
-  default:
-    return nullptr;
-  }
+// The dictionary carries each LIVE key, so the digest covers it. "" keeps a
+// field out of the LIVE snapshot. The shared logger emits keys in
+// field-table order.
+constexpr const char *live_or_null(const char *key) {
+  return key[0] == '\0' ? nullptr : key;
 }
 constexpr Definition kFields[] = {
-#define FIELD(name, type, procedure, unit, validity)                           \
-  {#name,         PhysicalType::type,                                          \
-   #procedure,    unit,                                                        \
-   #validity,     "urn:walkthru-earth:cores3:property:" #name,                 \
-   live_key(name)},
+#define FIELD(name, type, procedure, unit, validity, live)                     \
+  {#name,                                                                      \
+   PhysicalType::type,                                                         \
+   #procedure,                                                                 \
+   unit,                                                                       \
+   #validity,                                                                  \
+   "urn:walkthru-earth:cores3:property:" #name,                                \
+   live_or_null(live)},
 #include "telemetry_fields.inc"
 #undef FIELD
 };
