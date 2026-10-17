@@ -15,9 +15,10 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=2
 # These symbols exist only when a board component requires espcoredump, and
 # tools/check_idf_target.py rejects a build that drops them.
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
-# The dump runs on its own internal stack. IDF adds 100 bytes to this value
-# while the log level is debug, so the real buffer (s_coredump_stack) is 2660
-# bytes in these images. A Waveshare task watchdog dump used 1520 bytes of the
+# The dump runs on its own internal stack. IDF always adds 100 bytes to this
+# value, since its debug level test in core_dump_common.c compares against an
+# enum the preprocessor reads as 0, so the real buffer (s_coredump_stack) is
+# 2660 bytes. A Waveshare task watchdog dump used 1520 bytes of the
 # 1792 byte IDF default, which left 368. With 2660 about 1140 bytes stay free
 # for deeper call paths, such as an encrypted flash write or extra log calls.
 # The ELF writer walks tasks in a loop, so more tasks or radios add bytes to

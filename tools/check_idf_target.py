@@ -160,13 +160,13 @@ def kconfig_names(node: object, names: set[str]) -> set[str]:
     return names
 
 
-def renamed_names(component_paths: list[str], known: set[str]) -> set[str]:
-    """Deprecated names in the built components' sdkconfig.rename files.
+def renamed_names(directories: list[str], known: set[str]) -> set[str]:
+    """Deprecated names in the IDF root and built components' sdkconfig.rename files.
 
     kconfgen still maps these to their new symbol, so accept one only when its
     new name is a known symbol of this build."""
     names = set()
-    for directory in component_paths:
+    for directory in directories:
         for rename in (Path(directory) / "sdkconfig.rename",
                        Path(directory) / "sdkconfig.rename.esp32s3"):
             if not rename.is_file():
@@ -179,14 +179,14 @@ def renamed_names(component_paths: list[str], known: set[str]) -> set[str]:
     return names
 
 
-def check_defaults_known(build: Path, defaults: str, component_paths: list[str]) -> None:
+def check_defaults_known(build: Path, defaults: str, rename_paths: list[str]) -> None:
     """Fail where kconfgen only prints a NOTE, an unknown symbol in a defaults file.
 
     A symbol is unknown when no built component declares it, for example
     ESP_COREDUMP_* without the espcoredump component, and the setting is
     then silently dropped from the image."""
     known = kconfig_names(json.loads(build_file(build, "config/kconfig_menus.json").read_text()), set())
-    known |= renamed_names(component_paths, known)
+    known |= renamed_names(rename_paths, known)
     for name in filter(None, defaults.split(";")):
         for line in Path(name).read_text().splitlines():
             match = CONFIG_LINE.match(line.strip())
@@ -197,7 +197,9 @@ def check_defaults_known(build: Path, defaults: str, component_paths: list[str])
 
 
 def elf_symbols(path: Path) -> set[str]:
-    """Names in the ELF32 little-endian symbol tables, enough to prove a component linked."""
+    """Defined global symbols of an ELF32 little-endian image, enough to prove a component linked.
+
+    Undefined references and weak or local definitions do not count."""
     data = path.read_bytes()
     require(data[:6] == b"\x7fELF\x01\x01", "application is not a 32-bit little-endian ELF")
     offset = struct.unpack_from("<I", data, 0x20)[0]
@@ -209,7 +211,10 @@ def elf_symbols(path: Path) -> set[str]:
             continue
         strings = sections[section[6]][4]
         for entry in range(section[4], section[4] + section[5], 16):
-            start = strings + struct.unpack_from("<I", data, entry)[0]
+            name, info, index = struct.unpack_from("<I8xBxH", data, entry)
+            if info >> 4 != 1 or index == 0:  # not STB_GLOBAL, or SHN_UNDEF
+                continue
+            start = strings + name
             names.add(data[start:data.index(b"\0", start)].decode())
     return names
 
@@ -283,7 +288,7 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
     require(description["git_revision"] == "v" + sdk_lock()["ESP_IDF_VERSION"],
             "build used a different SDK revision")
     check_defaults_known(build, description["config_defaults"],
-                         description["build_component_paths"])
+                         [description["idf_path"], *description["build_component_paths"]])
     components = description["build_components"]
     require("espcoredump" in components, "core dump component is not built")
     missing = COREDUMP_SYMBOLS - elf_symbols(build_file(build, description["app_elf"]))
