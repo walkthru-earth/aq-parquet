@@ -756,6 +756,34 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   session.handle(read(f, handle, 0, 10), true);
   verify_read(f, handle, 0, 10, 512);
   assert(f.checks == ++checks);
+
+  // A refused CHUNK, as a critical battery close preempts it, comes after
+  // the recheck. A same result is proof, so the handle keeps serving and the
+  // retry needs no second check.
+  remount(session);
+  f.clear();
+  f.refuse_frame = 1;
+  session.handle(read(f, handle, 0, 3000), true);
+  assert(f.checks == ++checks && f.errors.empty() && f.frames.size() == 2);
+  {
+    const auto &end = f.frames[1].bytes;
+    assert(end.size() == 8 && end[0] == ble::kFrameReadEnd &&
+           get_u32(end.data() + 3) == 0 && end[7] == ble::kErrBusy);
+  }
+  f.clear();
+  session.handle(read(f, handle, 0, 3000), true);
+  verify_read(f, handle, 0, 3000, 512);
+  assert(f.checks == checks);
+  // A change proven before the first CHUNK ends the handle with ERROR bad
+  // handle, a frame the preempt never refuses.
+  remount(session);
+  write_file(path, other_parquet(f.bytes.size()));
+  f.clear();
+  f.refuse_frame = 1;
+  session.handle(read(f, handle, 0, 10), true);
+  expect_error(f, ble::kErrBadHandle);
+  assert(f.checks == ++checks);
+  write_file(path, f.bytes);
   session.close();
   assert(descriptor_count() == idle_descriptors);
 }
