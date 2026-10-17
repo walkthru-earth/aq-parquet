@@ -138,16 +138,21 @@ exact Pixi pins on macOS and Linux, so local runs and CI see the same tools.
 
 ### Continuous integration
 
-`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`.
+`.github/workflows/ci.yml` runs on every pull request, on pushes to `main`,
+and by hand from the Actions tab (`workflow_dispatch`).
 
 - **Host gate** runs `pixi run gate --keep-going` on Ubuntu with the locked
-  Pixi environment.
+  Pixi environment. Each task runs under GNU `timeout` from the Pixi
+  `coreutils` pin, 300 s by default (`AQ_GATE_TASK_TIMEOUT` overrides it), and
+  a stalled task is reported as `TIMEOUT` by name in the gate summary.
 - **Board builds** run `pixi run idf-setup`, then `cores3-build`,
-  `waveshare-build logger`, and the generic `connectivity-build-test` and
-  `logger-build-test` fixtures. The SDK comes from the same `setup-idf.sh`
-  path developers use, so CI builds exactly the commit in
-  `tools/idf-dependencies.lock`. The SDK and ccache are cached per board and
-  SDK commit.
+  `waveshare-build logger`, `waveshare-build diagnostic`, and the generic
+  `connectivity-build-test` and `logger-build-test` fixtures. The SDK comes
+  from the same `setup-idf.sh` path developers use, so CI builds exactly the
+  commit in `tools/idf-dependencies.lock`. The SDK and ccache caches are
+  restored on every run but written only by pushes to `main`, and the SDK is
+  saved from the cores3 leg alone, so pull requests never evict the `main`
+  entries. `waveshare-psram-build` stays a manual SDK fixture.
 - Each board job uploads its `idf.py size --format json2` report and
   `aq-build-sha256.json` as the `size-<board>` artifact and writes a size
   table to the job summary. When a green `main` run exists, the table shows the
@@ -156,6 +161,25 @@ exact Pixi pins on macOS and Linux, so local runs and CI see the same tools.
 CI proves compilation and host logic only. It never flashes a board, and board
 runs stay manual and dated in each bench record. Every action is pinned to a
 full commit SHA. Check the latest stable release before changing a pin.
+
+#### Required checks
+
+Make these five check names required for `main`.
+
+- `Host gate`
+- `Build cores3`
+- `Build waveshare-logger`
+- `Build waveshare-diagnostic`
+- `Build component-fixtures`
+
+Add them in Settings, Rules, Rulesets. Open or create the `main` branch
+ruleset, enable Require status checks to pass, add each name with the source
+set to GitHub Actions, and save. The board names come from `matrix.name` in
+the workflow, so renaming or adding a matrix entry changes the check name. Do
+it in the same PR as the matching ruleset update, or the old required check
+stays pending forever. Never pick the literal `Build ${{ matrix.name }}`, which
+only appears when the board job is skipped. If a merge queue is enabled later,
+add a `merge_group` trigger to the workflow at the same time.
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |

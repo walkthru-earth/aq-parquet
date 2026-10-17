@@ -35,9 +35,11 @@ C++ contract tests and cannot prove behavior on a physical board.
 - Keep host fixtures deterministic. Record actual hardware evidence only in
   the relevant board's `bench-verified.md` with date, image hash and limits.
 
-- `.github/workflows/ci.yml` runs `pixi run gate` and both board builds on every
-  pull request. Keep the gate free of tasks that need hardware, Bluetooth, a
-  LAN peer or the SDK. See `docs/shared/development.md#continuous-integration`.
+- `.github/workflows/ci.yml` runs `pixi run gate` and the board image builds on
+  every pull request. Keep the gate free of tasks that need hardware, Bluetooth,
+  a LAN peer or the SDK. Each gate task is bounded by `AQ_GATE_TASK_TIMEOUT`
+  (300 s). Renaming a CI matrix entry renames a required check, see
+  `docs/shared/development.md#required-checks`.
 - Firmware builds use the pinned native ESP-IDF wrapper and exact managed
   component pins. Host tests remain in Pixi. Never introduce an Arduino build
   route or infer physical native behavior from fixture compilation.
