@@ -122,7 +122,8 @@ Before choosing or changing SDK/component versions, check the latest stable rele
 ## Host gate
 
 Use the pinned pixi environment (`pixi install`, `pixi run <task>`), not ad hoc
-pip packages. Run `pixi run fmt-check` and `pixi run lint`. For writer/schema or
+pip packages. Run `pixi run gate`, the same entry point CI runs. It covers
+`fmt-check`, `lint` and every host contract task with sanitizers. For writer/schema or
 archive changes run the relevant `pixi run parquet-test --sanitize`, `reader-test`,
 `telemetry-contract-test --sanitize`, `archive-sync-test` and board contract
 gates. Every firmware PR builds both boards. Perform proportional real-device readback

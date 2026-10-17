@@ -115,24 +115,47 @@ conditionals or sibling trial dependencies.
 
 ## Verification
 
-Every firmware PR runs the baseline below and builds both boards. Use cached
+Every firmware PR runs the host gate and builds both boards. Use cached
 build directories and the pinned Pixi environment. Run additional gates for the
 changed subsystem. Preserve vendored bytes and licenses. Generic fixtures never
 get flashed.
 
 ```sh
-pixi run fmt-check
-pixi run lint
-pixi run common-test
-pixi run telemetry-contract-test --sanitize
-pixi run archive-sync-test
-pixi run control-sync-test
-pixi run wifi-link-test
-pixi run logger-status-test
+pixi run gate
 pixi run connectivity-build-test
 pixi run cores3-build
 pixi run waveshare-build
 ```
+
+`pixi run gate` runs `tools/gate.sh`. It runs `fmt-check`, `lint` and every
+host contract and fixture task in a fixed list, with ASan and UBSan wherever
+the task supports `--sanitize`. It stops at the first failure and prints which
+task failed. Pass `--keep-going` to run the whole list and see every failure.
+Tasks that need a board, a serial port, Bluetooth, a LAN peer or the ESP-IDF
+SDK are not in the gate. Add a new host test task to that list when you add it
+to `pixi.toml`. The clang, clang-format and cppcheck used by the gate come from
+exact Pixi pins on macOS and Linux, so local runs and CI see the same tools.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`.
+
+- **Host gate** runs `pixi run gate --keep-going` on Ubuntu with the locked
+  Pixi environment.
+- **Board builds** run `pixi run idf-setup`, then `cores3-build`,
+  `waveshare-build logger`, and the generic `connectivity-build-test` and
+  `logger-build-test` fixtures. The SDK comes from the same `setup-idf.sh`
+  path developers use, so CI builds exactly the commit in
+  `tools/idf-dependencies.lock`. The SDK and ccache are cached per board and
+  SDK commit.
+- Each board job uploads its `idf.py size --format json2` report and
+  `aq-build-sha256.json` as the `size-<board>` artifact and writes a size
+  table to the job summary. When a green `main` run exists, the table shows the
+  change against it.
+
+CI proves compilation and host logic only. It never flashes a board, and board
+runs stay manual and dated in each bench record. Every action is pinned to a
+full commit SHA. Check the latest stable release before changing a pin.
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |

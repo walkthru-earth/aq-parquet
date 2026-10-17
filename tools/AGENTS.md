@@ -23,6 +23,8 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
+| Full host gate, same entry point as CI | `gate` (`tools/gate.sh`, add new host test tasks to its list) |
+| CI image size table from `idf.py size --format json2` | `size_report.py` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`
   safety sequence and an explicit checked serial port. Only one process owns
@@ -33,6 +35,9 @@ C++ contract tests and cannot prove behavior on a physical board.
 - Keep host fixtures deterministic. Record actual hardware evidence only in
   the relevant board's `bench-verified.md` with date, image hash and limits.
 
+- `.github/workflows/ci.yml` runs `pixi run gate` and both board builds on every
+  pull request. Keep the gate free of tasks that need hardware, Bluetooth, a
+  LAN peer or the SDK. See `docs/shared/development.md#continuous-integration`.
 - Firmware builds use the pinned native ESP-IDF wrapper and exact managed
   component pins. Host tests remain in Pixi. Never introduce an Arduino build
   route or infer physical native behavior from fixture compilation.
