@@ -1,6 +1,7 @@
 #include "aq_logger.h"
 #include "aq_logger_archive_reset.h"
 #include "aq_logger_directory.h"
+#include "aq_logger_emergency_close.h"
 #include "aq_logger_live.h"
 #include "aq_logger_location.h"
 #include "aq_logger_power.h"
@@ -141,7 +142,7 @@ struct WriterState {
 constexpr std::size_t kStagingBytes = 4096;
 char staging_telemetry[kStagingBytes];
 struct Command {
-  enum class Source : std::uint8_t { Serial, Control, Network, Power };
+  enum class Source : std::uint8_t { Serial, Control, Network };
   Source source = Source::Serial;
   char text[2 * ble::kMaxControlBytes + 32]{};
   std::int64_t received_mono_us = 0;
@@ -153,6 +154,9 @@ QueueHandle_t samples = nullptr;
 QueueHandle_t commands = nullptr;
 SemaphoreHandle_t spi_mutex = nullptr;
 SemaphoreHandle_t worker_wakeup = nullptr;
+// Raised by report_battery() on the main loop, run only by the storage worker.
+power::EmergencyClose emergency_close;
+std::int64_t uptime_ms() { return esp_timer_get_time() / 1000; }
 aqsync::ServiceConfig sync_config{};
 std::atomic<std::uint32_t> dropped{0}, errors{0}, finalized{0}, buffered{0};
 std::atomic<std::uint32_t> write_us{0}, sync_us{0}, queue_peak{0};
@@ -1139,7 +1143,14 @@ void send_file(const char *name) {
   char hex[513];
   constexpr char digits[] = "0123456789abcdef";
   std::uint32_t offset = 0;
+  bool preempted = false;
   while (offset < size) {
+    // A critical battery close outranks a serial export. Stop between
+    // blocks, the worker loop closes the open file next.
+    if (emergency_close.preempt(uptime_ms())) {
+      preempted = true;
+      break;
+    }
     std::size_t count;
     {
       BusLock lock;
@@ -1163,6 +1174,12 @@ void send_file(const char *name) {
   {
     BusLock lock;
     std::fclose(file);
+  }
+  if (preempted) {
+    aqlog.printf("PARQUET ERROR operation=get reason=power-critical "
+                 "offset=%lu\n",
+                 static_cast<unsigned long>(offset));
+    return;
   }
   aqlog.printf("PARQUET DATA END name=%s bytes=%lu crc32=%08lx\n", name,
                static_cast<unsigned long>(offset),
@@ -1465,6 +1482,13 @@ aqsync::ArchiveSession archive_session(
      },
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         const std::uint8_t *frame, std::size_t length) {
+       // A due critical battery close stops a LIST or READ at its next data
+       // frame. The session ends it with the existing busy error and the
+       // client retries after the worker has closed the file.
+       if (length &&
+           (frame[0] == ble::kFrameChunk || frame[0] == ble::kFrameFile) &&
+           emergency_close.preempt(uptime_ms()))
+         return false;
        return link == ble::Link::Lan
                   ? lan_deliver(frame, length, peer, generation)
                   : ble::deliver(frame, length, generation, data_wait_step,
@@ -1711,16 +1735,55 @@ bool storage_writable(std::size_t &count, bool &storage_ready) {
   return storage_ready && governor.writable();
 }
 
-// Shared by `parquet flush` and the critical battery finalize. Finishes the
-// open file with the buffered rows. Never resets or sleeps.
+// The worker's view of the card for power::attempt_close().
+struct CloseStorage {
+  std::size_t &count;
+  bool &storage_ready;
+  bool has_data() const { return count || writer_state->telemetry.open(); }
+  bool writable() { return storage_writable(count, storage_ready); }
+  bool finalize() { return governed_commit(count, true); }
+};
+
+// `parquet flush`. Finishes the open file with the buffered rows. Never
+// resets or sleeps.
 void flush_batch(std::size_t &count, bool &storage_ready) {
-  if (!count && !writer_state->telemetry.open())
+  CloseStorage storage{count, storage_ready};
+  const auto outcome = power::attempt_close(storage);
+  if (outcome == power::CloseOutcome::NothingOpen)
     aqlog.println("PARQUET ERROR operation=flush reason=empty");
-  else if (!storage_writable(count, storage_ready))
+  else if (outcome == power::CloseOutcome::BusyRetry)
     aqlog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
                  storage::state_name(governor.state()));
-  else
-    governed_commit(count, true);
+}
+
+// The critical battery close, run at the top of each worker pass so it
+// never waits behind queued commands. Rows already buffered survive a
+// brownout, rows still queued go to the next file. Nothing to close is a
+// quiet success. Busy or failed attempts back off until the card recovers
+// or the retry bound is spent, which is logged as a preservation failure.
+void service_emergency_close(std::size_t &count, bool &storage_ready) {
+  const auto now = uptime_ms();
+  if (!emergency_close.due(now))
+    return;
+  CloseStorage storage{count, storage_ready};
+  const auto outcome = power::attempt_close(storage);
+  const auto next = emergency_close.finish(outcome, now);
+  const unsigned attempts = emergency_close.attempts();
+  if (next == power::Next::GaveUp) {
+    aqlog.printf("PARQUET ERROR operation=power-close reason=%s attempts=%u "
+                 "preserved=0\n",
+                 power::outcome_name(outcome), attempts);
+  } else if (next == power::Next::Retry) {
+    aqlog.printf("PARQUET FLUSH reason=power-critical result=%s storage=%s "
+                 "attempt=%u retry_ms=%lld\n",
+                 power::outcome_name(outcome),
+                 storage::state_name(governor.state()), attempts,
+                 static_cast<long long>(emergency_close.retry_at_ms() - now));
+  } else if (outcome == power::CloseOutcome::Closed) {
+    aqlog.printf("PARQUET FLUSH reason=power-critical result=closed "
+                 "attempt=%u\n",
+                 attempts);
+  }
 }
 
 struct WorkerState {
@@ -1904,6 +1967,7 @@ void storage_worker(void *) {
   Command command;
   for (;;) {
     stamp_heartbeat();
+    service_emergency_close(count, storage_ready);
     // Sample priority is retained without sleeping before every control
     // request. Successful producers signal after copying to a queue.
     if (xQueueReceive(samples, &row, 0) == pdTRUE) {
@@ -1945,14 +2009,6 @@ void storage_worker(void *) {
             static_cast<long long>(anchor.monotonic_us));
         publish_status();
       }
-      continue;
-    }
-    if (command.source == Command::Source::Power) {
-      // The battery reached critical: finish the open file now so the rows
-      // already buffered survive a brownout. Rows still queued go to the
-      // next file.
-      aqlog.println("PARQUET FLUSH reason=power-critical");
-      flush_batch(count, storage_ready);
       continue;
     }
     if (command.source == Command::Source::Control) {
@@ -2171,9 +2227,8 @@ void storage_worker(void *) {
   }
 }
 
-// Main loop only, written by report_battery() and read by collect().
+// Main loop only, written by report_battery().
 power::Tracker power_tracker;
-bool power_flush_pending = false;
 
 void collect(std::int64_t now, std::int64_t scheduled) {
   Sample row{};
@@ -2228,15 +2283,6 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   counter(row, "collection_completed_mono_us", esp_timer_get_time());
   if (!work::enqueue(samples, &row, worker_wakeup))
     ++dropped;
-  // Queued after the row that reported critical. A full command queue
-  // retries on the next sample.
-  if (power_flush_pending) {
-    static Command power_command{};
-    power_command.source = Command::Source::Power;
-    power_command.received_mono_us = now;
-    if (work::enqueue(commands, &power_command, worker_wakeup))
-      power_flush_pending = false;
-  }
   const auto depth =
       static_cast<std::uint32_t>(uxQueueMessagesWaiting(samples));
   if (depth > queue_peak.load())
@@ -2721,8 +2767,12 @@ bool enqueue_request(const ble::ControlRequest &request) {
 
 void report_battery(aq::battery::State state, std::int32_t millivolts) {
   const auto change = power_tracker.observe(state);
-  if (change.finalize)
-    power_flush_pending = true;
+  // The worker owns the close. Raising the intent never touches the card.
+  if (change.finalize) {
+    emergency_close.request();
+    if (worker_wakeup)
+      xSemaphoreGive(worker_wakeup);
+  }
   if (!change.changed)
     return;
   char line[80];
