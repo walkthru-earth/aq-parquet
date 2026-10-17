@@ -16,7 +16,7 @@ file in `docs/README.md` after this one.
   `.cpp` misses the pin or the four places that name the standard disagree.
 - The dialect is pinned because ESP-IDF 6.1 defaults to `gnu++26` and a later
   SDK may move it again. An SDK upgrade must never change the dialect silently.
-- Not C++26 yet. ISO has not published it, and GCC 15, the host clang and
+- Not C++26 yet. As of 2026-10 ISO has not published it, and GCC 15, the host clang and
   cppcheck support only part of it. Revisit when all three cover what we need.
 - Prefer `std::span` over pointer plus length, with a fixed extent for wire
   fields. Prefer `std::bit_cast` over `memcpy` type punning.
@@ -28,7 +28,8 @@ file in `docs/README.md` after this one.
   or `Done` value, so the existing result enums do not qualify as they are.
 - Never call `.value()` on an `expected` or `optional`. It aborts on device under
   `-fno-exceptions` and throws on host. Test `has_value()` or the object itself
-  and then use `*`, or use `value_or()`.
+  and then use `*`, or use `value_or()`. Other throwing paths such as `at()`,
+  `std::stoi` and a failed `new` abort on device for the same reason.
 - Put `[[nodiscard]]` on every result enum and on every function that returns an
   `expected` or a status. Use `enum class`, `std::to_underlying` for enum casts
   and `using enum` where it reads better.
