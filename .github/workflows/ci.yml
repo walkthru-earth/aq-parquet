@@ -24,7 +24,7 @@ jobs:
   host-gate:
     name: Host gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -43,6 +43,9 @@ jobs:
           pixi run clang-format --version
           pixi run cppcheck --version
       - name: Run host gate
+        # About one minute on ubuntu-24.04. A stuck task fails here instead of
+        # holding the runner.
+        timeout-minutes: 10
         run: pixi run gate --keep-going
 
   board-build:
