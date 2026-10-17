@@ -2,6 +2,7 @@
 #include "aq_logger_archive_reset.h"
 #include "aq_logger_directory.h"
 #include "aq_logger_emergency_close.h"
+#include "aq_logger_list_job.h"
 #include "aq_logger_live.h"
 #include "aq_logger_location.h"
 #include "aq_logger_power.h"
@@ -458,6 +459,9 @@ struct ArchiveDirectoryIO {
     errno = 0;
     return ::readdir(directory);
   }
+  // FatFs stat() looks the name up again from the start of its directory,
+  // so a directory of n entries costs about n squared entry reads. Fine at
+  // the 96 files of a day folder.
   static int inspect(const char *path, struct stat *info) {
     BusLock lock;
     return ::stat(path, info);
@@ -1479,10 +1483,9 @@ void *wait_context(const std::uint8_t *frame, std::size_t length) {
 }
 bool data_wait_step(void *context) {
   error_wait_step(context);
-  return power::keep_waiting(emergency_close,
-                             current_abort &&
-                                 aqsync::abort::pending(*current_abort),
-                             context != nullptr, uptime_ms());
+  return power::keep_waiting(
+      emergency_close, current_abort && aqsync::abort::pending(*current_abort),
+      context != nullptr, uptime_ms());
 }
 bool lan_deliver(const std::uint8_t *frame, std::size_t length,
                  std::uint8_t peer, std::uint32_t generation) {
@@ -1546,7 +1549,11 @@ aqsync::ArchiveSession archive_session(
        return writer_state->read_buffers[slot];
      },
      [](void *) { return std::int64_t(esp_timer_get_time()); },
-     [](void *) { archive_list.cancel(); }},
+     [](void *) { archive_list.cancel(); },
+     // A due critical battery close ends a LIST job before its next step or
+     // FILE. CHUNK frames and ring waits stop through the transfer gate,
+     // which reads the same close (aq_logger_transfer_gate.h).
+     [](void *) { return emergency_close.preempt(uptime_ms()); }},
     {nullptr,
      [](void *, ble::Link link, std::uint8_t peer) {
        return link_generation(link, peer);
@@ -1557,9 +1564,10 @@ aqsync::ArchiveSession archive_session(
      },
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         const std::uint8_t *frame, std::size_t length) {
-       // A due critical battery close stops a LIST or READ at its next data
-       // frame. The session ends it with the existing busy error and the
-       // client retries after the worker has closed the file.
+       // A due critical battery close stops a READ at its next CHUNK with
+       // READ_END busy. A LIST already stopped on the session's preempted
+       // hook, so this only catches a close that fell due in between, and
+       // the session still reports it as preempted.
        if (power::refuses_frame(emergency_close, frame, length, uptime_ms()))
          return false;
        return link == ble::Link::Lan
@@ -1732,16 +1740,19 @@ bool files_closed() {
 
 // Remount (when the board allows it) and re-measure. Clears Retry only when
 // the card answers and, with rows waiting, a write succeeds again.
-void probe_storage(std::size_t &count, bool &storage_ready) {
+// With remount false the probe keeps the mount and only measures and writes.
+void probe_storage(std::size_t &count, bool &storage_ready,
+                   bool remount = true) {
   const auto previous = governor.state();
   const auto now = uptime_seconds();
   bool mounted_again = false;
-  bool ok = storage_ready || hooks.storage_remount;
+  const bool may_remount = remount && hooks.storage_remount;
+  bool ok = storage_ready || may_remount;
   // An open file is finalized (or closed and quarantined by close_failed on
   // error) so no FILE* outlives the mount.
-  if (ok && hooks.storage_remount && writer_state->telemetry.open())
+  if (ok && may_remount && writer_state->telemetry.open())
     finalize_file(writer_state->telemetry);
-  if (ok && hooks.storage_remount && files_closed()) {
+  if (ok && may_remount && files_closed()) {
     // A remount may follow an external card edit, so cached CRCs go too.
     archive_session.remounted();
     writer_state->crc_cache.clear();
@@ -1784,21 +1795,33 @@ void probe_storage(std::size_t &count, bool &storage_ready) {
 }
 
 // Runs due probes and the 60 s free-space recheck while not Ready. A Full
-// card is remounted so space freed on a PC becomes visible.
-void service_storage(std::size_t &count, bool &storage_ready) {
+// card is remounted so space freed on a PC becomes visible. While a radio
+// LIST job runs a periodic remount waits for it (aq_logger_list_job.h).
+// `owner` marks an owner action or the emergency close, which remounts at
+// once even if that ends the job.
+listjob::StoragePlanner storage_planner;
+void service_storage(std::size_t &count, bool &storage_ready,
+                     bool owner = false) {
   const auto now = uptime_seconds();
-  if (governor.probe_due(now) && (storage_ready || hooks.storage_remount)) {
-    probe_storage(count, storage_ready);
+  const auto state = governor.state();
+  listjob::StorageInputs in;
+  in.probe_due = governor.probe_due(now);
+  in.can_probe = storage_ready || hooks.storage_remount;
+  in.recheck_due = governor.recheck_due(now);
+  in.full = state == storage::State::Full;
+  in.retry = state == storage::State::Retry;
+  in.remount = hooks.storage_remount != nullptr;
+  in.files_closed = files_closed();
+  in.listing = archive_session.listing();
+  in.owner = owner;
+  const auto pass = storage_planner.next(in);
+  if (pass == listjob::StoragePass::Idle)
+    return;
+  if (pass != listjob::StoragePass::Recheck) {
+    probe_storage(count, storage_ready, pass == listjob::StoragePass::Probe);
     return;
   }
-  if (!governor.recheck_due(now))
-    return;
-  const auto previous = governor.state();
-  if (previous == storage::State::Full && hooks.storage_remount &&
-      files_closed()) {
-    probe_storage(count, storage_ready);
-    return;
-  }
+  const auto previous = state;
   std::uint64_t free_bytes = 0;
   if (measure_free(free_bytes))
     governor.observe_free(free_bytes, now);
@@ -1810,7 +1833,7 @@ void service_storage(std::size_t &count, bool &storage_ready) {
 // Explicit owner actions retry at once instead of waiting for the backoff.
 bool storage_writable(std::size_t &count, bool &storage_ready) {
   governor.request_probe();
-  service_storage(count, storage_ready);
+  service_storage(count, storage_ready, true);
   return storage_ready && governor.writable();
 }
 
@@ -2020,6 +2043,26 @@ void handle_control_request(const ble::ControlRequest &request,
   }
 }
 
+// The one request the running LIST job holds back, outside the queue.
+struct ParkedRequest {
+  ble::ControlRequest request{};
+  bool waiting = false;
+};
+ParkedRequest parked;
+
+void serve_control(const ble::ControlRequest &request, std::size_t &count,
+                   bool &storage_ready) {
+  WorkerState state{count, storage_ready};
+  const auto stamp = aqsync::abort::tag(request);
+  current_request = &request;
+  current_abort = &stamp;
+  active_state = &state;
+  handle_control_request(request, state);
+  active_state = nullptr;
+  current_abort = nullptr;
+  current_request = nullptr;
+}
+
 void storage_worker(void *) {
   // Startup scans below are covered from the first instruction.
   stamp_heartbeat();
@@ -2090,20 +2133,40 @@ void storage_worker(void *) {
       current_abort = nullptr;
       active_state = nullptr;
     }
-    if (archive_session.listing()) {
-      // No idle sleep while a walk runs. A request the walk holds back stays
-      // at the head of the queue, together with everything behind it.
-      if (xQueuePeek(commands, &command, 0) != pdTRUE ||
-          (command.source == Command::Source::Control &&
-           archive_session.must_wait_for_list(command.control)))
-        continue;
-      xQueueReceive(commands, &command, 0);
-    } else if (xQueueReceive(commands, &command, 0) != pdTRUE) {
-      // Drain pending samples before sleeping. Queue-then-signal also covers
-      // an enqueue racing this check: the signal remains pending until taken.
-      work::wait_if_idle(samples, worker_wakeup);
+    // A request the job holds back moves to the parked slot, so requests
+    // behind it from other links still run between steps
+    // (aq_logger_list_job.h).
+    const bool listing = archive_session.listing();
+    const bool has_head = xQueuePeek(commands, &command, 0) == pdTRUE;
+    const auto take =
+        listjob::take(listing, parked.waiting, has_head,
+                      has_head && command.source == Command::Source::Control &&
+                          archive_session.must_wait_for_list(command.control));
+    if (take == listjob::Take::Wait) {
+      if (listing) {
+        // One tick per step, so a walk of cached entries into a ring with
+        // room still lets IDLE run for the task watchdog.
+        vTaskDelay(1);
+      } else {
+        // Drain pending samples before sleeping. Queue-then-signal also
+        // covers an enqueue racing this check: the signal remains pending
+        // until taken.
+        work::wait_if_idle(samples, worker_wakeup);
+      }
       continue;
     }
+    if (take == listjob::Take::Park) {
+      xQueueReceive(commands, &command, 0);
+      parked.request = command.control;
+      parked.waiting = true;
+      continue;
+    }
+    if (take == listjob::Take::Parked) {
+      parked.waiting = false;
+      serve_control(parked.request, count, storage_ready);
+      continue;
+    }
+    xQueueReceive(commands, &command, 0);
     if (command.source == Command::Source::Network) {
       const auto &anchor = command.network_time;
       if (set_clock(anchor.seconds, anchor.monotonic_us, aq::utc::Network,
@@ -2117,15 +2180,7 @@ void storage_worker(void *) {
       continue;
     }
     if (command.source == Command::Source::Control) {
-      WorkerState state{count, storage_ready};
-      const auto stamp = aqsync::abort::tag(command.control);
-      current_request = &command.control;
-      current_abort = &stamp;
-      active_state = &state;
-      handle_control_request(command.control, state);
-      active_state = nullptr;
-      current_abort = nullptr;
-      current_request = nullptr;
+      serve_control(command.control, count, storage_ready);
       continue;
     }
     if (std::strcmp(command.text, "parquet erase-archive CONFIRM") == 0) {
@@ -2172,6 +2227,7 @@ void storage_worker(void *) {
       worker_failed = !erased;
       xQueueReset(samples);
       xQueueReset(commands);
+      parked.waiting = false;
       if (erased) {
         partials_seen = partials_quarantined = 0;
         quarantine_bytes = 0;
@@ -2326,6 +2382,10 @@ void storage_worker(void *) {
       }
       report_host_clock("serial", seconds, mono, previous, skew_ns);
       publish_status();
+    } else if (listjob::serial_walks_archive(command.text) &&
+               archive_session.listing()) {
+      // A second walk would need a second set of directory handles.
+      aqlog.println("PARQUET ERROR operation=list reason=busy-list");
     } else if (std::strcmp(command.text, "parquet list") == 0)
       list_files();
     else if (std::strncmp(command.text, "parquet get ", 12) == 0)

@@ -1,6 +1,8 @@
 #include "abort_signal.h"
+#include "aq_logger_list_job.h"
 #include "aq_logger_transfer_gate.h"
 #include "archive_sync.h"
+#include "storage_governor.h"
 #include "sync_codec.h"
 
 #include <array>
@@ -8,10 +10,12 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fcntl.h>
 #include <string>
 #include <sys/resource.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -1064,15 +1068,17 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   assert(f.progress == f.frames.size() && f.frames.size() == 10001);
   assert(f.listed == listed + 2);
 
-  // While the job runs, requests on its link and peer and any other LIST
-  // wait, and other links are served between steps.
+  // While the job runs, requests on its link and peer wait, a LIST from
+  // another link or peer does not, and other links are served between steps.
   f.clear();
   f.list_repeats = 100;
   session.handle(request(f, ble::kOpList, ble::Link::Lan, 0), true);
   session.step(true);
   assert(session.must_wait_for_list(
       request(f, ble::kOpStatus, ble::Link::Lan, 0)));
-  assert(session.must_wait_for_list(request(f, ble::kOpList)));
+  assert(!session.must_wait_for_list(request(f, ble::kOpList)));
+  assert(
+      session.must_wait_for_list(request(f, ble::kOpList, ble::Link::Lan, 0)));
   auto marker_request = request(f, ble::kOpAbort, ble::Link::Lan, 0);
   assert(session.must_wait_for_list(marker_request));
   assert(!session.must_wait_for_list(request(f, ble::kOpStatus)));
@@ -1083,7 +1089,7 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   session.handle(read(f, other, 0, 100, ble::Link::Lan, 2), true);
   assert(session.listing());
   assert(!f.frames.empty() && f.frames.front().peer == 2);
-  // A second LIST reaching handle() anyway is refused, the job continues.
+  // A LIST from another link or peer is refused at once, the job continues.
   f.clear();
   session.handle(request(f, ble::kOpList), true);
   assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrBusy &&
@@ -1111,8 +1117,10 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   assert(!session.listing() && !f.list_open && f.list_cancels == 1);
   assert(f.frames.size() == sent && f.errors.empty());
 
-  // Storage leaving mid walk, a remount and an erase end the job with
-  // ERROR storage and close the walk.
+  // A step without storage, a remount and an erase end the job with ERROR
+  // storage and close the walk. The worker passes storage_ready false only
+  // around a failed remount, so in practice all three are a remount or an
+  // erase.
   for (int cause = 0; cause < 3; ++cause) {
     f.clear();
     session.handle(request(f, ble::kOpList), true);
@@ -1131,6 +1139,246 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
            f.errors[0].op == ble::kOpList &&
            f.errors[0].link == ble::Link::Ble);
   }
+  f.list_repeats = 1;
+  reset_abort();
+  f.clear();
+}
+
+// The storage worker glue around a LIST job (aq_logger_list_job.h), driven
+// with the real planner, governor and session as the worker runs them.
+void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
+  namespace listjob = aqlogger::listjob;
+  namespace storage = aqlogger::storage;
+  using listjob::StoragePass;
+  constexpr auto kStep = aqsync::ArchiveSession::kListStepEntries;
+  reset_abort();
+  f.payload = {517, 1024, 1024, 1024};
+
+  // One worker pass of service_storage on a board with a remount hook. A
+  // Probe remounts, which the session sees as remounted() then mounted().
+  struct Storage {
+    storage::Governor governor;
+    listjob::StoragePlanner planner;
+    unsigned remounts = 0, kept = 0, rechecks = 0;
+    std::uint64_t free_bytes = 0;
+    StoragePass pass(aqsync::ArchiveSession &session, std::int64_t now,
+                     bool owner = false) {
+      listjob::StorageInputs in;
+      in.probe_due = governor.probe_due(now);
+      in.can_probe = true;
+      in.recheck_due = governor.recheck_due(now);
+      in.full = governor.state() == storage::State::Full;
+      in.retry = governor.state() == storage::State::Retry;
+      in.remount = true;
+      in.files_closed = true;
+      in.listing = session.listing();
+      in.owner = owner;
+      const auto next = planner.next(in);
+      if (next == StoragePass::Probe) {
+        ++remounts;
+        session.remounted();
+        session.mounted();
+        governor.probe_succeeded(free_bytes, now);
+      } else if (next == StoragePass::KeepMount) {
+        ++kept;
+        governor.probe_succeeded(free_bytes, now);
+      } else if (next == StoragePass::Recheck) {
+        ++rechecks;
+        governor.observe_free(free_bytes, now);
+      }
+      return next;
+    }
+  };
+
+  // A Full card held across several rechecks does not remount mid LIST. The
+  // walk ends with LIST_END and the skipped remount runs after it.
+  {
+    f.clear();
+    f.list_repeats = 12 * kStep;
+    f.list_cancels = 0;
+    Storage card;
+    card.governor.configure(1ULL << 30);
+    card.governor.observe_free(0, 0);
+    assert(card.governor.state() == storage::State::Full);
+    session.handle(request(f, ble::kOpList), true);
+    std::int64_t now = 0;
+    while (session.listing()) {
+      now += 20;
+      card.pass(session, now);
+      session.step(true);
+    }
+    assert(now / storage::kRecheckSeconds >= 3 && card.rechecks >= 3);
+    assert(card.remounts == 0 && card.planner.deferred());
+    assert(card.governor.state() == storage::State::Full);
+    assert(f.errors.empty() && f.list_cancels == 1 && !f.list_open);
+    assert(f.frames.back().bytes[0] == ble::kFrameListEnd &&
+           get_u32(f.frames.back().bytes.data() + 1) == 12 * kStep);
+    assert(card.pass(session, now + 1) == StoragePass::Probe);
+    assert(card.remounts == 1 && !card.planner.deferred());
+    // Without a job the Full recheck remounts as before.
+    assert(card.pass(session, now + 2) == StoragePass::Idle);
+    assert(card.pass(session, now + 1 + storage::kRecheckSeconds) ==
+           StoragePass::Probe);
+  }
+
+  // The same governor without the planner's deferral ends the walk with
+  // ERROR storage, which is what the deferral prevents.
+  {
+    f.clear();
+    f.list_repeats = 4 * kStep;
+    session.handle(request(f, ble::kOpList), true);
+    session.step(true);
+    session.remounted();
+    session.mounted();
+    assert(!session.listing() && f.errors.size() == 1 &&
+           f.errors[0].code == ble::kErrStorage);
+  }
+
+  // A Retry probe due mid LIST keeps the mount. An owner action, the
+  // emergency close among them, still remounts and may end the job.
+  {
+    f.clear();
+    f.list_repeats = 4 * kStep;
+    Storage card;
+    card.free_bytes = 1ULL << 30;
+    card.governor.configure(1ULL << 30);
+    card.governor.write_failed(0);
+    assert(card.governor.state() == storage::State::Retry);
+    session.handle(request(f, ble::kOpList), true);
+    session.step(true);
+    assert(card.pass(session, 5) == StoragePass::Idle);
+    card.governor.write_failed(10);
+    card.governor.request_probe();
+    assert(card.pass(session, 11) == StoragePass::KeepMount);
+    assert(card.kept == 1 && card.remounts == 0 && card.planner.deferred());
+    session.step(true);
+    assert(session.listing() && f.errors.empty());
+    card.governor.write_failed(12);
+    card.governor.request_probe();
+    assert(card.pass(session, 13, true) == StoragePass::Probe);
+    assert(!session.listing() && f.errors.size() == 1 &&
+           f.errors[0].code == ble::kErrStorage && !card.planner.deferred());
+  }
+
+  // A Retry card whose kept probe failed again remounts as soon as the job
+  // ends, without waiting for its backoff.
+  {
+    listjob::StoragePlanner planner;
+    listjob::StorageInputs in;
+    in.probe_due = in.can_probe = in.retry = in.remount = true;
+    in.listing = true;
+    assert(planner.next(in) == StoragePass::KeepMount && planner.deferred());
+    in.probe_due = false;
+    assert(planner.next(in) == StoragePass::Idle && planner.deferred());
+    in.listing = false;
+    assert(planner.next(in) == StoragePass::Probe && !planner.deferred());
+    assert(planner.next(in) == StoragePass::Idle);
+    // A board without a remount hook probes as before, a job or not.
+    in.remount = false;
+    in.probe_due = in.listing = true;
+    assert(planner.next(in) == StoragePass::Probe && !planner.deferred());
+    // A Full card with an open writer file only rechecks.
+    in = listjob::StorageInputs{};
+    in.recheck_due = in.full = in.remount = in.can_probe = true;
+    assert(planner.next(in) == StoragePass::Recheck);
+    // A deferred remount the card no longer needs is dropped.
+    in.files_closed = in.listing = true;
+    assert(planner.next(in) == StoragePass::Recheck && planner.deferred());
+    in = listjob::StorageInputs{};
+    in.can_probe = in.remount = in.files_closed = true;
+    assert(planner.next(in) == StoragePass::Idle && !planner.deferred());
+  }
+
+  // The queue glue. A request the job holds parks outside the queue, so an
+  // unrelated READ behind it runs between steps, and a LIST from another
+  // link is refused at once. The parked request runs after LIST_END.
+  {
+    const auto reader = open(f, session, ble::Link::Lan, "sample.parquet", 2);
+    f.clear();
+    f.list_repeats = 6 * kStep;
+    std::deque<ble::ControlRequest> queue;
+    ble::ControlRequest parked{};
+    bool has_parked = false;
+    session.handle(request(f, ble::kOpList, ble::Link::Lan, 0), true);
+    auto same_peer = request(f, ble::kOpOpen, ble::Link::Lan, 0);
+    std::memcpy(same_peer.bytes + 1, "sample.parquet", 14);
+    same_peer.length += 14;
+    queue.push_back(same_peer);
+    queue.push_back(read(f, reader, 0, 100, ble::Link::Lan, 2));
+    queue.push_back(request(f, ble::kOpList));
+    std::vector<listjob::Take> takes;
+    std::size_t list_end = 0, opened = 0, read_at = 0, busy_at = 0;
+    for (unsigned pass = 0; pass < 100; ++pass) {
+      if (session.listing())
+        session.step(true);
+      const bool has_head = !queue.empty();
+      const auto take =
+          listjob::take(session.listing(), has_parked, has_head,
+                        has_head && session.must_wait_for_list(queue.front()));
+      takes.push_back(take);
+      if (take == listjob::Take::Wait) {
+        if (!session.listing())
+          break;
+        continue;
+      }
+      if (take == listjob::Take::Park) {
+        parked = queue.front();
+        queue.pop_front();
+        has_parked = true;
+        continue;
+      }
+      if (take == listjob::Take::Parked) {
+        has_parked = false;
+        session.handle(parked, true);
+        continue;
+      }
+      const auto r = queue.front();
+      queue.pop_front();
+      session.handle(r, true);
+      if (r.bytes[0] == ble::kOpRead)
+        read_at = f.frames.size();
+      else
+        busy_at = f.errors.size();
+    }
+    for (std::size_t i = 0; i < f.frames.size(); ++i) {
+      const auto &frame = f.frames[i];
+      if (frame.peer == 0 && frame.bytes[0] == ble::kFrameListEnd)
+        list_end = i + 1;
+      if (frame.peer == 0 && frame.bytes[0] == ble::kFrameOpened)
+        opened = i + 1;
+    }
+    assert(takes[0] == listjob::Take::Park && takes[1] == listjob::Take::Head &&
+           takes[2] == listjob::Take::Head);
+    assert(read_at && read_at < list_end && f.frames[read_at - 1].peer == 2);
+    assert(busy_at == 1 && f.errors[0].link == ble::Link::Ble &&
+           f.errors[0].code == ble::kErrBusy && f.errors[0].detail == "list");
+    assert(list_end && opened == list_end + 1 && f.frames.size() == opened);
+    assert(queue.empty() && !has_parked && !session.listing());
+    // A second request from the job's peer behind a parked one stays at the
+    // head until the job ends, the documented bound.
+    assert(listjob::take(true, true, true, true) == listjob::Take::Wait);
+    assert(listjob::take(true, true, true, false) == listjob::Take::Head);
+    assert(listjob::take(true, false, false, false) == listjob::Take::Wait);
+    assert(listjob::take(false, true, true, false) == listjob::Take::Parked);
+    assert(listjob::take(false, false, true, true) == listjob::Take::Head);
+    const auto parked_handle = get_u16(f.frames[opened - 1].bytes.data() + 1);
+    for (const auto &[link_peer, handle] :
+         {std::pair<std::uint8_t, std::uint16_t>{0, parked_handle},
+          std::pair<std::uint8_t, std::uint16_t>{2, reader}}) {
+      auto done = request(f, ble::kOpClose, ble::Link::Lan, link_peer);
+      done.length = 3;
+      put_u16(done.bytes + 1, handle);
+      serve(session, done, true);
+    }
+  }
+
+  // Serial `parquet list` walks the whole archive and is refused during a
+  // job. `parquet get` opens one file and is not.
+  assert(listjob::serial_walks_archive("parquet list"));
+  assert(!listjob::serial_walks_archive("parquet get sample.parquet"));
+  assert(!listjob::serial_walks_archive("parquet"));
+  assert(!listjob::serial_walks_archive(nullptr));
+
   f.list_repeats = 1;
   reset_abort();
   f.clear();
@@ -1224,6 +1472,7 @@ int main(int argc, char **argv) {
     f.list_repeats = 1;
   }
   list_job_cases(f, session);
+  worker_glue_cases(f, session);
 
   auto handle = open(f, session);
   f.clear();

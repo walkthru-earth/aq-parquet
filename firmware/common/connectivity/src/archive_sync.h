@@ -98,8 +98,9 @@ struct ArchiveTransport {
 // committed, so a large card never holds the worker for a whole walk. Each
 // step reads at most kListStepEntries directory entries and checks ABORT
 // first, so an ABORT stops the walk within one step. One LIST runs at a
-// time. While it runs the worker holds back every request that
-// must_wait_for_list() names and serves the others between steps.
+// time, and a LIST from another link or peer gets ERROR busy "list". While
+// the job runs the worker holds back every request that must_wait_for_list()
+// names and serves the others between steps.
 //
 // Independent immutable logical file handles for BLE and each LAN peer, bound
 // to their connection generations. Each open handle keeps one read-only FILE
@@ -139,8 +140,8 @@ public:
   }
   // True when `request` must wait for the LIST job to end. That is any
   // request on the job's link and peer, ABORT markers included, so replies
-  // keep their order and ABORTED follows ERROR aborted, and any LIST, since
-  // one walk runs at a time.
+  // keep their order and ABORTED follows ERROR aborted. A LIST from another
+  // link or peer does not wait. handle() answers it ERROR busy "list".
   bool must_wait_for_list(const ble::ControlRequest &request) const;
   void reconcile();
   // Drops every logical handle and closes its descriptor. Ends a LIST job

@@ -219,8 +219,11 @@ bool ArchiveSession::emit_file(void *context, const char *name,
   put_u32(frame + 1, bytes);
   std::memcpy(frame + 5, name, name_length);
   if (!session.respond(frame, 5 + name_length)) {
-    list.ok = false;
-    list.aborted = session.aborted();
+    // The transport may refuse the frame for the same reason the predicate
+    // names, an ABORT or a preemption seen while it waited for room. The
+    // reply then says which. Anything else is a refused frame.
+    if (!session.stop_list())
+      list.ok = false;
     return false;
   }
   ++list.count;
@@ -260,8 +263,6 @@ bool ArchiveSession::must_wait_for_list(
     const ble::ControlRequest &request) const {
   if (!list_.active || !request.length)
     return false;
-  if (request.bytes[0] == ble::kOpList)
-    return true;
   return request.link == list_.tag.link && request.peer == list_.tag.peer;
 }
 

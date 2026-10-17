@@ -116,6 +116,10 @@ then emits one bounded `PARQUET SCAN` summary. It does not print every archived
 path or `PARQUET LIST END` at boot: an archive-sized USB dump can block sampling
 storage until a serial reader drains it. An explicit `parquet list` request
 retains full `PARQUET FILE` entries, partial summary and `PARQUET LIST END`.
+While a BLE or LAN `LIST` runs, `parquet list` answers
+`PARQUET ERROR operation=list reason=busy-list` instead, because the card
+reserves directory handles for one walk only. Run it again once the radio
+`LIST` ends. `parquet get` reads one file and is not refused.
 No filesystem ownership, retention or sampling-clock policy changes with this
 output choice.
 
@@ -202,6 +206,18 @@ stateDiagram-v2
 
 The retry bound is not yet tied to measured energy. It moves with the
 discharge calibration in issue #28.
+
+## Radio LIST job
+
+A BLE or LAN `LIST` runs as a job of bounded steps on the storage worker
+(`archive_sync.h`). The worker glue around it lives in
+`aq_logger_list_job.h` as pure decisions that `archive-sync-test` drives with
+the real session and storage governor. It covers three things. Periodic
+remounts wait for the job, so a full card is measured without a remount and
+a card in Retry is probed without one, and the skipped remount runs after the
+job. One request from the job's own link and peer waits in a parked slot
+outside the command queue, so requests from other links behind it still run.
+Serial `parquet list` is refused while the job runs.
 
 ## Worker watchdog
 
