@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sys/stat.h>
+#include <utility>
 
 namespace aq::logger::detail {
 
@@ -38,66 +39,175 @@ inline bool ensure_directory(const char *path, DirectoryStat inspect = ::stat,
   return false;
 }
 
-// Bounded, allocation-free archive traversal. IO supplies open/read/inspect/
-// close with any required bus locking. A null read is EOF only when errno is
-// zero; FatFs otherwise reports an SD read failure through that same result.
-// Fail the entire snapshot on any inaccessible entry, rather than publishing
-// the successfully visited prefix as a complete archive.
+// Resumable, allocation-free archive traversal. An explicit stack of open
+// directories replaces recursion, so step() can visit a bounded number of
+// entries and a later step() continues where it stopped. The order is the
+// same pre-order, depth-first order a recursive walk produces.
+// IO supplies open/read/inspect/close with any required bus locking. A null
+// read is EOF only when errno is zero. FatFs otherwise reports an SD read
+// failure through that same result. Any inaccessible entry fails the whole
+// snapshot rather than publishing the visited prefix as complete.
+template <class IO> class DirectoryWalk {
+public:
+  // Deepest directory level the walk opens, the archive root being level 0.
+  static constexpr unsigned kMaxDepth = 6;
+  // More: entries remain. Done: every directory was read and closed.
+  // Failed: an IO call or a name check failed, errno says why. Stopped: the
+  // visitor returned false. After any status but More nothing stays open.
+  enum class Status : std::uint8_t { More, Done, Failed, Stopped };
+
+  DirectoryWalk() = default;
+  DirectoryWalk(const DirectoryWalk &) = delete;
+  DirectoryWalk &operator=(const DirectoryWalk &) = delete;
+  ~DirectoryWalk() { cancel(); }
+
+  // Opens "<base>/<relative>" as a walk at `depth`. Drops any earlier walk.
+  // `base` must outlive the walk. False with errno set when nothing opened.
+  bool begin(IO &io, const char *base, const char *relative = "",
+             unsigned depth = 0) {
+    cancel();
+    io_ = &io;
+    base_ = base;
+    if (depth > kMaxDepth) {
+      errno = EOVERFLOW;
+      return false;
+    }
+    const std::size_t length = std::strlen(relative);
+    if (length >= sizeof(relative_)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    std::memcpy(relative_, relative, length + 1);
+    first_depth_ = depth;
+    return push();
+  }
+
+  // Reads at most `budget` directory entries (at least one) and passes each
+  // file to visit(name, info), where name is relative to `base`.
+  template <class Visitor> Status step(unsigned budget, Visitor &visit) {
+    if (!open_)
+      return Status::Done;
+    if (budget == 0)
+      budget = 1;
+    for (; budget; --budget) {
+      Handle directory = handles_[open_ - 1];
+      errno = 0;
+      const auto *entry = io_->read(directory);
+      if (!entry) {
+        if (errno != 0)
+          return fail(Status::Failed);
+        --open_;
+        if (io_->close(directory) != 0)
+          return fail(Status::Failed);
+        if (!open_)
+          return Status::Done;
+        relative_[lengths_[open_ - 1]] = '\0';
+        continue;
+      }
+      if (entry->d_name[0] == '.')
+        continue;
+      const std::size_t parent = lengths_[open_ - 1];
+      int length =
+          std::snprintf(relative_ + parent, sizeof(relative_) - parent, "%s%s",
+                        parent ? "/" : "", entry->d_name);
+      if (length < 0 ||
+          parent + static_cast<std::size_t>(length) >= sizeof(relative_)) {
+        relative_[parent] = '\0';
+        errno = ENAMETOOLONG;
+        return fail(Status::Failed);
+      }
+      char path[416];
+      length = std::snprintf(path, sizeof(path), "%s/%s", base_, relative_);
+      if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
+        errno = ENAMETOOLONG;
+        return fail(Status::Failed);
+      }
+      struct stat info{};
+      if (io_->inspect(path, &info) != 0)
+        return fail(Status::Failed);
+      if (S_ISDIR(info.st_mode)) {
+        if (first_depth_ + open_ > kMaxDepth) {
+          errno = EOVERFLOW;
+          return fail(Status::Failed);
+        }
+        if (!push())
+          return fail(Status::Failed);
+        continue;
+      }
+      const bool keep = visit(static_cast<const char *>(relative_), info);
+      relative_[parent] = '\0';
+      if (!keep)
+        return fail(Status::Stopped);
+    }
+    return Status::More;
+  }
+
+  // Closes every open directory. False when a close failed.
+  bool cancel() {
+    bool closed = true;
+    while (open_)
+      if (io_->close(handles_[--open_]) != 0)
+        closed = false;
+    return closed;
+  }
+
+  bool active() const { return open_ != 0; }
+
+private:
+  using Handle = decltype(std::declval<IO &>().open(""));
+
+  // Opens "<base>/<relative_>" as the new innermost level.
+  bool push() {
+    char path[416];
+    const int length =
+        std::snprintf(path, sizeof(path), "%s/%s", base_, relative_);
+    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
+      errno = ENAMETOOLONG;
+      return false;
+    }
+    Handle directory = io_->open(path);
+    if (!directory)
+      return false;
+    handles_[open_] = directory;
+    lengths_[open_] = std::strlen(relative_);
+    ++open_;
+    return true;
+  }
+
+  // Closes everything, keeping the errno that ended the walk unless a close
+  // reports one when none was set.
+  Status fail(Status status) {
+    const int failure = errno;
+    if (!cancel() && status == Status::Stopped)
+      status = Status::Failed;
+    if (failure)
+      errno = failure;
+    return status;
+  }
+
+  IO *io_ = nullptr;
+  const char *base_ = "";
+  Handle handles_[kMaxDepth + 1]{};
+  std::size_t lengths_[kMaxDepth + 1]{};
+  unsigned open_ = 0;
+  unsigned first_depth_ = 0;
+  // Relative path of the innermost open directory, extended in place by the
+  // entry being visited.
+  char relative_[384]{};
+};
+
+// The whole walk in one call. True only when every entry was read.
 template <class IO, class Visitor>
 bool walk_directory(IO &io, const char *base, const char *relative,
                     unsigned depth, Visitor &visit) {
-  if (depth > 6) {
-    errno = EOVERFLOW;
+  DirectoryWalk<IO> walk;
+  if (!walk.begin(io, base, relative, depth))
     return false;
+  using Status = typename DirectoryWalk<IO>::Status;
+  Status status;
+  while ((status = walk.step(1024, visit)) == Status::More) {
   }
-  char path[416];
-  int length = std::snprintf(path, sizeof(path), "%s/%s", base, relative);
-  if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
-    errno = ENAMETOOLONG;
-    return false;
-  }
-  auto *directory = io.open(path);
-  if (!directory)
-    return false;
-  bool complete = true;
-  for (;;) {
-    errno = 0;
-    const auto *entry = io.read(directory);
-    if (!entry) {
-      complete = errno == 0;
-      break;
-    }
-    if (entry->d_name[0] == '.')
-      continue;
-    char name[384];
-    length = std::snprintf(name, sizeof(name), "%s%s%s", relative,
-                           *relative ? "/" : "", entry->d_name);
-    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(name)) {
-      errno = ENAMETOOLONG;
-      complete = false;
-      break;
-    }
-    length = std::snprintf(path, sizeof(path), "%s/%s", base, name);
-    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
-      errno = ENAMETOOLONG;
-      complete = false;
-      break;
-    }
-    struct stat info{};
-    if (io.inspect(path, &info) != 0 ||
-        !(S_ISDIR(info.st_mode)
-              ? walk_directory(io, base, name, depth + 1, visit)
-              : visit(name, info))) {
-      complete = false;
-      break;
-    }
-  }
-  const int failure = errno;
-  if (io.close(directory) != 0)
-    complete = false;
-  if (failure)
-    errno = failure;
-  return complete;
+  return status == Status::Done;
 }
 
 inline bool has_suffix(const char *name, const char *suffix) {

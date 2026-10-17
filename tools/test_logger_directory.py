@@ -22,7 +22,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Logger directory checks passed: FatFs root, mkdir races, archive traversal, quarantine provenance, same-boot quarantine and crosslink guard")
+    print("Logger directory checks passed: FatFs root, mkdir races, archive traversal, resumable bounded walk steps, quarantine provenance, same-boot quarantine and crosslink guard")
 
 
 if __name__ == "__main__":

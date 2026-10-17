@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -172,6 +174,142 @@ void check_archive_walk() {
   const std::string long_base(416, 'a');
   assert(!walk_directory(io, long_base.c_str(), "", 0, visit));
   assert(errno == ENAMETOOLONG);
+}
+// An in-memory tree for the resumable walk. Directories map to their entry
+// names; a trailing '/' marks a subdirectory.
+struct TreeIO {
+  struct Cursor {
+    std::string path;
+    std::size_t index = 0;
+  };
+  std::map<std::string, std::vector<std::string>> directories;
+  std::vector<std::unique_ptr<Cursor>> cursors;
+  struct dirent entry{};
+  unsigned opened = 0, closed = 0, reads = 0;
+
+  Cursor *open(const char *path) {
+    const auto found = directories.find(path);
+    if (found == directories.end()) {
+      errno = ENOENT;
+      return nullptr;
+    }
+    ++opened;
+    cursors.push_back(std::make_unique<Cursor>(Cursor{path, 0}));
+    return cursors.back().get();
+  }
+  const struct dirent *read(Cursor *cursor) {
+    ++reads;
+    const auto &names = directories.at(cursor->path);
+    if (cursor->index == names.size())
+      return nullptr;
+    std::string name = names[cursor->index++];
+    if (name.back() == '/')
+      name.pop_back();
+    std::snprintf(entry.d_name, sizeof(entry.d_name), "%s", name.c_str());
+    return &entry;
+  }
+  int inspect(const char *path, struct stat *info) {
+    const std::string full(path);
+    const auto slash = full.rfind('/');
+    const auto &names = directories.at(full.substr(0, slash) +
+                                       (slash == 3 ? "/" : ""));
+    const std::string leaf = full.substr(slash + 1);
+    for (const auto &name : names)
+      if (name == leaf || name == leaf + "/") {
+        info->st_mode = name.back() == '/' ? S_IFDIR : S_IFREG;
+        return 0;
+      }
+    errno = ENOENT;
+    return -1;
+  }
+  int close(Cursor *) {
+    ++closed;
+    return 0;
+  }
+  // "/sd/" holds a day tree with partials and one huge flat directory.
+  explicit TreeIO(unsigned huge) {
+    directories["/sd/"] = {"a.parquet", "station=x/", "huge/", "z.parquet"};
+    directories["/sd/station=x"] = {"year=2026/", "b.partial", ".hidden"};
+    directories["/sd/station=x/year=2026"] = {"month=01/", "month=02/"};
+    directories["/sd/station=x/year=2026/month=01"] = {"c.parquet", "d.parquet"};
+    directories["/sd/station=x/year=2026/month=02"] = {};
+    auto &flat = directories["/sd/huge"];
+    for (unsigned i = 0; i < huge; ++i)
+      flat.push_back("f" + std::to_string(i) + (i % 10 ? ".parquet" : ".partial"));
+  }
+};
+
+// A walk resumed in bounded steps visits exactly what one unbounded walk
+// does, and no step reads more entries than its budget.
+void check_resumable_walk() {
+  using aq::logger::detail::DirectoryWalk;
+  using aq::logger::detail::walk_directory;
+  using Status = DirectoryWalk<TreeIO>::Status;
+  std::vector<std::string> whole;
+  {
+    TreeIO io(10000);
+    auto visit = [&](const char *name, const struct stat &) {
+      whole.emplace_back(name);
+      return true;
+    };
+    assert(walk_directory(io, "/sd", "", 0, visit));
+    assert(io.opened == io.closed && io.opened == 6);
+  }
+  assert(whole.size() == 4 + 1 + 10000);
+  assert(whole[0] == "a.parquet" &&
+         whole[1] == "station=x/year=2026/month=01/c.parquet" &&
+         whole.back() == "z.parquet");
+  for (const unsigned budget : {1U, 7U, 32U, 4096U}) {
+    TreeIO io(10000);
+    std::vector<std::string> stepped;
+    auto visit = [&](const char *name, const struct stat &) {
+      stepped.emplace_back(name);
+      return true;
+    };
+    DirectoryWalk<TreeIO> walk;
+    assert(walk.begin(io, "/sd"));
+    unsigned steps = 0;
+    Status status;
+    do {
+      const unsigned before = io.reads;
+      status = walk.step(budget, visit);
+      assert(io.reads - before <= budget);
+      ++steps;
+    } while (status == Status::More);
+    assert(status == Status::Done && !walk.active());
+    assert(stepped == whole && io.opened == io.closed);
+    assert(steps >= io.reads / budget);
+  }
+  // A visitor that refuses stops the walk inside the step and closes every
+  // open directory. Nothing is read afterwards.
+  {
+    TreeIO io(10000);
+    unsigned visits = 0;
+    auto visit = [&](const char *, const struct stat &) { return ++visits < 3; };
+    DirectoryWalk<TreeIO> walk;
+    assert(walk.begin(io, "/sd"));
+    assert(walk.step(100000, visit) == Status::Stopped);
+    assert(visits == 3 && !walk.active() && io.opened == io.closed);
+    const unsigned reads = io.reads;
+    assert(walk.step(100000, visit) == Status::Done && io.reads == reads);
+  }
+  // cancel() mid walk, and a destroyed walk, close what is open.
+  {
+    TreeIO io(100);
+    auto visit = [](const char *, const struct stat &) { return true; };
+    {
+      DirectoryWalk<TreeIO> walk;
+      assert(walk.begin(io, "/sd"));
+      assert(walk.step(3, visit) == Status::More && walk.active());
+      assert(io.opened > io.closed);
+    }
+    assert(io.opened == io.closed);
+    DirectoryWalk<TreeIO> walk;
+    assert(walk.begin(io, "/sd"));
+    assert(walk.step(5, visit) == Status::More);
+    assert(walk.cancel() && !walk.active() && io.opened == io.closed);
+    assert(!walk.begin(io, "/missing") && errno == ENOENT);
+  }
 }
 void check_quarantine_names() {
   using aq::logger::detail::quarantine_target;
@@ -360,6 +498,7 @@ int main() {
   assert(!check(Scenario::RaceFile));
   assert(errno == ENOTDIR && inspections == 2 && creations == 1);
   check_archive_walk();
+  check_resumable_walk();
   check_quarantine_names();
   check_same_boot_quarantine();
   check_crosslink_guard();
