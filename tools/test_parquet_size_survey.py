@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import faulthandler
 from pathlib import Path
 import tempfile
 
@@ -48,7 +49,12 @@ def main() -> None:
         assert set(merged["variants"]) >= {"plain/LZ4", "dict/LZ4", "dict+pageindex/LZ4"}
 
         assert survey.main(["bogus"]) == 2
-    print("parquet size survey: ok")
+    print("parquet size survey: ok", flush=True)
+    # CI run 39042291160 once hung after the line above, in interpreter exit,
+    # and 180 later Linux gate runs did not reproduce it. If exit stalls again,
+    # dump every Python thread and fail with status 1 instead of waiting for
+    # the gate timeout, so the next occurrence leaves a stack in the log.
+    faulthandler.dump_traceback_later(60, exit=True)
 
 
 if __name__ == "__main__":
