@@ -66,6 +66,64 @@ def partitions(data: bytes) -> list[tuple]:
     raise ValueError("unterminated partition table")
 
 
+# The C++ dialect is written in four places. They must name the same standard.
+DIALECT_SOURCES = (
+    ("firmware/cmake/aq_cxx_standard.cmake", r"-std=gnu\+\+(\d+)"),
+    ("tools/host_cxx.py", r'CXX_STD = "-std=c\+\+(\d+)"'),
+    ("pixi.toml", r"clang\+\+ -std=c\+\+(\d+)"),
+    ("tools/lint.sh", r"--std=c\+\+(\d+)"),
+)
+
+
+def check_cxx_dialect_sources() -> str:
+    """Return the pinned firmware -std flag after checking every source agrees."""
+    found = {}
+    for relative, pattern in DIALECT_SOURCES:
+        matches = set(re.findall(pattern, (ROOT / relative).read_text()))
+        require(len(matches) == 1, f"{relative} must name exactly one C++ standard, found {sorted(matches)}")
+        found[relative] = matches.pop()
+    require(len(set(found.values())) == 1, f"C++ dialect sources disagree: {found}")
+    return "-std=gnu++" + next(iter(found.values()))
+
+
+def expand_response_files(arguments: list[str], directory: Path) -> list[str]:
+    """Inline @file arguments so a -std moved into a toolchain response file still counts."""
+    expanded = []
+    for argument in arguments:
+        if argument.startswith("@"):
+            path = Path(argument[1:])
+            path = path if path.is_absolute() else directory / path
+            expanded += expand_response_files(shlex.split(path.read_text()), directory) if path.is_file() else [argument]
+        else:
+            expanded.append(argument)
+    return expanded
+
+
+def check_compile_dialect(commands: list[dict], firmware_std: str) -> int:
+    """Every repo-owned C++ file must end on the pinned -std, and repo C files get no C++ -std."""
+    checked = 0
+    for entry in commands:
+        source = Path(entry["file"]).resolve()
+        if not source.is_relative_to(ROOT):
+            continue
+        parts = source.relative_to(ROOT).parts
+        if "managed_components" in parts or "build" in parts:
+            continue
+        directory = Path(entry.get("directory", "."))
+        arguments = expand_response_files(entry.get("arguments") or shlex.split(entry["command"]), directory)
+        standards = [argument for argument in arguments if argument.startswith("-std=")]
+        relative = source.relative_to(ROOT)
+        if source.suffix == ".cpp":
+            require(bool(standards) and standards[-1] == firmware_std,
+                    f"{relative} builds with {standards[-1] if standards else 'no -std'}, "
+                    f"expected {firmware_std}. Call aq_pin_cxx_standard() in its component")
+            checked += 1
+        elif source.suffix == ".c":
+            require(not any("++" in standard for standard in standards), f"{relative} got a C++ -std")
+    require(checked > 0, "no repo-owned C++ files in the compiler database")
+    return checked
+
+
 def build_file(build: Path, name: str) -> Path:
     path = (build / name).resolve()
     require(path.is_relative_to(build) and path.is_file(), "missing/outside-build artifact: " + name)
@@ -127,6 +185,7 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
         command = " ".join(arguments)
         require(not re.search(r"(?:^|\s)-D\s*ARDUINO(?:\b|_)", command) and
                 "/arduino-esp32/" not in command.lower(), "native compiler includes Arduino")
+    check_compile_dialect(commands, check_cxx_dialect_sources())
     description = json.loads(build_file(build, "project_description.json").read_text())
     require(Path(description["project_path"]).resolve() == trial,
             "build belongs to a different board project")
@@ -212,6 +271,8 @@ def main() -> None:
     parser.add_argument("--board", choices=["cores3", "waveshare"])
     parser.add_argument("--variant", choices=["bringup", "logger", "diagnostic"])
     parser.add_argument("--sdk-only", type=Path)
+    parser.add_argument("--cxx-dialect", action="store_true",
+                        help="only check that every C++ dialect source names the same standard")
     parser.add_argument("--allow-missing-submodules", action="store_true")
     parser.add_argument("--backup", type=Path)
     manifests = parser.add_mutually_exclusive_group()
@@ -219,6 +280,9 @@ def main() -> None:
     manifests.add_argument("--verify-manifest", action="store_true")
     args = parser.parse_args()
     try:
+        if args.cxx_dialect:
+            print(f"C++ dialect sources agree on {check_cxx_dialect_sources()}")
+            return
         if args.sdk_only:
             check_sdk(args.sdk_only.resolve(), args.allow_missing_submodules)
             print("Verified pinned ESP-IDF SDK and submodule identity")
@@ -239,7 +303,7 @@ def main() -> None:
         if args.backup:
             check_backup(args.backup, args.board)
         print(f"Verified native ESP32-S3 {args.board}/{args.variant}: "
-              "SDK, memory, console, components, partitions and flash plan")
+              "SDK, memory, console, components, C++ dialect, partitions and flash plan")
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"native target rejected: {error}") from error
 

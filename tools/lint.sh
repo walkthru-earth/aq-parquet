@@ -2,6 +2,8 @@
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
+# The C++ standard below must match the firmware helper and the host tests.
+python tools/check_idf_target.py --cxx-dialect
 options=(--language=c++ --enable=warning,style,performance,portability
   --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1
   '--suppress=*:*/vendor/lz4/*')
