@@ -336,3 +336,40 @@ Flashed with `pixi run waveshare-flash`, NVS untouched, hash verified.
 | Readback | Host time sync, 4 rows, manual flush, serial fetch. File `data_1215_07f07ae4..._1-4-1.parquet`, 10,782 bytes, SHA-256 `c3a1e7f76b41fdde1aa7142883c6ce3565e566dce3932311a982b2fed359a8c2`, CRC-32 `768fa99e`. Cadence deviation at most 1,007 us |
 | Schema | PyArrow 25 reads `event_time_utc_us` and `clock_anchor_utc_us` as `timestamp[us, tz=UTC]`. All 56 leaves carry field ids 1 to 56 (DuckDB `parquet_schema`), for example `sequence`=5, `event_time_utc_us`=9, `clock_anchor_utc_us`=52. DuckDB reads `TIMESTAMP WITH TIME ZONE`, values 2026-10-16 12:17:47 UTC onward, matching host UTC |
 | Not verified | LIVE keys over BLE (macOS pairing needs the owner to enter the device passkey, the attempt ended `BLE AUTH result=failed`, logging continued). Forced worker stall and watchdog reset not exercised |
+
+## Main 8344adc bench for the watchdog, remount and battery health merges (2026-10-17)
+
+Image `idf-waveshare-parquet-v2.7`, app version 8344adc on `main` (contains
+#21, #41 and #24). Board ESP32-S3 QFN56 rev v0.2, MAC a4:cb:8f:d7:75:00, flash
+manufacturer 85 device 2018 16 MB, 8 MB AP_3v3 PSRAM, WCH bridge 1A86:55D3.
+`pixi run ports`, `chip`, `flash-id` and `efuse` ran before each of the three
+flashes with the same result, `SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0`,
+`DIS_DOWNLOAD_MODE=False`. The owner waived a new flash backup, so the flash
+gate reused `waveshare-sim7670g-v2-flash-20261016T114219Z.bin` from the
+2026-10-16 entry. Every flash used `pixi run waveshare-flash`, wrote only
+bootloader, partition table, otadata and app, kept NVS, and verified every
+region hash. No eFuse write, card format, NVS erase or full chip erase.
+
+| Image | App SHA-256 | Use |
+| :--- | :--- | :--- |
+| main 8344adc | `c00749278dcfb8987f46918a142872f146dabe48eb62fb68aa4cd80cfd0c4ce3` | Boot checks |
+| Temporary stall build, 8344adc plus a bench patch | `d83a8fc06c23400fb147f1f3959623e59eabaa0dcc9ae15faced57d89e10e2c4` | Watchdog test only, then replaced |
+| main 8344adc, final | `9b7df8ef78d821120bdd1501b5246783337cd05beb566f4cc255e89e36ca92d9` | Left on the board. Same source as the first row, the hash differs only by the embedded build time |
+
+| Check | Result |
+| :--- | :--- |
+| Boot | `AQ BOARD waveshare-sim7670g-v2 firmware=idf-waveshare-parquet-v2.7 ... battery=installed`, `AQ MEMORY psram_physical_bytes=8388608 psram_heap_bytes=8321872 psram_ok=1`, `PARQUET WATCHDOG mode=armed timeout_s=60 consecutive=0 max_consecutive=3 healthy_s=3600 supervised=1`, `PARQUET BEGIN schema=waveshare-sim7670g-telemetry-v5 columns=62 ... psram_workspace_bytes=162520 row_bytes=880`. `parquet schema` printed `sha256=67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`. Build sdkconfig has `CONFIG_ESP_TASK_WDT_TIMEOUT_S=5`, TWDT panic off at boot, both idle tasks checked, interrupt watchdog 800 ms. TF mounted at 31,457,280,000 bytes and rows landed on the card |
+| Core dump on main | **Not in the main image.** Both board projects use `set(COMPONENTS ...)`, and the logger does not require `espcoredump`, so the component is not built. The build prints `unknown kconfig symbol 'ESP_COREDUMP_ENABLE_TO_FLASH'`, the generated sdkconfig has no core dump entry and the ELF has no `esp_core_dump` symbols. `firmware/common/logger/README.md` says the shared defaults enable the flash core dump. That holds only once `espcoredump` is in the build. The CoreS3 project uses the same `set(COMPONENTS ...)` pattern and needs the same check |
+| Watchdog, temporary build | The bench build added `espcoredump` to the logger `PRIV_REQUIRES` and a serial `parquet bench-stall <s>` command that blocks the worker (0 means forever). A forever stall logged `worker-stall seconds=5`, 35 and 65 with `watchdog=armed`, then `task_wdt:  - parquet-sd (CPU 0/1)` about 66 s after the stall began, `Core dump used 1520 bytes on stack. 368 bytes left free` and `rst:0xc (RTC_SW_CPU_RST)` with logged `reset=6` (task watchdog). The next boot printed `Core dump data checksum is correct`, `Found core dump 24992 bytes in flash @ 0xc10000` and `PARQUET ERROR operation=worker-watchdog-reset consecutive=1` |
+| Core dump size | 24,992 bytes, 38% of the 64 KiB `coredump` partition, 14 threads, with Wi-Fi unprovisioned and the modem idle. `esp_coredump info_corefile` decoded the panic reason naming `parquet-sd`, with the worker in `vTaskDelay(1000)` and 4256 of 20304 stack bytes used. The 368 byte free margin on the dump stack is small |
+| Recovery | A 64 s returning stall logged `PARQUET WATCHDOG mode=armed consecutive=1 reason=recovered` with no reset |
+| Boot loop guard | Two more forever stalls reset with `consecutive=2` and then `consecutive=3`, after which boot printed `PARQUET WATCHDOG mode=warn ... consecutive=3`. A 90 s stall in warn mode logged `watchdog=warn` warnings and no reset. `parquet status` then reported `dropped=1 queue_peak=8`, so a stall longer than about 80 s overflows the row queue by design |
+| Restore | The temporary patch was reverted and the final main image flashed. Its power on boot showed `mode=armed consecutive=0`. The `coredump` partition still holds the dump from the temporary build, which main cannot read |
+| Battery, USB with an 18650 installed | Serial gauge reads `vcell_raw=54752` (4277 mV), `soc_raw=28524`, `crate_raw=0`, `status=0x00ff`, `mode=0x1000`. `POWER STATE state=unknown mv=4276` then `external_power_likely mv=4286` about 20 s later. In the Parquet file `gauge_status=2` (valid), `battery_mv` 4271 to 4286, `battery_percent=100`, `battery_soc_raw_percent=111.42` (uncapped), `battery_charge_rate_percent_per_h=0`, `gauge_hibernating=1`, `battery_health_state` 0 for two rows then 1 (external power likely), `battery_minutes_to_empty` null. The cell was not discharged and the external rail was not measured, so the 4240 mV threshold stays uncalibrated for #28 |
+| 20 minute run | The final image logged 131 rows over 1311 s with `dropped=0`, `errors=0` and `queue_peak=0`. One file was ready at 902 s (`rows=89 bytes=38225 crc32=330b5098`). `parquet flush` closed the remaining 42 rows into a second file. Neither BLE pairing nor watchdog events occurred. An earlier 321 s run was cut short for the owner's BLE PIN change and is kept as a partial log. Its 32 buffered rows were lost on the reset because the CH343 port cannot be reopened without resetting the board |
+| Readback | `parquet-device fetch` of `data_unsynced_233c0e2d..._0-88-0.parquet`, 38,225 bytes, SHA-256 `5058c8b9fc647547ce2ba9f13cf52e2643303228a6e3f20c669a9a10e00e0294`, CRC-32 `330b5098`, `readers_match=true`, cadence deviation at most 1,015 us. PyArrow 25 reads 62 leaves with field ids 1 to 62 in order. `event_time_utc_us` (id 9) and `clock_anchor_utc_us` (id 52) are `timestamp[us, tz=UTC]` with Parquet logical type `Timestamp(isAdjustedToUTC=true, timeUnit=microseconds)`. Values are null because this boot had no host time sync. The battery columns are ids 33 to 35 and 57 to 62. After the fetch reset the board booted the same image and resumed rows |
+| BLE dev PIN | At the owner's request `parquet config-hex` set `ble.pin=<dev pin>` and returned `AQ CONFIG ok=1 reboot_required=1`. The next boot printed `BLE BEGIN ... bonds=1 pair=fixed`. The value is kept out of every log and this record |
+| Not run | BLE or LAN `LIST`, `OPEN`, `READ`, `ABORT` and the remount recheck. The Mac had no bond, so `ble-sync list` and `live` failed with `Insufficient Encryption` and pairing needs the owner. Wi-Fi is not provisioned, so LAN is unavailable. Also not run are the one hour healthy clear of the guard, a power pull or brownout with a pending stall, OTA, and battery discharge |
+
+Logs, images, the raw dump, its decode and the readback are in ignored
+`firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261017/`.
