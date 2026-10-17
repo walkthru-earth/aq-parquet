@@ -27,14 +27,28 @@ the older shapes it has stored, or the owner clears them.
   two released LIVE key sets that both report `idf-cores3-parquet-v6.12`. The
   build at e166978 sends the IMU die temperature as `t`. The build at d2a840c
   sends it as `imu_t`. Nothing in `info` tells them apart.
-- The app must add `e5060fb7…` to its `LiveProfile` map with the CoreS3 keys
-  above, reading `imu_t` as board temperature and never as air temperature.
+- The app must map `e5060fb7…` to the existing `LiveProfiles.CORES3` profile
+  from opensensor-space-mobile #87, unchanged. That profile leaves out `t` and
+  `rh` on purpose because they are always null on CoreS3, so do not copy the
+  key list above into it. It reads `imu_t` as board temperature, never as air
+  temperature. Tracked in opensensor-space-mobile #90.
+- Until the app knows `e5060fb7…`, `LiveProfiles.resolve` returns null for it
+  and the app shows "Live readings need newer firmware". Synced files still
+  work.
+- Release order. Ship the app release that maps `e5060fb7…` first, then flash
+  v6.13 to field boards. Bench boards may run v6.13 earlier.
 - Suggested mobile follow up for `22291d3a…` only. Read `imu_t`, and when it is
   missing read `t` as board temperature. Both carry the IMU die temperature on
   CoreS3, because ambient temperature is never valid there.
-- Frozen key sets for every released digest are in
-  `tools/fixtures/live_keys/`. The contract tests fail when a board's LIVE keys
+- Frozen key sets for every digest since CoreS3 `f35d7398…` (v6.9 to v6.11)
+  and Waveshare `0a024b85…` (v2.6) are in `tools/fixtures/live_keys/`,
+  including the first Waveshare v2.7 build `d0d01294…`. `f35d7398…` sends the
+  IMU die temperature as `t`, like the e166978 build, so it matches
+  `LiveProfiles.CORES3_LEGACY` in #87. The contract tests fail when a board's LIVE keys
   change without a new digest, or when a new digest has no fixture.
+- The digest is the SHA-256 of the raw `telemetry_fields.inc` bytes, so a
+  comment, whitespace or line ending edit also moves it and needs an app
+  release.
 - Phone side code may break freely. Firmware keeps every released wire contract
   readable, and any new LIVE key set gets a new dictionary digest.
 

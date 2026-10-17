@@ -179,7 +179,7 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null** (invalid, unavailable or non-finite), never zero. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
-Since CoreS3 v6.13 and Waveshare v2.7 the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its LIVE profile by that digest. Older digests do not cover the keys, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`.
+Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it and needs a phone release.
 
 ```json
 {"seq":15021,"mono":150210000000,"utc":1757990410000000000,"pms":4,
