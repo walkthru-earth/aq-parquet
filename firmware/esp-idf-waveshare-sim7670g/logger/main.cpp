@@ -118,7 +118,8 @@ const telemetry::KeyValue kMetadata[] = {
                    "5=model-mismatch"},
     {"gauge_status",
      "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
-     "battery_mv is kept under 1 when VCELL alone is valid"},
+     "gauge_status stays 1 when only VCELL is valid, battery_mv is still "
+     "written"},
     {"unavailable",
      "charger STAT and USB VBUS are not wired to the ESP32-S3; external power "
      "is inferred from VCELL only; no battery current; no onboard external "

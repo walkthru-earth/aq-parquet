@@ -8,51 +8,14 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
-## Emergency close on the storage worker (Waveshare v2.7, issues #28 and #29)
+## Battery health, cell voltage without SOC and the emergency close (Waveshare v2.7, PR #24, issues #28, #29 and #30)
 
-- The critical battery close now runs on the storage worker with retries.
-  LOG_TAIL `PARQUET FLUSH reason=power-critical` gains
-  `result=<closed|busy-retry|failed> attempt=<n>`, and retries add
-  `storage=<state> retry_ms=<ms>`. A close with nothing to preserve prints no
-  line instead of `PARQUET ERROR operation=flush reason=empty`.
-- New LOG_TAIL `PARQUET ERROR operation=power-close reason=<outcome>
-  attempts=<n> preserved=0` when every retry failed.
-- A BLE or LAN `LIST` or `READ` running when a close is due ends early with
-  the existing busy error (`ERROR busy` for LIST, `READ_END` with the busy
-  status for READ). The app must retry as it already does for busy.
-- One discharge now closes once. `bstate` can go 4 critical, 3 low and back
-  to 4 critical without a second close. Only 2 ok or 1 external power re-arms
-  it. The `bstate` and `battery_health_state` codes are unchanged, 0 unknown,
-  1 external power likely, 2 ok, 3 low, 4 critical, 5 settling.
-- No column, LIVE key, frame layout, dictionary or digest change. The v5
-  digest stays
-  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`.
+This one entry describes the final v2.7 contract. CoreS3 is unchanged.
 
-## Cell voltage without SOC (Waveshare v2.7, issue #30)
-
-- A failed or implausible SOC no longer hides a good cell voltage. Waveshare
-  rows can now have `battery_mv` set while `battery_percent`,
-  `battery_soc_raw_percent` and `battery_minutes_to_empty` are null, with
-  `gauge_status=1`. The reverse is also possible, a percent with a null mV.
-- LIVE follows the row, so `bat` can be present without `pct` and the reverse.
-- `bstate` can reach 4 critical from voltage alone while SOC is failing.
-- The `gauge_status` footer metadata text adds that `battery_mv` is kept under
-  status 1. The codes 0, 1 and 2 keep their meaning, and 2 still needs both
-  words.
-- The boot log line `AQ GAUGE read` replaces `io_error` and `plausible` with
-  `vcell_ok`, `soc_ok`, `vcell_plausible` and `soc_plausible`.
-- No column, schema, dictionary or digest change. The v5 digest stays
-  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`.
-- The app must not assume `battery_percent` or `pct` is present whenever
-  `battery_mv` or `bat` is, and should show the voltage alone when only it is
-  present.
-
-## Battery health columns and LIVE `bstate` (Waveshare v2.7, feat/battery-health-entry-points)
-
-- Waveshare writes schema and dictionary `waveshare-sim7670g-telemetry-v5`
+- Schema and dictionary. Waveshare writes `waveshare-sim7670g-telemetry-v5`
   (row value 5), firmware `idf-waveshare-parquet-v2.7`, configuration
-  `waveshare-sim7670g-acquisition-v3`, 62 columns. The dictionary SHA-256
-  changes. CoreS3 is unchanged.
+  `waveshare-sim7670g-acquisition-v3`, 62 columns. The v5 dictionary digest is
+  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`.
 - Six columns are appended, field ids 57 to 62.
   `battery_soc_raw_percent` (FLOAT, uncapped gauge SOC),
   `battery_charge_rate_percent_per_h` (FLOAT, MAX17048 CRATE, negative while
@@ -60,28 +23,60 @@ the older shapes it has stored, or the owner clears them.
   bit4 HD, bit5 SC, bit6 EnVr), `gauge_hibernating` (INT32, 0 or 1),
   `battery_health_state` (INT32 code) and `battery_minutes_to_empty` (INT32,
   null unless the SOC is trusted and discharging within 7 days).
-- `battery_health_state` codes are 0 unknown, 1 external power likely, 2 ok,
-  3 low, 4 critical, 5 settling after a gauge reset. External power is inferred
-  from cell voltage only, and the thresholds are uncalibrated.
-- LIVE gains the additive key `bstate` with the same codes. It is absent when
-  no battery is configured.
-- New LOG_TAIL lines `POWER STATE state=<name> mv=<n|null>` on each state
-  change, with ` action=finalize` once per critical entry, then
-  `PARQUET FLUSH reason=power-critical`. Boot adds `AQ GAUGE status=...` and,
-  after a gauge reset, `AQ GAUGE ri_clear=<result>`. Additive.
-- No STATUS, GET_DIAG, GET_CONFIG or advertising field changes.
-- The app must accept schema 5 and dictionary v5 for Waveshare files, may show
-  `bstate` as a battery badge and should keep reading v4 files already stored.
-- Waveshare LIVE keys now live in `telemetry_fields.inc` as the last `FIELD`
-  argument, so the v5 dictionary SHA-256 covers them. The v5 digest is
-  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`. The
-  LIVE keys and their order are unchanged, `seq`, `mono`, `utc`, `pms`, `c1`,
-  `c25`, `c10`, `pm1`, `pm25`, `pm10`, `n03`, `n05`, `n1`, `n25`, `t`, `rh`,
-  `bat`, `pct`, `bstate`.
-- The app keeps one LIVE profile per dictionary digest. Any change to a board's
-  `telemetry_fields.inc`, including a live key, changes that digest, so it needs
-  a matching app release before boards are reflashed. CoreS3 still maps its
-  LIVE keys in its contract header and is unchanged here.
+- `battery_health_state` and the LIVE key `bstate` share the codes 0 unknown,
+  1 external power likely, 2 ok, 3 low, 4 critical, 5 settling after a gauge
+  reset. External power is inferred from cell voltage only, and the
+  thresholds are uncalibrated. `bstate` is absent when no battery is
+  configured. At boot a cell resting on the critical threshold still leaves
+  unknown after three reads, as critical when at least half of them read
+  critical, otherwise as low.
+- Cell voltage without SOC. A failed or implausible SOC no longer hides a good
+  cell voltage. Rows can have `battery_mv` set while `battery_percent`,
+  `battery_soc_raw_percent` and `battery_minutes_to_empty` are null, with
+  `gauge_status=1`, and the reverse is possible. LIVE follows the row, so
+  `bat` can be present without `pct` and the reverse. `bstate` can reach 4
+  critical from voltage alone. The `gauge_status` footer metadata text now
+  reads `...2=valid; gauge_status stays 1 when only VCELL is valid,
+  battery_mv is still written`. The codes 0, 1 and 2 keep their meaning, and
+  2 still needs both words. This text is file metadata, not part of the
+  digest.
+- LIVE keys live in `telemetry_fields.inc` as the last `FIELD` argument, so
+  the digest covers them. The keys and their order are `seq`, `mono`, `utc`,
+  `pms`, `c1`, `c25`, `c10`, `pm1`, `pm25`, `pm10`, `n03`, `n05`, `n1`, `n25`,
+  `t`, `rh`, `bat`, `pct`, `bstate`. Any change to a board's
+  `telemetry_fields.inc`, including a live key, changes that digest, so it
+  needs a matching app release before boards are reflashed.
+- LOG_TAIL power lines. `POWER STATE state=<name> mv=<n|null>` on each state
+  change, with ` action=finalize` once per critical entry. Boot adds `AQ GAUGE
+  status=...`, after a gauge reset `AQ GAUGE ri_clear=<result>`, and `AQ GAUGE
+  read` carries `vcell_ok`, `soc_ok`, `vcell_plausible` and `soc_plausible`.
+- LOG_TAIL emergency close lines. The close runs on the storage worker with
+  retries. `files=<f>` counts telemetry files finalized during the attempt,
+  including one a storage probe closed before the close itself wrote.
+  - `PARQUET FLUSH reason=power-critical result=closed attempt=<n> files=<f>`
+  - `PARQUET FLUSH reason=power-critical result=<busy-retry|failed>
+    storage=<state> attempt=<n> files=<f> retry_ms=<ms>`
+  - `PARQUET FLUSH reason=power-critical result=nothing-open attempt=<n>
+    files=<f>`, only after a retry. A first attempt with nothing open prints
+    no line.
+  - `PARQUET ERROR operation=power-close reason=<outcome> attempts=<n>
+    files=<f> closed=0` when every retry failed.
+- Transfers during a close. A BLE or LAN `LIST` or `READ` running when a close
+  is due ends early with the existing busy error (`ERROR busy` for LIST,
+  `READ_END` with the busy status for READ), also while it waits for a slow
+  peer. A serial `parquet get` ends with `PARQUET ERROR operation=get
+  reason=power-critical offset=<n>`, where `offset` is the next byte not sent.
+  The app retries as it already does for busy. A close in storage Retry can
+  remount the card, so an open READ handle may then answer bad handle, as in
+  the #41 entry below.
+- One discharge closes once. `bstate` can go 4 critical, 3 low and back to 4
+  critical without a second close. Only 2 ok or 1 external power re-arms it,
+  and not while 5 settling.
+- No STATUS, GET_DIAG, GET_CONFIG, frame layout or advertising change.
+- The app must accept schema 5 and dictionary v5 for Waveshare files, keep
+  reading v4 files already stored, must not assume `battery_percent` or `pct`
+  is present whenever `battery_mv` or `bat` is, and may show `bstate` as a
+  battery badge.
 
 ## READ after a storage remount can answer bad handle (fix/34-remount-archive-handles)
 

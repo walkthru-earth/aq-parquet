@@ -141,40 +141,63 @@ exclude it from captures and artifacts.
 
 A critical battery asks the storage worker to finish the open Parquet file
 so the rows already buffered survive a brownout. The pure parts live in
-`aq_logger_power.h` (when to ask) and `aq_logger_emergency_close.h` (the
-intent, outcomes and retry), both covered by `pixi run logger-power-test`.
+`aq_logger_power.h` (when to ask and the main loop report),
+`aq_logger_emergency_close.h` (the intent, outcomes, retry, the worker pass
+and its log line) and `aq_logger_transfer_gate.h` (how a due close stops a
+transfer). `pixi run logger-power-test` covers the first two, and
+`archive-sync-test` and `wifi-link-test` drive the gate through the real
+archive session and LAN transport.
 
 - One close per discharge. After a critical entry asks for a close, nothing
   re-arms it until the battery recovers to ok, which already needs the low
-  threshold plus hysteresis, or to external power. A rebound to low, an unknown read or a
-  settling gauge does not re-arm it. A fresh boot starts armed, so a cut
-  before the close asks again on the next critical report.
+  threshold plus hysteresis, or to external power. A rebound to low, an
+  unknown read or a settling gauge does not re-arm it. Settling also covers
+  a gauge reset at runtime, so a recovery in that window re-arms only once
+  settling ends. A fresh boot starts armed, so a cut before the close asks
+  again on the next critical report.
 - `report_battery()` on the main loop only raises an atomic intent and wakes
   the worker. It never touches the card and there is no queue to fill.
 - The worker checks the intent at the top of every pass, before samples and
   queued commands. A due close also stops a BLE or LAN LIST or READ at its
   next data frame with the existing busy error, and a serial `parquet get`
   between blocks with `PARQUET ERROR operation=get reason=power-critical
-  offset=<n>`. Clients retry after the close.
-- Each attempt reports one outcome. `closed` logs
-  `PARQUET FLUSH reason=power-critical result=closed attempt=<n>`.
-  `nothing-open` (no rows buffered, no file open) is a quiet success with no
-  line. `busy-retry` (storage not writable) and `failed` (the finalize write
-  failed) log `PARQUET FLUSH reason=power-critical result=<outcome>
-  storage=<state> attempt=<n> retry_ms=<ms>` and back off 1, 2, 4, 8, 16, 30
-  and 30 s. After eight attempts the worker logs `PARQUET ERROR
-  operation=power-close reason=<outcome> attempts=8 preserved=0` and drops
-  the intent. Rows still queued go to the next file.
+  offset=<n>`. A data frame already waiting for ring space stops waiting at
+  the next wait step too, so a peer that stopped draining cannot hold the
+  close back for the slow peer bound. Terminal frames are never cut short.
+  Clients retry after the close.
+- With storage in Retry, the attempt's writable check runs the governor
+  probe. That probe finalizes the open telemetry file, remounts the card
+  and commits the buffered rows to a new file, which the close then
+  finishes. The remount reaches the archive session, so every open READ
+  handle is rechecked before its next CHUNK and a changed file ends with
+  bad handle instead of stale bytes (#41).
+- Each attempt reports one outcome, and `files=<f>` counts every telemetry
+  file finalized during it, including one the probe closed. `closed` logs
+  `PARQUET FLUSH reason=power-critical result=closed attempt=<n> files=<f>`.
+  `nothing-open` (no rows buffered, no file open) is quiet on a first
+  attempt. After a retry it logs `result=nothing-open attempt=<n> files=<f>`,
+  because an earlier probe may have closed the file. `busy-retry` (storage
+  not writable) and `failed` (the finalize write failed) log `PARQUET FLUSH
+  reason=power-critical result=<outcome> storage=<state> attempt=<n>
+  files=<f> retry_ms=<ms>` and back off 1, 2, 4, 8, 16, 30 and 30 s. After
+  eight attempts the worker logs `PARQUET ERROR operation=power-close
+  reason=<outcome> attempts=8 files=<f> closed=0`, where `closed=0` says the
+  close itself never finished, and drops the intent. A finalize that wrote
+  but whose free space reading then failed still counts as closed, and the
+  governor records the reading failure. Rows still queued go to the next
+  file.
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
     Idle --> Requested: critical entry while armed
-    Requested --> Attempt: worker pass or transfer checkpoint
+    Requested --> Attempt: worker pass, a stopped transfer or wait
+    Attempt --> Probe: storage in Retry
+    Probe --> Attempt: finalize, remount, new file, READs rechecked
     Attempt --> Idle: closed or nothing-open
     Attempt --> Backoff: busy-retry or failed
     Backoff --> Attempt: retry due
-    Attempt --> Idle: eighth attempt fails, preserved=0
+    Attempt --> Idle: eighth attempt fails, closed=0
 ```
 
 The retry bound is not yet tied to measured energy. It moves with the
