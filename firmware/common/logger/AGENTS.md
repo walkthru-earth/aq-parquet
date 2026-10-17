@@ -31,11 +31,14 @@ initialization and each board's schema/provenance remain in its own trial.
   the start and apply steps in `aq_logger_watchdog_apply.h` behind injected
   task watchdog and timer interfaces. The timer callback only wraps the IDF
   calls, and every arm or panic switch it applies has an unwind path. See the README section Worker watchdog.
-- Battery power policy stays pure in `aq_logger_power.h` and
-  `firmware/common/power`. `report_battery()` runs on the main loop and only
-  logs, calls the optional `power_shed` hook and queues a `Source::Power`
-  finalize that reuses the `parquet flush` path. Never reset, sleep or drop
-  rows from a power state.
+- Battery power policy stays pure in `aq_logger_power.h`,
+  `aq_logger_emergency_close.h` and `firmware/common/power`.
+  `report_battery()` runs on the main loop and only logs, calls the optional
+  `power_shed` hook and raises the emergency close intent. Only the worker
+  runs the close, at the top of each pass or after a transfer stops at a
+  data frame checkpoint, never from a timer, ISR or the main loop. Only Ok or
+  external power re-arms it. Never reset, sleep or drop rows from a power
+  state.
 - The SD space governor never deletes. A full card pauses and alarms; space
   returning or a successful probe resumes. Keep its logic pure in
   `storage_governor.h`; boards only supply the free, cluster and remount hooks.

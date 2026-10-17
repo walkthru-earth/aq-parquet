@@ -8,6 +8,26 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Emergency close on the storage worker (Waveshare v2.7, issues #28 and #29)
+
+- The critical battery close now runs on the storage worker with retries.
+  LOG_TAIL `PARQUET FLUSH reason=power-critical` gains
+  `result=<closed|busy-retry|failed> attempt=<n>`, and retries add
+  `storage=<state> retry_ms=<ms>`. A close with nothing to preserve prints no
+  line instead of `PARQUET ERROR operation=flush reason=empty`.
+- New LOG_TAIL `PARQUET ERROR operation=power-close reason=<outcome>
+  attempts=<n> preserved=0` when every retry failed.
+- A BLE or LAN `LIST` or `READ` running when a close is due ends early with
+  the existing busy error (`ERROR busy` for LIST, `READ_END` with the busy
+  status for READ). The app must retry as it already does for busy.
+- One discharge now closes once. `bstate` can go 4 critical, 3 low and back
+  to 4 critical without a second close. Only 2 ok or 1 external power re-arms
+  it. The `bstate` and `battery_health_state` codes are unchanged, 0 unknown,
+  1 external power likely, 2 ok, 3 low, 4 critical, 5 settling.
+- No column, LIVE key, frame layout, dictionary or digest change. The v5
+  digest stays
+  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`.
+
 ## Cell voltage without SOC (Waveshare v2.7, issue #30)
 
 - A failed or implausible SOC no longer hides a good cell voltage. Waveshare

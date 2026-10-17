@@ -8,7 +8,8 @@ location fields and, since v2.7, six battery health columns appended (raw SOC,
 CRATE, gauge STATUS flags, hibernation, `battery_health_state` and
 `battery_minutes_to_empty`). The shared `power/` classifier reports
 unknown, external power likely, ok, low, critical or settling. A critical
-entry finalizes the open file once. It never resets or sleeps. Thresholds are
+entry asks the storage worker to finalize the open file once per discharge,
+with bounded retries while the card is busy. It never resets or sleeps. Thresholds are
 uncalibrated and have no bench evidence yet. Since v2.6 the UTC instants are `event_time_utc_us`
 and `clock_anchor_utc_us` with `TIMESTAMP(MICROS, UTC)`, and every leaf
 carries Parquet `field_id` = its 1-based dictionary position (see
