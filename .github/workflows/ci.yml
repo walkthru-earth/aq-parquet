@@ -101,8 +101,14 @@ jobs:
       # tag can move, carries its own Python and tool set, and would bypass
       # these checks. The cache only skips downloads, setup-idf.sh still runs
       # and re-verifies the commit on every job.
+      #
+      # Caches are restored on every run but written only by pushes to main.
+      # Pull request scoped entries cannot be restored by main or by other
+      # pull requests, so writing them would only evict the main entries from
+      # the 10 GB repository quota.
       - name: Restore ESP-IDF SDK and tools
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: sdk-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
@@ -111,8 +117,20 @@ jobs:
           key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}
       - name: Install pinned ESP-IDF
         run: pixi run idf-setup
+      # Every leg installs the same SDK, so one leg saves it.
+      - name: Save ESP-IDF SDK and tools
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && matrix.name == 'cores3' && steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ~/.espressif
+            !~/.espressif/dist
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
       - name: Restore ccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.ccache
           key: ccache-${{ matrix.name }}-${{ steps.idf.outputs.commit }}-${{ github.sha }}
@@ -131,6 +149,12 @@ jobs:
       - name: ccache statistics
         if: always()
         run: pixi run ccache --show-stats
+      - name: Save ccache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.name }}-${{ steps.idf.outputs.commit }}-${{ github.sha }}
       - name: Measure image size
         if: matrix.project
         env:
