@@ -66,6 +66,10 @@ ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
           12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
           16: "aborted"}
+# What a person should do about an ERROR. Code 14 is never a busy device, so
+# the client never retries it. Over BLE it means the link is not paired and
+# authenticated, over LAN that the token was rejected.
+ERROR_HINTS = {14: "the link is not authenticated. Pair the device again, or for LAN fetch a new token over BLE"}
 # Protocol 3 typed disconnect reasons (BYE, DIAG events, STATUS `dr`).
 DISCONNECT_REASONS = ["unknown", "idle-timeout", "handshake-timeout", "auth-failed",
                       "sessions-full", "slow-peer", "tx-overflow", "malformed", "wifi-lost",
@@ -282,8 +286,9 @@ class Session:
     @staticmethod
     def _device_error(data: bytes) -> ProtocolError:
         op, code = data[1], data[2]
+        hint = f". {ERROR_HINTS[code]}" if code in ERROR_HINTS else ""
         return ProtocolError(f"device ERROR op=0x{op:02x} code={code} ({ERRORS.get(code, '?')}) "
-                             f"detail={data[3:].decode('utf-8', 'replace')!r}")
+                             f"detail={data[3:].decode('utf-8', 'replace')!r}{hint}")
 
     async def read_char(self, uuid: str) -> bytearray:
         # Bleak 3.0.2's CoreBluetooth backend ignores read timeout kwargs and

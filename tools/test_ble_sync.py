@@ -35,8 +35,12 @@ GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
 class FakeClient:
     """Scripted device: LIST of two files, one openable file served in chunks."""
 
-    def __init__(self, chunk=100, drop_frame=False, list_end=None):
+    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False):
         self.chunk = chunk
+        # Answer every Control write with ERROR 14, as firmware does on a link
+        # that is not paired and authenticated (issue #51).
+        self.auth_refused = auth_refused
+        self.writes = 0
         self.list_end = list_end
         self.reading = False
         self.callback = None
@@ -57,6 +61,10 @@ class FakeClient:
 
     async def write_gatt_char(self, _uuid, data, response=True):
         op = data[0]
+        self.writes += 1
+        if self.auth_refused:
+            self.emit(bytes([ble.F_ERROR, op, 14]) + b"auth")
+            return
         if op == ble.OP_LIST:
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", len(FILE)) + NAME.encode())
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", 7) + b"legacy-parquet/x.parquet")
@@ -193,10 +201,30 @@ async def run():
     assert text.encode() == LOG[-100:] and meta["total_bytes_since_boot"] == len(LOG), meta
     assert await session.reboot() == {"delay_ms": 500}
     print("PASS ble_sync frame codec: list, fetch, time, error, lost-chunk detection, config, scan, token, log, reboot")
+    await run_auth_refused()
     await run_protocol3()
     await run_lan()
     await run_lan_snapshot_deadlines()
     await run_lan_bye()
+
+
+async def run_auth_refused():
+    """ERROR 14 on LIST fails at once with a pairing hint and is never retried as busy."""
+    client = FakeClient(auth_refused=True)
+    session = ble.Session(client)
+    await session.start()
+    started = asyncio.get_running_loop().time()
+    try:
+        await session.list_files()
+    except ble.ProtocolError as error:
+        text = str(error)
+        assert "op=0x01 code=14 (auth-failed)" in text and "detail='auth'" in text, text
+        assert "Pair the device again" in text and "busy" not in text, text
+    else:
+        raise AssertionError("ERROR 14 must raise")
+    assert client.writes == 1, client.writes
+    assert asyncio.get_running_loop().time() - started < 0.5
+    print("PASS ble_sync auth refusal: ERROR 14 raises at once with a pairing hint, one write, no busy retry")
 
 
 def expect_protocol_error(call, needle):
