@@ -78,9 +78,9 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             abs(ambient.max + 3.7) < 1e-6, "signed temperature bounds")
     utc = group.column(by_name["event_time_utc_us"]).statistics
     require(utc.null_count == (0 if anchored else 90) and utc.has_min_max == anchored, "UTC bounds")
-    for name, expected in (("battery_mv", 4000), ("battery_percent", 75)):
+    for name, expected, nulls in (("battery_mv", 4000, 2), ("battery_percent", 75, 3)):
         stats = group.column(by_name[name]).statistics
-        require(stats.null_count == 2 and stats.min == stats.max == expected,
+        require(stats.null_count == nulls and stats.min == stats.max == expected,
                 f"battery null and valid statistics: {name}")
     for i in range(len(fields)):
         require(group.column(i).compression == ("LZ4" if compressed else "UNCOMPRESSED"), "codec")
@@ -115,13 +115,13 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
                 abs(row["ambient_temperature_c"] + 3.7) < 1e-6, "temperature validity")
         require(row["relative_humidity_percent"] is None if i < 5 or i == 6 else
                 abs(row["relative_humidity_percent"] - 63.4) < 1e-5, "RH validity and range")
-        require(row["gauge_status"] == (i if i < 2 else 2) and
+        require(row["gauge_status"] == (i if i < 2 else 1 if i == 2 else 2) and
                 row["battery_mv"] == (None if i < 2 else 4000) and
-                row["battery_percent"] == (None if i < 2 else 75),
-                "absent, read-error and valid gauge values")
+                row["battery_percent"] == (None if i < 3 else 75),
+                "absent, read-error, voltage-only and valid gauge values")
         raw_soc = row["battery_soc_raw_percent"]
         crate = row["battery_charge_rate_percent_per_h"]
-        require((raw_soc is None) if i < 2 else raw_soc == 75.5, "uncapped raw SOC")
+        require((raw_soc is None) if i < 3 else raw_soc == 75.5, "uncapped raw SOC")
         require((crate is None) if i < 2 else abs(crate + 2.08) < 1e-5, "signed CRATE")
         require(row["gauge_status_flags"] == (None if i < 2 else 0x40) and
                 row["gauge_hibernating"] == (None if i < 2 else 1), "per-register gauge diagnostics")

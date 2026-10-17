@@ -96,6 +96,68 @@ aq::Max17048Extended extended_ok() {
   ext.status = {0x4000, true}; // EnVr only
   return ext;
 }
+// A fake gauge bus so the driver, adapter and classifier run end to end.
+struct GaugeBus {
+  std::uint16_t vcell = 0;
+  std::uint16_t soc = 0;
+  bool nack_vcell = false;
+  bool nack_soc = false;
+  static bool read(void *context, std::uint8_t, std::uint8_t reg,
+                   std::uint8_t *data, std::size_t) {
+    const auto &bus = *static_cast<GaugeBus *>(context);
+    const bool vcell = reg == aq::Max17048::kRegVcell;
+    if (!vcell && reg != aq::Max17048::kRegSoc)
+      return false;
+    if (vcell ? bus.nack_vcell : bus.nack_soc)
+      return false;
+    const auto word = vcell ? bus.vcell : bus.soc;
+    data[0] = static_cast<std::uint8_t>(word >> 8);
+    data[1] = static_cast<std::uint8_t>(word & 0xff);
+    return true;
+  }
+};
+// 3300 mV every tick with a NACKed or implausible SOC reaches Critical
+// after debounce_samples. battery_mv is written and SOC columns stay null.
+void assert_voltage_only_critical() {
+  for (const bool nack : {true, false}) {
+    GaugeBus bus{0xa500, 0xffff, false, nack}; // 3300 mV
+    const aq::Max17048 gauge{{&bus, GaugeBus::read}};
+    aq::battery::Monitor monitor{kBatteryThresholds};
+    aq::battery::Assessment last;
+    BatteryHealth health{};
+    for (int tick = 1; tick <= kBatteryThresholds.debounce_samples + 2;
+         ++tick) {
+      health = {true, gauge.read(), extended_ok(), {}};
+      assert(health.reading.vcell_valid() && !health.reading.soc_valid());
+      last = monitor.update(
+          battery_sample(tick * 10000, health.reading, health.extended));
+      health.assessment = last;
+      const bool debounced = tick >= kBatteryThresholds.debounce_samples;
+      assert(last.state == (debounced ? aq::battery::State::Critical
+                                      : aq::battery::State::Unknown));
+      assert(!last.soc_trusted && last.minutes_to_empty == -1);
+    }
+    Sample row{};
+    apply_gauge(row, gauge_snapshot(health.reading));
+    apply_battery_health(row, health);
+    assert(row.data[gauge_status] == 1 && row.valid[battery_mv] &&
+           row.data[battery_mv] == 3300 && !row.valid[battery_percent] &&
+           !row.valid[battery_soc_raw_percent] &&
+           !row.valid[battery_minutes_to_empty]);
+    assert(row.valid[battery_health_state] &&
+           row.data[battery_health_state] ==
+               static_cast<std::int32_t>(aq::battery::State::Critical));
+    assert(row.valid[battery_charge_rate_percent_per_h] &&
+           row.valid[gauge_status_flags] && row.valid[gauge_hibernating]);
+  }
+  // A NACKed VCELL with a good SOC keeps the percent and no voltage.
+  GaugeBus bus{0xa500, 0x4b80, true, false};
+  const aq::Max17048 gauge{{&bus, GaugeBus::read}};
+  Sample row{};
+  apply_gauge(row, gauge_snapshot(gauge.read()));
+  assert(row.data[gauge_status] == 1 && !row.valid[battery_mv] &&
+         row.valid[battery_percent] && row.data[battery_percent] == 75);
+}
 void assert_battery_gates() {
   assert(kBatteryThresholds.validate());
   // Mapping from the driver into the classifier input.
@@ -107,9 +169,14 @@ void assert_battery_gates() {
          sample.millivolts == 4000 && sample.raw_soc == 0x4b80 &&
          sample.crate_ok && sample.crate_milli_percent_per_hour == -2080 &&
          sample.status_ok && sample.reset_indicator);
-  const auto implausible =
+  // VCELL and SOC map on their own. A wild SOC keeps the voltage.
+  const auto wild_soc =
       battery_sample(0, aq::Max17048::decode(0xd200, 0xffff), ext);
-  assert(!implausible.vcell_ok && !implausible.soc_ok);
+  assert(wild_soc.vcell_ok && wild_soc.millivolts == 4200 && !wild_soc.soc_ok);
+  const auto wild_vcell =
+      battery_sample(0, aq::Max17048::decode(0xffff, 0x4b80), ext);
+  assert(!wild_vcell.vcell_ok && wild_vcell.soc_ok);
+  assert(!battery_sample(0, aq::Max17048Reading{}, ext).vcell_ok);
   // Not installed leaves every new column null.
   Sample absent{};
   apply_battery_health(absent, {});
@@ -140,6 +207,7 @@ void assert_battery_gates() {
               sizeof(over_percent));
   assert(over.valid[battery_soc_raw_percent] && over_percent > 107.7F &&
          over_percent < 107.8F);
+  assert_voltage_only_critical();
   // A gauge reset at boot reports settling until the window ends.
   aq::battery::Monitor monitor{kBatteryThresholds};
   monitor.note_gauge_reset(0);
@@ -201,18 +269,27 @@ void assert_gates() {
   apply_pms(bad_model, pms, kPmsWarmupUs);
   assert(bad_model.data[pms_status] == kPmsModelMismatch);
   assert(!bad_model.valid[ambient_temperature_c]);
-  apply_gauge(bad_gauge, {true, false, 4200, 100});
-  assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv]);
+  apply_gauge(bad_gauge, {true, false, false, 4200, 100});
+  assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv] &&
+         !bad_gauge.valid[battery_percent]);
   const auto decoded = gauge_snapshot(aq::Max17048::decode(0xd200, 0x6400));
-  assert(decoded.read_ok && decoded.millivolts == 4200 &&
+  assert(decoded.vcell_ok && decoded.soc_ok && decoded.millivolts == 4200 &&
          decoded.percent == 100);
   apply_gauge(installed, decoded);
-  assert(installed.valid[battery_mv] && installed.valid[battery_percent]);
-  assert(!gauge_snapshot(aq::Max17048::decode(0, 0x5000)).read_ok);
+  assert(installed.data[gauge_status] == 2 && installed.valid[battery_mv] &&
+         installed.valid[battery_percent]);
+  const auto no_volts = gauge_snapshot(aq::Max17048::decode(0, 0x5000));
+  assert(!no_volts.vcell_ok && no_volts.soc_ok);
   const auto over_full = gauge_snapshot(aq::Max17048::decode(0xd5c0, 0x6bc9));
-  assert(over_full.read_ok && over_full.millivolts == 4275 &&
-         over_full.percent == 100);
-  assert(!gauge_snapshot(aq::Max17048::decode(0xd200, 0xffff)).read_ok);
+  assert(over_full.vcell_ok && over_full.soc_ok &&
+         over_full.millivolts == 4275 && over_full.percent == 100);
+  const auto wild = gauge_snapshot(aq::Max17048::decode(0xd200, 0xffff));
+  assert(wild.vcell_ok && !wild.soc_ok);
+  Sample volts_only{};
+  apply_gauge(volts_only, wild);
+  assert(volts_only.data[gauge_status] == 1 && volts_only.valid[battery_mv] &&
+         volts_only.data[battery_mv] == 4200 &&
+         !volts_only.valid[battery_percent]);
   Sample earlier{}, corrected{};
   apply_clock(earlier, 30000000, 15000000, 1788890000000000000LL, 1);
   const auto utc = earlier.data[event_time_utc_us];
@@ -308,7 +385,12 @@ int main(int argc, char **argv) {
     } else {
       health.battery_installed = true;
       if (i == 1) {
-        health.reading.io_error = true; // failed I2C transaction
+        // Both basic reads failed, a default reading has no ok flag.
+      } else if (i == 2) {
+        // VCELL read, SOC NACKed. Voltage is published without SOC.
+        health.reading = aq::Max17048::decode(0xc800, 0x4b80);
+        health.reading.soc_ok = false;
+        health.extended = extended_ok();
       } else {
         health.reading = aq::Max17048::decode(0xc800, 0x4b80);
         health.extended = extended_ok();
