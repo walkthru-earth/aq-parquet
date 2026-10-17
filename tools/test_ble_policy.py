@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -20,7 +21,7 @@ def main() -> None:
     connectivity = root / "firmware/common/connectivity/src"
     with tempfile.TemporaryDirectory(prefix="aq-ble-policy-test-") as directory:
         executable = Path(directory) / "ble-policy-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(connectivity),
                    str(root / "tools/test_ble_policy.cpp"),
                    str(connectivity / "ble_policy.cpp"), "-o", str(executable)]

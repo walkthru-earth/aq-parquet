@@ -42,7 +42,7 @@ reader-test = "python tools/test_parquet_reader.py --sanitize"
 # Device file sizes, footers and host encoding/compaction variants, see docs/shared/parquet-small-files.md.
 size-survey = "python tools/parquet_size_survey.py"
 size-survey-test = "python tools/test_parquet_size_survey.py"
-pms-frame-test = "clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
+pms-frame-test = "clang++ -std=c++23 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
 # --- native ESP-IDF: one pinned SDK, independent board applications ---

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -16,7 +17,7 @@ def main() -> None:
     common = root / "firmware/common"
     with tempfile.TemporaryDirectory(prefix="aq-logger-status-") as directory:
         executable = Path(directory) / "status-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror"]
         for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_status.cpp"),

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def compile_h3(root: Path, directory: Path, sanitize: bool = False) -> list[str]:
@@ -50,7 +51,7 @@ def main() -> None:
         directory = Path(temporary)
         objects = compile_h3(root, directory, args.sanitize)
         executable = directory / "location-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(helper),
                    "-I", str(root / "firmware/common/logger/src"),
                    "-I", str(root / "firmware/common/runtime/src"),

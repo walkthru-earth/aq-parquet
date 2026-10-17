@@ -8,6 +8,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -18,7 +19,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-archive-test-") as directory:
         executable = Path(directory) / "archive-test"
         command = [
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
             "-I", str(root / "firmware/common/src"), "-I", str(root / "firmware/common/runtime/src"),
             "-I", str(root / "firmware/common/connectivity/src"),
             "-I", str(root / "firmware/common/logger/src"),

@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 
 import ble_sync as client
+from host_cxx import CXX_STD
 
 # Mirrored in docs/shared/ble-sync-protocol.md, "Protocol 3 contract"
 # (#protocol-3-contract).
@@ -34,7 +35,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-disconnect-test-") as directory:
         executable = Path(directory) / "disconnect-test"
         command = [
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-pthread",
             "-I", str(root / "tools/host_fakes/config"), "-I", str(runtime),
             "-I", str(root / "firmware/common/src"), "-I", str(connectivity),
             str(root / "firmware/common/connectivity/tests/test_disconnect.cpp"),

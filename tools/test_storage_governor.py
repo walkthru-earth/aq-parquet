@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -22,7 +23,7 @@ def main() -> None:
     assert match is None, f"storage governor calls {match.group(0)}"
     with tempfile.TemporaryDirectory(prefix="aq-storage-governor-") as directory:
         executable = Path(directory) / "storage-governor-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(common / "logger/src"),
                    str(common / "logger/tests/test_storage_governor.cpp"), "-o", str(executable)]
         if args.sanitize:

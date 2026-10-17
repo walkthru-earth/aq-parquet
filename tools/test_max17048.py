@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -15,7 +16,7 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="aq-max17048-test-") as directory:
         executable = Path(directory) / "max17048-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    str(root / "tools/test_max17048.cpp"), "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]

@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from test_location import compile_h3
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -25,7 +26,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-config-test-") as directory:
         executable = Path(directory) / "config-test"
         command = [
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-pthread",
             "-I", str(root / "tools/host_fakes/config"), "-I", str(shared),
             str(root / "tools/test_device_config.cpp"),
             str(shared / "device_config.cpp"), str(shared / "debug_log.cpp"),

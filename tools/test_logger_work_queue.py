@@ -2,6 +2,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -9,7 +10,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-worker-test-") as directory:
         executable = Path(directory) / "worker-test"
         subprocess.run([
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-I", str(root / "tools/logger_work_host_fakes"),
             "-I", str(root / "firmware/common/logger/src"),

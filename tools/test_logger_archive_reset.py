@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import parquet_device
+from host_cxx import CXX_STD
 
 
 def check_reset_command() -> None:
@@ -45,7 +46,7 @@ def main() -> None:
     logger = root / "firmware/common/logger"
     with tempfile.TemporaryDirectory(prefix="aq-logger-archive-reset-") as directory:
         executable = Path(directory) / "archive-reset-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(logger / "src"),
                    str(logger / "tests/test_archive_reset.cpp"), "-o", str(executable)]
         if args.sanitize:

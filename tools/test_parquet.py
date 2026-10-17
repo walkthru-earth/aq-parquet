@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parquet_footer as footer  # noqa: E402
+from host_cxx import CXX_STD
 
 
 BASE_NAMES = [
@@ -260,7 +261,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="m5-parquet-test-") as temporary:
         directory = Path(temporary)
         executable = directory / "parquet_fixture"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror"]
         command += ["-I", str(root / "firmware/common/vendor/lz4")]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]

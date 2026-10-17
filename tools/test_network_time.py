@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -15,7 +16,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-network-time-") as directory:
         executable = Path(directory) / "network-time-test"
         command = [
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-pthread",
             "-I", str(root / "tools/wifi_host_fakes"),
             "-I", str(root / "firmware/common/connectivity/src"),
             "-I", str(root / "firmware/common/src"),

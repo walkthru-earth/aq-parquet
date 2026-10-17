@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -21,7 +22,7 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="aq-common-test-") as directory:
             executable = Path(directory) / f"common-test-{variant}"
             command = [
-                "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+                "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                 "-I", str(root / "firmware/common/src"), *extra,
                 str(root / "tools/test_common.cpp"), "-o", str(executable),
             ]

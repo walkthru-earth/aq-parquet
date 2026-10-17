@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 from test_location import compile_h3
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -17,7 +18,7 @@ def main() -> None:
     common = root / "firmware/common"
     with tempfile.TemporaryDirectory(prefix="aq-logger-provision-") as directory:
         executable = Path(directory) / "provision-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-pthread",
                    "-I", str(root / "tools/host_fakes/config")]
         for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]

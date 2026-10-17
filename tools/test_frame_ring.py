@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -19,7 +20,7 @@ def main() -> None:
     connectivity = root / "firmware/common/connectivity/src"
     with tempfile.TemporaryDirectory(prefix="aq-frame-ring-test-") as directory:
         executable = Path(directory) / "frame-ring-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(connectivity),
                    str(root / "tools/test_frame_ring.cpp"),
                    str(connectivity / "frame_ring.cpp"), "-o", str(executable)]

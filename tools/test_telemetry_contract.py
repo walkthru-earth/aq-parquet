@@ -26,6 +26,7 @@ import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
 import parquet_device
+from host_cxx import CXX_STD
 
 
 def require(condition: bool, message: str) -> None:
@@ -133,7 +134,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="m5-contract-") as temporary:
         directory = Path(temporary)
         executable = directory / "fixture"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror"]
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror"]
         for include in (common, root / "firmware/common/logger/src",
                         root / "firmware/common/connectivity/src",
                         root / "firmware/common/runtime/src", root / "firmware/common/location/src",

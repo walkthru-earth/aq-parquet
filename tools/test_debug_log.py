@@ -2,6 +2,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -10,7 +11,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-debug-log-test-") as directory:
         executable = Path(directory) / "debug-log-test"
         subprocess.run([
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-pthread",
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-I", str(root / "tools/host_fakes/config"), "-I", str(runtime),
             str(root / "tools/test_debug_log.cpp"), str(runtime / "debug_log.cpp"),

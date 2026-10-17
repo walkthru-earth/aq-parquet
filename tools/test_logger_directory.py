@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -15,7 +16,7 @@ def main() -> None:
     logger = root / "firmware/common/logger"
     with tempfile.TemporaryDirectory(prefix="aq-logger-directory-") as directory:
         executable = Path(directory) / "directory-test"
-        command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    "-I", str(logger / "src"),
                    str(logger / "tests/test_directory.cpp"), "-o", str(executable)]
         if args.sanitize:

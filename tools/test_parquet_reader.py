@@ -33,6 +33,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import parquet_footer as footer  # noqa: E402
+from host_cxx import CXX_STD  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 TIMEOUT = 20
@@ -49,7 +50,7 @@ class Tools:
     def __init__(self, directory: Path, sanitize: bool) -> None:
         self.reader = directory / "parquet_reader_fixture"
         self.writer = directory / "parquet_fixture"
-        base = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror", "-g"]
+        base = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror", "-g"]
         if sanitize:
             base += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         source = ROOT / "firmware/common/src"
@@ -70,7 +71,7 @@ class Tools:
 def check_stack() -> None:
     # Firmware tasks have small stacks; the reader may not grow them.
     for level in ("-O0", "-O2", "-Os"):
-        subprocess.run(["clang++", "-std=c++17", level, "-Wall", "-Wextra", "-Werror",
+        subprocess.run(["clang++", CXX_STD, level, "-Wall", "-Wextra", "-Werror",
                         "-Wframe-larger-than=1024", "-c", str(ROOT / "firmware/common/src/parquet_reader.cpp"),
                         "-o", "/dev/null"], check=True)
     print("PASS reader stack frames under 1024 bytes at -O0, -O2 and -Os", flush=True)

@@ -2,6 +2,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
+from host_cxx import CXX_STD
 
 
 def main() -> None:
@@ -10,7 +11,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-logger-rotation-") as directory:
         executable = Path(directory) / "rotation-test"
         subprocess.run([
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
             "-I", str(common / "src"), "-I", str(common / "logger/src"),
             str(common / "logger/tests/test_rotation.cpp"), "-o", str(executable),

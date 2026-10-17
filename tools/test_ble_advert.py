@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import ble_sync as client
+from host_cxx import CXX_STD
 
 
 def ad_fields(packet: bytes) -> dict[int, bytes]:
@@ -43,7 +44,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aq-ble-advert-") as directory:
         executable = Path(directory) / "advert"
         command = [
-            "clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+            "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
             "-I", str(root / "firmware/common/runtime/src"),
             "-I", str(root / "firmware/common/connectivity/src"),
             str(root / "firmware/common/connectivity/tests/test_ble_advert.cpp"),
