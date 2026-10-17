@@ -1,6 +1,7 @@
 #include "../firmware/common/src/lz4_codec.h"
 #include "../firmware/esp-idf-cores3/bringup/telemetry_contract.h"
 
+#include "live_sample.h"
 #include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <cassert>
@@ -36,19 +37,25 @@ void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
       aqlogger::format_live(table, count, row, json, sizeof(json));
   assert(used > 0 && used <= ble::kMaxJson);
 }
-void assert_board_live_keys() {
-  aqlogger::Field table[field_count];
-  for (std::size_t i = 0; i < field_count; ++i)
-    table[i] = {kFields[i].name,      kFields[i].type,
-                kFields[i].procedure, kFields[i].unit,
-                kFields[i].validity,  kFields[i].property_uri,
-                kFields[i].live_key};
-  assert_live_keys(table, field_count);
-}
+struct BoardTable {
+  aqlogger::Field fields[field_count];
+  BoardTable() {
+    for (std::size_t i = 0; i < field_count; ++i)
+      fields[i] = {kFields[i].name,      kFields[i].type,
+                   kFields[i].procedure, kFields[i].unit,
+                   kFields[i].validity,  kFields[i].property_uri,
+                   kFields[i].live_key};
+  }
+};
 } // namespace
 
 int main(int argc, char **argv) {
-  assert_board_live_keys();
+  const BoardTable board;
+  assert_live_keys(board.fields, field_count);
+  if (argc == 2 && std::strcmp(argv[1], "live") == 0) {
+    livesample::print(board.fields, field_count);
+    return 0;
+  }
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","
@@ -60,9 +67,10 @@ int main(int argc, char **argv) {
       // Dictionary tokens are compile-time literals, validated by the host.
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
                   "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
-                  "\"field_id\":%zu}",
+                  "\"field_id\":%zu,\"live\":\"%s\"}",
                   i ? "," : "", f.name, unsigned(f.type), f.procedure, f.unit,
-                  f.validity, f.property_uri, i + 1);
+                  f.validity, f.property_uri, i + 1,
+                  f.live_key ? f.live_key : "");
     }
     std::puts("]}");
     return 0;

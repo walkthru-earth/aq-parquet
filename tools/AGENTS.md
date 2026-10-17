@@ -21,6 +21,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Board-declared LIVE keys and JSON formatting | `logger-live-test` |
 | POWER STATE lines, one finalize per discharge, the report wake, emergency close outcomes, retry and pass lines | `logger-power-test` |
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |
+| LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`

@@ -1,0 +1,94 @@
+{
+  "board": "waveshare",
+  "convention": "Every field valid with integers 1 and floats 1.0, rendered by the shared emitter through tools/live_sample.h. utc is the stored microseconds times 1000 on the wire.",
+  "digests": {
+    "0a024b85c632f621c0e1223f1ecafe3a9c4524a1ec3c0d03d910d191aaee2f82": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v4. The digest does not cover the LIVE keys, but both released builds send the same key set, only the JSON order differs.",
+      "builds": [
+        {
+          "commit": "e166978",
+          "firmware": "idf-waveshare-parquet-v2.6",
+          "emitter": "hardcoded list in firmware/common/logger/src/aq_logger.cpp",
+          "keys": [
+            "seq",
+            "mono",
+            "utc",
+            "pms",
+            "pm1",
+            "pm25",
+            "pm10",
+            "c1",
+            "c25",
+            "c10",
+            "n03",
+            "n05",
+            "n1",
+            "n25",
+            "t",
+            "rh",
+            "bat",
+            "pct"
+          ],
+          "note": "Reconstructed from source. Not captured on hardware."
+        },
+        {
+          "commit": "d2a840c",
+          "firmware": "idf-waveshare-parquet-v2.6",
+          "emitter": "board field table through aqlogger::format_live",
+          "keys": [
+            "seq",
+            "mono",
+            "utc",
+            "pms",
+            "c1",
+            "c25",
+            "c10",
+            "pm1",
+            "pm25",
+            "pm10",
+            "n03",
+            "n05",
+            "n1",
+            "n25",
+            "t",
+            "rh",
+            "bat",
+            "pct"
+          ],
+          "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"t\":1.0,\"rh\":1.0,\"bat\":1,\"pct\":1}"
+        }
+      ]
+    },
+    "67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v5 from PR #24. The LIVE key is the last FIELD argument, so this digest covers the key map.",
+      "builds": [
+        {
+          "firmware": "idf-waveshare-parquet-v2.7",
+          "emitter": "board field table through aqlogger::format_live",
+          "keys": [
+            "seq",
+            "mono",
+            "utc",
+            "pms",
+            "c1",
+            "c25",
+            "c10",
+            "pm1",
+            "pm25",
+            "pm10",
+            "n03",
+            "n05",
+            "n1",
+            "n25",
+            "t",
+            "rh",
+            "bat",
+            "pct",
+            "bstate"
+          ],
+          "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"t\":1.0,\"rh\":1.0,\"bat\":1,\"pct\":1,\"bstate\":1}"
+        }
+      ]
+    }
+  }
+}

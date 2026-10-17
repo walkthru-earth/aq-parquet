@@ -17,6 +17,7 @@ import tempfile
 from test_location import compile_h3
 
 import duckdb
+import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -198,6 +199,10 @@ def main() -> None:
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
         require(dictionary["firmware"] == "idf-waveshare-parquet-v2.7", "firmware identity")
+        live = subprocess.check_output([str(executable), "live"], text=True).strip()
+        live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)
+        live_key_fixture.check("waveshare", dictionary["sha256"], dictionary["firmware"], live)
+        print("PASS Waveshare LIVE keys match the frozen fixture for digest " + dictionary["sha256"][:8], flush=True)
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")

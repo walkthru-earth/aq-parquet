@@ -1,4 +1,5 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
+#include "live_sample.h"
 #include <lz4_codec.h>
 
 #include <aq_logger_live.h>
@@ -315,6 +316,10 @@ void assert_gates() {
 
 int main(int argc, char **argv) {
   assert_live_keys(kFields, field_count);
+  if (argc == 2 && std::strcmp(argv[1], "live") == 0) {
+    livesample::print(kFields, field_count);
+    return 0;
+  }
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","

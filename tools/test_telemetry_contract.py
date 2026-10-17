@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import duckdb
+import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
 import parquet_device
@@ -55,8 +56,8 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
     require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v5", "schema version")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v4",
-            "dictionary version includes appended H3 fields")
+    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v5",
+            "dictionary version tracks the field table bytes, now with LIVE keys")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
             "firmware identity in created_by")
@@ -162,6 +163,15 @@ def main() -> None:
                                          separators=(",", ":")).encode()).hexdigest()
                 == "511b231ecdbf8f93fc3acbca42d5fceef7c3808551af1d035866cc0da4366135",
                 "original 77-column prefix changed")
+        inc = (firmware / "telemetry_fields.inc").read_text()
+        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)"\)$', inc, re.M)
+        require(rows == [(f["name"], f["live"]) for f in fields], "dictionary carries every LIVE key")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.13", "firmware identity")
+        live = subprocess.check_output([str(executable), "live"], text=True).strip()
+        live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
+        require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==
+                [f["live"] for f in fields if f["live"]], "rendered LIVE keys follow the dictionary")
+        print("PASS CoreS3 LIVE keys match the frozen fixture for digest " + dictionary["sha256"][:8], flush=True)
         require(len(fields) == len({f["name"] for f in fields}) == 81, "unique dictionary fields")
         require([f["field_id"] for f in fields] == list(range(1, 82)), "append-only 1-based field ids")
         require(len({f["property"] for f in fields}) == 81, "unique property identifiers")
