@@ -577,10 +577,11 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   const auto which =
       static_cast<Characteristic>(reinterpret_cast<std::uintptr_t>(arg));
   if (!confirm_secure(handle, "access")) {
-    // NimBLE's ATT permissions refuse an unencrypted access before this
-    // callback runs, and that ATT error is what makes a phone pair. A
-    // Control write that gets here anyway (encrypted, but for example with a
-    // short key) is refused by ERROR 14 on `response` alone. Its write is
+    // Not reached in this configuration. NimBLE's ATT permission check
+    // applies the same rule as secure() (ble_att_svr_check_perms with the
+    // ENC flags, plus AUTHEN and sm_sc_only in the passkey modes) and its
+    // ATT error is what makes a phone pair. If the checks ever diverge, a
+    // Control write is refused by ERROR 14 on `response` alone. It is
     // acknowledged and not dispatched, because an ATT error would fail the
     // client's write before it could read the ERROR.
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && which == Control) {
@@ -739,7 +740,9 @@ int gap_event(ble_gap_event *event, void *) {
       return 0;
     // A CCCD write proves nothing by itself, but it is the first event a
     // client sends after a reconnect, so a missed ENC_CHANGE latches here.
-    confirm_secure(event->subscribe.conn_handle, "subscribe");
+    // Not during teardown, which reports every CCCD as turned off.
+    if (event->subscribe.reason != BLE_GAP_SUBSCRIBE_REASON_TERM)
+      confirm_secure(event->subscribe.conn_handle, "subscribe");
     for (unsigned i = 0; i < Count; ++i) {
       if (event->subscribe.attr_handle != value_handles[i])
         continue;
@@ -767,11 +770,12 @@ int gap_event(ble_gap_event *event, void *) {
       }
     }
     return 0;
-  case BLE_GAP_EVENT_ENC_CHANGE:
+  case BLE_GAP_EVENT_ENC_CHANGE: {
     if (event->enc_change.conn_handle != conn_handle.load())
       return 0;
     pairing_active = false;
     passkey = 0;
+    const bool was = authenticated.load();
     authenticated =
         event->enc_change.status == 0 && secure(event->enc_change.conn_handle);
     update_bonds();
@@ -779,12 +783,13 @@ int gap_event(ble_gap_event *event, void *) {
     if (!authenticated.load()) {
       aqlog.println("BLE AUTH result=failed action=disconnect");
       terminate(event->enc_change.conn_handle, DisconnectReason::AuthFailed);
-    } else {
+    } else if (enc_change_announces(was, true)) {
       aqlog.printf("BLE BONDED authenticated=true bonds=%lu\n",
                    static_cast<unsigned long>(bonds.load()));
       start_link_sequence();
     }
     return 0;
+  }
   case BLE_GAP_EVENT_PASSKEY_ACTION: {
     if (mode == config::PairMode::None ||
         event->passkey.params.action != BLE_SM_IOACT_DISP)

@@ -575,6 +575,16 @@ static_assert(ble::control_refusal(false).code == ble::kErrAuth,
               "auth refusal is 14");
 static_assert(ble::control_refusal(true).code == ble::kErrBusy,
               "queue refusal is 7");
+// The full send or refuse table. A cached-only gate (the issue #51 bug)
+// fails the live-secure row.
+static_assert(ble::gate_allows(true, false, false), "cached link sends");
+static_assert(ble::gate_allows(false, false, true), "stale flag, secure link");
+static_assert(ble::gate_allows(false, true, false), "ERROR 14 always out");
+static_assert(!ble::gate_allows(false, false, false), "insecure refused");
+// A late ENC_CHANGE after a via= latch announces nothing.
+static_assert(ble::enc_change_announces(false, true), "first ENC_CHANGE");
+static_assert(!ble::enc_change_announces(true, true), "already latched");
+static_assert(!ble::enc_change_announces(false, false), "insecure");
 
 void test_stale_flag_secure_link_is_served() {
   // The failing bench connect: CONNECT before encryption leaves the flag
@@ -601,7 +611,8 @@ void test_stale_flag_secure_link_is_served() {
 
 void test_insecure_link_gets_visible_error_14() {
   Gate gate{.cached = false, .live_secure = false, .lookups = 0};
-  // access() refuses the Control write and queues this refusal.
+  // NimBLE's ATT check refuses an insecure Control write first. If it ever
+  // lets one through, access() queues this refusal as the fallback.
   const auto refusal = ble::control_refusal(false);
   assert(refusal.code == ble::kErrAuth &&
          std::strcmp(refusal.detail, "auth") == 0);
