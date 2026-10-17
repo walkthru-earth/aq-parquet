@@ -350,10 +350,15 @@ gate reused `waveshare-sim7670g-v2-flash-20261016T114219Z.bin` from the
 bootloader, partition table, otadata and app, kept NVS, and verified every
 region hash. No eFuse write, card format, NVS erase or full chip erase.
 
+Part of [#27](https://github.com/walkthru-earth/aq-parquet/issues/27), with
+evidence for [#18](https://github.com/walkthru-earth/aq-parquet/issues/18),
+[#28](https://github.com/walkthru-earth/aq-parquet/issues/28) and
+[#29](https://github.com/walkthru-earth/aq-parquet/issues/29).
+
 | Image | App SHA-256 | Use |
 | :--- | :--- | :--- |
 | main 8344adc | `c00749278dcfb8987f46918a142872f146dabe48eb62fb68aa4cd80cfd0c4ce3` | Boot checks |
-| Temporary stall build, 8344adc plus a bench patch | `d83a8fc06c23400fb147f1f3959623e59eabaa0dcc9ae15faced57d89e10e2c4` | Watchdog test only, then replaced |
+| Temporary stall build, app version `8344adc-dirty` (8344adc plus a bench patch) | `d83a8fc06c23400fb147f1f3959623e59eabaa0dcc9ae15faced57d89e10e2c4` | Watchdog test only, then replaced |
 | main 8344adc, final | `9b7df8ef78d821120bdd1501b5246783337cd05beb566f4cc255e89e36ca92d9` | Left on the board. Same source as the first row, the hash differs only by the embedded build time |
 
 | Check | Result |
@@ -365,11 +370,11 @@ region hash. No eFuse write, card format, NVS erase or full chip erase.
 | Recovery | A 64 s returning stall logged `PARQUET WATCHDOG mode=armed consecutive=1 reason=recovered` with no reset |
 | Boot loop guard | Two more forever stalls reset with `consecutive=2` and then `consecutive=3`, after which boot printed `PARQUET WATCHDOG mode=warn ... consecutive=3`. A 90 s stall in warn mode logged `watchdog=warn` warnings and no reset. `parquet status` then reported `dropped=1 queue_peak=8`, so a stall longer than about 80 s overflows the row queue by design |
 | Restore | The temporary patch was reverted and the final main image flashed. Its power on boot showed `mode=armed consecutive=0`. The `coredump` partition still holds the dump from the temporary build, which main cannot read |
-| Battery, USB with an 18650 installed | Serial gauge reads `vcell_raw=54752` (4277 mV), `soc_raw=28524`, `crate_raw=0`, `status=0x00ff`, `mode=0x1000`. `POWER STATE state=unknown mv=4276` then `external_power_likely mv=4286` about 20 s later. In the Parquet file `gauge_status=2` (valid), `battery_mv` 4271 to 4286, `battery_percent=100`, `battery_soc_raw_percent=111.42` (uncapped), `battery_charge_rate_percent_per_h=0`, `gauge_hibernating=1`, `battery_health_state` 0 for two rows then 1 (external power likely), `battery_minutes_to_empty` null. The cell was not discharged and the external rail was not measured, so the 4240 mV threshold stays uncalibrated for #28 |
+| Battery, USB with an 18650 installed | In the final run the first serial gauge read is `vcell_raw=54736` (4276 mV), `soc_raw=28524`, `crate_raw=0`, `status=0x00ff`, `mode=0x1000`. `POWER STATE state=unknown mv=4276` then, with `vcell_raw=54864`, `external_power_likely mv=4286` about 20 s later. In the Parquet file `gauge_status=2` (valid), `battery_mv` 4271 to 4286, `battery_percent=100`, `battery_soc_raw_percent=111.42` (uncapped), `battery_charge_rate_percent_per_h=0`, `gauge_hibernating=1`, `battery_health_state` 0 for two rows then 1 (external power likely), `battery_minutes_to_empty` null. The cell was not discharged and the external rail was not measured, so the 4240 mV threshold stays uncalibrated for #28 |
 | 20 minute run | The final image logged 131 rows over 1311 s with `dropped=0`, `errors=0` and `queue_peak=0`. One file was ready at 902 s (`rows=89 bytes=38225 crc32=330b5098`). `parquet flush` closed the remaining 42 rows into a second file. Neither BLE pairing nor watchdog events occurred. An earlier 321 s run was cut short for the owner's BLE PIN change and is kept as a partial log. Its 32 buffered rows were lost on the reset because the CH343 port cannot be reopened without resetting the board |
 | Readback | `parquet-device fetch` of `data_unsynced_233c0e2d..._0-88-0.parquet`, 38,225 bytes, SHA-256 `5058c8b9fc647547ce2ba9f13cf52e2643303228a6e3f20c669a9a10e00e0294`, CRC-32 `330b5098`, `readers_match=true`, cadence deviation at most 1,015 us. PyArrow 25 reads 62 leaves with field ids 1 to 62 in order. `event_time_utc_us` (id 9) and `clock_anchor_utc_us` (id 52) are `timestamp[us, tz=UTC]` with Parquet logical type `Timestamp(isAdjustedToUTC=true, timeUnit=microseconds)`. Values are null because this boot had no host time sync. The battery columns are ids 33 to 35 and 57 to 62. After the fetch reset the board booted the same image and resumed rows |
-| BLE dev PIN | At the owner's request `parquet config-hex` set `ble.pin=<dev pin>` and returned `AQ CONFIG ok=1 reboot_required=1`. The next boot printed `BLE BEGIN ... bonds=1 pair=fixed`. The value is kept out of every log and this record |
-| Not run | BLE or LAN `LIST`, `OPEN`, `READ`, `ABORT` and the remount recheck. The Mac had no bond, so `ble-sync list` and `live` failed with `Insufficient Encryption` and pairing needs the owner. Wi-Fi is not provisioned, so LAN is unavailable. Also not run are the one hour healthy clear of the guard, a power pull or brownout with a pending stall, OTA, and battery discharge |
+| BLE dev PIN | At the owner's request `parquet config-hex` set `ble.pin=<dev pin>`. The board answered `CONFIG SET pair=fixed pin_default=false ... rotate_token=<redacted> reboot_required=true` and `AQ CONFIG ok=1 reboot_required=1`, and the board was rebooted so the PIN applies. `pin_default=false` shows the stored PIN is no longer the default. The line carries no PIN digits. The value is kept out of every log and this record |
+| Not run | BLE or LAN `LIST`, `OPEN`, `READ`, `ABORT` and the remount recheck. The Mac had no bond. `ble-sync list` failed with `Insufficient Encryption`, and `ble-sync live` connected (MTU 515) and then timed out after 20 s on its first characteristic read. Pairing needs the owner. Wi-Fi is not provisioned, so LAN is unavailable. Also not run are the one hour healthy clear of the guard, a power pull or brownout with a pending stall, OTA, and battery discharge |
 
 Logs, images, the raw dump, its decode and the readback are in ignored
 `firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261017/`.
