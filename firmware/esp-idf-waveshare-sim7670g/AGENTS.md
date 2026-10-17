@@ -29,7 +29,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   power pins or change USB routing/DIP switches for the logger.
 - The owner subsequently installed an 18650 and verified battery-only boot.
   `kBatteryInstalled` is the explicit board configuration; a MAX17048 response
-  still cannot prove battery presence. Read failures leave battery fields null.
+  still cannot prove battery presence. A failed register nulls only its own
+  columns. A good VCELL with a bad SOC still writes `battery_mv` and drives
+  `battery_health_state`, which is always written and reads 0 when unknown.
   Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
 - Current firmware is `idf-waveshare-parquet-v2.7`, schema v5/dictionary v5

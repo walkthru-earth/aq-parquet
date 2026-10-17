@@ -8,6 +8,25 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Cell voltage without SOC (Waveshare v2.7, issue #30)
+
+- A failed or implausible SOC no longer hides a good cell voltage. Waveshare
+  rows can now have `battery_mv` set while `battery_percent`,
+  `battery_soc_raw_percent` and `battery_minutes_to_empty` are null, with
+  `gauge_status=1`. The reverse is also possible, a percent with a null mV.
+- LIVE follows the row, so `bat` can be present without `pct` and the reverse.
+- `bstate` can reach 4 critical from voltage alone while SOC is failing.
+- The `gauge_status` footer metadata text adds that `battery_mv` is kept under
+  status 1. The codes 0, 1 and 2 keep their meaning, and 2 still needs both
+  words.
+- The boot log line `AQ GAUGE read` replaces `io_error` and `plausible` with
+  `vcell_ok`, `soc_ok`, `vcell_plausible` and `soc_plausible`.
+- No column, schema, dictionary or digest change. The v5 digest stays
+  `67688d0fd2e86053c1c66b961a1446ad3c225ee71823e0fadb771b645c7183ff`.
+- The app must not assume `battery_percent` or `pct` is present whenever
+  `battery_mv` or `bat` is, and should show the voltage alone when only it is
+  present.
+
 ## Battery health columns and LIVE `bstate` (Waveshare v2.7, feat/battery-health-entry-points)
 
 - Waveshare writes schema and dictionary `waveshare-sim7670g-telemetry-v5`

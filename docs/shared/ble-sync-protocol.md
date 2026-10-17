@@ -196,7 +196,7 @@ Notified once per sample. Each board declares a short `live_key` next to the fie
 | `t` | `ambient_temperature_c`, ambient air temperature only. Waveshare PMS5003T reports it. CoreS3 has no resolved ambient sensor, so `t` stays absent there |
 | `rh` | `relative_humidity_percent`; absent when unavailable |
 | `imu_t` | CoreS3 `imu_temperature_c`, IMU die temperature. Never show it as air temperature |
-| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement |
+| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement. Waveshare checks VCELL and SOC on their own, so `bat` can appear without `pct` and the reverse |
 | `bstate` | Waveshare `battery_health_state` code: 0 unknown, 1 external power likely, 2 ok, 3 low, 4 critical, 5 settling after a gauge reset. Inferred from cell voltage only, thresholds are uncalibrated |
 | `als` | CoreS3 `light_ch0_raw` |
 

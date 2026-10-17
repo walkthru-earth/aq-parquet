@@ -38,6 +38,8 @@ A 2026-10-16 schematic review, not yet confirmed with a meter, found the followi
 
 The logger therefore classifies battery state from VCELL alone. `battery_health_state` 1 (external power likely) means VCELL is at or above 4240 mV, a heuristic, not a measured USB or charger signal. Low enters at 3500 mV and critical at 3350 mV with 75 mV hysteresis and three-sample debounce. These thresholds are uncalibrated, with no dated discharge run yet.
 
+VCELL and SOC are read and range checked on their own. When VCELL is valid but SOC fails to read or is above 120% raw, the row still writes `battery_mv` and the classifier still uses it, so Low and Critical still trigger. `battery_percent`, `battery_soc_raw_percent` and `battery_minutes_to_empty` stay null and `gauge_status` is 1. When SOC is valid but VCELL fails, `battery_percent` and `battery_soc_raw_percent` are written and `battery_mv` stays null. `gauge_status` 2 needs both words. CRATE, STATUS and MODE columns depend only on their own register. With a battery configured, `battery_health_state` is always written. It keeps the last state through up to two invalid VCELL samples and reads 0 unknown from the third.
+
 ## Power slider and DIP switches
 
 The [product hardware description](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G#hardware-description) identifies the single ON/OFF slider beside the battery holder as the **18650 battery power switch**. Use ON for battery-powered operation. USB already powered the diagnostic during this board's tests; those tests do not establish battery operation or the sensor's 5 V supply under either slider position. The slider is separate from BOOT/RESET.
