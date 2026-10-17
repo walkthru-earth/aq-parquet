@@ -53,12 +53,25 @@ def check(board: str, digest: str, firmware: str, payload: str) -> list[str]:
     return keys
 
 
+def render(pairs: list[tuple[str, object]]) -> str:
+    """Rebuild one compact LIVE JSON object from ordered key and value pairs."""
+    return "{" + ",".join(f"{json.dumps(key)}:{json.dumps(value)}" for key, value in pairs) + "}"
+
+
 def assert_rejects_drift(board: str, digest: str, firmware: str, payload: str) -> None:
-    """The check itself must refuse a renamed or dropped key and a legacy digest."""
+    """The check itself must refuse a renamed, dropped or reordered key and a legacy digest.
+
+    Cases come from the rendered keys, so they stay meaningful after any legitimate rename.
+    """
     fixture = json.loads((FIXTURES / f"{board}.json").read_text())
-    renamed = payload.replace('"seq":', '"sq":', 1)
-    dropped = payload.replace('"mono":1,', "", 1)
-    cases = [(digest, renamed), (digest, dropped)]
+    pairs = json.loads(payload, object_pairs_hook=lambda items: items)
+    require(len(pairs) >= 3, f"{board} LIVE payload too short for drift cases")
+    require(render(pairs) == payload, f"{board} LIVE payload does not round trip through render")
+    keys = [key for key, _ in pairs]
+    renamed = [(keys[0] + "_renamed", pairs[0][1])] + pairs[1:]
+    dropped = pairs[:1] + pairs[2:]
+    swapped = pairs[:1] + [pairs[2], pairs[1]] + pairs[3:]
+    cases = [(digest, render(case)) for case in (renamed, dropped, swapped)]
     cases += [(known, payload) for known, entry in fixture["digests"].items() if entry.get("collision")]
     for case_digest, case_payload in cases:
         require(case_payload != payload or case_digest != digest, "drift case is not a change")
