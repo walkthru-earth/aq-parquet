@@ -637,6 +637,24 @@ int main() {
   const auto waited = std::chrono::steady_clock::now() - wait_started;
   assert(steps == 1 &&
          waited < std::chrono::milliseconds(lan::options.wait_step_ms + 200));
+  // A LAN task that stops draining never runs the slow peer rule, and the
+  // worker's wait step keeps its heartbeat fresh. The wait still gives up
+  // after 2 * slow_peer_ms without a space wake, and the peer stays open.
+  // The clock is put back after, since no LAN tick ran meanwhile.
+  const std::int64_t frozen_at = fake_now_us;
+  steps = 0;
+  assert(!lan::deliver(
+      bulk.data(), bulk.size(), 0, lan::connection_generation(0),
+      [](void *context) {
+        ++*static_cast<unsigned *>(context);
+        fake_now_us += lan::slow_peer_us;
+        return true;
+      },
+      &steps));
+  assert(steps >= 2 && steps <= 4);
+  assert(fake_now_us - frozen_at >= 2 * lan::slow_peer_us);
+  assert(lan::payload_max(0) == lan::kPayloadMax);
+  fake_now_us = frozen_at;
   const std::uint8_t to_fast[] = {ble::kFrameClosed, 7};
   assert(lan::enqueue_response(to_fast, sizeof(to_fast), 1) ==
          aqsync::EnqueueResult::Ok);

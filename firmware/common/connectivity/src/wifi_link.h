@@ -101,12 +101,16 @@ aqsync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
 std::size_t encode_error(std::uint8_t *frame, ble::Op op, ble::Error code,
                          const char *detail);
 // Blocks for at most timeout_ms until the LAN task frees ring space or closes
-// a peer. Never call it from the LAN task.
-void wait_for_space(std::uint32_t timeout_ms);
+// a peer. Returns true when the LAN task signalled. Never call it from the LAN
+// task.
+bool wait_for_space(std::uint32_t timeout_ms);
 // Storage worker only. Queues a frame, waiting in Options::wait_step_ms steps
 // while the ring is full. Between steps `between_steps` runs and may stop the
 // wait by returning false (ABORT). Returns true once queued. The slow peer
-// rule bounds the wait because it closes a peer that stops reading.
+// rule normally ends the wait because it closes a peer that stops reading.
+// That rule runs in the LAN task, so the wait also gives up and returns false
+// after 2 * slow_peer_ms without a space wake, which bounds it when the LAN
+// task itself stops.
 using WaitStep = bool (*)(void *context);
 bool deliver(const std::uint8_t *frame, std::size_t length, std::uint8_t peer,
              std::uint32_t expected_generation, WaitStep between_steps,

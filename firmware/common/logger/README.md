@@ -139,7 +139,11 @@ paused after an erase. The writer stamps only on confirmed progress, after each
 block its output sink writes, after each encoded row group and after each
 completed fsync. A sink call that never returns therefore still trips the
 watchdog, while a slow write that keeps landing blocks does not. Each stamp
-also feeds the worker's task watchdog user.
+also feeds the worker's task watchdog user. A BLE or LAN frame wait stamps
+between its steps, so each transport bounds it. BLE gives up after twice
+`progress_timeout_ms` and LAN after twice `slow_peer_ms` without progress
+(30 s each by default), so a stuck radio task cannot keep a worker that
+writes nothing looking alive.
 
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...

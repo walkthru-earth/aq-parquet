@@ -1464,19 +1464,36 @@ aqsync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
   return push(peer, frame, length, expected_generation);
 }
 
-void wait_for_space(std::uint32_t timeout_ms) {
-  if (space_event)
-    xSemaphoreTake(space_event, pdMS_TO_TICKS(timeout_ms));
+bool wait_for_space(std::uint32_t timeout_ms) {
+  return space_event &&
+         xSemaphoreTake(space_event, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }
 
 bool deliver(const std::uint8_t *frame, std::size_t length, std::uint8_t peer,
              std::uint32_t expected_generation, WaitStep between_steps,
              void *context) {
+  // The slow peer rule runs in the LAN task, so it cannot end this wait when
+  // that task stops draining. Bound it as BLE does: twice the slow peer
+  // budget without a space wake from the LAN task gives up. The caller's wait
+  // step stamps the worker heartbeat, so without this bound a stuck LAN task
+  // would keep the worker looking alive while nothing reaches the card.
+  const std::int64_t budget_us = 2LL * options.slow_peer_ms * 1000LL;
+  std::int64_t waited_from = -1;
   for (;;) {
     const auto result = push(peer, frame, length, expected_generation);
     if (result != aqsync::EnqueueResult::Full)
       return result == aqsync::EnqueueResult::Ok;
-    wait_for_space(options.wait_step_ms);
+    const std::int64_t now = esp_timer_get_time();
+    if (waited_from < 0) {
+      waited_from = now;
+    } else if (now - waited_from >= budget_us) {
+      aqlog.record_only().printf(
+          "LAN ERROR operation=deliver slot=%u waited_ms=%lld\n",
+          unsigned(peer), static_cast<long long>((now - waited_from) / 1000));
+      return false;
+    }
+    if (wait_for_space(options.wait_step_ms))
+      waited_from = esp_timer_get_time();
     if (between_steps && !between_steps(context))
       return false;
   }

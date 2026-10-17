@@ -32,7 +32,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation and ABORT stamping passed")
+    print("LAN transport: native lifecycle/scans, authentication, routing, pushes, stale sessions, typed BYE per close path, per peer rings, slow-peer isolation, the worker wait bound and ABORT stamping passed")
 
 
 if __name__ == "__main__":
