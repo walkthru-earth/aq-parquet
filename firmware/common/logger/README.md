@@ -261,11 +261,16 @@ writes nothing looking alive.
   `rst:0xc (RTC_SW_CPU_RST)`, not a watchdog reset. `esp_reset_reason()`
   still reports `ESP_RST_TASK_WDT`, printed as `reset=6` on the `LOG ring=`
   line, and that value is what the next boot counts as a stall reset. Every
-  board table reserves the 64 KiB `coredump` partition, each board application
-  requires the `espcoredump` component, and the shared defaults enable `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` with a
-  2560 byte dump stack. The board build fails when the image lacks the dump,
-  see `tools/check_idf_target.py`. A bench task watchdog reset on the Waveshare
-  board with Wi-Fi off wrote a 24992 byte dump that `coredump-info` decoded.
+  board table reserves the 64 KiB `coredump` partition, each board
+  application requires the `espcoredump` component, and the shared defaults
+  enable `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` with a 2660 byte dump stack
+  (2560 plus the 100 bytes IDF adds at debug log level). The board build
+  fails when the image lacks the dump, see `tools/check_idf_target.py`. A
+  bench task watchdog reset on the Waveshare board with Wi-Fi off wrote a
+  24992 byte dump that `coredump-info` decoded. A dump larger than the
+  partition is not saved at all, and the size with Wi-Fi, BLE and LAN running
+  is not measured yet (issue #49). The next boot reports a saved dump on the
+  console only, not in the LOG ring.
   Idle tasks keep their print-only behavior until a worker stall is declared.
 - If the worker stamps again before that period ends, the supervisor recovers.
   It withdraws the pending stall, restores the task watchdog config the IDF

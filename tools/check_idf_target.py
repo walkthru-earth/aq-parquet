@@ -141,8 +141,11 @@ COREDUMP_SETTINGS = ["CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y", "CONFIG_ESP_COREDU
 # ESP-IDF 6.1 only writes ELF dumps with a SHA-256 checksum. Its Kconfig still
 # selects ESP_COREDUMP_DATA_FORMAT_ELF and ESP_COREDUMP_CHECKSUM_SHA256, but
 # neither symbol is defined or written to sdkconfig, so prove both by symbol.
+# Only global symbols, which survive any optimization level. The checksum one
+# links only with core_dump_sha.c, and esp_core_dump_image_check only with the
+# flash backend (esp_core_dump_init alone has a weak fallback).
 COREDUMP_SYMBOLS = {"esp_core_dump_init", "esp_core_dump_write", "esp_core_dump_write_elf",
-                    "core_dump_sha256_finish"}
+                    "esp_core_dump_checksum_finish", "esp_core_dump_image_check"}
 
 
 def kconfig_names(node: object, names: set[str]) -> set[str]:
@@ -157,19 +160,40 @@ def kconfig_names(node: object, names: set[str]) -> set[str]:
     return names
 
 
-def check_defaults_known(build: Path, defaults: str) -> None:
+def renamed_names(component_paths: list[str], known: set[str]) -> set[str]:
+    """Deprecated names in the built components' sdkconfig.rename files.
+
+    kconfgen still maps these to their new symbol, so accept one only when its
+    new name is a known symbol of this build."""
+    names = set()
+    for directory in component_paths:
+        for rename in (Path(directory) / "sdkconfig.rename",
+                       Path(directory) / "sdkconfig.rename.esp32s3"):
+            if not rename.is_file():
+                continue
+            for line in rename.read_text().splitlines():
+                fields = line.split()
+                if len(fields) == 2 and fields[0].startswith("CONFIG_") and \
+                        fields[1].lstrip("!") in known:
+                    names.add(fields[0])
+    return names
+
+
+def check_defaults_known(build: Path, defaults: str, component_paths: list[str]) -> None:
     """Fail where kconfgen only prints a NOTE, an unknown symbol in a defaults file.
 
     A symbol is unknown when no built component declares it, for example
     ESP_COREDUMP_* without the espcoredump component, and the setting is
     then silently dropped from the image."""
     known = kconfig_names(json.loads(build_file(build, "config/kconfig_menus.json").read_text()), set())
+    known |= renamed_names(component_paths, known)
     for name in filter(None, defaults.split(";")):
         for line in Path(name).read_text().splitlines():
             match = CONFIG_LINE.match(line.strip())
             symbol = match and (match[1] or match[2])
             require(not symbol or symbol in known,
-                    f"unknown kconfig symbol {symbol} in {Path(name).name}, a component is missing")
+                    f"unknown or renamed kconfig symbol {symbol} in {Path(name).name}, "
+                    "check the name or add the component that declares it")
 
 
 def elf_symbols(path: Path) -> set[str]:
@@ -258,7 +282,8 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
     sdk_commit = check_sdk(Path(description["idf_path"]))
     require(description["git_revision"] == "v" + sdk_lock()["ESP_IDF_VERSION"],
             "build used a different SDK revision")
-    check_defaults_known(build, description["config_defaults"])
+    check_defaults_known(build, description["config_defaults"],
+                         description["build_component_paths"])
     components = description["build_components"]
     require("espcoredump" in components, "core dump component is not built")
     missing = COREDUMP_SYMBOLS - elf_symbols(build_file(build, description["app_elf"]))
