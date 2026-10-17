@@ -9,6 +9,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Manual rerun of the full workflow on any branch, for example to refresh
+  # the main size baseline. Add merge_group here if a merge queue is enabled.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -24,7 +27,9 @@ jobs:
   host-gate:
     name: Host gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The gate takes about one minute warm. Each task has its own 300 s bound
+    # in tools/gate.sh, so this only catches a stall outside the gate.
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -43,8 +48,6 @@ jobs:
           pixi run clang-format --version
           pixi run cppcheck --version
       - name: Run host gate
-        # About one minute on ubuntu-24.04. A stuck task fails here instead of
-        # holding the runner.
         timeout-minutes: 10
         run: pixi run gate --keep-going
 
