@@ -24,6 +24,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Lint the workflows themselves. actionlint checks syntax, expressions and
+  # embedded shell with shellcheck. zizmor audits for template injection,
+  # credential persistence, unpinned actions and excessive permissions. It is
+  # cheap, so it runs on every event and needs no path filter.
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Only the pixi binary is needed. The linters come from exact conda-forge
+      # pins through pixi exec, so local runs use the same versions.
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          pixi-version: v0.82.0
+          run-install: false
+      - name: actionlint
+        run: pixi exec -s actionlint==1.7.12 -s shellcheck==0.11.0 -- actionlint -color
+      - name: zizmor
+        env:
+          # Online audits look up known vulnerable and impostor action commits.
+          GH_TOKEN: ${{ github.token }}
+        run: pixi exec -s zizmor==1.31.1 -- zizmor --format=github .github
+
   host-gate:
     name: Host gate
     runs-on: ubuntu-24.04
