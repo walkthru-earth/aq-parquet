@@ -14,18 +14,24 @@ the older shapes it has stored, or the owner clears them.
 event, so its cached "authenticated" flag stayed false while the link was in
 fact encrypted. The first `LIST` after such a reconnect was refused with
 `ERROR` 7 and that `ERROR` was dropped too, so the app saw nothing. The board
-now reads NimBLE's live security state, so that `LIST` is served. A Control
-write on a link that really is not encrypted and authenticated now gets a
-visible `ERROR` with code 14 and `detail="auth"`. Code 7 now only means busy.
+now reads NimBLE's live security state, so that `LIST` is served. Code 7 is
+never sent for an authentication reason any more. An unpaired phone still
+sees what it saw before. NimBLE refuses its unencrypted Control write with an
+ATT Insufficient Encryption or Insufficient Authentication error, which
+starts pairing, and it cannot subscribe to `response`. As defense in depth,
+a Control write that passes ATT on an encrypted link but still fails the
+firmware check (for example a key shorter than 16 bytes) is acknowledged and
+answered with `ERROR` 14 and `detail="auth"` instead of being run.
 Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
 via=access`, `via=connect` or `via=subscribe` when the board learns the link
 is secure without the encryption event. No frame layout changed.
 
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
-**What the app must do.** Treat `ERROR` 14 on BLE as "pair again", the same
-as a bad LAN token and the same as an ATT Insufficient Authentication or
-Encryption error on a Control write. Never retry it as busy. Handle 7 as
+**What the app must do.** Keep treating an ATT Insufficient Authentication
+or Encryption error on a Control write as "pair again". That is the normal
+unpaired case. Treat the rare `ERROR` 14 on BLE the same way, like a bad LAN
+token. Never retry either as busy. Handle 7 as
 before, by its `detail`. A plain busy 7 can be retried later, while
 `detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
 repeating the same request.
