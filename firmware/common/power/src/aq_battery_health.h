@@ -96,6 +96,7 @@ private:
   Level pending_ = kNone; // mildest target of the current run
   int pending_direction_ = 0;
   std::uint8_t pending_count_ = 0;
+  std::uint8_t boot_critical_ = 0; // critical reads in a boot Low run
   std::uint8_t invalid_count_ = 0;
   bool reset_seen_ = false;
   bool settling_active_ = false;

@@ -118,6 +118,27 @@ void initial_classification_needs_agreement() {
   for (int i = 0; i < 2; ++i)
     empty.at(3300);
   assert(empty.at(3300).state == State::Critical);
+
+  // A cell resting on the critical threshold at boot alternates Low and
+  // Critical reads. They form one run, so it still leaves Unknown, and
+  // Critical wins when at least half the run read critical.
+  Feed edge;
+  assert(edge.at(3340).state == State::Unknown);
+  assert(edge.at(3360).state == State::Unknown);
+  assert(edge.at(3340).state == State::Critical);
+
+  Feed edge_low_first;
+  assert(edge_low_first.at(3360).state == State::Unknown);
+  assert(edge_low_first.at(3340).state == State::Unknown);
+  assert(edge_low_first.at(3360).state == State::Low); // 1 of 3 critical
+
+  Thresholds four;
+  four.debounce_samples = 4;
+  Feed edge_tie{four};
+  assert(edge_tie.at(3360).state == State::Unknown);
+  assert(edge_tie.at(3340).state == State::Unknown);
+  assert(edge_tie.at(3360).state == State::Unknown);
+  assert(edge_tie.at(3340).state == State::Critical); // 2 of 4, tie
 }
 
 void debounce_and_hysteresis() {

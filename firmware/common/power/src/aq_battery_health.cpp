@@ -122,6 +122,7 @@ Assessment Monitor::update(const Sample &sample) {
     pending_ = kNone;
     pending_direction_ = 0;
     pending_count_ = 0;
+    boot_critical_ = 0;
     if (invalid_count_ < needed)
       ++invalid_count_;
     if (invalid_count_ >= needed)
@@ -129,13 +130,25 @@ Assessment Monitor::update(const Sample &sample) {
   } else {
     invalid_count_ = 0;
     if (level_ == kNone) {
+      // Low and Critical reads at boot form one run, so a cell resting on
+      // the critical threshold still leaves Unknown. Critical wins when at
+      // least half the run read critical, a tie included. Any other band
+      // change restarts the run.
       const Level band = initial_level(sample.millivolts);
-      if (band == pending_) {
+      const auto low_side = [](Level level) {
+        return level == kLow || level == kCritical;
+      };
+      if (band == pending_ || (low_side(band) && low_side(pending_))) {
         ++pending_count_;
       } else {
         pending_ = band;
         pending_count_ = 1;
+        boot_critical_ = 0;
       }
+      if (band == kCritical)
+        ++boot_critical_;
+      if (low_side(pending_))
+        pending_ = 2 * boot_critical_ >= pending_count_ ? kCritical : kLow;
     } else {
       const Level target = target_level(level_, sample.millivolts);
       if (target == level_) {
@@ -162,6 +175,7 @@ Assessment Monitor::update(const Sample &sample) {
       pending_ = kNone;
       pending_direction_ = 0;
       pending_count_ = 0;
+      boot_critical_ = 0;
     }
   }
 
