@@ -79,7 +79,7 @@ fact encrypted. The first `LIST` after such a reconnect was refused with
 now reads NimBLE's live security state, so that `LIST` is served. Code 7 is
 never sent for an authentication reason any more. An unpaired phone still
 sees what it saw before. NimBLE refuses its unencrypted Control write with an
-ATT Insufficient Encryption or Insufficient Authentication error, which
+ATT Insufficient Encryption, Encryption Key Size or Authentication error, which
 starts pairing, and it cannot subscribe to `response`. `ERROR` 14 with
 `detail="auth"` over BLE is only a guarded fallback, for a Control write that
 passes ATT but fails the firmware check. In this configuration both apply
@@ -91,8 +91,8 @@ link logs no second `BLE BONDED` line. No frame layout changed.
 
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
-**What the app must do.** Keep treating an ATT Insufficient Authentication
-or Encryption error on a Control write as "pair again". That is the normal
+**What the app must do.** Keep treating an ATT Insufficient Authentication,
+Encryption or Encryption Key Size error on a Control write as "pair again". That is the normal
 unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
 like a bad LAN token. Never retry either as busy. Handle 7 as
 before, by its `detail`. A plain busy 7 can be retried later, while

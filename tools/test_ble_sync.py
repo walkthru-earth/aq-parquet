@@ -236,7 +236,8 @@ async def run_auth_refused():
     # NimBLE rejects an unencrypted Control write at the ATT layer, so the
     # backend raises before any ERROR frame. Same hint, still one write.
     for wording in ("Insufficient Authentication", "Authentication is insufficient.",
-                    "Protocol Error 0x05: Insufficient Authentication"):
+                    "Protocol Error 0x05: Insufficient Authentication",
+                    "Protocol Error 0x0C: Insufficient Encryption Key Size"):
         client = FakeClient(att_error=RuntimeError(wording))
         session = ble.Session(client)
         await session.start()
