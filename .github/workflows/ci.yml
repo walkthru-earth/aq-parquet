@@ -68,6 +68,12 @@ jobs:
             task: waveshare-build logger
             project: firmware/esp-idf-waveshare-sim7670g
             variant: logger
+          # Retained PMS5003T/TF bench image. It shares the board components,
+          # so a component change must keep it compiling too.
+          - name: waveshare-diagnostic
+            task: waveshare-build diagnostic
+            project: firmware/esp-idf-waveshare-sim7670g
+            variant: diagnostic
           # Generic component fixtures. They prove the shared components build
           # without Arduino or M5 dependencies and have no image to size.
           - name: component-fixtures
