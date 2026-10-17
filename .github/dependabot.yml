@@ -1,0 +1,16 @@
+# Weekly update PR for the SHA pinned GitHub Actions in .github/workflows.
+# All bumps arrive as one grouped PR, and a release must be 7 days old before
+# it is proposed, so a compromised or yanked tag has time to be caught.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
