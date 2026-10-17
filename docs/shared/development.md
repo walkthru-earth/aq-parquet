@@ -81,6 +81,20 @@ If the checkout or managed environment moved and a tool reports an old
 interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 `python -m espefuse` through project tasks rather than stale entry-point shebangs.
 
+### C++ dialect
+
+Firmware and host tests are pinned to C++23. ESP-IDF 6.1 adds `-std=gnu++26`
+for chip targets, so every repo-owned component calls
+`aq_pin_cxx_standard(${COMPONENT_LIB})` from
+[`firmware/cmake/aq_cxx_standard.cmake`](../../firmware/cmake/aq_cxx_standard.cmake),
+which appends `$<$<COMPILE_LANGUAGE:CXX>:-std=gnu++23>`. Board and fixture
+projects include that file before `project.cmake`. C sources such as vendored
+H3 keep the SDK C dialect, and third-party components keep the SDK default.
+Host tests read `CXX_STD` from `tools/host_cxx.py`, and `tools/lint.sh` runs
+cppcheck with `--std=c++23`. Check a build with
+`build/<variant>/compile_commands.json`. Style rules live at the top of
+[`AGENTS.md`](../../AGENTS.md#c-standard-and-style).
+
 ## Native migration validation 2026-10-09
 
 The migration passed native board and generic component builds plus host

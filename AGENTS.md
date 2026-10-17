@@ -1,5 +1,36 @@
 # Agent map for aq-parquet
 
+## C++ standard and style
+
+- Language is C++23. Firmware builds as `-std=gnu++23` through
+  `aq_pin_cxx_standard()` in `firmware/cmake/aq_cxx_standard.cmake`, and host
+  tests use `-std=c++23` from `tools/host_cxx.py`. Every component we own calls
+  the helper. Third-party components keep the SDK default.
+- The dialect is pinned because ESP-IDF 6.1 defaults to `gnu++26` and a later
+  SDK may move it again. An SDK upgrade must never change the dialect silently.
+- Not C++26 yet. ISO has not published it, and GCC 15, the host clang and
+  cppcheck support only part of it. Revisit when all three cover what we need.
+- Prefer `std::span` over pointer plus length, with a fixed extent for wire
+  fields. Prefer `std::bit_cast` over `memcpy` type punning.
+- Use `constexpr`, `consteval` and `constinit` for tables and globals.
+- New fallible functions return `std::expected<T, E>` with the existing result
+  enums as `E`, instead of `bool` plus an out parameter.
+- Use `enum class`, `std::to_underlying` for enum casts and `using enum` where it
+  reads better. Put `[[nodiscard]]` on results.
+- Use designated initializers in declaration order, `std::array` over C arrays
+  and `std::string_view` for non-owning text. Use concepts only for real templates.
+- On device, avoid `std::format`, `std::print` and iostream. One
+  `std::format_to_n` call cost about 331 KB of image and 4.4 KB of DRAM, so keep
+  `snprintf`.
+- Exceptions and RTTI stay off. Use FreeRTOS tasks with explicit stack, priority
+  and core, not `std::thread` or `std::jthread`.
+- No heap in hot paths or ISRs. No ranges pipelines in hot code, because `-Og`
+  keeps every adaptor layer. No coroutines and no modules.
+- Wire and file formats use explicit shifts, never `std::byteswap` or host
+  endianness.
+- Existing code moves over gradually, one module per PR. These PRs never change
+  wire or file formats.
+
 ESP32-S3 air-quality firmware. CoreS3 and Waveshare V2 each have one active,
 self-contained native ESP-IDF application. Do not add Arduino APIs or an
 Arduino component. Shared code lives in `firmware/common/`. Device
