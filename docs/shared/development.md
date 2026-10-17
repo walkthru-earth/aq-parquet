@@ -141,10 +141,15 @@ exact Pixi pins on macOS and Linux, so local runs and CI see the same tools.
 `.github/workflows/ci.yml` runs on every pull request, on pushes to `main`,
 and by hand from the Actions tab (`workflow_dispatch`).
 
+- **Workflow lint** runs `actionlint` (with `shellcheck`) and `zizmor` on
+  `.github/` at exact conda-forge pins through `pixi exec`. Run the same
+  commands locally before changing a workflow.
 - **Host gate** runs `pixi run gate --keep-going` on Ubuntu with the locked
   Pixi environment. Each task runs under GNU `timeout` from the Pixi
   `coreutils` pin, 300 s by default (`AQ_GATE_TASK_TIMEOUT` overrides it), and
-  a stalled task is reported as `TIMEOUT` by name in the gate summary.
+  a stalled task is reported as `TIMEOUT` by name in the gate summary. The
+  gate refuses to start when a `*-test` task in `pixi.toml` is missing from its
+  list, except the two SDK fixtures the board job runs.
 - **Board builds** run `pixi run idf-setup`, then `cores3-build`,
   `waveshare-build logger`, `waveshare-build diagnostic`, and the generic
   `connectivity-build-test` and `logger-build-test` fixtures. The SDK comes
@@ -154,9 +159,16 @@ and by hand from the Actions tab (`workflow_dispatch`).
   saved from the cores3 leg alone, so pull requests never evict the `main`
   entries. `waveshare-psram-build` stays a manual SDK fixture.
 - Each board job uploads its `idf.py size --format json2` report and
-  `aq-build-sha256.json` as the `size-<board>` artifact and writes a size
-  table to the job summary. When a green `main` run exists, the table shows the
-  change against it.
+  `aq-build-sha256.json` as the `size-<board>` artifact, and the ELF, map and
+  `flash_args` as `firmware-<board>`. Both are kept 90 days for `main` builds
+  and 7 days otherwise. The job summary shows a size table. For a pull request
+  the change is measured against the green build of its base commit, else
+  against the newest green `main` build, and the summary names which commit
+  was used.
+- **CI result** waits for every other job and fails unless each one passed or
+  was skipped. It is the single required check.
+- Dependabot opens one grouped pull request a week for action pin updates,
+  only for releases at least 7 days old (`.github/dependabot.yml`).
 
 CI proves compilation and host logic only. It never flashes a board, and board
 runs stay manual and dated in each bench record. Every action is pinned to a
@@ -164,22 +176,15 @@ full commit SHA. Check the latest stable release before changing a pin.
 
 #### Required checks
 
-Make these five check names required for `main`.
+Make only `CI result` required for `main`. In Settings, Rules, Rulesets, open
+or create the `main` branch ruleset, enable Require status checks to pass, add
+`CI result` with the source set to GitHub Actions, and save.
 
-- `Host gate`
-- `Build cores3`
-- `Build waveshare-logger`
-- `Build waveshare-diagnostic`
-- `Build component-fixtures`
-
-Add them in Settings, Rules, Rulesets. Open or create the `main` branch
-ruleset, enable Require status checks to pass, add each name with the source
-set to GitHub Actions, and save. The board names come from `matrix.name` in
-the workflow, so renaming or adding a matrix entry changes the check name. Do
-it in the same PR as the matching ruleset update, or the old required check
-stays pending forever. Never pick the literal `Build ${{ matrix.name }}`, which
-only appears when the board job is skipped. If a merge queue is enabled later,
-add a `merge_group` trigger to the workflow at the same time.
+`CI result` needs every other job, so jobs and board matrix entries can be
+added or renamed without a ruleset change. A new job must be added to its
+`needs` list, or its failure will not block a merge. Keep the job name
+`CI result` stable. If a merge queue is enabled later, add a `merge_group`
+trigger to the workflow at the same time.
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |

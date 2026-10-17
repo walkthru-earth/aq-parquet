@@ -38,8 +38,9 @@ C++ contract tests and cannot prove behavior on a physical board.
 - `.github/workflows/ci.yml` runs `pixi run gate` and the board image builds on
   every pull request. Keep the gate free of tasks that need hardware, Bluetooth,
   a LAN peer or the SDK. Each gate task is bounded by `AQ_GATE_TASK_TIMEOUT`
-  (300 s). Renaming a CI matrix entry renames a required check, see
-  `docs/shared/development.md#required-checks`.
+  (300 s), and the gate fails if a pixi `*-test` task is missing from its list.
+  `CI result` is the only required check, so a new CI job must join its
+  `needs` list, see `docs/shared/development.md#required-checks`.
 - Firmware builds use the pinned native ESP-IDF wrapper and exact managed
   component pins. Host tests remain in Pixi. Never introduce an Arduino build
   route or infer physical native behavior from fixture compilation.
