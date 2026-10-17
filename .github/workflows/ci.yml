@@ -181,9 +181,12 @@ jobs:
           NAME: ${{ matrix.name }}
         run: |
           # The delta is optional, so an API error must not fail a green build.
+          # Pushes and manual runs on main both count. Filtering on the event
+          # keeps out a fork pull request whose head branch is also named main.
           run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
-            --branch main --event push --status success --limit 1 \
-            --json databaseId --jq '.[0].databaseId // empty' || true)"
+            --branch main --status success --limit 20 --json databaseId,event \
+            --jq 'map(select(.event == "push" or .event == "workflow_dispatch"))
+              | .[0].databaseId // empty' || true)"
           if [[ -n "${run_id}" ]] && gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" \
               --name "size-${NAME}" --dir baseline; then
             echo "Baseline from main run ${run_id}"
