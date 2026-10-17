@@ -103,6 +103,8 @@ struct Fixture {
       buffers{};
   bool complete = true;
   bool cache_hit = false;
+  // Makes the finalized hook fail as if a read hit an I/O error.
+  bool check_io_error = false;
   bool listing_complete = true;
   std::size_t refuse_frame = 0;
   std::size_t disconnect_frame = 0;
@@ -164,6 +166,10 @@ struct Fixture {
           check.crc =
               crc32_update(0xffffffffU, data.data(), count) ^ 0xffffffffU;
           check.cached = f.cache_hit;
+          if (f.check_io_error) {
+            check.io_error = true;
+            return false;
+          }
           return f.complete && count >= 12 &&
                  parquet_complete(count, data.data(), data.data() + count - 8);
         },
@@ -524,8 +530,9 @@ void persistent_cases(Fixture &f, aqsync::ArchiveSession &session,
   assert(descriptor_count() == idle_descriptors);
 }
 // remounted() closes every stream and the next READ on each handle checks
-// the reopened file again. Same bytes keep serving, anything else is
-// ERROR bad handle and the handle is gone.
+// the reopened file again once mounted() follows. Same bytes keep serving. A
+// proven change is ERROR bad handle and the handle is gone. An unmounted
+// volume or an I/O error is READ_END status 4 and the recheck stays pending.
 void write_file(const std::string &path,
                 const std::vector<std::uint8_t> &data) {
   FILE *file = std::fopen(path.c_str(), "wb");
@@ -547,6 +554,22 @@ void expect_bad_handle_read(Fixture &f, aqsync::ArchiveSession &session,
   assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpRead);
   expect_error(f, ble::kErrBadHandle);
 }
+// A remount the board completed, as probe_storage reports it.
+void remount(aqsync::ArchiveSession &session) {
+  session.remounted();
+  session.mounted();
+}
+// READ_END status 4 at offset with no CHUNK, the retryable open failure.
+void expect_open_failed_read(Fixture &f, aqsync::ArchiveSession &session,
+                             std::uint16_t handle, std::uint32_t offset) {
+  f.clear();
+  session.handle(read(f, handle, offset, 10), true);
+  assert(f.errors.empty() && f.frames.size() == 1);
+  const auto &end = f.frames[0].bytes;
+  assert(end.size() == 8 && end[0] == ble::kFrameReadEnd &&
+         get_u16(end.data() + 1) == handle &&
+         get_u32(end.data() + 3) == offset && end[7] == ble::kErrOpenFailed);
+}
 void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
                    unsigned idle_descriptors) {
   const std::string path = f.directory + "/sample.parquet";
@@ -555,7 +578,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   // Identical bytes after a remount: one check, then plain descriptor reuse.
   auto handle = open(f, session);
   assert(f.checks == ++checks);
-  session.remounted();
+  remount(session);
   assert(descriptor_count() == idle_descriptors);
   f.clear();
   session.handle(read(f, handle, 100, 3000), true);
@@ -563,7 +586,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   assert(f.checks == ++checks);
   assert(f.logs.size() == 2 &&
          f.logs[0].find("BLE READ RECHECK handle=") == 0 &&
-         f.logs[0].find(" same=1") != std::string::npos);
+         f.logs[0].find(" result=same check_us=") != std::string::npos);
   f.clear();
   session.handle(read(f, handle, 5000, 2000), true);
   verify_read(f, handle, 5000, 2000, 512);
@@ -580,7 +603,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   for (int round = 0; round < 2; ++round) {
     session.remounted();
     session.remounted();
-    session.remounted();
+    remount(session);
     f.clear();
     session.handle(read(f, handle, 64, 64), true);
     verify_read(f, handle, 64, 64, 512);
@@ -589,7 +612,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
 
   // A full descriptor table after a remount is a retryable READ_END, and the
   // check still runs once the file opens again.
-  session.remounted();
+  remount(session);
   {
     DescriptorLimit limit;
     f.clear();
@@ -605,11 +628,12 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   assert(f.checks == ++checks);
 
   // Different bytes and size at the same path drop the handle.
-  session.remounted();
+  remount(session);
   write_file(path, other_parquet(f.bytes.size() + 777));
   expect_bad_handle_read(f, session, handle);
   assert(f.checks == ++checks);
-  assert(f.logs.size() == 1 && f.logs[0].find(" same=0") != std::string::npos);
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find(" result=changed ") != std::string::npos);
   assert(descriptor_count() == idle_descriptors);
   expect_bad_handle_read(f, session, handle); // gone, not retried
   assert(f.checks == checks);
@@ -624,7 +648,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   // Same size but different bytes is a CRC mismatch, also bad handle.
   handle = open(f, session);
   assert(f.checks == ++checks);
-  session.remounted();
+  remount(session);
   write_file(path, other_parquet(f.bytes.size()));
   expect_bad_handle_read(f, session, handle);
   assert(f.checks == ++checks);
@@ -633,7 +657,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   // A file that is no longer finalized drops the handle.
   handle = open(f, session);
   assert(f.checks == ++checks);
-  session.remounted();
+  remount(session);
   f.complete = false;
   expect_bad_handle_read(f, session, handle);
   assert(f.checks == ++checks);
@@ -642,7 +666,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   // A file deleted while the card was out drops the handle without a check.
   handle = open(f, session);
   assert(f.checks == ++checks);
-  session.remounted();
+  remount(session);
   assert(std::remove(path.c_str()) == 0);
   expect_bad_handle_read(f, session, handle);
   assert(f.checks == checks && descriptor_count() == idle_descriptors);
@@ -652,7 +676,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   const auto lan = open(f, session, ble::Link::Lan, "sample.parquet", 2);
   handle = open(f, session);
   checks += 2;
-  session.remounted();
+  remount(session);
   handle = open(f, session);
   assert(f.checks == ++checks);
   f.clear();
@@ -662,6 +686,75 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   f.clear();
   session.handle(read(f, lan, 0, 10, ble::Link::Lan, 2), true);
   verify_read(f, lan, 0, 10, 1024, ble::Link::Lan, 2);
+  assert(f.checks == ++checks);
+  session.close();
+  assert(descriptor_count() == idle_descriptors);
+
+  // CLOSE on a handle still waiting for its recheck answers CLOSED and frees
+  // the slot without a check.
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  remount(session);
+  f.clear();
+  close_request = request(f, ble::kOpClose);
+  close_request.length = 3;
+  put_u16(close_request.bytes + 1, handle);
+  session.handle(close_request, true);
+  assert(f.errors.empty() && f.frames.size() == 1 &&
+         f.frames[0].bytes[0] == ble::kFrameClosed &&
+         get_u16(f.frames[0].bytes.data() + 1) == handle);
+  assert(f.checks == checks && descriptor_count() == idle_descriptors);
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == checks);
+
+  // A generation change while a recheck is pending clears the slot. The old
+  // handle answers bad handle without a check and a fresh OPEN needs none.
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  remount(session);
+  ++f.generation[slot(ble::Link::Ble)];
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == checks && descriptor_count() == idle_descriptors);
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512);
+  assert(f.checks == checks);
+
+  // A volume that did not mount again answers every path as missing, so the
+  // file is moved away here too. READ is READ_END status 4 without opening
+  // anything, and the recheck waits, also across another failed remount.
+  const std::string away = path + ".away";
+  session.remounted();
+  assert(std::rename(path.c_str(), away.c_str()) == 0);
+  expect_open_failed_read(f, session, handle, 100);
+  expect_open_failed_read(f, session, handle, 100);
+  session.remounted();
+  expect_open_failed_read(f, session, handle, 100);
+  assert(f.checks == checks && descriptor_count() == idle_descriptors);
+  // The same card mounts again unchanged and the handle serves.
+  assert(std::rename(away.c_str(), path.c_str()) == 0);
+  session.mounted();
+  f.clear();
+  session.handle(read(f, handle, 100, 3000), true);
+  verify_read(f, handle, 100, 3000, 512);
+  assert(f.checks == ++checks);
+
+  // An I/O error during the recheck is READ_END status 4. The handle stays,
+  // each retry checks again, and a clean check serves.
+  remount(session);
+  f.check_io_error = true;
+  expect_open_failed_read(f, session, handle, 0);
+  assert(f.checks == ++checks && descriptor_count() == idle_descriptors);
+  assert(f.logs.size() == 1 &&
+         f.logs[0].find(" result=io_error check_us=") != std::string::npos);
+  expect_open_failed_read(f, session, handle, 0);
+  assert(f.checks == ++checks);
+  f.check_io_error = false;
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512);
   assert(f.checks == ++checks);
   session.close();
   assert(descriptor_count() == idle_descriptors);

@@ -12,11 +12,14 @@ using FileEmitter = void (*)(void *context, const char *name,
                              std::uint32_t bytes);
 
 // Result of the finalized check behind OPEN. cached is true when the CRC came
-// from the owner's finalize-time cache instead of a full read.
+// from the owner's finalize-time cache instead of a full read. io_error is
+// set when a failed check stopped at a filesystem call or a short read, so the
+// false result says nothing about the file itself.
 struct FileCheck {
   std::uint32_t size = 0;
   std::uint32_t crc = 0;
   bool cached = false;
+  bool io_error = false;
 };
 
 struct ListResult {
@@ -104,9 +107,14 @@ public:
   void release_files();
   // Call before a storage remount. Like release_files(), but the card may be
   // edited or swapped meanwhile, so the next READ on each handle runs the
-  // finalized check again. Same size and CRC keep the handle. Anything else
-  // drops it and READ answers ERROR bad handle.
+  // finalized check again. Same size and CRC keep the handle. A different
+  // file, or a missing or no longer finalized one on the mounted volume,
+  // drops it and READ answers ERROR bad handle. Until mounted() is called, or
+  // when the check hits an I/O error, READ answers READ_END status 4 and the
+  // recheck stays pending.
   void remounted();
+  // Call after the volume remounted successfully.
+  void mounted() { mounted_ = true; }
 
 private:
   struct OpenFile {
@@ -119,6 +127,7 @@ private:
     // Set by remounted(). The next reopen must match size and crc.
     bool verify = false;
   };
+  enum class Recheck { Same, Changed, Unreadable };
   struct ListContext {
     ArchiveSession *session;
     std::uint32_t count = 0;
@@ -135,6 +144,9 @@ private:
   ArchiveTransport transport_;
   std::array<OpenFile, kReadHandles> open_{};
   std::uint16_t next_handle_ = 1;
+  // False from remounted() until mounted(). A pending handle is not rechecked
+  // meanwhile, because an absent volume answers every path as missing.
+  bool mounted_ = true;
   ble::Link request_link_ = ble::Link::Ble;
   std::uint8_t request_peer_ = 0;
   std::uint32_t request_generation_ = 0;
@@ -143,7 +155,7 @@ private:
   std::size_t slot() const;
   OpenFile &file();
   void release(OpenFile &opened);
-  bool reverify(OpenFile &opened);
+  Recheck reverify(OpenFile &opened);
   FILE *open_input(const char *path, std::size_t slot, int &failure);
   void close_current();
   std::size_t payload_max() const;

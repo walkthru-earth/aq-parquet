@@ -117,6 +117,7 @@ void ArchiveSession::release_files() {
 }
 
 void ArchiveSession::remounted() {
+  mounted_ = false;
   for (auto &opened : open_) {
     release(opened);
     if (opened.handle)
@@ -125,20 +126,35 @@ void ArchiveSession::remounted() {
 }
 
 // Runs on the stream read() just reopened, still at offset 0. A handle names
-// the bytes OPENED described, never whatever now sits at its path.
-bool ArchiveSession::reverify(OpenFile &opened) {
+// the bytes OPENED described, never whatever now sits at its path. Only a
+// completed check proves a change. An I/O error keeps the recheck pending.
+ArchiveSession::Recheck ArchiveSession::reverify(OpenFile &opened) {
+  const std::int64_t started =
+      archive_.now_us ? archive_.now_us(archive_.context) : 0;
   FileCheck check;
-  const bool same =
-      archive_.finalized(archive_.context, opened.path, opened.file, check) &&
-      check.size == opened.size && check.crc == opened.crc;
+  const bool finalized =
+      archive_.finalized(archive_.context, opened.path, opened.file, check);
+  Recheck result = Recheck::Same;
+  if (!finalized)
+    result = check.io_error ? Recheck::Unreadable : Recheck::Changed;
+  else if (check.size != opened.size || check.crc != opened.crc)
+    result = Recheck::Changed;
   if (archive_.log) {
-    char line[80];
-    std::snprintf(line, sizeof(line), "BLE READ RECHECK handle=%u same=%d\n",
-                  unsigned(opened.handle), same ? 1 : 0);
+    const std::int64_t elapsed =
+        archive_.now_us ? archive_.now_us(archive_.context) - started : -1;
+    char line[112];
+    std::snprintf(line, sizeof(line),
+                  "BLE READ RECHECK handle=%u result=%s check_us=%lld\n",
+                  unsigned(opened.handle),
+                  result == Recheck::Same      ? "same"
+                  : result == Recheck::Changed ? "changed"
+                                               : "io_error",
+                  static_cast<long long>(elapsed));
     archive_.log(archive_.context, line);
   }
-  opened.verify = !same;
-  return same;
+  if (result == Recheck::Same)
+    opened.verify = false;
+  return result;
 }
 
 void ArchiveSession::reconcile() {
@@ -354,16 +370,23 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
   // Only the storage worker accesses files. The handle's descriptor stays
   // open across READ windows. After release_files(), remounted() or a read
   // failure the path is reopened here. After a remount the reopened file must
-  // still be the one OPENED described, or the handle is gone.
-  if (!opened.file) {
+  // still be the one OPENED described, or the handle is gone. Only proof of a
+  // change ends it. An unmounted volume or an I/O error leaves the stream
+  // closed, so READ_END status 4 below keeps the recheck pending.
+  if (!opened.file && !(opened.verify && !mounted_)) {
     int failure = 0;
     opened.file = open_input(opened.path, slot(), failure);
-    if (opened.verify &&
-        (opened.file ? !reverify(opened) : failure == ENOENT)) {
+    const Recheck recheck = !opened.verify      ? Recheck::Same
+                            : opened.file       ? reverify(opened)
+                            : failure == ENOENT ? Recheck::Changed
+                                                : Recheck::Unreadable;
+    if (recheck == Recheck::Changed) {
       close_current();
       error(ble::kOpRead, ble::kErrBadHandle);
       return;
     }
+    if (recheck == Recheck::Unreadable)
+      release(opened);
   }
   bool seek_ok = false;
   if (opened.file) {

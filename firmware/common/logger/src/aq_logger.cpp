@@ -251,23 +251,27 @@ bool crc_key(const char *path, aq::storage::CrcKey &key) {
 
 // Structural completion check and CRC-32 of `file`, an open stream. PyArrow +
 // DuckDB perform conformance. With use_cache, an entry matching path, size
-// and mtime replaces the full read, and a computed CRC is remembered.
+// and mtime replaces the full read, and a computed CRC is remembered. A
+// failed seek or a short read sets check.io_error.
 bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
                 bool use_cache) {
   std::uint8_t magic[4]{}, tail[8]{};
   bool ok = false;
   {
     BusLock lock;
+    check.io_error = true;
     if (std::fseek(file, 0, SEEK_END) == 0) {
       const long length = std::ftell(file);
+      check.io_error = length < 0;
       if (length >= 12 && length <= 1048576) {
         check.size = static_cast<std::uint32_t>(length);
-        ok = std::fseek(file, 0, SEEK_SET) == 0 &&
-             std::fread(magic, 1, 4, file) == 4 &&
-             std::fseek(file, -8, SEEK_END) == 0 &&
-             std::fread(tail, 1, 8, file) == 8;
-        ok = ok && aq::sync::parquet_complete(check.size, magic, tail) &&
-             std::fseek(file, 0, SEEK_SET) == 0;
+        const bool read = std::fseek(file, 0, SEEK_SET) == 0 &&
+                          std::fread(magic, 1, 4, file) == 4 &&
+                          std::fseek(file, -8, SEEK_END) == 0 &&
+                          std::fread(tail, 1, 8, file) == 8;
+        ok = read && aq::sync::parquet_complete(check.size, magic, tail);
+        check.io_error = !read || (ok && std::fseek(file, 0, SEEK_SET) != 0);
+        ok = ok && !check.io_error;
       }
     }
   }
@@ -286,8 +290,10 @@ bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
       BusLock lock;
       count = std::fread(writer_state->crc_scratch, 1, kCrcScratchBytes, file);
     }
-    if (!count)
+    if (!count) {
+      check.io_error = true;
       return false;
+    }
     crc = crc32_update(crc, writer_state->crc_scratch, count);
     read_bytes += count;
     stamp_heartbeat(); // a 1 MiB CRC pass is progress, not a stall
@@ -1612,7 +1618,8 @@ void free_benchmark() {
 }
 
 // No file may be open across a remount. probe_storage releases the archive
-// session's read streams; their handles reopen by path on the next READ.
+// session's read streams through remounted(), and the next READ on each handle
+// reopens the path and rechecks its size and CRC.
 bool files_closed() {
   return !writer_state->telemetry.open() &&
          (!writer_state->benchmark || !writer_state->benchmark->open());
@@ -1642,6 +1649,8 @@ void probe_storage(std::size_t &count, bool &storage_ready) {
     stamp_heartbeat();
     mounted_again = ok;
   }
+  if (mounted_again)
+    archive_session.mounted();
   std::uint64_t free_bytes = 0;
   ok = ok && (!mounted_again || measure_volume()) && measure_free(free_bytes);
   if (ok && !storage_ready) {
