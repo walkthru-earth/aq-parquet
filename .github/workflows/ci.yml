@@ -82,10 +82,12 @@ jobs:
   board-build:
     name: Build ${{ matrix.name }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Observed legs take about 4 min with no SDK cache (every pull request
+    # until main writes one), so 25 min leaves room for a slow mirror.
+    timeout-minutes: 25
     permissions:
       contents: read
-      # Read the latest main run's size artifact for the delta summary.
+      # Read a main run's size artifact for the delta summary.
       actions: read
     strategy:
       fail-fast: false
