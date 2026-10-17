@@ -593,15 +593,35 @@ and board bus locking preserves display/SD ownership and monotonic sampling.
 `LIST` runs as a job of bounded steps, at most 32 directory entries each,
 so a large card never holds the worker for a whole walk. Between steps the
 worker takes samples, commits finished batches and serves requests from other
-links and LAN peers. Requests from the link or LAN peer that sent the `LIST`,
-`ABORT` included, and a second `LIST` from any link wait until the `LIST`
-ends, so replies keep their order and `ABORTED` follows the `LIST` error.
+links and LAN peers. One `LIST` runs at a time. A `LIST` from another link or
+LAN peer gets `ERROR` 7 `detail="list"` at once and should be sent again
+later. Requests from the link or LAN peer that sent the `LIST`, `ABORT`
+included, wait until the `LIST` ends, so replies keep their order and
+`ABORTED` follows the `LIST` error. The first such request waits outside the
+command queue, so requests from other links behind it still run. A second one
+from the same peer waits at the head of the queue and holds requests behind
+it until the `LIST` ends. A phone that sends one request per link at a time,
+plus at most one `ABORT`, never reaches that case, and an `ABORT` ends the
+`LIST` within one step.
+
 A file finalized during the walk may or may not be in that listing, and
-`new_files` then stays set. A storage remount or an archive erase during the
-walk ends it with `ERROR` 8. When the device needs the storage worker for
-something more urgent, for example closing the open file on a critical
-battery, the walk ends before its next step or `FILE` with `ERROR` 7
+`new_files` then stays set. `LIST_END.partials` is approximate, a `.partial`
+file finalized during the walk can be counted once too often or too few.
+A storage remount or an archive erase during the walk ends it with `ERROR` 8.
+A failed directory read ends it the same way. The device does not start its
+periodic remounts during a `LIST`. A full card is measured without a remount
+until the `LIST` ends, and a card that failed a write is probed without a
+remount, so a `LIST` longer than the 60 s full card recheck still completes.
+The skipped remount runs right after the `LIST`. An owner action, such as
+`FLUSH`, a config change or the critical battery close, still remounts at
+once and may end the walk with `ERROR` 8. When the device needs the storage
+worker for something more urgent, for example closing the open file on a
+critical battery, the walk ends before its next step or `FILE` with `ERROR` 7
 `detail="preempted"`. Send `LIST` again later. No frame or opcode changed.
+The serial `parquet list` command answers
+`PARQUET ERROR operation=list reason=busy-list` while a radio `LIST` runs,
+because the card has directory handles for one walk only. `parquet get` reads
+one file and still runs.
 
 On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 

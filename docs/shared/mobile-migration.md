@@ -17,7 +17,12 @@ walk only stopped at the next `FILE`, and the whole walk ran first. The reply
 is unchanged, `FILE` frames already sent, then `ERROR` 16, then `ABORTED`
 naming `LIST`. Other links and LAN peers are served between steps. A file
 finalized during the walk may be missing from that listing, and `new_files`
-then stays set in the advert. When the device needs its storage worker for
+then stays set in the advert. `LIST_END.partials` is approximate when a
+`.partial` file is finalized during the walk. Only one `LIST` runs at a time,
+and a `LIST` from another link or LAN peer now gets `ERROR` 7 `detail="list"`
+at once instead of waiting for the running one. A full card no longer
+remounts during a `LIST`, so a long walk is not cut off with `ERROR` 8 every
+60 s. When the device needs its storage worker for
 something more urgent, such as a critical battery close, the walk ends the
 same way early with `ERROR` 7 `detail="preempted"` instead of after the whole
 walk. No frame layout, opcode or error code changed.
@@ -31,7 +36,9 @@ also held the storage worker away from samples and the watchdog heartbeat.
 that the `FILE` count matches `LIST_END.count`. The drain now ends sooner.
 A preempted `LIST` is `ERROR` 7, which `DeviceSession` already maps to
 `DeviceBusyException`, and `CollectionController` retries it after its
-backoff like any busy reply.
+backoff like any busy reply. The same holds for the `detail="list"` busy
+reply, which an app syncing over BLE and LAN at once can see on its second
+link.
 
 ## CoreS3 LIVE keys covered by the dictionary digest (CoreS3 v6.13, issue #31)
 
