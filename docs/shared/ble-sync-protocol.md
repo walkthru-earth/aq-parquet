@@ -598,7 +598,10 @@ links and LAN peers. Requests from the link or LAN peer that sent the `LIST`,
 ends, so replies keep their order and `ABORTED` follows the `LIST` error.
 A file finalized during the walk may or may not be in that listing, and
 `new_files` then stays set. A storage remount or an archive erase during the
-walk ends it with `ERROR` 8. No frame or opcode changed.
+walk ends it with `ERROR` 8. When the device needs the storage worker for
+something more urgent, for example closing the open file on a critical
+battery, the walk ends before its next step or `FILE` with `ERROR` 7
+`detail="preempted"`. Send `LIST` again later. No frame or opcode changed.
 
 On LAN the worker never blocks on a socket. It queues frames on the peer's ring and, while the ring is full, waits in short steps during which it moves queued samples into the RAM batch when that needs no card write.
 

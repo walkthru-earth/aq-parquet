@@ -114,6 +114,10 @@ struct Fixture {
   bool list_open = false;
   // Runs between steps, as the storage worker's sample pass does.
   void (*between_steps)(Fixture &) = nullptr;
+  // The preempted hook reports true while preempt is set, or once this many
+  // frames were delivered (0 never).
+  bool preempt = false;
+  std::size_t preempt_frame = 0;
   std::size_t refuse_frame = 0;
   std::size_t disconnect_frame = 0;
   // Stamp an ABORT on (abort_link, abort_peer) as this frame is delivered.
@@ -235,6 +239,11 @@ struct Fixture {
           auto &f = *static_cast<Fixture *>(ctx);
           ++f.list_cancels;
           f.list_open = false;
+        },
+        [](void *ctx) {
+          const auto &f = *static_cast<Fixture *>(ctx);
+          return f.preempt ||
+                 (f.preempt_frame && f.frames.size() >= f.preempt_frame);
         }};
   }
   aqsync::ArchiveTransport transport() {
@@ -966,6 +975,53 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   assert(f.frames.size() == kStep + 5 && f.errors.size() == 1 &&
          f.errors[0].code == ble::kErrBusy && f.errors[0].detail == "refused");
   assert(f.listed == listed);
+
+  // A preemption, for example a critical battery close, ends the job with
+  // ERROR busy before its next read, and leaves no ABORT marker behind.
+  reset_abort();
+  f.clear();
+  f.list_reads = f.list_cancels = 0;
+  session.handle(request(f, ble::kOpList), true);
+  session.step(true);
+  assert(session.listing() && f.list_reads == kStep);
+  f.preempt = true;
+  session.step(true);
+  f.preempt = false;
+  assert(!session.listing() && f.list_reads == kStep && !f.list_open &&
+         f.list_cancels == 1);
+  assert(f.frames.size() == kStep && f.errors.size() == 1 &&
+         f.errors[0].code == ble::kErrBusy && f.errors[0].op == ble::kOpList &&
+         f.errors[0].detail == "preempted");
+  assert(f.listed == listed);
+  marker = stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  assert(abort::take_stopped(marker) == 0);
+
+  // A preemption raised during a step stops it at the next FILE frame.
+  reset_abort();
+  f.clear();
+  f.list_reads = 0;
+  f.preempt_frame = kStep + 3;
+  serve(session, request(f, ble::kOpList), true);
+  f.preempt_frame = 0;
+  assert(f.list_reads == kStep + 4 && !f.list_open);
+  assert(f.frames.size() == kStep + 3 && f.errors.size() == 1 &&
+         f.errors[0].code == ble::kErrBusy &&
+         f.errors[0].detail == "preempted");
+
+  // An ABORT wins over a preemption that is pending at the same time.
+  reset_abort();
+  f.clear();
+  session.handle(stamped(request(f, ble::kOpList)), true);
+  session.step(true);
+  stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  f.preempt = true;
+  session.step(true);
+  f.preempt = false;
+  assert(!session.listing() && f.errors.size() == 1 &&
+         f.errors[0].code == ble::kErrAborted);
+  marker = stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  assert(abort::take_stopped(marker) == ble::kOpList);
+  reset_abort();
 
   // Bounded steps list exactly what one unbounded pass lists, in order.
   f.clear();

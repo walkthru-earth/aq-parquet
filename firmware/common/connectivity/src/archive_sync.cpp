@@ -191,13 +191,8 @@ bool ArchiveSession::emit_file(void *context, const char *name,
                                std::uint32_t bytes) {
   auto &session = *static_cast<ArchiveSession *>(context);
   auto &list = session.list_;
-  if (!list.ok)
+  if (!list.ok || session.stop_list())
     return false;
-  if (session.aborted()) {
-    list.ok = false;
-    list.aborted = true;
-    return false;
-  }
   if (list.count == UINT32_MAX) {
     list.ok = false;
     list.failure_detail = "count";
@@ -229,6 +224,29 @@ bool ArchiveSession::emit_file(void *context, const char *name,
     return false;
   }
   ++list.count;
+  return true;
+}
+
+ArchiveSession::Stop ArchiveSession::should_stop() const {
+  if (aborted())
+    return Stop::Aborted;
+  if (archive_.preempted && archive_.preempted(archive_.context))
+    return Stop::Preempted;
+  return Stop::None;
+}
+
+bool ArchiveSession::stop_list() {
+  switch (should_stop()) {
+  case Stop::None:
+    return false;
+  case Stop::Aborted:
+    list_.aborted = true;
+    break;
+  case Stop::Preempted:
+    list_.failure_detail = "preempted";
+    break;
+  }
+  list_.ok = false;
   return true;
 }
 
@@ -290,11 +308,10 @@ void ArchiveSession::step(bool storage_ready) {
     return;
   }
   ListStatus status;
-  if (aborted()) {
-    // Checked before any directory read, so ABORT stops the walk within
-    // one step even when no entry of the last step was a finalized file.
-    list_.ok = false;
-    list_.aborted = true;
+  if (stop_list()) {
+    // Checked before any directory read, so ABORT or a preemption stops the
+    // walk within one step even when no entry of the last step was a
+    // finalized file.
     status = ListStatus::Stopped;
   } else if (!storage_ready) {
     status = ListStatus::Failed;

@@ -68,6 +68,11 @@ struct ArchiveHooks {
   // Closes a walk that list left at More. Must be safe to call when nothing
   // is open. Optional when list holds nothing open between steps.
   void (*list_cancel)(void *) = nullptr;
+  // Optional, read only. True while the storage owner needs the worker for
+  // something more urgent, for example a critical battery close. A running
+  // LIST job then ends with ERROR busy "preempted" before its next directory
+  // read or FILE frame. Must not consume the request it reports.
+  bool (*preempted)(void *) = nullptr;
 };
 
 // Transport adapters are independent of the filesystem and may be faked in
@@ -212,6 +217,12 @@ private:
   // op then ends with ERROR aborted and the marker's ABORTED names it.
   bool aborted() const;
   void stop_aborted(ble::Op op);
+  enum class Stop : std::uint8_t { None, Aborted, Preempted };
+  // The single stop predicate of a LIST job, checked before every step and
+  // every FILE frame. An ABORT wins over a preemption.
+  Stop should_stop() const;
+  // Records a pending stop on the job. True when the walk must end.
+  bool stop_list();
   static bool emit_file(void *context, const char *name, std::uint32_t bytes);
   void serve(const abort::Tag &tag);
   bool list_connected() const;

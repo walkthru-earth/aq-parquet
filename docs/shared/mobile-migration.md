@@ -17,7 +17,10 @@ walk only stopped at the next `FILE`, and the whole walk ran first. The reply
 is unchanged, `FILE` frames already sent, then `ERROR` 16, then `ABORTED`
 naming `LIST`. Other links and LAN peers are served between steps. A file
 finalized during the walk may be missing from that listing, and `new_files`
-then stays set in the advert. No frame layout, opcode or error code changed.
+then stays set in the advert. When the device needs its storage worker for
+something more urgent, such as a critical battery close, the walk ends the
+same way early with `ERROR` 7 `detail="preempted"` instead of after the whole
+walk. No frame layout, opcode or error code changed.
 
 **Why.** On a large card the abort drain could outrun the app's bound of 4096
 frames, 4 MiB or 30 s and close the link with `DrainExceeded`. A long walk
@@ -26,6 +29,9 @@ also held the storage worker away from samples and the watchdog heartbeat.
 **What the app must do.** Nothing. `LinkSession` already accepts any number of
 `FILE` frames, then `ERROR` 16 and `ABORTED` in either order, and only checks
 that the `FILE` count matches `LIST_END.count`. The drain now ends sooner.
+A preempted `LIST` is `ERROR` 7, which `DeviceSession` already maps to
+`DeviceBusyException`, and `CollectionController` retries it after its
+backoff like any busy reply.
 
 ## CoreS3 LIVE keys covered by the dictionary digest (CoreS3 v6.13, issue #31)
 
