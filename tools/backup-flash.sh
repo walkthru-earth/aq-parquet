@@ -31,7 +31,7 @@ temporary="$(mktemp "${backup_dir}/.${board}-flash.XXXXXXXX")"
 trap 'rm -f "${temporary}"' EXIT
 # Keep esptool at its default serial speed.
 python -m esptool --chip esp32s3 --port "${port}" read-flash 0 0x1000000 "${temporary}"
-bytes="$(stat -f %z "${temporary}")"
+bytes="$(wc -c <"${temporary}" | tr -d " ")"
 if [[ "${bytes}" != 16777216 ]]; then
   printf 'backup size mismatch: %s bytes in %s\n' "${bytes}" "${temporary}" >&2
   exit 1
