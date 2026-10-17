@@ -14,10 +14,15 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     logger = root / "firmware/common/logger"
-    header = logger / "src/aq_logger_watchdog.h"
-    # The decision logic stays pure so it builds and runs on the host.
-    include = re.search(r'#include\s*[<"](esp_|freertos/|driver/|soc/)', header.read_text())
-    assert include is None, f"watchdog header includes {include.group(0)}"
+    # The decision logic and the steps that apply it stay pure so they build
+    # and run on the host, and aq_logger.cpp must go through them.
+    for name in ("aq_logger_watchdog.h", "aq_logger_watchdog_apply.h"):
+        header = logger / "src" / name
+        include = re.search(r'#include\s*[<"](esp_|freertos/|driver/|soc/)', header.read_text())
+        assert include is None, f"{name} includes {include.group(0)}"
+    source = (logger / "src/aq_logger.cpp").read_text()
+    for call in ("watchdog::tick(", "watchdog::prepare(", "watchdog::launch("):
+        assert call in source, f"aq_logger.cpp no longer calls {call}"
     with tempfile.TemporaryDirectory(prefix="aq-watchdog-") as directory:
         executable = Path(directory) / "watchdog-test"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
@@ -27,8 +32,9 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Worker watchdog: recovery clears the latch, repeated stalls, boot-loop guard, "
-          "slow writes, hung sink and setup unwinding passed")
+    print("Worker watchdog: apply order, IDF feed rule, recovery clears the latch, repeated "
+          "stalls, boot-loop guard, slow writes, hung sink and setup "
+          "unwinding passed")
 
 
 if __name__ == "__main__":

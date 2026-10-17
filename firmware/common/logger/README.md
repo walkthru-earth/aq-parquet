@@ -186,10 +186,15 @@ writes nothing looking alive.
   clears the RTC record.
 - The supervisor decision (`watchdog::supervise`, which returns Nothing, Feed,
   Arm, Trip or Recover), its unwinding (`watchdog::failed`), the guard and the
-  expiry rule are pure in `aq_logger_watchdog.h`. The `esp_timer` callback only
-  applies the result. `pixi run logger-watchdog-test` drives them with a fake
-  clock and a fake task watchdog, and `pixi run logger-work-queue-test` keeps
-  the guard and expiry cases. A forced stall on a bench board is still required
+  expiry rule are pure in `aq_logger_watchdog.h`. The start steps
+  (`watchdog::prepare`, `watchdog::launch`) and the tick that applies each
+  decision (`watchdog::tick`, `watchdog::apply`) live in
+  `aq_logger_watchdog_apply.h` behind an injected task watchdog and timer, and
+  `aq_logger.cpp` only wraps the ESP-IDF calls. `pixi run logger-watchdog-test`
+  runs that same code with a fake clock and a fake task watchdog that keeps the
+  IDF feed rule, where the timer is fed only once every entry, the two idle
+  tasks included, has reset. `pixi run logger-work-queue-test` keeps the guard
+  and expiry cases. A forced stall on a bench board is still required
   before claiming the reset, recovery and core dump on hardware.
 
 Read a saved core dump with `tools/idf.sh -C <trial> -B <build dir>

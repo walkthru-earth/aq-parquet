@@ -7,6 +7,7 @@
 #include "aq_logger_rotation.h"
 #include "aq_logger_status.h"
 #include "aq_logger_watchdog.h"
+#include "aq_logger_watchdog_apply.h"
 #include "aq_logger_work_queue.h"
 #include "crc_cache.h"
 #include "debug_log.h"
@@ -2326,47 +2327,48 @@ constexpr bool kTaskWdtPanic = true;
 constexpr bool kTaskWdtPanic = false;
 #endif
 
-bool arm_worker_watchdog() {
-  esp_task_wdt_user_handle_t user = nullptr;
-  if (esp_task_wdt_add_user("parquet-sd", &user) != ESP_OK)
-    return false;
-  worker_wdt = user;
-  return true;
-}
-
-// Unregisters the user so nothing is left armed without a feeder. A worker
-// stamp racing this sees a cleared handle or one the IDF no longer lists.
-void disarm_worker_watchdog() {
-  if (auto *user = worker_wdt.exchange(nullptr))
-    esp_task_wdt_delete_user(user);
-}
-
-// Applies one decision of watchdog::supervise(). Returns false when the task
-// watchdog refused it, so the caller can unwind the decision.
-bool apply_watchdog(watchdog::Action action) {
-  switch (action) {
-  case watchdog::Action::Nothing:
-    return true;
-  case watchdog::Action::Arm:
-    if (!arm_worker_watchdog())
+// The worker's task watchdog user, as watchdog::apply() and the start steps
+// in aq_logger_watchdog_apply.h use it.
+struct IdfTaskWdt {
+  bool add_user() {
+    esp_task_wdt_user_handle_t user = nullptr;
+    if (esp_task_wdt_add_user("parquet-sd", &user) != ESP_OK)
       return false;
-    esp_task_wdt_reset_user(worker_wdt.load());
+    worker_wdt = user;
     return true;
-  case watchdog::Action::Feed:
+  }
+  bool reset_user() {
     return esp_task_wdt_reset_user(worker_wdt.load()) == ESP_OK;
-  case watchdog::Action::Trip: {
-    const auto config = task_wdt_config(true);
+  }
+  bool reconfigure(bool panic) {
+    const auto config = task_wdt_config(panic);
     return esp_task_wdt_reconfigure(&config) == ESP_OK;
   }
-  case watchdog::Action::Recover: {
-    const auto config = task_wdt_config(kTaskWdtPanic);
-    const bool restored = esp_task_wdt_reconfigure(&config) == ESP_OK;
-    esp_task_wdt_reset_user(worker_wdt.load());
-    return restored;
+  // Unregisters the user so nothing is left armed without a feeder. A worker
+  // stamp racing this sees a cleared handle or one the IDF no longer lists.
+  void delete_user() {
+    if (auto *user = worker_wdt.exchange(nullptr))
+      esp_task_wdt_delete_user(user);
   }
+};
+
+void supervise_worker(void *);
+
+struct IdfSupervisorTimer {
+  esp_timer_handle_t handle = nullptr;
+  bool create() {
+    static const esp_timer_create_args_t args{supervise_worker, nullptr,
+                                              ESP_TIMER_TASK, "aq-wdt", true};
+    return esp_timer_create(&args, &handle) == ESP_OK;
   }
-  return false;
-}
+  bool start() {
+    return esp_timer_start_periodic(handle, 1000000ULL) == ESP_OK;
+  }
+  void destroy() {
+    esp_timer_delete(handle);
+    handle = nullptr;
+  }
+};
 
 // Runs every second in the esp_timer task. The task watchdog has one global
 // period (CONFIG_ESP_TASK_WDT_TIMEOUT_S) shared with the idle tasks, so this
@@ -2376,17 +2378,17 @@ bool apply_watchdog(watchdog::Action action) {
 // RTC memory and switches the task watchdog to panic, so the next period
 // names "parquet-sd" and resets with a core dump. A worker that moves again
 // first is recovered. The pending stall is withdrawn and the original config
-// comes back, so a later stall trips again. watchdog::supervise() decides.
+// comes back, so a later stall trips again. watchdog::supervise() decides and
+// watchdog::tick() applies it.
 void supervise_worker(void *) {
-  const auto step = watchdog::supervise(
-      wdt_supervisor, stall_guard, esp_timer_get_time(),
+  IdfTaskWdt twdt;
+  const auto result = watchdog::tick(
+      wdt_supervisor, stall_guard, twdt, esp_timer_get_time(),
       worker_heartbeat_us.load(), CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S,
-      CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S);
-  if (step.cleared)
+      CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S, kTaskWdtPanic);
+  if (result.cleared)
     wdt_cleared = true;
-  if (!apply_watchdog(step.action))
-    watchdog::failed(wdt_supervisor, stall_guard, step.action);
-  else if (step.action == watchdog::Action::Recover)
+  if (result.recovered)
     wdt_recovered = true;
   wdt_armed = wdt_supervisor.armed;
 }
@@ -2394,39 +2396,29 @@ void supervise_worker(void *) {
 const char *watchdog_mode_name() { return wdt_armed.load() ? "armed" : "warn"; }
 
 void start_worker_watchdog() {
-  const bool was_pending = watchdog::valid(stall_guard) && stall_guard.pending;
-  const bool task_wdt_reset = esp_reset_reason() == ESP_RST_TASK_WDT;
-  const auto mode = watchdog::on_boot(stall_guard, task_wdt_reset);
-  if (was_pending && task_wdt_reset)
+  IdfTaskWdt twdt;
+  IdfSupervisorTimer timer;
+  auto boot = watchdog::prepare(wdt_supervisor, stall_guard, twdt, timer,
+                                esp_reset_reason() == ESP_RST_TASK_WDT,
+                                esp_timer_get_time());
+  // Read before the timer runs. After launch() the guard belongs to it.
+  const std::uint32_t consecutive = stall_guard.consecutive;
+  wdt_armed = boot.armed;
+  if (boot.stall_reset)
     aqlog.printf("PARQUET ERROR operation=worker-watchdog-reset "
                  "consecutive=%lu\n",
-                 static_cast<unsigned long>(stall_guard.consecutive));
-  // Create the timer before arming, and unwind the user when the timer does
-  // not run, so no user is ever armed without its feeder.
-  static const esp_timer_create_args_t args{supervise_worker, nullptr,
-                                            ESP_TIMER_TASK, "aq-wdt", true};
-  esp_timer_handle_t timer = nullptr;
-  bool supervised = esp_timer_create(&args, &timer) == ESP_OK;
-  bool armed =
-      supervised && mode == watchdog::Mode::Armed && arm_worker_watchdog();
-  watchdog::start(wdt_supervisor, esp_timer_get_time(), armed);
-  wdt_armed = armed;
-  if (supervised && esp_timer_start_periodic(timer, 1000000ULL) != ESP_OK) {
-    supervised = false;
-    esp_timer_delete(timer);
-  }
-  if (!supervised && armed) {
-    disarm_worker_watchdog();
-    armed = false;
+                 static_cast<unsigned long>(consecutive));
+  watchdog::launch(boot, wdt_supervisor, twdt, timer);
+  if (!boot.supervised)
     wdt_armed = false;
-  }
-  aqlog.printf(
-      "PARQUET WATCHDOG mode=%s timeout_s=%u consecutive=%lu "
-      "max_consecutive=%lu healthy_s=%u supervised=%u\n",
-      armed ? "armed" : "warn", unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S),
-      static_cast<unsigned long>(stall_guard.consecutive),
-      static_cast<unsigned long>(watchdog::kMaxConsecutive),
-      unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S), supervised ? 1U : 0U);
+  aqlog.printf("PARQUET WATCHDOG mode=%s timeout_s=%u consecutive=%lu "
+               "max_consecutive=%lu healthy_s=%u supervised=%u\n",
+               boot.armed ? "armed" : "warn",
+               unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S),
+               static_cast<unsigned long>(consecutive),
+               static_cast<unsigned long>(watchdog::kMaxConsecutive),
+               unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S),
+               boot.supervised ? 1U : 0U);
 }
 #else
 const char *watchdog_mode_name() { return "off"; }

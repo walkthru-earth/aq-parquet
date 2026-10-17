@@ -27,9 +27,10 @@ initialization and each board's schema/provenance remain in its own trial.
   Any new loop or walk on the worker calls `stamp_heartbeat()` per entry, and
   any new blocking board hook is stamped on both sides. Writer code stamps only
   after confirmed progress, never before a call that may hang. Keep the
-  supervisor decision and boot-loop guard pure in `aq_logger_watchdog.h`. The
-  timer callback only applies it, and every arm or panic switch it applies has
-  an unwind path. See the README section Worker watchdog.
+  supervisor decision and boot-loop guard pure in `aq_logger_watchdog.h`, and
+  the start and apply steps in `aq_logger_watchdog_apply.h` behind injected
+  task watchdog and timer interfaces. The timer callback only wraps the IDF
+  calls, and every arm or panic switch it applies has an unwind path. See the README section Worker watchdog.
 - The SD space governor never deletes. A full card pauses and alarms; space
   returning or a successful probe resumes. Keep its logic pure in
   `storage_governor.h`; boards only supply the free, cluster and remount hooks.
