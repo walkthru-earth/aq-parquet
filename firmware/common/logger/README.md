@@ -255,9 +255,17 @@ writes nothing looking alive.
 - When the heartbeat is older than the timeout, the supervisor stops feeding,
   marks a pending stall in RTC no-init memory and switches the task watchdog to
   panic. Within one more watchdog period the IDF prints
-  `task_wdt: ... - parquet-sd (user)`, panics, saves the core dump (both board
-  tables reserve the 64 KiB `coredump` partition and the shared defaults enable
-  `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`) and resets with reason `TASK_WDT`.
+  `task_wdt: ... - parquet-sd (CPU 0/1)`, since a watchdog user has no task
+  and so no core of its own, panics, saves the core dump and resets. The panic
+  restarts through a software CPU reset, so the boot banner shows
+  `rst:0xc (RTC_SW_CPU_RST)`, not a watchdog reset. `esp_reset_reason()`
+  still reports `ESP_RST_TASK_WDT`, printed as `reset=6` on the `LOG ring=`
+  line, and that value is what the next boot counts as a stall reset. Every
+  board table reserves the 64 KiB `coredump` partition, each board application
+  requires the `espcoredump` component, and the shared defaults enable `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH` with a
+  2560 byte dump stack. The board build fails when the image lacks the dump,
+  see `tools/check_idf_target.py`. A bench task watchdog reset on the Waveshare
+  board with Wi-Fi off wrote a 24992 byte dump that `coredump-info` decoded.
   Idle tasks keep their print-only behavior until a worker stall is declared.
 - If the worker stamps again before that period ends, the supervisor recovers.
   It withdraws the pending stall, restores the task watchdog config the IDF

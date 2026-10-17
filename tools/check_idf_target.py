@@ -134,6 +134,62 @@ def build_file(build: Path, name: str) -> Path:
     return path
 
 
+CONFIG_LINE = re.compile(r"^(?:(CONFIG_\w+)=.*|# (CONFIG_\w+) is not set)$")
+COREDUMP_SETTINGS = ["CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y", "CONFIG_ESP_COREDUMP_ENABLE=y",
+                     "CONFIG_ESP_COREDUMP_CHECK_BOOT=y", "CONFIG_ESP_COREDUMP_STACK_SIZE=2560",
+                     "# CONFIG_ESP_COREDUMP_CAPTURE_DRAM is not set"]
+# ESP-IDF 6.1 only writes ELF dumps with a SHA-256 checksum. Its Kconfig still
+# selects ESP_COREDUMP_DATA_FORMAT_ELF and ESP_COREDUMP_CHECKSUM_SHA256, but
+# neither symbol is defined or written to sdkconfig, so prove both by symbol.
+COREDUMP_SYMBOLS = {"esp_core_dump_init", "esp_core_dump_write", "esp_core_dump_write_elf",
+                    "core_dump_sha256_finish"}
+
+
+def kconfig_names(node: object, names: set[str]) -> set[str]:
+    if isinstance(node, dict):
+        if isinstance(node.get("name"), str):
+            names.add("CONFIG_" + node["name"])
+        for value in node.values():
+            kconfig_names(value, names)
+    elif isinstance(node, list):
+        for value in node:
+            kconfig_names(value, names)
+    return names
+
+
+def check_defaults_known(build: Path, defaults: str) -> None:
+    """Fail where kconfgen only prints a NOTE, an unknown symbol in a defaults file.
+
+    A symbol is unknown when no built component declares it, for example
+    ESP_COREDUMP_* without the espcoredump component, and the setting is
+    then silently dropped from the image."""
+    known = kconfig_names(json.loads(build_file(build, "config/kconfig_menus.json").read_text()), set())
+    for name in filter(None, defaults.split(";")):
+        for line in Path(name).read_text().splitlines():
+            match = CONFIG_LINE.match(line.strip())
+            symbol = match and (match[1] or match[2])
+            require(not symbol or symbol in known,
+                    f"unknown kconfig symbol {symbol} in {Path(name).name}, a component is missing")
+
+
+def elf_symbols(path: Path) -> set[str]:
+    """Names in the ELF32 little-endian symbol tables, enough to prove a component linked."""
+    data = path.read_bytes()
+    require(data[:6] == b"\x7fELF\x01\x01", "application is not a 32-bit little-endian ELF")
+    offset = struct.unpack_from("<I", data, 0x20)[0]
+    size, count = struct.unpack_from("<HH", data, 0x2E)
+    sections = [struct.unpack_from("<10I", data, offset + index * size) for index in range(count)]
+    names = set()
+    for section in sections:
+        if section[1] != 2:  # SHT_SYMTAB
+            continue
+        strings = sections[section[6]][4]
+        for entry in range(section[4], section[4] + section[5], 16):
+            start = strings + struct.unpack_from("<I", data, entry)[0]
+            names.add(data[start:data.index(b"\0", start)].decode())
+    return names
+
+
 def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, str]]:
     require((board == "cores3") == (variant == "bringup"), "board and variant disagree")
     trial = ROOT / "firmware" / ("esp-idf-cores3" if board == "cores3"
@@ -177,6 +233,8 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
     required += (["CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y"] if board == "cores3" else
                  ["CONFIG_ESP_CONSOLE_UART_DEFAULT=y", "CONFIG_ESP_CONSOLE_UART_NUM=0",
                   "CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200"])
+    # Every image saves a panic core dump to the coredump partition below.
+    required += COREDUMP_SETTINGS
     for setting in required:
         require(setting in lines, f"native target missing {setting}")
     require("CONFIG_ESP_CONSOLE_USB_CDC=y" not in lines, "unexpected USB CDC console")
@@ -200,7 +258,11 @@ def check_target(build: Path, board: str, variant: str) -> tuple[str, dict[str, 
     sdk_commit = check_sdk(Path(description["idf_path"]))
     require(description["git_revision"] == "v" + sdk_lock()["ESP_IDF_VERSION"],
             "build used a different SDK revision")
+    check_defaults_known(build, description["config_defaults"])
     components = description["build_components"]
+    require("espcoredump" in components, "core dump component is not built")
+    missing = COREDUMP_SYMBOLS - elf_symbols(build_file(build, description["app_elf"]))
+    require(not missing, "application ELF lacks core dump symbols: " + ", ".join(sorted(missing)))
     if variant == "diagnostic":
         require("connectivity" not in components and "logger" not in components,
                 "diagnostic unexpectedly includes application/radio runtime")
@@ -307,7 +369,7 @@ def main() -> None:
         if args.backup:
             check_backup(args.backup, args.board)
         print(f"Verified native ESP32-S3 {args.board}/{args.variant}: "
-              "SDK, memory, console, components, C++ dialect, partitions and flash plan")
+              "SDK, memory, console, components, C++ dialect, core dump, partitions and flash plan")
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"native target rejected: {error}") from error
 

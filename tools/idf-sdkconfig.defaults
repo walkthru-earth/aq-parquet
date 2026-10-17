@@ -12,4 +12,12 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=2
 # A panic, including the storage worker watchdog reset, saves an ELF core dump
 # (task stacks only, SHA-256 checked) to the 64 KiB coredump partition that
 # every board table reserves at 0xc10000. Read it with idf.py coredump-info.
+# These symbols exist only when a board component requires espcoredump, and
+# tools/check_idf_target.py rejects a build that drops them.
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+# The dump runs on its own internal stack. A Waveshare task watchdog dump used
+# 1520 of the 1792 byte IDF default (368 left). 2560 bytes leaves about 1 KiB,
+# 40 percent of the stack, for longer task lists and SHA-256 state, at a cost
+# of 768 bytes of internal RAM. Images without PSRAM task stacks get the same
+# stack instead of running the dump on the crashed task or ISR stack.
+CONFIG_ESP_COREDUMP_STACK_SIZE=2560
