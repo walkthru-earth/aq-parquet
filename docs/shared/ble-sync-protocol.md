@@ -624,8 +624,8 @@ next step or `FILE` with `ERROR` 7 `detail="preempted"`. A close that falls
 due between steps ends the `LIST` the same way before the close runs, so the
 close's own remount never reaches a live walk. A `LIST` sent while a close is
 due gets the same reply at once. Send `LIST` again later. On a critical
-battery the device retries a failed close up to 8 times over about 2 to 3
-minutes, and each due retry can preempt a `LIST` again. A phone that counts
+battery the device makes up to 8 close attempts with about 91 s of backoff
+between them (1, 2, 4, 8, 16, 30 and 30 s), and each due retry can preempt a `LIST` again. A phone that counts
 each one against its retry budget may give up with link busy before the
 close succeeds. That is accepted, since the board is about to brown out. No
 frame or opcode changed.

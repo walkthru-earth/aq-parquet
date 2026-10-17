@@ -1885,7 +1885,8 @@ void flush_batch(std::size_t &count, bool &storage_ready) {
 void service_emergency_close(std::size_t &count, bool &storage_ready) {
   const auto now = uptime_ms();
   // A due close first ends a running LIST with ERROR busy "preempted", so
-  // its Retry remount never answers a live walk with ERROR storage.
+  // its Retry remount never reaches a live walk. A request() landing after
+  // this check still ends the LIST through the remount, as busy "remount".
   listjob::preempt_for_close(archive_session, emergency_close, now);
   const std::uint32_t finalized_before = finalized.load();
   CloseStorage storage{count, storage_ready};

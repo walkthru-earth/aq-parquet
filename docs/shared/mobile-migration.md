@@ -45,8 +45,8 @@ reply, which an app syncing over BLE and LAN at once can see on its second
 link, and for `detail="remount"`. Before, a `LIST` cut by a remount ended the
 collection as a device failure with no retry. The `DeviceBusyException` KDoc
 should list the LIST details `preempted`, `list` and `remount`. On a critical
-battery the device retries its close up to 8 times over 2 to 3 minutes, and
-each retry can preempt a `LIST` again, so the app can spend its 5 attempt
+battery the device makes up to 8 close attempts with about 91 s of backoff
+between them, and each retry can preempt a `LIST` again, so the app can spend its 5 attempt
 retry budget and end with link busy. That is accepted on a dying battery and
 needs no app change.
 
