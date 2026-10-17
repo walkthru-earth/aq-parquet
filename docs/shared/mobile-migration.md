@@ -14,7 +14,9 @@ the older shapes it has stored, or the owner clears them.
 open handle, the next `READ` on that handle runs the finalized check again. The
 same size and CRC-32 keep the handle. A deleted, edited or swapped file now
 answers `ERROR` 5 (bad handle) for that `READ` and every later `READ` or
-`CLOSE` on the handle. Before this change the device reopened the path and
+`CLOSE` on the handle. A card that has not mounted again yet, or an I/O error
+during the check, answers `READ_END` status 4 and keeps the handle, so a later
+`READ` can still succeed. Before this change the device reopened the path and
 served the new bytes under the old handle. No frame layout or opcode changed.
 
 **Why.** A card can be pulled, edited on a PC and put back, or swapped, while
@@ -22,8 +24,9 @@ the phone keeps its handle. The old reopen mixed bytes from two files under
 one size and CRC, so the phone only caught it at its own CRC check.
 
 **What the app must do.** Nothing. `SyncEngine` already turns a READ
-`ERROR` 5 into `FileOutcome.DeviceError` for that file without reopening or
-looping, logs the refused `CLOSE` and moves on to the next file. The next run
+`ERROR` 5, and any non-zero `READ_END` status, into `FileOutcome.DeviceError`
+for that file without reopening or looping, logs a refused `CLOSE` and moves
+on to the next file. The next run
 lists again and resumes the partial only if `OPENED` size and CRC still match.
 
 ## Smaller resident writer workspace (feat/multi-chip-portability-and-watchdog)
