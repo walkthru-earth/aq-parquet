@@ -12,8 +12,9 @@
 //
 // Now every host task place that reads the live state (CONNECT, ENC_CHANGE,
 // SUBSCRIBE and each GATT access) latches the copy, and each gate falls back
-// to the live state before it refuses. An insecure link is still refused, and
-// it is told so with ERROR 14, never 7.
+// to the live state before it refuses. An insecure link is still refused,
+// never with 7. An unencrypted write gets NimBLE's ATT error, which makes the
+// phone pair. A Control write that passes ATT but not secure() gets ERROR 14.
 
 #include "ble_sync.h"
 

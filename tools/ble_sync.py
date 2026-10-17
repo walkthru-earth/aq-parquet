@@ -40,6 +40,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import struct
 import sys
 import time
@@ -70,6 +71,12 @@ ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed
 # the client never retries it. Over BLE it means the link is not paired and
 # authenticated, over LAN that the token was rejected.
 ERROR_HINTS = {14: "the link is not authenticated. Pair the device again, or for LAN fetch a new token over BLE"}
+# Backend wording for an ATT Insufficient Authentication (0x05) or Encryption
+# (0x0F) write error. BlueZ, CoreBluetooth and WinRT each phrase it their way.
+ATT_AUTH_REFUSAL = re.compile(
+    r"insufficient (authentication|encryption)|(authentication|encryption) is insufficient"
+    r"|notauthorized|not authorized|protocol error 0x0?[5f]\b",
+    re.IGNORECASE)
 # Protocol 3 typed disconnect reasons (BYE, DIAG events, STATUS `dr`).
 DISCONNECT_REASONS = ["unknown", "idle-timeout", "handshake-timeout", "auth-failed",
                       "sessions-full", "slow-peer", "tx-overflow", "malformed", "wifi-lost",
@@ -261,7 +268,17 @@ class Session:
         self.frames.put_nowait(error)
 
     async def request(self, payload: bytes):
-        await self.client.write_gatt_char(CONTROL, payload, response=True)
+        try:
+            await self.client.write_gatt_char(CONTROL, payload, response=True)
+        except ProtocolError:
+            raise
+        except Exception as error:
+            # NimBLE refuses an unencrypted Control write at the ATT layer
+            # before the firmware sees it. That is the same "not paired"
+            # answer as ERROR 14, so it gets the same hint and no retry.
+            if not ATT_AUTH_REFUSAL.search(str(error)):
+                raise
+            raise ProtocolError(f"Control write refused by ATT ({error}). {ERROR_HINTS[14]}") from error
 
     # Per frame deadline. On LAN a reply can wait up to the device's 15 s
     # slow-peer bound behind another phone, so callers there may raise it.

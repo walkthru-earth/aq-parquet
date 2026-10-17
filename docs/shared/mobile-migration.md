@@ -86,7 +86,11 @@ is secure without the encryption event. No frame layout changed.
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
 **What the app must do.** Treat `ERROR` 14 on BLE as "pair again", the same
-as a bad LAN token. Never retry it as busy. Keep retrying 7 as before.
+as a bad LAN token and the same as an ATT Insufficient Authentication or
+Encryption error on a Control write. Never retry it as busy. Handle 7 as
+before, by its `detail`. A plain busy 7 can be retried later, while
+`detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
+repeating the same request.
 
 ## ABORT stops a LIST within one step (fix/33-abort-list-walk)
 
