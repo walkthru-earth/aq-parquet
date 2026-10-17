@@ -29,6 +29,11 @@ the older shapes it has stored, or the owner clears them.
   after a stall reset. Additive.
 - A stalled storage worker now resets the device after about 60 s instead of
   staying wedged. The app sees a normal BLE/LAN disconnect and reconnect.
+- New LOG_TAIL line `PARQUET WATCHDOG mode=armed consecutive=N
+  reason=recovered` when a stalled worker moves again before the reset. The
+  device keeps running and a later stall can trip again. Additive.
+- `PARQUET WATCHDOG ... supervised=0` now comes with `mode=warn`, since a
+  worker without its supervisor timer is never left armed.
 - A serial `parquet get` and its CRC pass count as worker progress, so a
   large USB export no longer logs `worker-stall` or trips the watchdog.
 - No STATUS, LIVE, GET_DIAG, GET_CONFIG or advertising field changes. The app

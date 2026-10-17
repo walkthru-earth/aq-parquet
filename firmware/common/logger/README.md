@@ -135,7 +135,11 @@ The `parquet-sd` worker stamps a heartbeat on every loop pass, at each BLE/LAN
 frame, per directory entry in every archive walk (startup scan, partial
 quarantine, `parquet list`, ERASE_ARCHIVE preflight and delete), on both sides
 of the board free-space, capacity and remount hooks, and once per second while
-paused after an erase. Each stamp also feeds the worker's task watchdog user.
+paused after an erase. The writer stamps only on confirmed progress, after each
+block its output sink writes, after each encoded row group and after each
+completed fsync. A sink call that never returns therefore still trips the
+watchdog, while a slow write that keeps landing blocks does not. Each stamp
+also feeds the worker's task watchdog user.
 
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
@@ -155,6 +159,18 @@ paused after an erase. Each stamp also feeds the worker's task watchdog user.
   tables reserve the 64 KiB `coredump` partition and the shared defaults enable
   `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH`) and resets with reason `TASK_WDT`.
   Idle tasks keep their print-only behavior until a worker stall is declared.
+- If the worker stamps again before that period ends, the supervisor recovers.
+  It withdraws the pending stall, restores the task watchdog config the IDF
+  started with (from `CONFIG_ESP_TASK_WDT_*`, so idle tasks and other users get
+  their own panic policy back) and resumes feeding. `poll()` then logs
+  `PARQUET WATCHDOG mode=armed consecutive=N reason=recovered`. A later stall
+  trips again, and a later task watchdog reset that this firmware did not arm
+  is not counted as a worker stall.
+- The supervisor never leaves a user armed without a feeder. When the timer
+  cannot be created or started, `begin()` deletes the user again and logs
+  `mode=warn ... supervised=0`. A refused panic switch withdraws the pending
+  stall and retries on the next tick. A refused restore keeps feeding and
+  retries until the original config is back.
 - The next boot logs `PARQUET ERROR operation=worker-watchdog-reset
   consecutive=N`. Every boot logs one `PARQUET WATCHDOG mode=armed|warn
   timeout_s=... consecutive=... max_consecutive=3 healthy_s=... supervised=1`.
@@ -164,10 +180,13 @@ paused after an erase. Each stamp also feeds the worker's task watchdog user.
   continuous liveness clears it, re-arms a warn-only worker and logs
   `PARQUET WATCHDOG mode=armed consecutive=0 reason=healthy`. Power loss also
   clears the RTC record.
-- The guard logic (`aq_logger_watchdog.h`) and the expiry rule
-  (`work::stall_expired`) are pure and covered by `pixi run
-  logger-work-queue-test`. A forced stall on a bench board is still required
-  before claiming the reset and core dump on hardware.
+- The supervisor decision (`watchdog::supervise`, which returns Nothing, Feed,
+  Arm, Trip or Recover), its unwinding (`watchdog::failed`), the guard and the
+  expiry rule are pure in `aq_logger_watchdog.h`. The `esp_timer` callback only
+  applies the result. `pixi run logger-watchdog-test` drives them with a fake
+  clock and a fake task watchdog, and `pixi run logger-work-queue-test` keeps
+  the guard and expiry cases. A forced stall on a bench board is still required
+  before claiming the reset, recovery and core dump on hardware.
 
 Read a saved core dump with `tools/idf.sh -C <trial> -B <build dir>
 coredump-info` against the ELF that was flashed. Reading the partition does not

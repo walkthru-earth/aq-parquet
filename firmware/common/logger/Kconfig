@@ -10,8 +10,10 @@ config AQ_LOGGER_WORKER_WDT
         on the worker's behalf while the heartbeat is younger than
         AQ_LOGGER_WORKER_WDT_TIMEOUT_S. After that the task watchdog panics,
         names parquet-sd and resets with a core dump when the image enables
-        one. Three such resets without a healthy period in between switch the
-        worker to warn-only until it stays healthy again.
+        one. A worker that moves again before that period ends is recovered,
+        and the original task watchdog config is restored. Three such resets
+        without a healthy period in between switch the worker to warn-only
+        until it stays healthy again.
 
 config AQ_LOGGER_WORKER_WDT_TIMEOUT_S
     int "Storage worker stall timeout (seconds)"
