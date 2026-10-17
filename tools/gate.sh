@@ -37,6 +37,8 @@ tasks=(
   "pms-frame-test"
   "ltr553-test"
   "max17048-test"
+  # Battery health states and thresholds
+  "battery-health-test"
   # Archive, transport and radio policy fixtures
   "archive-sync-test"
   "control-sync-test"
@@ -60,12 +62,29 @@ tasks=(
   "logger-archive-reset-test"
   "logger-provision-test"
   "logger-live-test"
+  "logger-power-test"
   "storage-governor-test"
   "crc-cache-test"
   "sd-transfer-buffer-test"
   # Offline backup publication with a fake esptool
   "backup-test"
 )
+
+# Every *-test task in pixi.toml runs here unless it needs the ESP-IDF SDK.
+# Fail before running anything if a new test task was added to pixi.toml but
+# not to this list, so CI cannot silently skip it.
+sdk_tasks=" connectivity-build-test logger-build-test "
+listed=" ${tasks[*]%% *} "
+unlisted=()
+while read -r name; do
+  if [[ "${sdk_tasks}" != *" ${name} "* && "${listed}" != *" ${name} "* ]]; then
+    unlisted+=("${name}")
+  fi
+done < <(sed -n 's/^\([a-z0-9-]*-test\) = .*/\1/p' "$(dirname "$0")/../pixi.toml")
+if [[ ${#unlisted[@]} -gt 0 ]]; then
+  printf '!!! pixi test tasks missing from tools/gate.sh, %s\n' "${unlisted[*]}" >&2
+  exit 1
+fi
 
 task_timeout=${AQ_GATE_TASK_TIMEOUT:-300}
 group=""
