@@ -1,27 +1,47 @@
 # Agent map for aq-parquet
 
+ESP32-S3 air-quality firmware. CoreS3 and Waveshare V2 each have one active,
+self-contained native ESP-IDF application. Do not add Arduino APIs or an
+Arduino component. Shared code lives in `firmware/common/`. Device
+protocol and telemetry contracts live in `docs/shared/`. Open only the relevant
+file in `docs/README.md` after this one.
+
 ## C++ standard and style
 
 - Language is C++23. Firmware builds as `-std=gnu++23` through
   `aq_pin_cxx_standard()` in `firmware/cmake/aq_cxx_standard.cmake`, and host
   tests use `-std=c++23` from `tools/host_cxx.py`. Every component we own calls
-  the helper. Third-party components keep the SDK default.
+  the helper right after `idf_component_register()`. Third-party components
+  keep the SDK default. `tools/check_idf_target.py` fails a build when a repo
+  `.cpp` misses the pin or the four places that name the standard disagree.
 - The dialect is pinned because ESP-IDF 6.1 defaults to `gnu++26` and a later
   SDK may move it again. An SDK upgrade must never change the dialect silently.
 - Not C++26 yet. ISO has not published it, and GCC 15, the host clang and
   cppcheck support only part of it. Revisit when all three cover what we need.
 - Prefer `std::span` over pointer plus length, with a fixed extent for wire
   fields. Prefer `std::bit_cast` over `memcpy` type punning.
-- Use `constexpr`, `consteval` and `constinit` for tables and globals.
-- New fallible functions return `std::expected<T, E>` with the existing result
-  enums as `E`, instead of `bool` plus an out parameter.
-- Use `enum class`, `std::to_underlying` for enum casts and `using enum` where it
-  reads better. Put `[[nodiscard]]` on results.
-- Use designated initializers in declaration order, `std::array` over C arrays
-  and `std::string_view` for non-owning text. Use concepts only for real templates.
+- Constant tables are `static constexpr`, so they live in flash `.rodata`. Use
+  `constinit` only for mutable globals that need static initialization, because
+  those sit in DRAM. Use `consteval` for values that must be computed at build time.
+- New fallible functions return `std::expected<T, E>` instead of `bool` plus an
+  out parameter. `E` is a dedicated error-only `enum class` with no `Ok`, `More`
+  or `Done` value, so the existing result enums do not qualify as they are.
+- Never call `.value()` on an `expected` or `optional`. It aborts on device under
+  `-fno-exceptions` and throws on host. Test `has_value()` or the object itself
+  and then use `*`, or use `value_or()`.
+- Put `[[nodiscard]]` on every result enum and on every function that returns an
+  `expected` or a status. Use `enum class`, `std::to_underlying` for enum casts
+  and `using enum` where it reads better.
+- Use designated initializers in declaration order, without mixing in positional
+  values. Nest them as `.flags = {.x = 1}`, never `.flags.x = 1`, per the
+  [ESP-IDF C++ guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/cplusplus.html#designated-initializers).
+  Prefer `std::array` over C arrays and use concepts only for real templates.
+- Use `std::string_view` for non-owning text. It is not NUL terminated, so never
+  pass `.data()` to `%s` or a C API that expects a C string. Never return a view
+  of a temporary or of a local buffer.
 - On device, avoid `std::format`, `std::print` and iostream. One
-  `std::format_to_n` call cost about 331 KB of image and 4.4 KB of DRAM, so keep
-  `snprintf`.
+  `std::format_to_n` call cost about 341 KB of image and 5 KB of DIRAM on CoreS3
+  (GCC 15.2, measured 2026-10-17), so keep `snprintf`.
 - Exceptions and RTTI stay off. Use FreeRTOS tasks with explicit stack, priority
   and core, not `std::thread` or `std::jthread`.
 - No heap in hot paths or ISRs. No ranges pipelines in hot code, because `-Og`
@@ -31,11 +51,7 @@
 - Existing code moves over gradually, one module per PR. These PRs never change
   wire or file formats.
 
-ESP32-S3 air-quality firmware. CoreS3 and Waveshare V2 each have one active,
-self-contained native ESP-IDF application. Do not add Arduino APIs or an
-Arduino component. Shared code lives in `firmware/common/`. Device
-protocol and telemetry contracts live in `docs/shared/`. Open only the relevant
-file in `docs/README.md` after this one.
+## Task map
 
 | Task | Open next |
 | --- | --- |
