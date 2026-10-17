@@ -1,2 +1,4 @@
 # SCM syntax highlighting & preventing 3-way merges
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff
+# The dictionary digest is the SHA-256 of these exact bytes, so keep LF on every checkout
+firmware/**/telemetry_fields.inc text eol=lf
