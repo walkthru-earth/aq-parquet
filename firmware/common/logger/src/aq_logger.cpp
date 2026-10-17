@@ -219,6 +219,9 @@ public:
   ~BusLock() { unlock_bus(); }
 };
 
+// Writer output. Each block that reaches the file is confirmed progress, so it
+// stamps the heartbeat after the write and never before. A write that never
+// returns still trips the watchdog, a slow one that keeps moving does not.
 bool sink(void *context, const std::uint8_t *data, std::size_t size) {
   BusLock lock;
   FILE *file = static_cast<FILE *>(context);
@@ -233,6 +236,7 @@ bool sink(void *context, const std::uint8_t *data, std::size_t size) {
       return false;
     }
     written += count;
+    stamp_heartbeat();
   }
   return true;
 }
@@ -659,6 +663,8 @@ bool sync_file(OutputFile &target) {
   }
   target.sync_us += esp_timer_get_time() - started;
   sync_us = static_cast<std::uint32_t>(esp_timer_get_time() - started);
+  if (ok)
+    stamp_heartbeat(); // a completed fsync is progress
   return ok;
 }
 
@@ -674,6 +680,8 @@ bool append_group(OutputFile &target, std::size_t count) {
     close_failed(target, "row-group", result.error);
     return false;
   }
+  // Encoding after the last sink write is progress too.
+  stamp_heartbeat();
   if (!sync_file(target)) {
     close_failed(target, "row-group-sync", nullptr);
     return false;
