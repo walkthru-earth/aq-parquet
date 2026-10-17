@@ -178,7 +178,8 @@ std::int64_t sample_sequence = 0;
 std::atomic<std::int64_t> missed_deadlines{0};
 // Worker liveness: the loop and every long walk stamp this; poll warns when
 // it stops moving for 5 s, and the watchdog supervisor resets the chip when
-// it stops for CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S.
+// it stops for CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S. begin() seeds it before
+// the worker starts, so a worker that never stamps still ages out.
 std::atomic<std::int64_t> worker_heartbeat_us{0};
 #if CONFIG_AQ_LOGGER_WORKER_WDT
 // Survives the task-watchdog panic reset, lost on power-on.
@@ -2528,6 +2529,9 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   // when the RTC holds an earlier host sync.
   seed_clock_from_rtc();
   next_sample_us = esp_timer_get_time() + kSampleUs;
+  // Seed the heartbeat so a worker that blocks before its first stamp ages
+  // out like any other stall, for the worker-stall warning and the watchdog.
+  worker_heartbeat_us = esp_timer_get_time();
   if (xTaskCreate(storage_worker, "parquet-sd",
                   static_cast<std::uint32_t>(config.worker_stack_bytes),
                   nullptr, config.worker_priority, &worker_task) != pdPASS) {

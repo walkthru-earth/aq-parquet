@@ -60,6 +60,19 @@ int main() {
   assert(check_stall(20000000LL, 1000000LL, last_warn, 0) == StallAction::None);
   assert(check_stall(36000002LL, 1000000LL, last_warn, 0) == StallAction::Warn);
   assert(last_warn == 36000002LL);
+  // begin() seeds the heartbeat before the worker starts. A worker that never
+  // stamps warns 5 s after that seed, instead of never, as an unseeded zero
+  // heartbeat would.
+  {
+    constexpr std::int64_t seeded = 300000LL;
+    std::int64_t first_warn = 0;
+    assert(check_stall(seeded + 5000000LL, seeded, first_warn, 0) ==
+           StallAction::None);
+    assert(check_stall(seeded + 5000001LL, seeded, first_warn, 0) ==
+           StallAction::Warn);
+    assert(check_stall(seeded + 5000001LL, 0, first_warn, 0) ==
+           StallAction::None);
+  }
   // With restart_s = 120, stalls <= 120 s warn/throttle; > 120 s trigger
   // Restart.
   assert(check_stall(121000000LL, 1000000LL, last_warn, 120) ==

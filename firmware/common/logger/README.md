@@ -145,6 +145,8 @@ between its steps, so each transport bounds it. BLE gives up after twice
 (30 s each by default), so a stuck radio task cannot keep a worker that
 writes nothing looking alive.
 
+- `begin()` seeds the heartbeat just before it creates the worker task, so a
+  worker that blocks before its first stamp ages out like any other stall.
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
   watchdog=armed|warn|off`, at most every 30 s.

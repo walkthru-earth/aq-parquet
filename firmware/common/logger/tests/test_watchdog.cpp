@@ -16,7 +16,7 @@ constexpr std::int64_t kSecond = 1000000LL;
 constexpr std::uint32_t kTimeoutS = 60;
 constexpr std::uint32_t kHealthyS = 3600;
 constexpr std::int64_t kTwdtPeriodUs = 5 * kSecond; // ESP_TASK_WDT_TIMEOUT_S
-// begin() runs a little after boot.
+// begin() runs a little after boot, so a seeded heartbeat is never zero.
 constexpr std::int64_t kBeginUs = 300000;
 
 // The ESP-IDF task watchdog as task_wdt.c implements it. Each entry has a
@@ -140,7 +140,9 @@ struct Rig {
   }
 
   // begin() and start_worker_watchdog() after a reset of the given kind.
-  wd::Mode boot(bool task_watchdog_reset) {
+  // begin() seeds the heartbeat before the worker task starts, and the
+  // worker stamps first thing unless it never runs.
+  wd::Mode boot(bool task_watchdog_reset, bool worker_runs = true) {
     now = kBeginUs;
     reset = false;
     trips = 0;
@@ -153,11 +155,12 @@ struct Rig {
     twdt.clock = &now;
     twdt.period_start = now;
     timer.running = false;
-    heartbeat = 0;
+    heartbeat = now;
     last_boot =
         wd::prepare(state, guard, twdt, timer, task_watchdog_reset, now);
     wd::launch(last_boot, state, twdt, timer);
-    stamp(); // the worker's first loop pass
+    if (worker_runs)
+      stamp();
     return last_boot.mode;
   }
 
@@ -316,6 +319,21 @@ void sink_that_never_returns_trips() {
   assert(rig.now <= entered + (kTimeoutS + 1) * kSecond + kTwdtPeriodUs);
 }
 
+// A worker that blocks before its first stamp. begin() seeded the heartbeat,
+// so it ages out like any other stall. Without the seed it never would.
+void worker_that_never_stamps_trips() {
+  Rig rig;
+  assert(rig.boot(false, false) == wd::Mode::Armed);
+  const std::int64_t seeded = rig.heartbeat;
+  assert(seeded == kBeginUs && rig.state.armed);
+  rig.run(600 * kSecond, 0);
+  assert(rig.reset && rig.trips == 1 && rig.guard.pending == 1);
+  assert(rig.now > seeded + kTimeoutS * kSecond);
+  assert(rig.now <= seeded + (kTimeoutS + 1) * kSecond + kTwdtPeriodUs);
+  assert(rig.boot(true) == wd::Mode::Armed && rig.last_boot.stall_reset);
+  assert(rig.guard.consecutive == 1);
+}
+
 // The timer feeds only once every entry has reset. A user fed every second
 // does not hide idle tasks that stop running, which print as the IDF config
 // says and never reset while panic is off.
@@ -420,6 +438,7 @@ int main() {
   repeated_stalls_hit_the_boot_loop_guard();
   slow_progressing_write_never_trips();
   sink_that_never_returns_trips();
+  worker_that_never_stamps_trips();
   starved_idle_tasks_still_print();
   timer_failure_leaves_no_armed_user();
   reconfigure_failures_unwind();

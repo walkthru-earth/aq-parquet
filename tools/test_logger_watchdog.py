@@ -23,6 +23,10 @@ def main() -> None:
     source = (logger / "src/aq_logger.cpp").read_text()
     for call in ("watchdog::tick(", "watchdog::prepare(", "watchdog::launch("):
         assert call in source, f"aq_logger.cpp no longer calls {call}"
+    # begin() seeds the heartbeat before the worker exists, so a worker that
+    # never stamps still ages out.
+    seed = source.find("worker_heartbeat_us = esp_timer_get_time();\n  if (xTaskCreate(storage_worker")
+    assert seed >= 0, "begin() must seed the heartbeat right before xTaskCreate"
     with tempfile.TemporaryDirectory(prefix="aq-watchdog-") as directory:
         executable = Path(directory) / "watchdog-test"
         command = ["clang++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
@@ -33,7 +37,7 @@ def main() -> None:
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
     print("Worker watchdog: apply order, IDF feed rule, recovery clears the latch, repeated "
-          "stalls, boot-loop guard, slow writes, hung sink and setup "
+          "stalls, boot-loop guard, slow writes, hung sink, unstamped worker and setup "
           "unwinding passed")
 
 
