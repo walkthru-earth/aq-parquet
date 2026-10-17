@@ -1617,9 +1617,10 @@ void free_benchmark() {
   heap_caps_free(target);
 }
 
-// No file may be open across a remount. probe_storage releases the archive
-// session's read streams through remounted(), and the next READ on each handle
-// reopens the path and rechecks its size and CRC.
+// True when no writer file is open, so the card may be remounted.
+// probe_storage releases the archive session's read streams through
+// remounted(), and after mounted() the next READ on each handle reopens the
+// path and rechecks its size and CRC.
 bool files_closed() {
   return !writer_state->telemetry.open() &&
          (!writer_state->benchmark || !writer_state->benchmark->open());
