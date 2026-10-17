@@ -57,18 +57,21 @@ file in `docs/README.md` after this one.
   flash checklist below and a dated bench capture.
 - The writer workspace requires PSRAM. Do not add an internal RAM fallback, it
   cannot fit next to Wi-Fi and NimBLE. Keep the PSRAM allocation failure
-  loud, the logger prints `PARQUET ERROR operation=allocate logging=false`
-  and stops logging. Any long storage-worker walk (erase, quarantine,
+  loud. The logger prints `PARQUET ERROR operation=allocate mem=psram
+  bytes=N purpose=writer-state logging=false` and stops logging. Any long storage-worker walk (erase, quarantine,
   remount, free-space scan) must stamp the worker heartbeat so the stall check
   and task watchdog do not misread healthy work.
 
 ## Compatibility, licensing and reviews
 
-- No backward compatibility is kept for schema, Parquet layout, config or the
-  BLE/LAN protocol. Every change the phone can observe (columns, units, field
-  ids, LIVE keys, log lines, versions, digests) gets a newest-first entry in
-  `docs/shared/mobile-migration.md` saying what changed, why, and what the app
-  must do. Bump schema, dictionary and firmware identity strings together.
+- Phone side code may break freely. Firmware keeps every released wire
+  contract readable for boards already in the field. A new LIVE key set, column
+  set or field order always gets a new dictionary digest, and a digest is never
+  reused for a different key set. Every change the phone can observe (columns,
+  units, field ids, LIVE keys, log lines, versions, digests) gets a newest-first
+  entry in `docs/shared/mobile-migration.md` saying what changed, why, and what
+  the app must do. Bump schema, dictionary and firmware identity strings
+  together.
 - Parquet columns keep stable `field_id` values (1-based position in the board
   `telemetry_fields.inc`, append only) and UTC uses `TIMESTAMP(MICROS, UTC)`
   so files register in Iceberg v3 tables without rewrites. Do not switch UTC
