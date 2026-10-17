@@ -171,9 +171,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ matrix.name }}
         run: |
+          # The delta is optional, so an API error must not fail a green build.
           run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
             --branch main --event push --status success --limit 1 \
-            --json databaseId --jq '.[0].databaseId // empty')"
+            --json databaseId --jq '.[0].databaseId // empty' || true)"
           if [[ -n "${run_id}" ]] && gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" \
               --name "size-${NAME}" --dir baseline; then
             echo "Baseline from main run ${run_id}"
