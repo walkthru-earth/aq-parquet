@@ -1,12 +1,16 @@
 // Exercise the real BLE link policy (notify credits, the response queue, slow
-// peer close, advert flag flips, advert window, interval mode and parameter
-// validation) on the host. Run with
+// peer close, advert flag flips, advert window, interval mode, parameter
+// validation and the link authentication gates) on the host. Run with
 // tools/test_ble_policy.py.
+#include <ble_link_auth.h>
 #include <ble_policy.h>
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <span>
 
 using aqsync::EnqueueResult;
 using ble::AdvertWindow;
@@ -543,6 +547,93 @@ void test_flag_watch() {
   assert(!same.on_publish(0x01));
   assert(same.on_publish(0x03));
 }
+// Link authentication (issue #51). The transport answers what these decide;
+// the frames below are built the way ble_sync.cpp encodes them.
+std::array<std::uint8_t, 7> error_frame(ble::Op op, ble::Error code) {
+  return {ble::kFrameError, op, code, 'a', 'u', 't', 'h'};
+}
+
+// What one ble_sync.cpp gate does for a frame: the cached flag, the ERROR 14
+// exception, then NimBLE's live state, counting live lookups.
+struct Gate {
+  bool cached = false;
+  bool live_secure = false;
+  int lookups = 0;
+  bool send(std::span<const std::uint8_t> frame) {
+    return ble::may_send(cached, frame, [this] {
+      ++lookups;
+      return live_secure;
+    });
+  }
+};
+
+static_assert(ble::should_latch(true, false, true), "first proof latches");
+static_assert(!ble::should_latch(true, true, true), "latched once");
+static_assert(!ble::should_latch(false, false, true), "another handle");
+static_assert(!ble::should_latch(true, false, false), "insecure never");
+static_assert(ble::control_refusal(false).code == ble::kErrAuth,
+              "auth refusal is 14");
+static_assert(ble::control_refusal(true).code == ble::kErrBusy,
+              "queue refusal is 7");
+
+void test_stale_flag_secure_link_is_served() {
+  // The failing bench connect: CONNECT before encryption leaves the flag
+  // false and ENC_CHANGE never arrives, yet NimBLE says the link is secure.
+  Gate gate{.cached = false, .live_secure = true, .lookups = 0};
+  const std::uint8_t file_frame[] = {ble::kFrameFile, 0, 0, 0, 0, 'a'};
+  const std::uint8_t list_end[] = {ble::kFrameListEnd, 1, 0, 0, 0};
+  assert(gate.send(file_frame));
+  assert(gate.send(list_end));
+  assert(gate.lookups == 2);
+  // A busy ERROR on that link still goes out, so a real 7 stays visible.
+  const auto busy = error_frame(ble::kOpList, ble::kErrBusy);
+  assert(gate.send(busy));
+
+  // The first GATT access then latches the flag, and the gates stop asking
+  // NimBLE for every frame.
+  const bool current_link = true;
+  assert(ble::should_latch(current_link, gate.cached, gate.live_secure));
+  gate.cached = true;
+  gate.lookups = 0;
+  assert(gate.send(file_frame) && gate.send(list_end) && gate.lookups == 0);
+  assert(!ble::should_latch(current_link, gate.cached, gate.live_secure));
+}
+
+void test_insecure_link_gets_visible_error_14() {
+  Gate gate{.cached = false, .live_secure = false, .lookups = 0};
+  // access() refuses the Control write and queues this refusal.
+  const auto refusal = ble::control_refusal(false);
+  assert(refusal.code == ble::kErrAuth &&
+         std::strcmp(refusal.detail, "auth") == 0);
+  const auto frame = error_frame(ble::kOpList, refusal.code);
+  assert(ble::is_auth_refusal(frame));
+  // The gate lets it out without asking NimBLE, so the client sees it.
+  assert(gate.send(frame) && gate.lookups == 0);
+  // Nothing else reaches an insecure link: no data, no snapshot, no other
+  // ERROR, and no latch.
+  const std::uint8_t file_frame[] = {ble::kFrameFile, 0, 0, 0, 0, 'a'};
+  const std::uint8_t status_json[] = {'{', '}'};
+  assert(!gate.send(file_frame));
+  assert(!gate.send(status_json));
+  assert(!gate.send(error_frame(ble::kOpList, ble::kErrBusy)));
+  assert(!ble::should_latch(true, gate.cached, gate.live_secure));
+}
+
+void test_no_auth_refusal_answers_busy() {
+  // An auth reason is never code 7, and code 7 is only the full queue.
+  assert(ble::control_refusal(false).code != ble::kErrBusy);
+  const auto queue = ble::control_refusal(true);
+  assert(queue.code == ble::kErrBusy &&
+         std::strcmp(queue.detail, "queue-full") == 0);
+  // Only a whole ERROR 14 frame counts as the auth refusal.
+  assert(!ble::is_auth_refusal(error_frame(ble::kOpList, ble::kErrBusy)));
+  const std::uint8_t short_frame[] = {ble::kFrameError, ble::kOpList};
+  assert(!ble::is_auth_refusal(short_frame));
+  const std::uint8_t not_error[] = {ble::kFrameFile, ble::kOpList,
+                                    ble::kErrAuth};
+  assert(!ble::is_auth_refusal(not_error));
+  assert(!ble::is_auth_refusal(std::span<const std::uint8_t>{}));
+}
 } // namespace
 
 int main() {
@@ -566,6 +657,9 @@ int main() {
   test_classify_close();
   test_stall_close();
   test_flag_watch();
+  test_stale_flag_secure_link_is_served();
+  test_insecure_link_gets_visible_error_14();
+  test_no_auth_refusal_answers_busy();
   std::printf("ble policy passed\n");
   return 0;
 }
