@@ -55,9 +55,10 @@ jobs:
   host-gate:
     name: Host gate
     runs-on: ubuntu-24.04
-    # The gate takes about one minute warm. Each task has its own 300 s bound
-    # in tools/gate.sh, so this only catches a stall outside the gate.
-    timeout-minutes: 15
+    # The gate takes about 6.5 min on ubuntu-24.04, almost 5 of them in
+    # logger-directory-test under ASan. Each task has its own 600 s bound in
+    # tools/gate.sh, so this only catches a stall outside the gate.
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -76,7 +77,7 @@ jobs:
           pixi run clang-format --version
           pixi run cppcheck --version
       - name: Run host gate
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: pixi run gate --keep-going
 
   board-build:

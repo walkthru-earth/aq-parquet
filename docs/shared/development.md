@@ -146,7 +146,7 @@ and by hand from the Actions tab (`workflow_dispatch`).
   commands locally before changing a workflow.
 - **Host gate** runs `pixi run gate --keep-going` on Ubuntu with the locked
   Pixi environment. Each task runs under GNU `timeout` from the Pixi
-  `coreutils` pin, 300 s by default (`AQ_GATE_TASK_TIMEOUT` overrides it), and
+  `coreutils` pin, 600 s by default (`AQ_GATE_TASK_TIMEOUT` overrides it), and
   a stalled task is reported as `TIMEOUT` by name in the gate summary. The
   gate refuses to start when a `*-test` task in `pixi.toml` is missing from its
   list, except the two SDK fixtures the board job runs.
