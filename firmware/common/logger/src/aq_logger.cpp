@@ -2306,6 +2306,9 @@ bool path_within(const char *path, const char *root) {
 std::atomic<bool> wdt_armed{false};
 std::atomic<bool> wdt_cleared{false};
 std::atomic<bool> wdt_recovered{false};
+// The guard's count as the supervisor last left it. The guard itself belongs
+// to the supervisor timer, so poll() reads this copy instead.
+std::atomic<std::uint32_t> wdt_consecutive{0};
 watchdog::Supervisor wdt_supervisor;
 
 // The task watchdog has one global config shared with the idle tasks and any
@@ -2386,6 +2389,7 @@ void supervise_worker(void *) {
       wdt_supervisor, stall_guard, twdt, esp_timer_get_time(),
       worker_heartbeat_us.load(), CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S,
       CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S, kTaskWdtPanic);
+  wdt_consecutive = stall_guard.consecutive;
   if (result.cleared)
     wdt_cleared = true;
   if (result.recovered)
@@ -2401,8 +2405,9 @@ void start_worker_watchdog() {
   auto boot = watchdog::prepare(wdt_supervisor, stall_guard, twdt, timer,
                                 esp_reset_reason() == ESP_RST_TASK_WDT,
                                 esp_timer_get_time());
-  // Read before the timer runs. After launch() the guard belongs to it.
+  // Published before the timer runs. After launch() the guard belongs to it.
   const std::uint32_t consecutive = stall_guard.consecutive;
+  wdt_consecutive = consecutive;
   wdt_armed = boot.armed;
   if (boot.stall_reset)
     aqlog.printf("PARQUET ERROR operation=worker-watchdog-reset "
@@ -2608,7 +2613,7 @@ void poll() {
   if (wdt_recovered.exchange(false))
     aqlog.printf("PARQUET WATCHDOG mode=%s consecutive=%lu reason=recovered\n",
                  watchdog_mode_name(),
-                 static_cast<unsigned long>(stall_guard.consecutive));
+                 static_cast<unsigned long>(wdt_consecutive.load()));
   if (wdt_cleared.exchange(false))
     aqlog.printf("PARQUET WATCHDOG mode=%s consecutive=0 reason=healthy\n",
                  watchdog_mode_name());

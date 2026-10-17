@@ -194,7 +194,8 @@ writes nothing looking alive.
   runs that same code with a fake clock and a fake task watchdog that keeps the
   IDF feed rule, where the timer is fed only once every entry, the two idle
   tasks included, has reset. `pixi run logger-work-queue-test` keeps the guard
-  and expiry cases. A forced stall on a bench board is still required
+  and expiry cases. The count `poll()` logs is a copy the supervisor publishes
+  each tick, since the guard belongs to the supervisor timer. A forced stall on a bench board is still required
   before claiming the reset, recovery and core dump on hardware.
 
 Read a saved core dump with `tools/idf.sh -C <trial> -B <build dir>
