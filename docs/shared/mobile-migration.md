@@ -8,6 +8,24 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## BLE auth refusal answers ERROR 14 (fix/51-ble-auth-state)
+
+**What changed.** On some bonded reconnects the board never saw the encryption
+event, so its cached "authenticated" flag stayed false while the link was in
+fact encrypted. The first `LIST` after such a reconnect was refused with
+`ERROR` 7 and that `ERROR` was dropped too, so the app saw nothing. The board
+now reads NimBLE's live security state, so that `LIST` is served. A Control
+write on a link that really is not encrypted and authenticated now gets a
+visible `ERROR` with code 14 and `detail="auth"`. Code 7 now only means busy.
+Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
+via=access`, `via=connect` or `via=subscribe` when the board learns the link
+is secure without the encryption event. No frame layout changed.
+
+**Why.** Issue #51, a reconnect looked like a hung sync.
+
+**What the app must do.** Treat `ERROR` 14 on BLE as "pair again", the same
+as a bad LAN token. Never retry it as busy. Keep retrying 7 as before.
+
 ## ABORT stops a LIST within one step (fix/33-abort-list-walk)
 
 **What changed.** The device walks the card for `LIST` in steps of at most 32
