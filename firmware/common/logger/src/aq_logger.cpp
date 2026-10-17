@@ -1565,9 +1565,8 @@ aqsync::ArchiveSession archive_session(
      [](void *, ble::Link link, std::uint8_t peer, std::uint32_t generation,
         const std::uint8_t *frame, std::size_t length) {
        // A due critical battery close stops a READ at its next CHUNK with
-       // READ_END busy. A LIST already stopped on the session's preempted
-       // hook, so this only catches a close that fell due in between, and
-       // the session still reports it as preempted.
+       // READ_END busy. LIST frames pass, since the session's preempted
+       // hook already ends the job before each FILE.
        if (power::refuses_frame(emergency_close, frame, length, uptime_ms()))
          return false;
        return link == ble::Link::Lan
@@ -1885,6 +1884,9 @@ void flush_batch(std::size_t &count, bool &storage_ready) {
 // file finalized during the attempt, including one the storage probe closed.
 void service_emergency_close(std::size_t &count, bool &storage_ready) {
   const auto now = uptime_ms();
+  // A due close first ends a running LIST with ERROR busy "preempted", so
+  // its Retry remount never answers a live walk with ERROR storage.
+  listjob::preempt_for_close(archive_session, emergency_close, now);
   const std::uint32_t finalized_before = finalized.load();
   CloseStorage storage{count, storage_ready};
   const auto pass = power::service(emergency_close, storage, now);

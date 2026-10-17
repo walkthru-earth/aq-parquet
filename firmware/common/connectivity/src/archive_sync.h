@@ -71,7 +71,8 @@ struct ArchiveHooks {
   // Optional, read only. True while the storage owner needs the worker for
   // something more urgent, for example a critical battery close. A running
   // LIST job then ends with ERROR busy "preempted" before its next directory
-  // read or FILE frame. Must not consume the request it reports.
+  // read or FILE frame, and a new LIST gets the same reply at once. Must not
+  // consume the request it reports.
   bool (*preempted)(void *) = nullptr;
 };
 
@@ -147,11 +148,17 @@ public:
   // Drops every logical handle and closes its descriptor. Ends a LIST job
   // with ERROR storage.
   void close();
+  // Ends a running LIST job with ERROR busy "preempted", or ERROR aborted
+  // when an ABORT is already pending, and closes its walk. The worker calls
+  // it before a critical battery close so the close never remounts under a
+  // live walk. No frame when the job's peer left.
+  void preempt_list();
   // Closes descriptors but keeps logical handles. The next READ reopens the
   // path without checking it again, so the card must stay mounted.
   void release_files();
-  // Call before a storage remount. Ends a LIST job with ERROR storage, since
-  // its open directories cannot outlive the mount. Like release_files(), but
+  // Call before a storage remount. Ends a LIST job with ERROR busy
+  // "remount", since its open directories cannot outlive the mount and the
+  // client should simply retry. Like release_files(), but
   // the card may be edited or swapped meanwhile, so the next READ on each
   // handle runs the finalized check again. Same size and CRC keep the handle. A
   // different file, or a missing or no longer finalized one on the mounted
@@ -228,7 +235,8 @@ private:
   void serve(const abort::Tag &tag);
   bool list_connected() const;
   void finish_list(ListStatus status);
-  void cancel_list(bool notify);
+  void cancel_list(bool notify, ble::Error code = ble::kErrStorage,
+                   const char *detail = nullptr);
   void open(const std::uint8_t *name_bytes, std::size_t name_length);
   void read(std::uint16_t file_handle, std::uint32_t offset,
             std::uint32_t length);

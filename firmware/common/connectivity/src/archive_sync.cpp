@@ -132,7 +132,8 @@ void ArchiveSession::release_files() {
 }
 
 void ArchiveSession::remounted() {
-  cancel_list(true);
+  // A remount is transient, so the LIST ends busy and the client retries.
+  cancel_list(true, ble::kErrBusy, "remount");
   mounted_ = false;
   for (auto &opened : open_) {
     release(opened);
@@ -266,9 +267,10 @@ bool ArchiveSession::must_wait_for_list(
   return request.link == list_.tag.link && request.peer == list_.tag.peer;
 }
 
-// Ends the job outside step(), for an erase or a remount. The request being
-// served, if any, keeps its reply route.
-void ArchiveSession::cancel_list(bool notify) {
+// Ends the job outside step(), for an erase, a remount or a preemption. The
+// request being served, if any, keeps its reply route.
+void ArchiveSession::cancel_list(bool notify, ble::Error code,
+                                 const char *detail) {
   if (!list_.active)
     return;
   if (list_.begun && archive_.list_cancel)
@@ -284,13 +286,42 @@ void ArchiveSession::cancel_list(bool notify) {
   serve(list_.tag);
   if (archive_.log) {
     char line[96];
-    std::snprintf(line, sizeof(line),
-                  "LIST ABORT link=%s after=%lu reason=%s\n",
-                  request_link_ == ble::Link::Lan ? "lan" : "ble",
-                  static_cast<unsigned long>(list_.count), "storage");
+    std::snprintf(
+        line, sizeof(line), "LIST ABORT link=%s after=%lu reason=%s\n",
+        request_link_ == ble::Link::Lan ? "lan" : "ble",
+        static_cast<unsigned long>(list_.count), detail ? detail : "storage");
     archive_.log(archive_.context, line);
   }
-  error(ble::kOpList, ble::kErrStorage);
+  error(ble::kOpList, code,
+        detail && payload_max() >= 3 + std::strlen(detail) ? detail : nullptr);
+  request_link_ = link;
+  request_peer_ = peer;
+  request_generation_ = generation;
+  request_tag_ = tag;
+  request_ = request ? &request_tag_ : nullptr;
+}
+
+void ArchiveSession::preempt_list() {
+  if (!list_.active)
+    return;
+  // Called between requests, but keep any reply route like cancel_list().
+  const auto link = request_link_;
+  const auto peer = request_peer_;
+  const auto generation = request_generation_;
+  const auto *request = request_;
+  const auto tag = request_tag_;
+  serve(list_.tag);
+  if (!list_connected()) {
+    cancel_list(false);
+  } else {
+    // A pending ABORT still wins, as in should_stop().
+    if (aborted())
+      list_.aborted = true;
+    else
+      list_.failure_detail = "preempted";
+    list_.ok = false;
+    finish_list(ListStatus::Stopped);
+  }
   request_link_ = link;
   request_peer_ = peer;
   request_generation_ = generation;
@@ -609,8 +640,11 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
     if (!storage_ready) {
       error(op, ble::kErrStorage);
     } else if (list_.active) {
-      // The worker holds a second LIST back until the first ends.
+      // One LIST runs at a time. Only the job's own peer waits for it.
       error(op, ble::kErrBusy, payload_max() >= 7 ? "list" : nullptr);
+    } else if (archive_.preempted && archive_.preempted(archive_.context)) {
+      // A close is already due, so the job would end on its first step.
+      error(op, ble::kErrBusy, payload_max() >= 12 ? "preempted" : nullptr);
     } else {
       // step() walks it, one bounded step per worker pass.
       list_ = ListJob{};

@@ -246,8 +246,10 @@ struct Fixture {
         },
         [](void *ctx) {
           const auto &f = *static_cast<Fixture *>(ctx);
+          // The firmware hook reads the battery close, as the gate does.
           return f.preempt ||
-                 (f.preempt_frame && f.frames.size() >= f.preempt_frame);
+                 (f.preempt_frame && f.frames.size() >= f.preempt_frame) ||
+                 (f.close && f.close->preempt(0));
         }};
   }
   aqsync::ArchiveTransport transport() {
@@ -1117,10 +1119,10 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   assert(!session.listing() && !f.list_open && f.list_cancels == 1);
   assert(f.frames.size() == sent && f.errors.empty());
 
-  // A step without storage, a remount and an erase end the job with ERROR
-  // storage and close the walk. The worker passes storage_ready false only
-  // around a failed remount, so in practice all three are a remount or an
-  // erase.
+  // A step without storage and an erase end the job with ERROR storage, a
+  // remount with ERROR busy "remount" since it is transient. Each closes the
+  // walk. The worker passes storage_ready false only around a failed
+  // remount.
   for (int cause = 0; cause < 3; ++cause) {
     f.clear();
     session.handle(request(f, ble::kOpList), true);
@@ -1135,9 +1137,13 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
     if (cause == 1)
       session.mounted();
     assert(!session.listing() && !f.list_open);
-    assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrStorage &&
-           f.errors[0].op == ble::kOpList &&
+    assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpList &&
            f.errors[0].link == ble::Link::Ble);
+    if (cause == 1)
+      assert(f.errors[0].code == ble::kErrBusy &&
+             f.errors[0].detail == "remount");
+    else
+      assert(f.errors[0].code == ble::kErrStorage);
   }
   f.list_repeats = 1;
   reset_abort();
@@ -1221,8 +1227,8 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
            StoragePass::Probe);
   }
 
-  // The same governor without the planner's deferral ends the walk with
-  // ERROR storage, which is what the deferral prevents.
+  // The same remount without the planner's deferral ends the walk with
+  // ERROR busy "remount", which is what the deferral prevents.
   {
     f.clear();
     f.list_repeats = 4 * kStep;
@@ -1231,11 +1237,12 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
     session.remounted();
     session.mounted();
     assert(!session.listing() && f.errors.size() == 1 &&
-           f.errors[0].code == ble::kErrStorage);
+           f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].detail == "remount");
   }
 
-  // A Retry probe due mid LIST keeps the mount. An owner action, the
-  // emergency close among them, still remounts and may end the job.
+  // A Retry probe due mid LIST keeps the mount. An owner action such as
+  // FLUSH still remounts and ends the job with ERROR busy "remount".
   {
     f.clear();
     f.list_repeats = 4 * kStep;
@@ -1257,7 +1264,8 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
     card.governor.request_probe();
     assert(card.pass(session, 13, true) == StoragePass::Probe);
     assert(!session.listing() && f.errors.size() == 1 &&
-           f.errors[0].code == ble::kErrStorage && !card.planner.deferred());
+           f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].detail == "remount" && !card.planner.deferred());
   }
 
   // A Retry card whose kept probe failed again remounts as soon as the job
@@ -1287,6 +1295,61 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
     in = listjob::StorageInputs{};
     in.can_probe = in.remount = in.files_closed = true;
     assert(planner.next(in) == StoragePass::Idle && !planner.deferred());
+  }
+
+  // A critical battery close that falls due between steps. The worker's
+  // close pass first ends the job with ERROR busy "preempted", then the
+  // close attempt runs its Retry remount with the walk's directories
+  // already closed, so the phone never sees ERROR storage.
+  {
+    struct CloseCard {
+      Fixture &f;
+      aqsync::ArchiveSession &session;
+      unsigned remounts = 0;
+      bool has_data() const { return true; }
+      bool writable() {
+        assert(!f.list_open && !session.listing());
+        ++remounts;
+        session.remounted();
+        session.mounted();
+        return true;
+      }
+      bool finalize() { return true; }
+    };
+    aqlogger::power::EmergencyClose close;
+    CloseCard card{f, session};
+    f.clear();
+    f.list_repeats = 4 * kStep;
+    f.list_cancels = 0;
+    session.handle(request(f, ble::kOpList, ble::Link::Lan, 1), true);
+    session.step(true);
+    assert(session.listing() && f.list_open);
+    const std::size_t sent = f.frames.size();
+    // Nothing is due, so the pass leaves the job alone.
+    assert(!listjob::preempt_for_close(session, close, 0));
+    assert(!aqlogger::power::service(close, card, 0).attempted);
+    close.request();
+    assert(listjob::preempt_for_close(session, close, 0));
+    const auto pass = aqlogger::power::service(close, card, 0);
+    assert(pass.attempted &&
+           pass.outcome == aqlogger::power::CloseOutcome::Closed);
+    assert(card.remounts == 1 && !f.list_open && f.list_cancels == 1);
+    assert(f.frames.size() == sent && f.errors.size() == 1 &&
+           f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].detail == "preempted" &&
+           f.errors[0].link == ble::Link::Lan && f.errors[0].peer == 1);
+    // An ABORT already pending still wins over the close.
+    f.clear();
+    session.handle(request(f, ble::kOpList), true);
+    session.step(true);
+    stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+    close.request();
+    assert(listjob::preempt_for_close(session, close, 0));
+    assert(!session.listing() && f.errors.size() == 1 &&
+           f.errors[0].code == ble::kErrAborted);
+    reset_abort();
+    assert(close.due(0));
+    close.finish(aqlogger::power::CloseOutcome::Closed, 0);
   }
 
   // The queue glue. A request the job holds parks outside the queue, so an
@@ -1443,8 +1506,9 @@ int main(int argc, char **argv) {
          f.frames.back().bytes.size() == 15 &&
          get_u32(f.frames.back().bytes.data() + 1) == 70000);
   f.list_repeats = 1;
-  // A critical battery close raised mid LIST stops it at the next FILE
-  // through the logger's gate, with the same terminal ERROR busy. The worker
+  // A critical battery close raised mid LIST stops it before the next FILE
+  // through the session's preempted hook with ERROR busy "preempted". The
+  // gate passes FILE frames and refuses only READ CHUNK frames. The worker
   // runs the close, then a retried LIST completes.
   {
     aqlogger::power::EmergencyClose close;
@@ -1453,11 +1517,17 @@ int main(int argc, char **argv) {
     f.close = &close;
     f.raise_close_after = 1;
     serve(session, request(f, ble::kOpList, ble::Link::Lan), true);
-    assert(f.frames.size() == 1 && f.frames[0].bytes[0] == ble::kFrameFile);
+    assert(f.frames.size() == 2 && f.frames[1].bytes[0] == ble::kFrameFile);
     assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpList &&
            f.errors[0].code == ble::kErrBusy &&
-           f.errors[0].detail == "refused" &&
+           f.errors[0].detail == "preempted" &&
            f.errors[0].link == ble::Link::Lan);
+    // A LIST while the close is still due is answered at once, no job.
+    f.clear();
+    serve(session, request(f, ble::kOpList), true);
+    assert(!session.listing() && f.frames.empty() && f.errors.size() == 1 &&
+           f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].detail == "preempted");
     const unsigned listed_before = f.listed;
     assert(close.due(0) && close.finish(aqlogger::power::CloseOutcome::Closed,
                                         0) == aqlogger::power::Next::Done);

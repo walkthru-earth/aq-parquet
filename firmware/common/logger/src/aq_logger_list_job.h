@@ -28,14 +28,15 @@ struct StorageInputs {
   bool owner = false;        // an owner action or the emergency close asked
 };
 
-// A remount ends a running LIST job with ERROR 8, because every directory
-// handle of the walk dies with the mount. A Full card is remounted every
-// recheck so space freed on a PC shows up, and that would end every walk
+// A remount ends a running LIST job with ERROR busy "remount", because every
+// directory handle of the walk dies with the mount. A Full card is remounted
+// every recheck so space freed on a PC shows up, and that would end every walk
 // longer than the recheck period. So periodic remounts wait for the job. A
 // Full card gets the plain free space recheck meanwhile, and a Retry card a
 // probe that keeps the mount and still proves a write. The skipped remount
-// runs on the first pass after the job ends. An owner action, the emergency
-// close among them, still remounts at once and may end the job.
+// runs on the first pass after the job ends. An owner action, such as FLUSH
+// or a config change, still remounts at once and may end the job. The
+// emergency close ends the job first (preempt_for_close below).
 class StoragePlanner {
 public:
   StoragePass next(const StorageInputs &in) {
@@ -109,6 +110,21 @@ inline Take take(bool listing, bool parked, bool has_head,
 // (archive_files.h). `parquet get` opens one file by name and is not one.
 inline bool serial_walks_archive(const char *text) {
   return text && std::strcmp(text, "parquet list") == 0;
+}
+
+// Before a critical battery close attempt. The attempt may remount the card
+// in Retry, and a remount would end a running LIST with ERROR busy
+// "remount". The job ends first with ERROR busy "preempted" and its walk
+// closes, so the close runs with no directory open. `Close` is
+// power::EmergencyClose and `Session` is aqsync::ArchiveSession. True when
+// a job was ended.
+template <class Session, class Close>
+bool preempt_for_close(Session &session, const Close &close,
+                       std::int64_t now_ms) {
+  if (!session.listing() || !close.preempt(now_ms))
+    return false;
+  session.preempt_list();
+  return true;
 }
 
 } // namespace aqlogger::listjob

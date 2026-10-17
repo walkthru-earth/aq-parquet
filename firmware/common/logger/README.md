@@ -217,7 +217,10 @@ remounts wait for the job, so a full card is measured without a remount and
 a card in Retry is probed without one, and the skipped remount runs after the
 job. One request from the job's own link and peer waits in a parked slot
 outside the command queue, so requests from other links behind it still run.
-Serial `parquet list` is refused while the job runs.
+Serial `parquet list` is refused while the job runs. A due critical battery
+close first ends a running job with ERROR busy "preempted"
+(`preempt_for_close`), so the close's Retry remount never reaches a live
+walk.
 
 ## Worker watchdog
 
