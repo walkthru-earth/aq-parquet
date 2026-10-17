@@ -237,7 +237,9 @@ async def run_auth_refused():
     # backend raises before any ERROR frame. Same hint, still one write.
     for wording in ("Insufficient Authentication", "Authentication is insufficient.",
                     "Protocol Error 0x05: Insufficient Authentication",
-                    "Protocol Error 0x0C: Insufficient Encryption Key Size"):
+                    "Protocol Error 0x0C: Insufficient Encryption Key Size",
+                    "Protocol Error 0x0F: Insufficient Encryption",
+                    "Insufficient encryption"):
         client = FakeClient(att_error=RuntimeError(wording))
         session = ble.Session(client)
         await session.start()
@@ -249,15 +251,18 @@ async def run_auth_refused():
             raise AssertionError("ATT auth refusal must raise")
         assert client.writes == 1, client.writes
     # Any other backend failure passes through unchanged.
-    client = FakeClient(att_error=OSError("adapter gone"))
-    session = ble.Session(client)
-    await session.start()
-    try:
-        await session.list_files()
-    except ble.ProtocolError:
-        raise AssertionError("a non auth write error must not be mapped")
-    except OSError:
-        pass
+    for other in (OSError("adapter gone"),
+                  RuntimeError("Protocol Error 0x08: Insufficient Authorization"),
+                  RuntimeError("[org.bluez.Error.NotAuthorized] Not authorized")):
+        client = FakeClient(att_error=other)
+        session = ble.Session(client)
+        await session.start()
+        try:
+            await session.list_files()
+        except ble.ProtocolError:
+            raise AssertionError(f"{other!r} must not be mapped")
+        except (OSError, RuntimeError):
+            pass
     print("PASS ble_sync ATT auth refusal: mapped to the pairing hint, other write errors untouched")
 
 

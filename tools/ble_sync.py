@@ -73,10 +73,11 @@ ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed
 # only the firmware's fallback if its check and NimBLE's ever disagree.
 ERROR_HINTS = {14: "the link is not authenticated. Pair the device again, or for LAN fetch a new token over BLE"}
 # Backend wording for an ATT Insufficient Authentication (0x05), Encryption
-# Key Size (0x0C) or Encryption (0x0F) write error. BlueZ, CoreBluetooth and WinRT each phrase it their way.
+# Key Size (0x0C) or Encryption (0x0F) write error. BlueZ may only say "Not
+# paired". Insufficient Authorization (0x08) is a different refusal. BlueZ, CoreBluetooth and WinRT each phrase it their way.
 ATT_AUTH_REFUSAL = re.compile(
     r"insufficient (authentication|encryption)|(authentication|encryption) is insufficient"
-    r"|notauthorized|not authorized|protocol error 0x0?[5cf]\b",
+    r"|not paired|protocol error 0x0?[5cf]\b",
     re.IGNORECASE)
 # Protocol 3 typed disconnect reasons (BYE, DIAG events, STATUS `dr`).
 DISCONNECT_REASONS = ["unknown", "idle-timeout", "handshake-timeout", "auth-failed",
