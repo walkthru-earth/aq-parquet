@@ -204,34 +204,54 @@ jobs:
           pixi run idf -C "${PROJECT}" -B "${PROJECT}/build/${VARIANT}" \
             size --format json2 --output-file "${PWD}/size/size.json"
           cp "${PROJECT}/build/${VARIANT}/aq-build-sha256.json" size/
-      - name: Fetch main size baseline
+      - name: Fetch size baseline
+        id: baseline
         if: matrix.project
         env:
           GH_TOKEN: ${{ github.token }}
           NAME: ${{ matrix.name }}
+          # Empty outside pull requests.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # The delta is optional, so an API error must not fail a green build.
-          # Pushes and manual runs on main both count. Filtering on the event
-          # keeps out a fork pull request whose head branch is also named main.
-          run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
-            --branch main --status success --limit 20 --json databaseId,event \
-            --jq 'map(select(.event == "push" or .event == "workflow_dispatch"))
-              | .[0].databaseId // empty' || true)"
+          # Pushes and manual runs both count. Filtering on the event keeps out
+          # a fork pull request whose head branch is also named main.
+          events='map(select(.event == "push" or .event == "workflow_dispatch"))'
+          run_id="" sha="" from=""
+          # Prefer the run for the commit this pull request is based on, so the
+          # delta shows only this change. Fall back to the newest green main run.
+          if [[ -n "${BASE_SHA}" ]]; then
+            run_id="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+              --commit "${BASE_SHA}" --status success --limit 20 --json databaseId,event \
+              --jq "${events} | .[0].databaseId // empty" || true)"
+            from="pull request base ${BASE_SHA:0:12}"
+            if [[ -z "${run_id}" ]]; then
+              echo "No green run for the pull request base ${BASE_SHA:0:12}"
+            fi
+          fi
+          if [[ -z "${run_id}" ]]; then
+            read -r run_id sha < <(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci.yml \
+              --branch main --status success --limit 20 --json databaseId,event,headSha \
+              --jq "${events} | .[0] // empty | \"\\(.databaseId) \\(.headSha)\"" || true) || true
+            from="newest green main build ${sha:0:12}"
+          fi
           if [[ -n "${run_id}" ]] && gh run download "${run_id}" --repo "${GITHUB_REPOSITORY}" \
               --name "size-${NAME}" --dir baseline; then
-            echo "Baseline from main run ${run_id}"
+            echo "Size baseline is the ${from}, run ${run_id}"
+            echo "from=${from}, run ${run_id}" >> "$GITHUB_OUTPUT"
           else
-            echo "No main baseline available"
+            echo "No size baseline available"
           fi
       - name: Write size summary
         if: matrix.project
         env:
           NAME: ${{ matrix.name }}
           VARIANT: ${{ matrix.variant }}
+          BASELINE_FROM: ${{ steps.baseline.outputs.from }}
         run: |
           baseline=()
           if [[ -f baseline/size.json ]]; then
-            baseline=(--baseline baseline/size.json)
+            baseline=(--baseline baseline/size.json --baseline-from "${BASELINE_FROM}")
           fi
           pixi run python tools/size_report.py --label "${NAME} (${VARIANT})" \
             size/size.json ${baseline[@]+"${baseline[@]}"} >> "$GITHUB_STEP_SUMMARY"
@@ -242,4 +262,37 @@ jobs:
           name: size-${{ matrix.name }}
           path: size/
           if-no-files-found: error
-          retention-days: 90
+          # Main builds are size baselines for later pull requests.
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+      # The ELF and map decode a crash backtrace or explain a size change, and
+      # flash_args records the offsets of the image that was built. Provisioning
+      # data and owner secrets live in NVS on the device, never in the build.
+      - name: Upload firmware symbols
+        if: matrix.project
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: firmware-${{ matrix.name }}
+          path: |
+            ${{ matrix.project }}/build/${{ matrix.variant }}/*.elf
+            ${{ matrix.project }}/build/${{ matrix.variant }}/*.map
+            ${{ matrix.project }}/build/${{ matrix.variant }}/flash_args
+          if-no-files-found: error
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+
+  # The one required status check. It fails unless every job above passed or
+  # was skipped, so adding, renaming or splitting a job never needs a ruleset
+  # change. A cancelled or timed out job counts as a failure.
+  ci-result:
+    name: CI result
+    if: always()
+    needs: [workflow-lint, host-gate, board-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check every job result
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key) \(.value.result)"' <<<"${NEEDS}"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"${NEEDS}" >/dev/null
