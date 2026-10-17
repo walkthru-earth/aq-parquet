@@ -1,7 +1,7 @@
 # Mobile app migration notes
 
-The firmware does not keep backward compatibility with older file schemas,
-protocol shapes or companion app builds. Each section below records one change
+Companion app builds may break. Released firmware wire contracts stay readable,
+because boards in the field keep speaking them. Each section below records one change
 the Android and iOS apps (opensensor-space-mobile) can observe, newest first,
 with what changed, why, and what the app must do. The wire contract itself
 lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone

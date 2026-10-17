@@ -52,31 +52,37 @@ file in `docs/README.md` after this one.
   sample/file and split on changes. Never relabel finalized files.
 - Bench claims require dated board evidence with image identity and limits.
   Host tests do not prove SD, radio coexistence or power-cut durability.
-- Only ESP32-S3 on ESP-IDF 6.1 is verified. Do not claim C3, C6, P4 or other
-  chips in READMEs, manifests or Kconfig until a connected board passes the
-  flash checklist below and a dated bench capture.
-- The writer workspace requires PSRAM. Do not add an internal RAM fallback, it
-  cannot fit next to Wi-Fi and NimBLE. Keep the PSRAM allocation failure
-  loud. The logger prints `PARQUET ERROR operation=allocate mem=psram
-  bytes=N purpose=writer-state logging=false` and stops logging. Any long storage-worker walk (erase, quarantine,
-  remount, free-space scan) must stamp the worker heartbeat so the stall check
-  and task watchdog do not misread healthy work.
+- Only ESP32-S3 on the ESP-IDF pinned in `tools/idf-dependencies.lock` is
+  verified. Do not claim C3, C6, P4 or other chips in READMEs, manifests or
+  Kconfig until a board of that chip has completed the flash checklist below
+  and has a dated bench record.
+- The writer workspace lives in PSRAM with no internal RAM fallback, it cannot
+  fit next to Wi-Fi and NimBLE. A failed allocation prints
+  `PARQUET ERROR operation=allocate mem=psram bytes=N purpose=writer-state
+  logging=false` and stops logging. Worker heartbeat and watchdog rules live in
+  `firmware/common/logger/AGENTS.md`.
 
 ## Compatibility, licensing and reviews
 
-- Phone side code may break freely. Firmware keeps every released wire
-  contract readable for boards already in the field. A new LIVE key set, column
-  set or field order always gets a new dictionary digest, and a digest is never
-  reused for a different key set. Every change the phone can observe (columns,
-  units, field ids, LIVE keys, log lines, versions, digests) gets a newest-first
-  entry in `docs/shared/mobile-migration.md` saying what changed, why, and what
-  the app must do. Bump schema, dictionary and firmware identity strings
-  together.
+- Phone side code may break freely. Never change what a released wire contract
+  means, because boards in the field keep sending it and the phone must still
+  read it. Any change to LIVE keys, columns or field order ships under a new
+  dictionary digest, and a digest is never reused for a different key set. Keep
+  every `live_key` in the board `telemetry_fields.inc` so the digest covers it.
+- Every change the phone can observe (columns, units, field ids, LIVE keys, log
+  lines, versions, digests) gets a newest-first entry in
+  `docs/shared/mobile-migration.md` saying what changed, why, and what the app
+  must do. Bump only the identity strings the change touches. The dictionary
+  string and digest move when `telemetry_fields.inc` changes. The schema string
+  moves when columns, types or annotations change. The firmware identity moves
+  with each release image.
 - Parquet columns keep stable `field_id` values (1-based position in the board
-  `telemetry_fields.inc`, append only) and UTC uses `TIMESTAMP(MICROS, UTC)`
-  so files register in Iceberg v3 tables without rewrites. Do not switch UTC
-  to NANOS. It maps only to v3 `timestamptz_ns`, which most engines cannot
-  read. See `docs/shared/mobile-migration.md`.
+  `telemetry_fields.inc`. Append only, never reorder, remove or reuse a
+  position). Parquet UTC columns (`*_utc_us`) use `TIMESTAMP(MICROS, UTC)` so
+  files register in Iceberg v3 tables without rewrites. Do not switch them to
+  NANOS, which maps only to v3 `timestamptz_ns` that Spark, Athena and Redshift
+  cannot read. LIVE `utc` and the footer `reconciliation_anchor_utc_ns` stay
+  nanoseconds.
 - Our code is CC-BY-4.0 with Walkthru.Earth attribution. Third-party code keeps
   its own LICENSE, NOTICE and headers. When a dependency, vendored file or
   pinned version changes, update `THIRD_PARTY_NOTICES.md` from the linker maps.
@@ -84,9 +90,10 @@ file in `docs/README.md` after this one.
 - Every PR gets a CodeRabbit review. Validate each inline comment against the
   code, fix it or explain why not, reply in that comment's thread and resolve
   it before merging. CodeRabbit skips draft PRs, so comment
-  `@coderabbitai review` on them. Commit per major step and post progress on
-  the tracking issue.
-- No em dashes in docs, commits, PR text or replies.
+  `@coderabbitai review` once. If it is rate limited, wait for the window, ask
+  once more, and note the gap on the PR. Commit per major step and post
+  progress on the tracking issue.
+- No em dashes in new or edited docs, commits, PR text or replies.
 
 ## Before any physical flash write
 
