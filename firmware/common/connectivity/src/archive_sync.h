@@ -76,12 +76,12 @@ struct ArchiveTransport {
 
 // Independent immutable logical file handles for BLE and each LAN peer, bound
 // to their connection generations. Each open handle keeps one read-only FILE
-// until CLOSE, a re-OPEN on its slot, a generation change, close() or
-// release_files(), so READ windows seek instead of reopening. The mount must
-// budget kReadHandles descriptors for these slots (archive_files.h).
-// Construct once, then call exclusively from the storage worker that owns the
-// archive. Radio callbacks must
-// enqueue ControlRequest copies; they must never call this class directly.
+// until CLOSE, a re-OPEN on its slot, a generation change, close(),
+// release_files() or remounted(), so READ windows seek instead of reopening.
+// The mount must budget kReadHandles descriptors for these slots
+// (archive_files.h). Construct once, then call exclusively from the storage
+// worker that owns the archive. Radio callbacks must enqueue ControlRequest
+// copies; they must never call this class directly.
 class ArchiveSession {
 public:
   static constexpr std::size_t kReadHandles = 1 + ble::kMaxLanClients;
@@ -100,8 +100,13 @@ public:
   // Drops every logical handle and closes its descriptor.
   void close();
   // Closes descriptors but keeps logical handles. The next READ reopens the
-  // path. Call before a storage remount.
+  // path without checking it again, so the card must stay mounted.
   void release_files();
+  // Call before a storage remount. Like release_files(), but the card may be
+  // edited or swapped meanwhile, so the next READ on each handle runs the
+  // finalized check again. Same size and CRC keep the handle. Anything else
+  // drops it and READ answers ERROR bad handle.
+  void remounted();
 
 private:
   struct OpenFile {
@@ -111,6 +116,8 @@ private:
     std::uint32_t size = 0;
     std::uint32_t crc = 0;
     std::uint32_t generation = 0;
+    // Set by remounted(). The next reopen must match size and crc.
+    bool verify = false;
   };
   struct ListContext {
     ArchiveSession *session;
@@ -136,6 +143,7 @@ private:
   std::size_t slot() const;
   OpenFile &file();
   void release(OpenFile &opened);
+  bool reverify(OpenFile &opened);
   FILE *open_input(const char *path, std::size_t slot, int &failure);
   void close_current();
   std::size_t payload_max() const;

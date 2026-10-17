@@ -116,6 +116,31 @@ void ArchiveSession::release_files() {
     release(opened);
 }
 
+void ArchiveSession::remounted() {
+  for (auto &opened : open_) {
+    release(opened);
+    if (opened.handle)
+      opened.verify = true;
+  }
+}
+
+// Runs on the stream read() just reopened, still at offset 0. A handle names
+// the bytes OPENED described, never whatever now sits at its path.
+bool ArchiveSession::reverify(OpenFile &opened) {
+  FileCheck check;
+  const bool same =
+      archive_.finalized(archive_.context, opened.path, opened.file, check) &&
+      check.size == opened.size && check.crc == opened.crc;
+  if (archive_.log) {
+    char line[80];
+    std::snprintf(line, sizeof(line), "BLE READ RECHECK handle=%u same=%d\n",
+                  unsigned(opened.handle), same ? 1 : 0);
+    archive_.log(archive_.context, line);
+  }
+  opened.verify = !same;
+  return same;
+}
+
 void ArchiveSession::reconcile() {
   for (std::size_t i = 0; i < open_.size(); ++i) {
     auto &opened = open_[i];
@@ -327,11 +352,18 @@ void ArchiveSession::read(std::uint16_t file_handle, std::uint32_t offset,
   const std::size_t chunk_max =
       max_payload - 7 > kChunkCap ? kChunkCap : max_payload - 7;
   // Only the storage worker accesses files. The handle's descriptor stays
-  // open across READ windows. After release_files() or a read failure the
-  // path is reopened here.
+  // open across READ windows. After release_files(), remounted() or a read
+  // failure the path is reopened here. After a remount the reopened file must
+  // still be the one OPENED described, or the handle is gone.
   if (!opened.file) {
     int failure = 0;
     opened.file = open_input(opened.path, slot(), failure);
+    if (opened.verify &&
+        (opened.file ? !reverify(opened) : failure == ENOENT)) {
+      close_current();
+      error(ble::kOpRead, ble::kErrBadHandle);
+      return;
+    }
   }
   bool seek_ok = false;
   if (opened.file) {

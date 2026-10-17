@@ -1631,7 +1631,7 @@ void probe_storage(std::size_t &count, bool &storage_ready) {
     finalize_file(writer_state->telemetry);
   if (ok && hooks.storage_remount && files_closed()) {
     // A remount may follow an external card edit, so cached CRCs go too.
-    archive_session.release_files();
+    archive_session.remounted();
     writer_state->crc_cache.clear();
     stamp_heartbeat();
     {

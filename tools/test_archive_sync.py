@@ -29,7 +29,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable), directory], check=True)
-    print("Shared BLE/LAN archive framing, bounds, generations, ABORT of LIST and READ, stale markers, 70000-entry u32 LIST_END, persistent read descriptors, lazy reopen, EMFILE and read-only tests passed")
+    print("Shared BLE/LAN archive framing, bounds, generations, ABORT of LIST and READ, stale markers, 70000-entry u32 LIST_END, persistent read descriptors, lazy reopen, remount recheck, EMFILE and read-only tests passed")
 
 
 if __name__ == "__main__":

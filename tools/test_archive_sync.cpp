@@ -523,6 +523,149 @@ void persistent_cases(Fixture &f, aqsync::ArchiveSession &session,
   session.close();
   assert(descriptor_count() == idle_descriptors);
 }
+// remounted() closes every stream and the next READ on each handle checks
+// the reopened file again. Same bytes keep serving, anything else is
+// ERROR bad handle and the handle is gone.
+void write_file(const std::string &path,
+                const std::vector<std::uint8_t> &data) {
+  FILE *file = std::fopen(path.c_str(), "wb");
+  assert(file);
+  assert(std::fwrite(data.data(), 1, data.size(), file) == data.size());
+  assert(std::fclose(file) == 0);
+}
+std::vector<std::uint8_t> other_parquet(std::size_t size) {
+  std::vector<std::uint8_t> data(size, 0x5a);
+  std::memcpy(data.data(), "PAR1", 4);
+  put_u32(data.data() + size - 8, 32);
+  std::memcpy(data.data() + size - 4, "PAR1", 4);
+  return data;
+}
+void expect_bad_handle_read(Fixture &f, aqsync::ArchiveSession &session,
+                            std::uint16_t handle) {
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpRead);
+  expect_error(f, ble::kErrBadHandle);
+}
+void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
+                   unsigned idle_descriptors) {
+  const std::string path = f.directory + "/sample.parquet";
+  unsigned checks = f.checks;
+
+  // Identical bytes after a remount: one check, then plain descriptor reuse.
+  auto handle = open(f, session);
+  assert(f.checks == ++checks);
+  session.remounted();
+  assert(descriptor_count() == idle_descriptors);
+  f.clear();
+  session.handle(read(f, handle, 100, 3000), true);
+  verify_read(f, handle, 100, 3000, 512);
+  assert(f.checks == ++checks);
+  assert(f.logs.size() == 2 &&
+         f.logs[0].find("BLE READ RECHECK handle=") == 0 &&
+         f.logs[0].find(" same=1") != std::string::npos);
+  f.clear();
+  session.handle(read(f, handle, 5000, 2000), true);
+  verify_read(f, handle, 5000, 2000, 512);
+  assert(f.checks == checks);
+  // A later release_files() on the same mount reopens without a check.
+  session.release_files();
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512);
+  assert(f.checks == checks && descriptor_count() == idle_descriptors + 1);
+
+  // Repeated remounts need one check, and each new remount needs another.
+  // The flag has no counter, so no epoch can wrap back to a match.
+  for (int round = 0; round < 2; ++round) {
+    session.remounted();
+    session.remounted();
+    session.remounted();
+    f.clear();
+    session.handle(read(f, handle, 64, 64), true);
+    verify_read(f, handle, 64, 64, 512);
+    assert(f.checks == ++checks);
+  }
+
+  // A full descriptor table after a remount is a retryable READ_END, and the
+  // check still runs once the file opens again.
+  session.remounted();
+  {
+    DescriptorLimit limit;
+    f.clear();
+    session.handle(read(f, handle, 0, 10), true);
+    assert(f.errors.empty() && f.frames.size() == 1 &&
+           f.frames[0].bytes[0] == ble::kFrameReadEnd &&
+           f.frames[0].bytes[7] == ble::kErrOpenFailed);
+    assert(f.checks == checks);
+  }
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512);
+  assert(f.checks == ++checks);
+
+  // Different bytes and size at the same path drop the handle.
+  session.remounted();
+  write_file(path, other_parquet(f.bytes.size() + 777));
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == ++checks);
+  assert(f.logs.size() == 1 && f.logs[0].find(" same=0") != std::string::npos);
+  assert(descriptor_count() == idle_descriptors);
+  expect_bad_handle_read(f, session, handle); // gone, not retried
+  assert(f.checks == checks);
+  f.clear();
+  auto close_request = request(f, ble::kOpClose);
+  close_request.length = 3;
+  put_u16(close_request.bytes + 1, handle);
+  session.handle(close_request, true);
+  expect_error(f, ble::kErrBadHandle);
+  write_file(path, f.bytes);
+
+  // Same size but different bytes is a CRC mismatch, also bad handle.
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  session.remounted();
+  write_file(path, other_parquet(f.bytes.size()));
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == ++checks);
+  write_file(path, f.bytes);
+
+  // A file that is no longer finalized drops the handle.
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  session.remounted();
+  f.complete = false;
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == ++checks);
+  f.complete = true;
+
+  // A file deleted while the card was out drops the handle without a check.
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  session.remounted();
+  assert(std::remove(path.c_str()) == 0);
+  expect_bad_handle_read(f, session, handle);
+  assert(f.checks == checks && descriptor_count() == idle_descriptors);
+  write_file(path, f.bytes);
+
+  // The other slots are checked independently, a fresh OPEN needs no recheck.
+  const auto lan = open(f, session, ble::Link::Lan, "sample.parquet", 2);
+  handle = open(f, session);
+  checks += 2;
+  session.remounted();
+  handle = open(f, session);
+  assert(f.checks == ++checks);
+  f.clear();
+  session.handle(read(f, handle, 0, 10), true);
+  verify_read(f, handle, 0, 10, 512);
+  assert(f.checks == checks);
+  f.clear();
+  session.handle(read(f, lan, 0, 10, ble::Link::Lan, 2), true);
+  verify_read(f, lan, 0, 10, 1024, ble::Link::Lan, 2);
+  assert(f.checks == ++checks);
+  session.close();
+  assert(descriptor_count() == idle_descriptors);
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -781,6 +924,7 @@ int main(int argc, char **argv) {
   assert(descriptor_count() == idle_descriptors);
 
   persistent_cases(f, session, idle_descriptors);
+  remount_cases(f, session, idle_descriptors);
   abort_cases(f, session);
   session.close();
   assert(descriptor_count() == idle_descriptors);
