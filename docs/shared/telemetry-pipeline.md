@@ -50,7 +50,7 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 
 | Field | Requirement |
 | --- | --- |
-| `schema_version` | Current CoreS3 source (native v6.12): INT32 version 5, file metadata `cores3-telemetry-v5`, 81 columns, `dictionary_version` `cores3-telemetry-v4`, every leaf with Parquet `field_id` = 1-based dictionary position. Native v6.9 to v6.11 wrote version 4 with the same leaves under the old `*_utc_ns` names. Native v6.8 retained historical schema v3/77 columns. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
+| `schema_version` | Current CoreS3 source (native v6.13): INT32 version 5, file metadata `cores3-telemetry-v5`, 81 columns, `dictionary_version` `cores3-telemetry-v5` (v6.12 wrote `cores3-telemetry-v4` with the same columns, v5 adds LIVE keys to the dictionary bytes), every leaf with Parquet `field_id` = 1-based dictionary position. Native v6.9 to v6.11 wrote version 4 with the same leaves under the old `*_utc_ns` names. Native v6.8 retained historical schema v3/77 columns. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
 | `station_id` | UUID generated once and persisted in NVS (`parquet` namespace, `station` key); carried in file metadata and the Hive directory, not repeated as a numeric row column. Erasing NVS creates a new station identity. |
 | `device_id` | INT64 containing the board's 48-bit Wi-Fi station MAC; a hardware identifier, not an anonymized UUID. |
 | `boot_id_hi`, `boot_id_lo` | Two INT64 fields carrying a random 128-bit identifier generated once per boot. |

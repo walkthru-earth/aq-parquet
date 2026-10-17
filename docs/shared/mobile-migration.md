@@ -8,6 +8,36 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## CoreS3 LIVE keys covered by the dictionary digest (CoreS3 v6.13, issue #31)
+
+- CoreS3 LIVE keys now live in `telemetry_fields.inc` as the last `FIELD`
+  argument, the same as Waveshare, so the dictionary SHA-256 covers them.
+- CoreS3 writes dictionary `cores3-telemetry-v5`, firmware
+  `idf-cores3-parquet-v6.13`. Schema stays `cores3-telemetry-v5` (row value 5)
+  with the same 81 columns, order, types and field ids. Configuration stays
+  `cores3-acquisition-v3`.
+- The new digest is
+  `e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b`. Its LIVE
+  keys, in order, are `seq`, `mono`, `utc`, `pms`, `c1`, `c25`, `c10`, `pm1`,
+  `pm25`, `pm10`, `n03`, `n05`, `n1`, `n25`, `n5`, `n10`, `imu_t`, `als`,
+  `vbus`, `bat`, `pct`, `chg`, `t`, `rh`. These are the same keys as the
+  previous build. `t` and `rh` are mapped but always null on CoreS3.
+- The legacy digest
+  `22291d3aab63365404394f30c1549fb18bde0699df9b2de863de70bb3f4edf65` covers
+  two released LIVE key sets that both report `idf-cores3-parquet-v6.12`. The
+  build at e166978 sends the IMU die temperature as `t`. The build at d2a840c
+  sends it as `imu_t`. Nothing in `info` tells them apart.
+- The app must add `e5060fb7…` to its `LiveProfile` map with the CoreS3 keys
+  above, reading `imu_t` as board temperature and never as air temperature.
+- Suggested mobile follow up for `22291d3a…` only. Read `imu_t`, and when it is
+  missing read `t` as board temperature. Both carry the IMU die temperature on
+  CoreS3, because ambient temperature is never valid there.
+- Frozen key sets for every released digest are in
+  `tools/fixtures/live_keys/`. The contract tests fail when a board's LIVE keys
+  change without a new digest, or when a new digest has no fixture.
+- Phone side code may break freely. Firmware keeps every released wire contract
+  readable, and any new LIVE key set gets a new dictionary digest.
+
 ## Battery health, cell voltage without SOC and the emergency close (Waveshare v2.7, PR #24, issues #28, #29 and #30)
 
 This one entry describes the final v2.7 contract. CoreS3 is unchanged.

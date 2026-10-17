@@ -19,8 +19,10 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
   `AQCommon` own their services; never add a second owner for a bus/radio.
 - M134/PMSA003 is optional. Preserve missing sensor values as null, and keep
   RTC writes on the main task rather than the storage worker.
-- Current firmware is `idf-cores3-parquet-v6.12`, schema v5/dictionary v4 with
-  81 fields. Preserve the original 77-field order. Field ids are the 1-based
+- Current firmware is `idf-cores3-parquet-v6.13`, schema v5/dictionary v5 with
+  81 fields. LIVE keys are the last `FIELD` argument, so changing one changes
+  the digest and needs a new entry in `tools/fixtures/live_keys/cores3.json`.
+  Preserve the original 77-field order. Field ids are the 1-based
   `telemetry_fields.inc` position, so only append fields. H3 and NTP policy are
   shared services: capture coarsened station location with each sample, keep
   country owner-declared, and never initialize GPS or infer country here.
