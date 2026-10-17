@@ -577,16 +577,21 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   const auto which =
       static_cast<Characteristic>(reinterpret_cast<std::uintptr_t>(arg));
   if (!confirm_secure(handle, "access")) {
-    // NimBLE's own ATT permissions refuse an unencrypted access before this
-    // callback runs. A Control write that gets here anyway is also answered
-    // with ERROR 14 on `response`, which the gates let through.
+    // NimBLE's ATT permissions refuse an unencrypted access before this
+    // callback runs, and that ATT error is what makes a phone pair. A
+    // Control write that gets here anyway (encrypted, but for example with a
+    // short key) is refused by ERROR 14 on `response` alone. Its write is
+    // acknowledged and not dispatched, because an ATT error would fail the
+    // client's write before it could read the ERROR.
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && which == Control) {
       std::uint8_t op = 0;
       if (OS_MBUF_PKTLEN(ctxt->om) > 0)
         os_mbuf_copydata(ctxt->om, 0, 1, &op);
       const auto refusal = control_refusal(false);
-      defer_error(static_cast<Op>(op), refusal.code, refusal.detail,
-                  generation.load());
+      // If the error queue is full the ATT error below still refuses it.
+      if (defer_error(static_cast<Op>(op), refusal.code, refusal.detail,
+                      generation.load()))
+        return 0;
     }
     return mode == config::PairMode::None ? BLE_ATT_ERR_INSUFFICIENT_ENC
                                           : BLE_ATT_ERR_INSUFFICIENT_AUTHEN;

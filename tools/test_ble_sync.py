@@ -35,8 +35,11 @@ GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
 class FakeClient:
     """Scripted device: LIST of two files, one openable file served in chunks."""
 
-    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False):
+    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False, att_error=None):
         self.chunk = chunk
+        # Raise this from every Control write, as a backend does when NimBLE
+        # rejects an unencrypted write at the ATT layer.
+        self.att_error = att_error
         # Answer every Control write with ERROR 14, as firmware does on a link
         # that is not paired and authenticated (issue #51).
         self.auth_refused = auth_refused
@@ -62,6 +65,8 @@ class FakeClient:
     async def write_gatt_char(self, _uuid, data, response=True):
         op = data[0]
         self.writes += 1
+        if self.att_error is not None:
+            raise self.att_error
         if self.auth_refused:
             self.emit(bytes([ble.F_ERROR, op, 14]) + b"auth")
             return
@@ -225,6 +230,31 @@ async def run_auth_refused():
     assert client.writes == 1, client.writes
     assert asyncio.get_running_loop().time() - started < 0.5
     print("PASS ble_sync auth refusal: ERROR 14 raises at once with a pairing hint, one write, no busy retry")
+    # NimBLE rejects an unencrypted Control write at the ATT layer, so the
+    # backend raises before any ERROR frame. Same hint, still one write.
+    for wording in ("Insufficient Authentication", "Authentication is insufficient.",
+                    "Protocol Error 0x05: Insufficient Authentication"):
+        client = FakeClient(att_error=RuntimeError(wording))
+        session = ble.Session(client)
+        await session.start()
+        try:
+            await session.list_files()
+        except ble.ProtocolError as error:
+            assert "refused by ATT" in str(error) and "Pair the device again" in str(error), error
+        else:
+            raise AssertionError("ATT auth refusal must raise")
+        assert client.writes == 1, client.writes
+    # Any other backend failure passes through unchanged.
+    client = FakeClient(att_error=OSError("adapter gone"))
+    session = ble.Session(client)
+    await session.start()
+    try:
+        await session.list_files()
+    except ble.ProtocolError:
+        raise AssertionError("a non auth write error must not be mapped")
+    except OSError:
+        pass
+    print("PASS ble_sync ATT auth refusal: mapped to the pairing hint, other write errors untouched")
 
 
 def expect_protocol_error(call, needle):
