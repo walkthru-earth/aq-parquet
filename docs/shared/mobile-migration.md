@@ -8,6 +8,37 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Bonded reconnect serves the first LIST (fix/51-ble-auth-state)
+
+**What changed.** On some bonded reconnects the board never saw the encryption
+event, so its cached "authenticated" flag stayed false while the link was in
+fact encrypted. The first `LIST` after such a reconnect was refused with
+`ERROR` 7 and that `ERROR` was dropped too, so the app saw nothing. The board
+now reads NimBLE's live security state, so that `LIST` is served. Code 7 is
+never sent for an authentication reason any more. An unpaired phone still
+sees what it saw before. NimBLE refuses its unencrypted Control write with an
+ATT Insufficient Encryption, Encryption Key Size or Authentication error, which
+starts pairing. It can still subscribe to `response`, because the CCCD has
+no security flag, but receives nothing there except a possible `ERROR` 14.
+`ERROR` 14 with
+`detail="auth"` over BLE is only a guarded fallback, for a Control write that
+passes ATT but fails the firmware check. In this configuration both apply
+the same rule, so an app should not expect to see it.
+Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
+via=access`, `via=connect` or `via=subscribe` when the board learns the link
+is secure without the encryption event. A later encryption event on that
+link logs no second `BLE BONDED` line. No frame layout changed.
+
+**Why.** Issue #51, a reconnect looked like a hung sync.
+
+**What the app must do.** Keep treating an ATT Insufficient Authentication,
+Encryption or Encryption Key Size error on a Control write as "pair again". That is the normal
+unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
+like a bad LAN token. Never retry either as busy. Handle 7 as
+before, by its `detail`. A plain busy 7 can be retried later, while
+`detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
+repeating the same request.
+
 ## ABORT stops a LIST within one step (fix/33-abort-list-walk)
 
 **What changed.** The device walks the card for `LIST` in steps of at most 32

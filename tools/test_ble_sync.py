@@ -35,8 +35,15 @@ GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
 class FakeClient:
     """Scripted device: LIST of two files, one openable file served in chunks."""
 
-    def __init__(self, chunk=100, drop_frame=False, list_end=None):
+    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False, att_error=None):
         self.chunk = chunk
+        # Raise this from every Control write, as a backend does when NimBLE
+        # rejects an unpaired write at the ATT layer. The normal BLE case.
+        self.att_error = att_error
+        # Answer every Control write with ERROR 14. Over LAN a bad token, over
+        # BLE only the firmware fallback if its check and ATT ever diverge.
+        self.auth_refused = auth_refused
+        self.writes = 0
         self.list_end = list_end
         self.reading = False
         self.callback = None
@@ -57,6 +64,12 @@ class FakeClient:
 
     async def write_gatt_char(self, _uuid, data, response=True):
         op = data[0]
+        self.writes += 1
+        if self.att_error is not None:
+            raise self.att_error
+        if self.auth_refused:
+            self.emit(bytes([ble.F_ERROR, op, 14]) + b"auth")
+            return
         if op == ble.OP_LIST:
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", len(FILE)) + NAME.encode())
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", 7) + b"legacy-parquet/x.parquet")
@@ -193,10 +206,64 @@ async def run():
     assert text.encode() == LOG[-100:] and meta["total_bytes_since_boot"] == len(LOG), meta
     assert await session.reboot() == {"delay_ms": 500}
     print("PASS ble_sync frame codec: list, fetch, time, error, lost-chunk detection, config, scan, token, log, reboot")
+    await run_auth_refused()
     await run_protocol3()
     await run_lan()
     await run_lan_snapshot_deadlines()
     await run_lan_bye()
+
+
+async def run_auth_refused():
+    """An unpaired refusal fails at once with a pairing hint and is never retried.
+
+    Over BLE the real case is the ATT error checked second. ERROR 14 is the
+    LAN answer and the BLE firmware fallback."""
+    client = FakeClient(auth_refused=True)
+    session = ble.Session(client)
+    await session.start()
+    started = asyncio.get_running_loop().time()
+    try:
+        await session.list_files()
+    except ble.ProtocolError as error:
+        text = str(error)
+        assert "op=0x01 code=14 (auth-failed)" in text and "detail='auth'" in text, text
+        assert "Pair the device again" in text and "busy" not in text, text
+    else:
+        raise AssertionError("ERROR 14 must raise")
+    assert client.writes == 1, client.writes
+    assert asyncio.get_running_loop().time() - started < 0.5
+    print("PASS ble_sync auth refusal: ERROR 14 raises at once with a pairing hint, one write, no busy retry")
+    # NimBLE rejects an unencrypted Control write at the ATT layer, so the
+    # backend raises before any ERROR frame. Same hint, still one write.
+    for wording in ("Insufficient Authentication", "Authentication is insufficient.",
+                    "Protocol Error 0x05: Insufficient Authentication",
+                    "Protocol Error 0x0C: Insufficient Encryption Key Size",
+                    "Protocol Error 0x0F: Insufficient Encryption",
+                    "Insufficient encryption"):
+        client = FakeClient(att_error=RuntimeError(wording))
+        session = ble.Session(client)
+        await session.start()
+        try:
+            await session.list_files()
+        except ble.ProtocolError as error:
+            assert "refused by ATT" in str(error) and "Pair the device again" in str(error), error
+        else:
+            raise AssertionError("ATT auth refusal must raise")
+        assert client.writes == 1, client.writes
+    # Any other backend failure passes through unchanged.
+    for other in (OSError("adapter gone"),
+                  RuntimeError("Protocol Error 0x08: Insufficient Authorization"),
+                  RuntimeError("[org.bluez.Error.NotAuthorized] Not authorized")):
+        client = FakeClient(att_error=other)
+        session = ble.Session(client)
+        await session.start()
+        try:
+            await session.list_files()
+        except ble.ProtocolError:
+            raise AssertionError(f"{other!r} must not be mapped")
+        except (OSError, RuntimeError):
+            pass
+    print("PASS ble_sync ATT auth refusal: mapped to the pairing hint, other write errors untouched")
 
 
 def expect_protocol_error(call, needle):

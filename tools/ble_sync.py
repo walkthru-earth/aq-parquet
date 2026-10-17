@@ -40,6 +40,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import struct
 import sys
 import time
@@ -66,6 +67,18 @@ ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
           12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
           16: "aborted"}
+# What a person should do about an ERROR. Code 14 is never a busy device, so
+# the client never retries it. Over LAN it means the token was rejected. Over
+# BLE an unpaired link normally gets the ATT refusal below instead, and 14 is
+# only the firmware's fallback if its check and NimBLE's ever disagree.
+ERROR_HINTS = {14: "the link is not authenticated. Pair the device again, or for LAN fetch a new token over BLE"}
+# Backend wording for an ATT Insufficient Authentication (0x05), Encryption
+# Key Size (0x0C) or Encryption (0x0F) write error. BlueZ may only say "Not
+# paired". Insufficient Authorization (0x08) is a different refusal. BlueZ, CoreBluetooth and WinRT each phrase it their way.
+ATT_AUTH_REFUSAL = re.compile(
+    r"insufficient (authentication|encryption)|(authentication|encryption) is insufficient"
+    r"|not paired|protocol error 0x0?[5cf]\b",
+    re.IGNORECASE)
 # Protocol 3 typed disconnect reasons (BYE, DIAG events, STATUS `dr`).
 DISCONNECT_REASONS = ["unknown", "idle-timeout", "handshake-timeout", "auth-failed",
                       "sessions-full", "slow-peer", "tx-overflow", "malformed", "wifi-lost",
@@ -257,7 +270,17 @@ class Session:
         self.frames.put_nowait(error)
 
     async def request(self, payload: bytes):
-        await self.client.write_gatt_char(CONTROL, payload, response=True)
+        try:
+            await self.client.write_gatt_char(CONTROL, payload, response=True)
+        except ProtocolError:
+            raise
+        except Exception as error:
+            # The normal unpaired BLE case. NimBLE refuses the Control write
+            # at the ATT layer before the firmware sees it, so it gets the
+            # pairing hint and no retry, the same as ERROR 14.
+            if not ATT_AUTH_REFUSAL.search(str(error)):
+                raise
+            raise ProtocolError(f"Control write refused by ATT ({error}). {ERROR_HINTS[14]}") from error
 
     # Per frame deadline. On LAN a reply can wait up to the device's 15 s
     # slow-peer bound behind another phone, so callers there may raise it.
@@ -282,8 +305,9 @@ class Session:
     @staticmethod
     def _device_error(data: bytes) -> ProtocolError:
         op, code = data[1], data[2]
+        hint = f". {ERROR_HINTS[code]}" if code in ERROR_HINTS else ""
         return ProtocolError(f"device ERROR op=0x{op:02x} code={code} ({ERRORS.get(code, '?')}) "
-                             f"detail={data[3:].decode('utf-8', 'replace')!r}")
+                             f"detail={data[3:].decode('utf-8', 'replace')!r}{hint}")
 
     async def read_char(self, uuid: str) -> bytearray:
         # Bleak 3.0.2's CoreBluetooth backend ignores read timeout kwargs and

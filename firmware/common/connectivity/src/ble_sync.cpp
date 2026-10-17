@@ -1,6 +1,7 @@
 #include "ble_sync.h"
 #include "abort_signal.h"
 #include "ble_advert.h"
+#include "ble_link_auth.h"
 #include "ble_policy.h"
 #include "debug_log.h"
 #include "disconnect.h"
@@ -30,6 +31,7 @@ void ble_store_config_init(void);
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <span>
 
 namespace ble {
 namespace {
@@ -150,6 +152,16 @@ bool secure(std::uint16_t handle) {
           (desc.sec_state.authenticated && desc.sec_state.key_size == 16));
 }
 
+// The response gates (ble_link_auth.h). The cached flag, else the ERROR 14
+// refusal, else NimBLE's live state, so a missed ENC_CHANGE never refuses a
+// secure link. Safe from any task: ble_gap_conn_find() takes the host lock.
+bool may_send_frame(std::uint16_t handle, const std::uint8_t *data,
+                    std::size_t length) {
+  return may_send(authenticated.load(),
+                  std::span<const std::uint8_t>(data, length),
+                  [handle] { return secure(handle); });
+}
+
 bool apply_advert_data() {
   const std::uint64_t word = desired_advert.load();
   const auto data =
@@ -249,8 +261,9 @@ int notify_on_host(Characteristic which, const std::uint8_t *data,
                    std::uint16_t handle) {
   if (!data || length == 0 || length > kMaxFrame || length > payload_max())
     return BLE_HS_EMSGSIZE;
-  if (!connected.load() || !authenticated.load() || !subscribed[which].load() ||
-      generation.load() != session || conn_handle.load() != handle)
+  if (!connected.load() || !subscribed[which].load() ||
+      generation.load() != session || conn_handle.load() != handle ||
+      !may_send_frame(handle, data, length))
     return BLE_HS_ENOTCONN;
   // Native custom notifications consume the mbuf on success AND failure.
   // Each retry must allocate a fresh buffer containing the same whole frame.
@@ -325,9 +338,11 @@ void drain_responses(ble_npl_event *) {
     portEXIT_CRITICAL(&tx_lock);
     if (!any)
       break;
-    if (!connected.load() || !authenticated.load() ||
-        !subscribed[Response].load() || generation.load() != slot.session ||
-        conn_handle.load() != slot.handle) {
+    if (!connected.load() || !subscribed[Response].load() ||
+        generation.load() != slot.session ||
+        conn_handle.load() != slot.handle ||
+        !may_send_frame(slot.handle, tx_frames + std::size_t(head) * kMaxFrame,
+                        slot.length)) {
       // The phone unsubscribed or the session ended. The stream is over for
       // this session, but the link itself did nothing wrong.
       close_responses();
@@ -392,8 +407,8 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
   if (!data || !length || length > kMaxFrame || length > payload_max())
     return aqsync::EnqueueResult::Closed;
   const auto handle = conn_handle.load();
-  if (!connected.load() || !authenticated.load() ||
-      !subscribed[Response].load() || generation.load() != session)
+  if (!connected.load() || !subscribed[Response].load() ||
+      generation.load() != session || !may_send_frame(handle, data, length))
     return aqsync::EnqueueResult::Closed;
   portENTER_CRITICAL(&tx_lock);
   const auto reservation = responses.reserve(session, esp_timer_get_time());
@@ -522,6 +537,26 @@ void start_link_sequence() {
                         ble_npl_time_ms_to_ticks32(kLinkSettleMs));
 }
 
+// Host task only. Reads NimBLE's security state for `handle` and, the first
+// time it proves the current link secure, latches `authenticated` the way
+// ENC_CHANGE does. `via` names where the proof came from for the bench log.
+// Returns the live state.
+bool confirm_secure(std::uint16_t handle, const char *via) {
+  const bool secure_now = secure(handle);
+  if (!should_latch(connected.load() && handle == conn_handle.load(),
+                    authenticated.load(), secure_now))
+    return secure_now;
+  authenticated = true;
+  pairing_active = false;
+  passkey = 0;
+  update_bonds();
+  touch_ui();
+  aqlog.printf("BLE BONDED authenticated=true bonds=%lu via=%s\n",
+               static_cast<unsigned long>(bonds.load()), via);
+  start_link_sequence();
+  return true;
+}
+
 bool defer_error(Op op, Error code, const char *detail, std::uint32_t session) {
   const ImmediateError error{op, code, detail, session};
   return immediate_errors && xQueueSend(immediate_errors, &error, 0) == pdTRUE;
@@ -541,9 +576,27 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
            void *arg) {
   const auto which =
       static_cast<Characteristic>(reinterpret_cast<std::uintptr_t>(arg));
-  if (!secure(handle))
+  if (!confirm_secure(handle, "access")) {
+    // Not reached in this configuration. NimBLE's ATT permission check
+    // applies the same rule as secure() (ble_att_svr_check_perms with the
+    // ENC flags, plus AUTHEN and sm_sc_only in the passkey modes) and its
+    // ATT error is what makes a phone pair. If the checks ever diverge, a
+    // Control write is refused by ERROR 14 on `response` alone. It is
+    // acknowledged and not dispatched, because an ATT error would fail the
+    // client's write before it could read the ERROR.
+    if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && which == Control) {
+      std::uint8_t op = 0;
+      if (OS_MBUF_PKTLEN(ctxt->om) > 0)
+        os_mbuf_copydata(ctxt->om, 0, 1, &op);
+      const auto refusal = control_refusal(false);
+      // If the error queue is full the ATT error below still refuses it.
+      if (defer_error(static_cast<Op>(op), refusal.code, refusal.detail,
+                      generation.load()))
+        return 0;
+    }
     return mode == config::PairMode::None ? BLE_ATT_ERR_INSUFFICIENT_ENC
                                           : BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+  }
   if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
     if (which == Info)
       return os_mbuf_append(ctxt->om, info_text, std::strlen(info_text)) == 0
@@ -598,8 +651,10 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
     aqsync::abort::commit(request);
     return 0;
   }
-  if (!defer_error(static_cast<Op>(request.bytes[0]), kErrBusy, "queue-full",
-                   request.link_generation))
+  // The link is secure here, so the only refusal left is the full queue.
+  const auto refusal = control_refusal(true);
+  if (!defer_error(static_cast<Op>(request.bytes[0]), refusal.code,
+                   refusal.detail, request.link_generation))
     return BLE_ATT_ERR_INSUFFICIENT_RES;
   return 0;
 }
@@ -620,7 +675,7 @@ int gap_event(ble_gap_event *event, void *) {
     conn_handle = event->connect.conn_handle;
     mtu = ble_att_mtu(event->connect.conn_handle);
     advertising = false;
-    authenticated = secure(event->connect.conn_handle);
+    authenticated = false;
     connected = true;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
     {
@@ -636,6 +691,8 @@ int gap_event(ble_gap_event *event, void *) {
     touch_ui();
     aqlog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
     request_link_parameters(event->connect.conn_handle);
+    // Already secure at connect, which ENC_CHANGE would never report.
+    confirm_secure(event->connect.conn_handle, "connect");
     return 0;
   case BLE_GAP_EVENT_DISCONNECT: {
     const auto local = pending_reason.exchange(DisconnectReason::Unknown);
@@ -681,6 +738,11 @@ int gap_event(ble_gap_event *event, void *) {
   case BLE_GAP_EVENT_SUBSCRIBE:
     if (event->subscribe.conn_handle != conn_handle.load())
       return 0;
+    // A CCCD write proves nothing by itself, but it is the first event a
+    // client sends after a reconnect, so a missed ENC_CHANGE latches here.
+    // Not during teardown, which reports every CCCD as turned off.
+    if (event->subscribe.reason != BLE_GAP_SUBSCRIBE_REASON_TERM)
+      confirm_secure(event->subscribe.conn_handle, "subscribe");
     for (unsigned i = 0; i < Count; ++i) {
       if (event->subscribe.attr_handle != value_handles[i])
         continue;
@@ -708,11 +770,12 @@ int gap_event(ble_gap_event *event, void *) {
       }
     }
     return 0;
-  case BLE_GAP_EVENT_ENC_CHANGE:
+  case BLE_GAP_EVENT_ENC_CHANGE: {
     if (event->enc_change.conn_handle != conn_handle.load())
       return 0;
     pairing_active = false;
     passkey = 0;
+    const bool was = authenticated.load();
     authenticated =
         event->enc_change.status == 0 && secure(event->enc_change.conn_handle);
     update_bonds();
@@ -720,12 +783,13 @@ int gap_event(ble_gap_event *event, void *) {
     if (!authenticated.load()) {
       aqlog.println("BLE AUTH result=failed action=disconnect");
       terminate(event->enc_change.conn_handle, DisconnectReason::AuthFailed);
-    } else {
+    } else if (enc_change_announces(was, true)) {
       aqlog.printf("BLE BONDED authenticated=true bonds=%lu\n",
                    static_cast<unsigned long>(bonds.load()));
       start_link_sequence();
     }
     return 0;
+  }
   case BLE_GAP_EVENT_PASSKEY_ACTION: {
     if (mode == config::PairMode::None ||
         event->passkey.params.action != BLE_SM_IOACT_DISP)
