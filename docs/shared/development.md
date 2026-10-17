@@ -99,7 +99,9 @@ The standard is named in four places. Change them together.
 | `pixi.toml` task `pms-frame-test` | `clang++ -std=c++23` |
 | `tools/lint.sh` | cppcheck `--std=c++23` |
 
-`python tools/check_idf_target.py --cxx-dialect` fails when the four disagree.
+`python tools/check_idf_target.py --cxx-dialect` fails when the four disagree,
+or when a `tools/test_*.py` hardcodes a C++ `-std` instead of importing
+`CXX_STD`. C standards such as `-std=c99` for H3 stay allowed.
 `tools/lint.sh` runs it first. Every board build runs `check_idf_target.py`,
 which repeats that check and reads `build/<variant>/compile_commands.json`. It
 fails when the last `-std` on any repo-owned `.cpp` is not the pinned GNU

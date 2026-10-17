@@ -83,6 +83,10 @@ def check_cxx_dialect_sources() -> str:
         require(len(matches) == 1, f"{relative} must name exactly one C++ standard, found {sorted(matches)}")
         found[relative] = matches.pop()
     require(len(set(found.values())) == 1, f"C++ dialect sources disagree: {found}")
+    # Host harnesses take the C++ standard from host_cxx.CXX_STD. C standards such as -std=c99 stay allowed.
+    hardcoded = sorted(path.name for path in (ROOT / "tools").glob("test_*.py")
+                       if re.search(r"-std=(?:c|gnu)\+\+\d+", path.read_text()))
+    require(not hardcoded, f"import CXX_STD from host_cxx instead of a C++ -std in {hardcoded}")
     return "-std=gnu++" + next(iter(found.values()))
 
 
