@@ -38,10 +38,10 @@ class FakeClient:
     def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False, att_error=None):
         self.chunk = chunk
         # Raise this from every Control write, as a backend does when NimBLE
-        # rejects an unencrypted write at the ATT layer.
+        # rejects an unpaired write at the ATT layer. The normal BLE case.
         self.att_error = att_error
-        # Answer every Control write with ERROR 14, as firmware does on a link
-        # that is not paired and authenticated (issue #51).
+        # Answer every Control write with ERROR 14. Over LAN a bad token, over
+        # BLE only the firmware fallback if its check and ATT ever diverge.
         self.auth_refused = auth_refused
         self.writes = 0
         self.list_end = list_end
@@ -214,7 +214,10 @@ async def run():
 
 
 async def run_auth_refused():
-    """ERROR 14 on LIST fails at once with a pairing hint and is never retried as busy."""
+    """An unpaired refusal fails at once with a pairing hint and is never retried.
+
+    Over BLE the real case is the ATT error checked second. ERROR 14 is the
+    LAN answer and the BLE firmware fallback."""
     client = FakeClient(auth_refused=True)
     session = ble.Session(client)
     await session.start()

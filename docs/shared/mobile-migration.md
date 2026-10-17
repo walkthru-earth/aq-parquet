@@ -70,7 +70,7 @@ field left no trace in what the app collects.
 shows device logs may flag a `COREDUMP` line, and parse it as space separated
 `key=value` pairs that may grow new keys. The values hold no secrets.
 
-## BLE auth refusal answers ERROR 14 (fix/51-ble-auth-state)
+## Bonded reconnect serves the first LIST (fix/51-ble-auth-state)
 
 **What changed.** On some bonded reconnects the board never saw the encryption
 event, so its cached "authenticated" flag stayed false while the link was in
@@ -80,20 +80,21 @@ now reads NimBLE's live security state, so that `LIST` is served. Code 7 is
 never sent for an authentication reason any more. An unpaired phone still
 sees what it saw before. NimBLE refuses its unencrypted Control write with an
 ATT Insufficient Encryption or Insufficient Authentication error, which
-starts pairing, and it cannot subscribe to `response`. As defense in depth,
-a Control write that passes ATT on an encrypted link but still fails the
-firmware check (for example a key shorter than 16 bytes) is acknowledged and
-answered with `ERROR` 14 and `detail="auth"` instead of being run.
+starts pairing, and it cannot subscribe to `response`. `ERROR` 14 with
+`detail="auth"` over BLE is only a guarded fallback, for a Control write that
+passes ATT but fails the firmware check. In this configuration both apply
+the same rule, so an app should not expect to see it.
 Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
 via=access`, `via=connect` or `via=subscribe` when the board learns the link
-is secure without the encryption event. No frame layout changed.
+is secure without the encryption event. A later encryption event on that
+link logs no second `BLE BONDED` line. No frame layout changed.
 
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
 **What the app must do.** Keep treating an ATT Insufficient Authentication
 or Encryption error on a Control write as "pair again". That is the normal
-unpaired case. Treat the rare `ERROR` 14 on BLE the same way, like a bad LAN
-token. Never retry either as busy. Handle 7 as
+unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
+like a bad LAN token. Never retry either as busy. Handle 7 as
 before, by its `detail`. A plain busy 7 can be retried later, while
 `detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
 repeating the same request.

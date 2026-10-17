@@ -13,8 +13,11 @@
 // Now every host task place that reads the live state (CONNECT, ENC_CHANGE,
 // SUBSCRIBE and each GATT access) latches the copy, and each gate falls back
 // to the live state before it refuses. An insecure link is still refused,
-// never with 7. An unencrypted write gets NimBLE's ATT error, which makes the
-// phone pair. A Control write that passes ATT but not secure() gets ERROR 14.
+// never with 7. NimBLE's ATT permission check refuses it first, with the same
+// rule as secure() in this configuration (ENC flags in every mode, AUTHEN and
+// sm_sc_only, which also demands a 16 byte key, in the passkey modes). That
+// ATT error is what makes the phone pair. ERROR 14 is a guarded fallback in
+// case the two checks ever diverge.
 
 #include "ble_sync.h"
 
@@ -37,15 +40,31 @@ is_auth_refusal(std::span<const std::uint8_t> frame) {
   return frame.size() >= 3 && frame[0] == kFrameError && frame[2] == kErrAuth;
 }
 
-// The response gates. A frame goes out when the cached flag says the link is
-// authenticated, when it is the ERROR 14 refusal (the same way the LAN link
-// answers a bad token before it closes), or else when NimBLE's live state says
-// the link is secure. `live` runs only when nothing cheaper decided, so a
-// healthy link pays no host lock per frame.
+// The response gates' send or refuse decision. A frame goes out when the
+// cached flag says the link is authenticated, when it is the ERROR 14 refusal
+// (the same way the LAN link answers a bad token before it closes), or else
+// when NimBLE's live state says the link is secure. Refusing on the cached
+// flag alone is the issue #51 bug.
+[[nodiscard]] constexpr bool gate_allows(bool cached, bool auth_error,
+                                         bool live_secure) {
+  return cached || auth_error || live_secure;
+}
+
+// gate_allows() for the transport. `live` runs only when nothing cheaper
+// decided, so a healthy link pays no host lock per frame.
 template <class Live>
 [[nodiscard]] bool may_send(bool cached, std::span<const std::uint8_t> frame,
                             Live &&live) {
-  return cached || is_auth_refusal(frame) || live();
+  const bool auth_error = is_auth_refusal(frame);
+  return gate_allows(cached, auth_error, !cached && !auth_error && live());
+}
+
+// ENC_CHANGE after a link was already latched by a via= proof (or a second
+// encryption on the same link) changes nothing, so it logs no second BLE
+// BONDED line and does not restart the link sequence.
+[[nodiscard]] constexpr bool enc_change_announces(bool was_cached,
+                                                  bool secure_now) {
+  return secure_now && !was_cached;
 }
 
 // The ERROR that answers a Control write the transport does not hand to the

@@ -68,8 +68,9 @@ ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed
           12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
           16: "aborted"}
 # What a person should do about an ERROR. Code 14 is never a busy device, so
-# the client never retries it. Over BLE it means the link is not paired and
-# authenticated, over LAN that the token was rejected.
+# the client never retries it. Over LAN it means the token was rejected. Over
+# BLE an unpaired link normally gets the ATT refusal below instead, and 14 is
+# only the firmware's fallback if its check and NimBLE's ever disagree.
 ERROR_HINTS = {14: "the link is not authenticated. Pair the device again, or for LAN fetch a new token over BLE"}
 # Backend wording for an ATT Insufficient Authentication (0x05) or Encryption
 # (0x0F) write error. BlueZ, CoreBluetooth and WinRT each phrase it their way.
@@ -273,9 +274,9 @@ class Session:
         except ProtocolError:
             raise
         except Exception as error:
-            # NimBLE refuses an unencrypted Control write at the ATT layer
-            # before the firmware sees it. That is the same "not paired"
-            # answer as ERROR 14, so it gets the same hint and no retry.
+            # The normal unpaired BLE case. NimBLE refuses the Control write
+            # at the ATT layer before the firmware sees it, so it gets the
+            # pairing hint and no retry, the same as ERROR 14.
             if not ATT_AUTH_REFUSAL.search(str(error)):
                 raise
             raise ProtocolError(f"Control write refused by ATT ({error}). {ERROR_HINTS[14]}") from error
