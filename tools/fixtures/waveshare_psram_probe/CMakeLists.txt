@@ -4,5 +4,6 @@ set(EXTRA_COMPONENT_DIRS "../../../firmware/common/runtime" "../../../firmware/c
 set(COMPONENTS component)
 set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
 set(SDKCONFIG_DEFAULTS "../../../tools/idf-sdkconfig.defaults;sdkconfig.defaults")
+include("${CMAKE_CURRENT_LIST_DIR}/../../../firmware/cmake/aq_cxx_standard.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(aq_psram_probe)

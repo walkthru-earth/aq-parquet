@@ -3,4 +3,4 @@ idf_component_register(
     INCLUDE_DIRS "src"
     REQUIRES common runtime connectivity location power
     PRIV_REQUIRES nvs_flash esp_timer esp_hw_support heap)
-target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+aq_pin_cxx_standard(${COMPONENT_LIB})

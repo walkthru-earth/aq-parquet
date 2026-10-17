@@ -5,5 +5,6 @@ set(EXTRA_COMPONENT_DIRS "${AQ_REPO}/firmware/common" "${AQ_REPO}/firmware/commo
 set(COMPONENTS component)
 set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
 set(SDKCONFIG_DEFAULTS "${AQ_REPO}/tools/idf-sdkconfig.defaults;${AQ_REPO}/tools/idf-connectivity-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+include("${AQ_REPO}/firmware/cmake/aq_cxx_standard.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(aq_connectivity_fixture)
