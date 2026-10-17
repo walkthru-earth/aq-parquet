@@ -1,5 +1,7 @@
 #pragma once
 
+#include "aq_logger_watchdog.h"
+
 #include <cstdint>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -25,16 +27,8 @@ inline void wait_if_idle(QueueHandle_t samples, SemaphoreHandle_t wakeup) {
     xSemaphoreTake(wakeup, pdMS_TO_TICKS(1000));
 }
 
-// True when the worker heartbeat is older than timeout_s (clamped to >= 5 s).
-// No heartbeat yet means the worker has not started and is never expired.
-inline bool stall_expired(std::int64_t now_us, std::int64_t heartbeat_us,
-                          std::uint32_t timeout_s) {
-  if (heartbeat_us <= 0 || now_us <= heartbeat_us || timeout_s == 0)
-    return false;
-  const std::int64_t timeout_us =
-      static_cast<std::int64_t>(timeout_s < 5U ? 5U : timeout_s) * 1000000LL;
-  return now_us - heartbeat_us > timeout_us;
-}
+// The expiry rule is shared with the watchdog supervisor.
+using watchdog::stall_expired;
 
 // Evaluates storage-worker heartbeat liveness.
 // - Returns None before the first heartbeat or within the 5 s normal window.
