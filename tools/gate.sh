@@ -34,6 +34,7 @@ tasks=(
   "bench-power-cut-test"
   "size-survey-test"
   "size-report-test"
+  "ota-slot-check-test"
   "stack-budget-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"

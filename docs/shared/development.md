@@ -199,7 +199,11 @@ and by hand from the Actions tab (`workflow_dispatch`).
   and 7 days otherwise. The job summary shows a size table. For a pull request
   the change is measured against the green build of its base commit, else
   against the newest green `main` build, and the summary names which commit
-  was used.
+  was used. A malformed baseline prints a warning and the absolute table.
+- Each board job then runs `ota-slot-check`, which fails when the app image
+  uses more than half of the smallest app slot in that variant's
+  `partitions.csv`. The share and the measurements behind it live in
+  `tools/ota_slot_check.py`.
 - **CI result** waits for every other job and fails unless each one passed.
   A skipped job passes only when its id is listed in `ALLOWED_SKIPS` in that
   job, which is empty today because no job has an `if:`. It is the single

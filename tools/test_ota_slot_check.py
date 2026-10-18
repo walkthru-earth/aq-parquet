@@ -1,0 +1,110 @@
+"""Host tests for ota_slot_check.py on crafted partition tables and images."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+import ota_slot_check as check
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = Path(__file__).resolve().with_name("ota_slot_check.py")
+BOARD_TABLES = (
+    "firmware/esp-idf-cores3/bringup/partitions.csv",
+    "firmware/esp-idf-waveshare-sim7670g/logger/partitions.csv",
+    "firmware/esp-idf-waveshare-sim7670g/diagnostic/partitions.csv",
+)
+TABLE = """# Name, Type, SubType, Offset, Size, Flags
+nvs,      data, nvs,   0x9000,  0x5000,
+otadata,  data, ota,   0xe000,  0x2000,
+app0,     app,  ota_0, 0x10000, {app0},
+app1,     app,  ota_1, ,        {app1},
+"""
+
+
+def build(root: Path, image_bytes: int, *, app0: str = "0x1000", app1: str = "4K") -> tuple[Path, Path]:
+    table = root / "partitions.csv"
+    table.write_text(TABLE.format(app0=app0, app1=app1))
+    out = root / "build"
+    out.mkdir(exist_ok=True)
+    (out / "project_description.json").write_text(json.dumps({"app_bin": "aq.bin"}))
+    (out / "aq.bin").write_bytes(b"\xe9" * image_bytes)
+    return table, out
+
+
+def run(table: Path, out: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, str(SCRIPT), "--label", "cores3 (bringup)",
+                           "--partitions", str(table), "--build", str(out)],
+                          capture_output=True, text=True, timeout=60, check=False)
+
+
+def rejected(result: subprocess.CompletedProcess[str], text: str) -> None:
+    assert result.returncode != 0, result.stdout
+    assert "OTA slot check failed" in result.stderr and text in result.stderr, result.stderr
+
+
+def main() -> None:
+    # Every board table names two OTA slots of 6 MiB today.
+    for relative in BOARD_TABLES:
+        assert check.app_slots((ROOT / relative).read_text()) == {"app0": 0x600000, "app1": 0x600000}, relative
+    assert 0 < check.MAX_SHARE < 1
+
+    assert check.parse_size("0x600000") == 0x600000
+    assert check.parse_size("4K") == 4096 and check.parse_size("6M") == 6 * 1024 * 1024
+    assert check.parse_size("4096") == 4096
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        limit = int(4096 * check.MAX_SHARE)
+
+        table, out = build(root, limit)
+        result = run(table, out)
+        assert result.returncode == 0, result.stderr
+        assert "| cores3 (bringup) |" in result.stdout and f"| {limit:,} |" in result.stdout
+
+        table, out = build(root, limit + 1)
+        rejected(run(table, out), "over the")
+
+        # The smallest app slot sets the limit, since the image must fit both.
+        table, out = build(root, limit, app1="0x800")
+        rejected(run(table, out), "app1")
+
+        table, out = build(root, 0)
+        rejected(run(table, out), "empty")
+
+        table, out = build(root, 16)
+        table.unlink()
+        rejected(run(table, out), "partitions.csv")
+
+        malformed = {
+            "no app rows": "nvs, data, nvs, 0x9000, 0x5000,\n",
+            "empty file": "",
+            "short row": "app0, app, ota_0, 0x10000\n",
+            "text size": "app0, app, ota_0, 0x10000, big,\n",
+            "zero size": "app0, app, ota_0, 0x10000, 0,\n",
+            "negative size": "app0, app, ota_0, 0x10000, -4K,\n",
+            "duplicate name": "app0, app, ota_0, , 4K,\napp0, app, ota_1, , 4K,\n",
+        }
+        for name, text in malformed.items():
+            table, out = build(root, 16)
+            table.write_text(text)
+            result = run(table, out)
+            assert result.returncode != 0, name
+            assert "OTA slot check failed" in result.stderr, f"{name}: {result.stderr}"
+
+        table, out = build(root, 16)
+        (out / "project_description.json").write_text("{truncated")
+        rejected(run(table, out), "project_description.json")
+
+        table, out = build(root, 16)
+        (out / "aq.bin").unlink()
+        rejected(run(table, out), "aq.bin")
+
+    print("ota_slot_check.py host tests passed")
+
+
+if __name__ == "__main__":
+    main()

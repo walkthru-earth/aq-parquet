@@ -280,6 +280,19 @@ jobs:
             ${{ matrix.project }}/build/${{ matrix.variant }}/flash_args
           if-no-files-found: error
           retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+      # Fail closed when the app image uses more than half of its smallest app
+      # slot. The slot size comes from the board partitions.csv and the share
+      # and its reasoning live in tools/ota_slot_check.py (issue #45).
+      - name: Check OTA slot share
+        if: matrix.project
+        env:
+          NAME: ${{ matrix.name }}
+          PROJECT: ${{ matrix.project }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          pixi run ota-slot-check --label "${NAME} (${VARIANT})" \
+            --partitions "${PROJECT}/${VARIANT}/partitions.csv" \
+            --build "${PROJECT}/build/${VARIANT}" >> "$GITHUB_STEP_SUMMARY"
       # Static task stack worst case and linker section sizes against
       # tools/stack_budget.json (issue #37). The image key is the board before
       # the first dash of the leg name plus the variant, such as cores3/bringup.

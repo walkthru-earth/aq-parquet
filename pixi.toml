@@ -50,6 +50,9 @@ size-survey = "python tools/parquet_size_survey.py"
 size-survey-test = "python tools/test_parquet_size_survey.py"
 # CI image size table, falls back to absolute sizes on a malformed baseline (#45).
 size-report-test = "python tools/test_size_report.py"
+# Fail closed when an app image uses more than its share of the smallest app slot (#45).
+ota-slot-check = "python tools/ota_slot_check.py"
+ota-slot-check-test = "python tools/test_ota_slot_check.py"
 stack-budget = "python tools/stack_budget.py"
 stack-budget-test = "python tools/test_stack_budget.py"
 pms-frame-test = "clang++ -std=c++23 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"

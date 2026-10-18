@@ -28,6 +28,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 | Full host gate, same entry point as CI | `gate` (`tools/gate.sh`, add new host test tasks to its list) |
 | CI image size table from `idf.py size --format json2`, absolute sizes with a warning when the baseline is malformed | `size_report.py`, `size-report-test` |
+| App image share of the smallest app slot in the board `partitions.csv`, fail closed over the budget in the tool | `ota-slot-check --label --partitions --build`, `ota-slot-check-test` |
 | Static task stack worst case, xTaskCreate name and stack size cross check, and linker section budgets per image (`stack_budget.json`) | `stack-budget [--check] [--path]`, `stack-budget-test` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`
