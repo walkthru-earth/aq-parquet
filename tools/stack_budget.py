@@ -26,11 +26,12 @@ file. It is a static estimate, a bench high water mark (`parquet mem`) is the
 measured counterpart.
 
 `--check` also fails on a tracked task with no budget, and it scans repo
-firmware (comments skipped) for every `xTaskCreate*` call in a file the image
+firmware (comments and string contents skipped) for every `xTaskCreate*` call in a file the image
 links (any of its functions in the call graph). Each one must name a tracked
 task (`task_name`, the task key by default) whose `stack_bytes` equals the
 stack size in source, so a new task or a resized stack cannot pass unnoticed.
-A call it cannot parse, such as a lambda entry or a name in a variable, fails.
+A call it cannot parse, such as a lambda entry or a name in a variable, fails,
+and so does a second creation site for one tracked task name.
 
 Usage:
   pixi run stack-budget                         # every image with a build
@@ -416,6 +417,17 @@ def strip_comments(text: str) -> str:
     return COMMENT_RE.sub(blank, text)
 
 
+def blank_literals(text: str) -> str:
+    """Blank the inside of string and character literals, keeping the quotes,
+    the length and line numbers, so call names in log text are not calls."""
+    def blank(match: re.Match) -> str:
+        token = match.group(0)
+        if token[0] not in "\"'":
+            return token
+        return token[0] + re.sub(r"[^\n]", " ", token[1:-1]) + token[-1]
+    return COMMENT_RE.sub(blank, text)
+
+
 def constant(text: str) -> int | None:
     """Digits, spaces, `*`, `+` and parentheses only, such as `16 * 1024`."""
     def value(node: ast.expr) -> int:
@@ -442,9 +454,12 @@ def scan_sources(root: Path) -> SourceScan:
             texts[relative.as_posix()] = strip_comments(path.read_text(errors="replace"))
     scan = SourceScan()
     for name, text in texts.items():
-        for match in EXTERNAL_STACK_RE.finditer(text):
+        # Calls are found in code only. The literal text at the same offsets
+        # still gives the task name.
+        code = blank_literals(text)
+        for match in EXTERNAL_STACK_RE.finditer(code):
             scan.external.append(f"{name}:{text.count(chr(10), 0, match.start()) + 1}")
-        for token in TASK_TOKEN_RE.finditer(text):
+        for token in TASK_TOKEN_RE.finditer(code):
             where = f"{name}:{text.count(chr(10), 0, token.start()) + 1}"
             if not (match := TASK_CREATE_RE.match(text, token.start())):
                 call = " ".join(text[token.start():token.start() + 80].split(";")[0].split())
@@ -499,6 +514,13 @@ def task_site_findings(graph: Graph, spec: dict, budgets: dict, sites: list[Task
         elif copied != site.stack:
             findings.append(f"{tracked[0]} stack_bytes {copied} does not match the {site.stack} B "
                             f"stack at {site.where}")
+    # One creation site per tracked name. A second copy takes its own stack
+    # from the heap, which no budget here counts.
+    for task_name, name in names.items():
+        copies = [site.where for site in here if site.parsed and site.name == name]
+        if len(copies) > 1:
+            findings.append(f'{task_name}: task "{name}" is created at {len(copies)} sites ({", ".join(copies)}). '
+                            "Keep one creation site per tracked task")
     created = {site.name for site in here}
     for task_name, image_task in spec["tasks"].items():
         if "stack_bytes" in image_task and names[task_name] not in created:

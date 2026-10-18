@@ -260,6 +260,11 @@ def check_cli(root: Path) -> None:
     unparsed = sb.TaskSite("src/a.c:9", "src/a.c", "", "", None, "xTaskCreate(task_name_var", parsed=False)
     code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000), unparsed])
     assert code == 1 and "src/a.c:9 creates a task the scan cannot parse (xTaskCreate(task_name_var" in err, err
+    # A second creation site for one tracked name fails. Each copy takes its
+    # own stack from the heap, which the check does not count.
+    code, _, err = run(["--budgets", str(path), "--check"],
+                       [site("tight", 1000), sb.TaskSite("src/a.c:12", "src/a.c", "main_task", "tight", 1000, "1000")])
+    assert code == 1 and 'task "tight" is created at 2 sites (src/a.c:7, src/a.c:12)' in err, err
     # --write-budgets refuses while the stack sizes disagree.
     assert run(["--budgets", str(path), "--write-budgets"], [site("tight", 2000)])[0] == 2
     assert path.read_text() == clean
@@ -311,6 +316,14 @@ def check_internal_stacks(root: Path) -> None:
         ("firmware/common/x.cpp:2", False), ("firmware/common/x.cpp:3", False),
         ("firmware/common/x.cpp:4", True)], sites
     assert sites[0].stack_text.startswith("xTaskCreate([](void *)") and sites[2].entry == "defined_elsewhere"
+    # A string literal that mentions a task call is text, not a call.
+    source.write_text("void a() {\n  ESP_LOGI(\"t\", \"xTaskCreate(failed)\");\n"
+                      "  puts(\"xTaskCreateStatic(x) \\\" xTaskCreate(\");\n"
+                      "  xTaskCreate(board_task, \"board\", 4096, nullptr, 1, nullptr);\n}\n")
+    scan = sb.scan_sources(root)
+    assert scan.external == [], scan.external
+    assert [(item.where, item.name, item.stack, item.parsed) for item in scan.sites] == [
+        ("firmware/common/x.cpp:4", "board", 4096, True)], scan.sites
     assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}
     findings = sb.stack_memory_findings(allowed, ["firmware/common/x.cpp:2"])
