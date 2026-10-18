@@ -39,6 +39,9 @@ ble-sync-test = "python tools/test_ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
 # Footer reader and Iceberg DataFile metrics: PyArrow/DuckDB cross-check, crafted footers, fuzz loop.
 reader-test = "python tools/test_parquet_reader.py --sanitize"
+# Rebuild a footer for a quarantined .partial from its page headers, see docs/shared/telemetry-pipeline.md.
+rebuild-partial = "python tools/rebuild_partial.py"
+rebuild-partial-test = "python tools/test_rebuild_partial.py"
 # Device file sizes, footers and host encoding/compaction variants, see docs/shared/parquet-small-files.md.
 size-survey = "python tools/parquet_size_survey.py"
 size-survey-test = "python tools/test_parquet_size_survey.py"

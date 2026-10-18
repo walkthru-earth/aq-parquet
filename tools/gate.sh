@@ -30,6 +30,7 @@ tasks=(
   "common-test"
   "parquet-test --sanitize"
   "reader-test"
+  "rebuild-partial-test --sanitize"
   "size-survey-test"
   "stack-budget-test"
   "telemetry-contract-test --sanitize"
