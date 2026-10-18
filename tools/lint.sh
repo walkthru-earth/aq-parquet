@@ -21,6 +21,7 @@ cppcheck "${options[@]}" \
   firmware/common/runtime/src/device_config.cpp \
   firmware/common/runtime/src/debug_log.cpp \
   firmware/common/runtime/src/aq_console.cpp \
+  firmware/common/runtime/src/coredump_report.cpp \
   firmware/esp-idf-waveshare-sim7670g/board_io.cpp \
   firmware/common/src/parquet_writer.cpp \
   firmware/common/src/parquet_reader.cpp \

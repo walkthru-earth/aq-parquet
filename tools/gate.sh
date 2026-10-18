@@ -54,6 +54,7 @@ tasks=(
   "location-test"
   # Logger lifecycle, storage and persistence
   "debug-log-test"
+  "coredump-report-test"
   "logger-work-queue-test"
   "logger-watchdog-test"
   "logger-status-test"

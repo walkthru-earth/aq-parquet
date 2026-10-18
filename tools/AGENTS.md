@@ -18,6 +18,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
 | Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
 | Battery health states, thresholds, debounce, settling and the boot Low or Critical tie | `battery-health-test` |
+| COREDUMP line once per saved core dump, NVS record and its read or write failures | `coredump-report-test` |
 | Board-declared LIVE keys and JSON formatting | `logger-live-test` |
 | POWER STATE lines, one finalize per discharge, the report wake, emergency close outcomes, retry and pass lines | `logger-power-test` |
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |

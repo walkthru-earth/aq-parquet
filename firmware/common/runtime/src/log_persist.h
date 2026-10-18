@@ -18,4 +18,9 @@
 namespace aq::log {
 DebugLog::Layout default_layout();
 bool attach_persistent(const DebugLog::Layout &layout = default_layout());
+// Call once after nvs_flash_init() succeeds. With a core dump saved in flash
+// that no earlier boot reported, writes one COREDUMP line and records the
+// dump's size and SHA-256 in NVS namespace "aqdump". The dump stays in flash
+// for idf.py coredump-info. A no-op unless CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH.
+void report_coredump();
 } // namespace aq::log

@@ -184,6 +184,7 @@ bool init_board() {
                  nvs_result);
     return false;
   }
+  aq::log::report_coredump();
   board::start_indicator();
   vTaskDelay(pdMS_TO_TICKS(500));
   board::indicator(0, 0, 8);

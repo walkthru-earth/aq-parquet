@@ -955,6 +955,7 @@ extern "C" void app_main() {
     aqlog.printf("DIAG ERROR operation=nvs-init error=%d erased=false\n", nvs);
     return;
   }
+  aq::log::report_coredump();
   aq::power::configure_dfs();
   if (xTaskCreate(board_task, "cores3-board", 16 * 1024, nullptr,
                   aqlogger::kBoardTaskPriority, nullptr) != pdPASS)
