@@ -384,8 +384,8 @@
       "sections_measured": {
         ".iram0.text": 119863,
         ".dram0.data": 33812,
-        ".dram0.bss": 55160,
-        ".flash.text": 1064698,
+        ".dram0.bss": 55176,
+        ".flash.text": 1064770,
         ".flash.rodata": 225444,
         ".noinit": 0
       }
