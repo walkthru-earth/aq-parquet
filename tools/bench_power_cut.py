@@ -128,6 +128,10 @@ def partial_stem(source: str) -> str:
 
 
 def collect(events: Iterable[dict]) -> list[Boot]:
+    # Lines are attributed to the boot of the last BEGIN. The logger starts
+    # the storage worker before it prints BEGIN, so on a fast mount the
+    # RECOVERY and QUARANTINE lines of a new boot can land under the previous
+    # one. Totals across boots are unaffected.
     boots: list[Boot] = []
     current: Boot | None = None
     for event in events:
