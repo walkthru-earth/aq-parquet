@@ -130,8 +130,10 @@ ble_npl_callout retry_callout{}, relax_callout{}, advertise_callout{},
 static_assert(kPhy2M == BLE_GAP_LE_PHY_2M);
 // Where the post-connect link sequence is, see link_on_host().
 LinkStep link_step = LinkStep::Idle; // host task only
-AdvertWindow adv_window;             // host task only
-IntervalPolicy interval;             // host task only
+// The last DATA_LEN_CHG max_tx_octets on this link, 0 for none. Host task.
+std::uint16_t dle_tx_octets = 0;
+AdvertWindow adv_window; // host task only
+IntervalPolicy interval; // host task only
 std::atomic<bool> adv_fast{false};
 std::atomic<unsigned> pending_snapshots{0};
 std::atomic<bool> startup_ok{false}, host_requested{false};
@@ -450,6 +452,16 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
   return aqsync::EnqueueResult::Ok;
 }
 
+// A link command NimBLE refused or the controller failed. rc 19
+// (BLE_HS_ETIMEOUT_HCI) means no ack within 2 s, and NimBLE resets the host
+// right after, so this line names the command that started the reset.
+void log_hci_fail(const char *command, std::uint16_t opcode, int rc) {
+  if (rc == 0)
+    return;
+  aqlog.printf("BLE HCI fail cmd=%s op=0x%04x rc=%d timeout=%u\n", command,
+               unsigned(opcode), rc, unsigned(rc == BLE_HS_ETIMEOUT_HCI));
+}
+
 int request_conn_params(std::uint16_t handle, const ConnParams &p,
                         const char *label) {
   ble_gap_upd_params params{};
@@ -462,6 +474,8 @@ int request_conn_params(std::uint16_t handle, const ConnParams &p,
       "BLE CONN request=%s itvl=%u-%u lat=%u to=%u rc=%d\n", label,
       unsigned(p.itvl_min), unsigned(p.itvl_max), unsigned(p.latency),
       unsigned(p.supervision_timeout), rc);
+  log_hci_fail("conn", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_CONN_UPDATE),
+               rc);
   return rc;
 }
 
@@ -492,8 +506,11 @@ void relax_on_host(ble_npl_event *) {
 // connection update both carry an instant, and the ESP32-S3 controller
 // asserted in its local connection update (lld_con.c 3275) when an iPad's
 // own CONNECTION_UPDATE_IND crossed ours during the bonded reconnect
-// (bench 2026-10-12). Data length has no instant, so it goes at connect.
-// PHY waits for encryption to settle, the interval waits for the PHY.
+// (bench 2026-10-12). Nothing is sent from the CONNECT event. A data length
+// request there timed out while a bonded phone started encryption, and the
+// host reset that followed crashed on the stale ack (core dumps 2026-10-18).
+// Data length goes once the link is secure, PHY waits for the central to
+// settle, the interval waits for the PHY.
 constexpr std::uint32_t kLinkSettleMs = 2000;
 constexpr std::uint32_t kPhyWaitMs = 2000;
 
@@ -509,18 +526,39 @@ void link_on_host(ble_npl_event *) {
   if (!connected.load() || !authenticated.load())
     return;
   const auto handle = conn_handle.load();
+  if (link_step == LinkStep::Dle) {
+    link_step = LinkStep::Phy;
+    if (dle_request_needed(dle_tx_octets, options.data_len_octets)) {
+      const int rc = ble_gap_set_data_len(handle, options.data_len_octets,
+                                          options.data_len_time_us);
+      aqlog.record_only().printf("BLE LINK request dle=%u/%u rc=%d\n",
+                                 unsigned(options.data_len_octets),
+                                 unsigned(options.data_len_time_us), rc);
+      log_hci_fail("dle",
+                   BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_SET_DATA_LEN), rc);
+    } else
+      aqlog.record_only().printf("BLE LINK dle=%u by central\n",
+                                 unsigned(dle_tx_octets));
+    ble_npl_callout_reset(&link_callout,
+                          ble_npl_time_ms_to_ticks32(kLinkSettleMs));
+    return;
+  }
   if (link_step == LinkStep::Phy) {
     link_step = LinkStep::Interval;
     std::uint8_t tx = 0, rx = 0;
-    if (options.prefer_2m_phy &&
-        !phy_request_needed(ble_gap_read_le_phy(handle, &tx, &rx) == 0, tx,
-                            rx)) {
+    const int read =
+        options.prefer_2m_phy ? ble_gap_read_le_phy(handle, &tx, &rx) : 0;
+    log_hci_fail("read_phy", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_RD_PHY),
+                 read);
+    if (options.prefer_2m_phy && !phy_request_needed(read == 0, tx, rx)) {
       aqlog.record_only().println("BLE LINK phy=2m by central");
     } else if (options.prefer_2m_phy) {
       const int rc = ble_gap_set_prefered_le_phy(handle, BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_CODED_ANY);
       aqlog.record_only().printf("BLE LINK request phy=2m rc=%d\n", rc);
+      log_hci_fail("phy", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_SET_PHY),
+                   rc);
       if (rc == 0) {
         // PHY_UPDATE_COMPLETE moves on sooner; this is the fallback.
         ble_npl_callout_reset(&link_callout,
@@ -544,22 +582,13 @@ void link_on_host(ble_npl_event *) {
     link_step = LinkStep::Done;
 }
 
-void request_link_parameters(std::uint16_t handle) {
-  link_step = LinkStep::Idle;
-  const int dle = ble_gap_set_data_len(handle, options.data_len_octets,
-                                       options.data_len_time_us);
-  aqlog.record_only().printf("BLE LINK request dle=%u/%u rc=%d\n",
-                             unsigned(options.data_len_octets),
-                             unsigned(options.data_len_time_us), dle);
-}
-
-// Called once the link is encrypted and authenticated.
+// Called once the link is encrypted and authenticated, from a GAP event. The
+// first command goes out on the next turn of the host's event queue.
 void start_link_sequence() {
   if (link_step != LinkStep::Idle)
     return;
-  link_step = LinkStep::Phy;
-  ble_npl_callout_reset(&link_callout,
-                        ble_npl_time_ms_to_ticks32(kLinkSettleMs));
+  link_step = LinkStep::Dle;
+  ble_npl_callout_reset(&link_callout, 0);
 }
 
 // The central ran a procedure of its own on `handle`. While the PHY request
@@ -739,6 +768,8 @@ int gap_event(ble_gap_event *event, void *) {
     authenticated = false;
     connected = true;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
+    link_step = LinkStep::Idle;
+    dle_tx_octets = 0;
     {
       const auto now = esp_timer_get_time();
       portENTER_CRITICAL(&tx_lock);
@@ -759,7 +790,6 @@ int gap_event(ble_gap_event *event, void *) {
             }))
       aqlog.printf("BLE SUBSCRIBE early=%u response=%u\n", held,
                    unsigned(subscribed[Response].load()));
-    request_link_parameters(event->connect.conn_handle);
     // Already secure at connect, which ENC_CHANGE would never report.
     confirm_secure(event->connect.conn_handle, "connect");
     return 0;
@@ -783,6 +813,7 @@ int gap_event(ble_gap_event *event, void *) {
     ++generation;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
     early_cccd.clear();
+    dle_tx_octets = 0;
     close_responses();
     ble_npl_callout_stop(&relax_callout);
     ble_npl_callout_stop(&link_callout);
@@ -917,12 +948,15 @@ int gap_event(ble_gap_event *event, void *) {
                                  event->phy_updated.status);
     return 0;
   case BLE_GAP_EVENT_DATA_LEN_CHG:
-    if (event->data_len_chg.conn_handle == conn_handle.load())
-      aqlog.record_only().printf("BLE DLE tx=%u/%u rx=%u/%u\n",
-                                 unsigned(event->data_len_chg.max_tx_octets),
-                                 unsigned(event->data_len_chg.max_tx_time),
-                                 unsigned(event->data_len_chg.max_rx_octets),
-                                 unsigned(event->data_len_chg.max_rx_time));
+    if (event->data_len_chg.conn_handle != conn_handle.load())
+      return 0;
+    // The Dle step skips a length the central already set.
+    dle_tx_octets = event->data_len_chg.max_tx_octets;
+    aqlog.record_only().printf("BLE DLE tx=%u/%u rx=%u/%u\n",
+                               unsigned(event->data_len_chg.max_tx_octets),
+                               unsigned(event->data_len_chg.max_tx_time),
+                               unsigned(event->data_len_chg.max_rx_octets),
+                               unsigned(event->data_len_chg.max_rx_time));
     return 0;
   default:
     return 0;
@@ -949,6 +983,7 @@ void on_reset(int reason) {
   ++generation;
   std::fill(std::begin(subscribed), std::end(subscribed), false);
   early_cccd.clear();
+  dle_tx_octets = 0;
   close_responses();
   ble_npl_callout_stop(&relax_callout);
   ble_npl_callout_stop(&link_callout);

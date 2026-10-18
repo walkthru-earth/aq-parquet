@@ -870,23 +870,37 @@ void test_pending_cccd() {
   assert(early.replay(7, count) == 0 && calls == 1);
 }
 
-// link_on_host()'s PHY step on a callout, in milliseconds. Central events and
-// the callout run in time order on the host task, as in ble_sync.cpp.
+// link_on_host()'s Dle and PHY steps on a callout, in milliseconds. Central
+// events and the callout run in time order on the host task, as in
+// ble_sync.cpp. CONNECT itself sends nothing.
 struct LinkSequence {
-  static constexpr std::int64_t kSettleMs = 2000; // kLinkSettleMs
+  static constexpr std::int64_t kSettleMs = 2000;   // kLinkSettleMs
+  static constexpr std::uint16_t kWantOctets = 251; // data_len_octets
   ble::LinkStep step = ble::LinkStep::Idle;
   std::int64_t due_ms = -1;
+  std::int64_t dle_ms = -1;
   std::int64_t requested_ms = -1;
-  std::uint8_t tx = 1, rx = 1; // 1M until a PHY update
+  std::uint16_t central_tx_octets = 0; // the last DATA_LEN_CHG
+  std::uint8_t tx = 1, rx = 1;         // 1M until a PHY update
 
-  // The latch, via CONNECT or ENC_CHANGE.
+  // The latch, via CONNECT or ENC_CHANGE. Dle runs on the next queue turn.
   void start(std::int64_t now) {
-    step = ble::LinkStep::Phy;
-    due_ms = now + kSettleMs;
+    step = ble::LinkStep::Dle;
+    due_ms = now;
   }
   // Runs the callout if it fell due before `now`.
   void advance(std::int64_t now) {
-    if (step != ble::LinkStep::Phy || due_ms < 0 || due_ms > now)
+    if (due_ms < 0 || due_ms > now)
+      return;
+    if (step == ble::LinkStep::Dle) {
+      step = ble::LinkStep::Phy;
+      if (ble::dle_request_needed(central_tx_octets, kWantOctets))
+        dle_ms = due_ms;
+      due_ms += kSettleMs;
+      if (due_ms > now)
+        return;
+    }
+    if (step != ble::LinkStep::Phy)
       return;
     step = ble::LinkStep::Interval;
     if (ble::phy_request_needed(true, tx, rx))
@@ -906,6 +920,7 @@ void test_phy_request_waits_for_central_procedures() {
   using ble::LinkStep;
   static_assert(ble::central_procedure_rearms(LinkStep::Phy));
   static_assert(!ble::central_procedure_rearms(LinkStep::Idle));
+  static_assert(!ble::central_procedure_rearms(LinkStep::Dle));
   static_assert(!ble::central_procedure_rearms(LinkStep::Interval));
   static_assert(!ble::central_procedure_rearms(LinkStep::Done));
   LinkSequence link;
@@ -944,6 +959,41 @@ void test_phy_request_skipped_on_2m() {
   half.advance(10000);
   assert(half.requested_ms == 2000);
 }
+
+// The CoreS3 core dumps (2026-10-18). Data length at CONNECT timed out while
+// the bonded phone started encryption. It now waits for the latch and goes
+// out before the PHY request.
+void test_dle_waits_for_latch_and_precedes_phy() {
+  LinkSequence link;
+  link.advance(5000); // connected, not yet secure
+  assert(link.step == ble::LinkStep::Idle && link.dle_ms == -1);
+  link.start(5100);
+  link.advance(5100);
+  assert(link.dle_ms == 5100 && link.step == ble::LinkStep::Phy);
+  assert(link.requested_ms == -1);
+  link.advance(10000);
+  assert(link.requested_ms == 5100 + LinkSequence::kSettleMs);
+  assert(link.dle_ms < link.requested_ms);
+}
+
+// A central that set the data length itself sees no local request.
+void test_dle_skipped_when_central_set_it() {
+  static_assert(ble::dle_request_needed(0, 251));
+  static_assert(ble::dle_request_needed(27, 251));
+  static_assert(!ble::dle_request_needed(251, 251));
+  static_assert(!ble::dle_request_needed(251, 200));
+  LinkSequence link;
+  link.central_tx_octets = 251;
+  link.start(0);
+  link.advance(10000);
+  assert(link.dle_ms == -1 && link.requested_ms == 2000);
+  // A shorter length from the central still asks.
+  LinkSequence short_central;
+  short_central.central_tx_octets = 27;
+  short_central.start(0);
+  short_central.advance(10000);
+  assert(short_central.dle_ms == 0);
+}
 } // namespace
 
 int main() {
@@ -976,6 +1026,8 @@ int main() {
   test_pending_cccd();
   test_phy_request_waits_for_central_procedures();
   test_phy_request_skipped_on_2m();
+  test_dle_waits_for_latch_and_precedes_phy();
+  test_dle_skipped_when_central_set_it();
   std::printf("ble policy passed\n");
   return 0;
 }

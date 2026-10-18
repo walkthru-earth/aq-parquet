@@ -310,7 +310,15 @@ private:
 };
 
 // Where the post-connect link sequence is, see link_on_host() in ble_sync.cpp.
-enum class LinkStep : std::uint8_t { Idle, Phy, Interval, Done };
+enum class LinkStep : std::uint8_t { Idle, Dle, Phy, Interval, Done };
+
+// The Dle step asks for `want` TX octets only when the central's own data
+// length update did not already reach it. `central_tx_octets` is the last
+// DATA_LEN_CHG max_tx_octets on this link, 0 when none came.
+[[nodiscard]] constexpr bool dle_request_needed(std::uint16_t central_tx_octets,
+                                                std::uint16_t want) {
+  return central_tx_octets < want;
+}
 
 // A procedure the central ran (MTU exchange, connection update, PHY update)
 // while the local PHY request still waits. The wait starts over, so the PHY
