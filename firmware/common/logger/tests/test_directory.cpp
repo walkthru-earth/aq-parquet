@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <vector>
 
@@ -175,59 +176,18 @@ void check_archive_walk() {
   assert(!walk_directory(io, long_base.c_str(), "", 0, visit));
   assert(errno == ENAMETOOLONG);
 }
-// An in-memory tree for the resumable walk. Directories map to their entry
-// names. A trailing '/' marks a subdirectory.
-struct TreeIO {
-  struct Cursor {
-    std::string path;
-    std::size_t index = 0;
-  };
-  std::map<std::string, std::vector<std::string>> directories;
-  std::vector<std::unique_ptr<Cursor>> cursors;
-  struct dirent entry{};
-  unsigned opened = 0, closed = 0, reads = 0;
+// An in-memory tree for the resumable walk, built once and shared read only
+// by every case. Directories map to their entry names, and a trailing '/'
+// marks a subdirectory. `kinds` indexes every entry by its full path, so
+// inspect() costs O(log n) instead of a scan of the parent listing. The scan
+// made each walk of the 10000 entry directory quadratic, and that walk ran six
+// times (issue #50).
+struct Tree {
+  std::map<std::string, std::vector<std::string>, std::less<>> directories;
+  std::map<std::string, mode_t, std::less<>> kinds;
 
-  Cursor *open(const char *path) {
-    const auto found = directories.find(path);
-    if (found == directories.end()) {
-      errno = ENOENT;
-      return nullptr;
-    }
-    ++opened;
-    cursors.push_back(std::make_unique<Cursor>(Cursor{path, 0}));
-    return cursors.back().get();
-  }
-  const struct dirent *read(Cursor *cursor) {
-    ++reads;
-    const auto &names = directories.at(cursor->path);
-    if (cursor->index == names.size())
-      return nullptr;
-    std::string name = names[cursor->index++];
-    if (name.back() == '/')
-      name.pop_back();
-    std::snprintf(entry.d_name, sizeof(entry.d_name), "%s", name.c_str());
-    return &entry;
-  }
-  int inspect(const char *path, struct stat *info) {
-    const std::string full(path);
-    const auto slash = full.rfind('/');
-    const auto &names =
-        directories.at(full.substr(0, slash) + (slash == 3 ? "/" : ""));
-    const std::string leaf = full.substr(slash + 1);
-    for (const auto &name : names)
-      if (name == leaf || name == leaf + "/") {
-        info->st_mode = name.back() == '/' ? S_IFDIR : S_IFREG;
-        return 0;
-      }
-    errno = ENOENT;
-    return -1;
-  }
-  int close(Cursor *) {
-    ++closed;
-    return 0;
-  }
   // "/sd/" holds a day tree with partials and one huge flat directory.
-  explicit TreeIO(unsigned huge) {
+  explicit Tree(unsigned huge) {
     directories["/sd/"] = {"a.parquet", "station=x/", "huge/", "z.parquet"};
     directories["/sd/station=x"] = {"year=2026/", "b.partial", ".hidden"};
     directories["/sd/station=x/year=2026"] = {"month=01/", "month=02/"};
@@ -238,6 +198,68 @@ struct TreeIO {
     for (unsigned i = 0; i < huge; ++i)
       flat.push_back("f" + std::to_string(i) +
                      (i % 10 ? ".parquet" : ".partial"));
+    for (const auto &[directory, names] : directories) {
+      // The root opens as "/sd/" while its entries stat as "/sd/<name>".
+      const std::string parent = directory == "/sd/" ? "/sd" : directory;
+      for (const auto &name : names) {
+        const bool subdirectory = name.back() == '/';
+        const std::string_view leaf(name.data(),
+                                    name.size() - (subdirectory ? 1 : 0));
+        kinds.emplace(parent + "/" + std::string(leaf),
+                      subdirectory ? S_IFDIR : S_IFREG);
+      }
+    }
+  }
+};
+
+// Per case IO state over a shared Tree, so cursors and counters start fresh.
+struct TreeIO {
+  struct Cursor {
+    const std::vector<std::string> *names = nullptr;
+    std::size_t index = 0;
+  };
+  const Tree &tree;
+  std::vector<std::unique_ptr<Cursor>> cursors;
+  struct dirent entry{};
+  unsigned opened = 0, closed = 0, reads = 0;
+
+  explicit TreeIO(const Tree &shared) : tree(shared) {}
+
+  Cursor *open(const char *path) {
+    const auto found = tree.directories.find(std::string_view(path));
+    if (found == tree.directories.end()) {
+      errno = ENOENT;
+      return nullptr;
+    }
+    ++opened;
+    cursors.push_back(
+        std::make_unique<Cursor>(Cursor{.names = &found->second, .index = 0}));
+    return cursors.back().get();
+  }
+  const struct dirent *read(Cursor *cursor) {
+    ++reads;
+    const auto &names = *cursor->names;
+    if (cursor->index == names.size())
+      return nullptr;
+    const std::string &name = names[cursor->index++];
+    const int length =
+        static_cast<int>(name.size()) - (name.back() == '/' ? 1 : 0);
+    std::snprintf(entry.d_name, sizeof(entry.d_name), "%.*s", length,
+                  name.c_str());
+    return &entry;
+  }
+  int inspect(const char *path, struct stat *info) {
+    const auto found = tree.kinds.find(std::string_view(path));
+    if (found == tree.kinds.end()) {
+      errno = ENOENT;
+      return -1;
+    }
+    info->st_mode = found->second;
+    return 0;
+  }
+  int close(Cursor *) {
+    ++closed;
+    return 0;
   }
 };
 
@@ -247,9 +269,10 @@ void check_resumable_walk() {
   using aq::logger::detail::DirectoryWalk;
   using aq::logger::detail::walk_directory;
   using Status = DirectoryWalk<TreeIO>::Status;
+  const Tree tree(10000);
   std::vector<std::string> whole;
   {
-    TreeIO io(10000);
+    TreeIO io(tree);
     auto visit = [&](const char *name, const struct stat &) {
       whole.emplace_back(name);
       return true;
@@ -262,7 +285,7 @@ void check_resumable_walk() {
          whole[1] == "station=x/year=2026/month=01/c.parquet" &&
          whole.back() == "z.parquet");
   for (const unsigned budget : {1U, 7U, 32U, 4096U}) {
-    TreeIO io(10000);
+    TreeIO io(tree);
     std::vector<std::string> stepped;
     auto visit = [&](const char *name, const struct stat &) {
       stepped.emplace_back(name);
@@ -285,7 +308,7 @@ void check_resumable_walk() {
   // A visitor that refuses stops the walk inside the step and closes every
   // open directory. Nothing is read afterwards.
   {
-    TreeIO io(10000);
+    TreeIO io(tree);
     unsigned visits = 0;
     auto visit = [&](const char *, const struct stat &) {
       return ++visits < 3;
@@ -299,7 +322,7 @@ void check_resumable_walk() {
   }
   // cancel() mid walk, and a destroyed walk, close what is open.
   {
-    TreeIO io(100);
+    TreeIO io(tree);
     auto visit = [](const char *, const struct stat &) { return true; };
     {
       DirectoryWalk<TreeIO> walk;
