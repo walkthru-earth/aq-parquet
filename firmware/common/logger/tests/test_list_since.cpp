@@ -323,6 +323,17 @@ void check_keeper() {
     keeper.note_unsynced(nvs.store());
     assert(keeper.appended() && !keeper.stale_marker());
   }
+  // A marked boot whose append never succeeded still needs its marker.
+  {
+    FakeStore failing;
+    failing.fail_save = true;
+    ls::RingKeeper keeper;
+    keeper.set_current(boot_of(7));
+    keeper.note_unsynced(failing.store());
+    assert(!keeper.appended() && keeper.needs_marker());
+    keeper.marker_made();
+    assert(!keeper.needs_marker() && !keeper.stale_marker());
+  }
   // The marker path, and a buffer too small for it.
   {
     char path[96];
@@ -332,6 +343,15 @@ void check_keeper() {
     char small[20];
     assert(!ls::marker_path(small, "/sdcard/output", "ab", "0011"));
     assert(!ls::marker_path(std::span<char>{}, "/sdcard/output", "ab", "0011"));
+    // The path needs room for its terminator. A buffer exactly its length
+    // fails and one byte more fits.
+    constexpr std::size_t exact =
+        sizeof("/sdcard/output/station=ab/unsynced/ringless=0011") - 1;
+    char edge[exact + 1];
+    assert(!ls::marker_path(std::span<char>(edge, exact), "/sdcard/output",
+                            "ab", "0011"));
+    assert(ls::marker_path(std::span<char>(edge, exact + 1), "/sdcard/output",
+                           "ab", "0011"));
   }
   // A failing read gives no ring, so LIST_SINCE walks every unsynced boot.
   {
