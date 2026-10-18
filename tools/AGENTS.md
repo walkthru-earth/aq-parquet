@@ -27,7 +27,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
 | Formatting and static diagnostics | `fmt-check`, `lint` |
 | Full host gate, same entry point as CI | `gate` (`tools/gate.sh`, add new host test tasks to its list) |
-| CI image size table from `idf.py size --format json2` | `size_report.py` |
+| CI image size table from `idf.py size --format json2`, absolute sizes with a warning when the baseline is malformed | `size_report.py`, `size-report-test` |
 | Static task stack worst case, xTaskCreate name and stack size cross check, and linker section budgets per image (`stack_budget.json`) | `stack-budget [--check] [--path]`, `stack-budget-test` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`

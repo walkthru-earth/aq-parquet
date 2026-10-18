@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 
 def load(path: Path) -> dict[str, int]:
@@ -24,6 +25,14 @@ def load(path: Path) -> dict[str, int]:
     for region in report["layout"]:
         rows[region["name"]] = int(region["used"])
     return rows
+
+
+def load_baseline(path: Path) -> tuple[dict[str, int] | None, str]:
+    """Return the baseline rows, or None and the reason it could not be read."""
+    try:
+        return load(path), ""
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        return None, f"{type(error).__name__}: {error}"
 
 
 def delta(current: int, previous: int | None) -> str:
@@ -45,11 +54,16 @@ def main() -> None:
                         help="which build the baseline came from, shown above the table")
     args = parser.parse_args()
     current = load(args.report)
-    baseline = load(args.baseline) if args.baseline else None
+    baseline, problem = load_baseline(args.baseline) if args.baseline else (None, "")
 
     lines = [f"### {args.label} image size", ""]
-    if baseline is None:
+    if problem:
+        print(f"warning: size baseline {args.baseline} could not be read, {problem}", file=sys.stderr)
+        lines += [f"The baseline from the {args.baseline_from} could not be read ({problem}), "
+                  "so only absolute sizes are shown.", ""]
+    elif baseline is None:
         lines += ["No baseline build was available, so only absolute sizes are shown.", ""]
+    if baseline is None:
         lines += ["| Region | Used bytes |", "| --- | ---: |"]
         lines += [f"| {name} | {used:,} |" for name, used in current.items()]
     else:

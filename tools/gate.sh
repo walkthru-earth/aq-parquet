@@ -33,6 +33,7 @@ tasks=(
   "rebuild-partial-test --sanitize"
   "bench-power-cut-test"
   "size-survey-test"
+  "size-report-test"
   "stack-budget-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
