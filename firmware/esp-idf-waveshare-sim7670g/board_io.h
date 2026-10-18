@@ -13,6 +13,7 @@ bool mount_card();
 // a reinserted card or space freed elsewhere is seen. Never formats.
 bool remount_card();
 std::uint32_t cluster_bytes(); // 0 when unknown
+std::uint32_t volume_serial(); // FAT volume serial, 0 when unknown
 bool storage_free_bytes(std::uint64_t &free_bytes);
 std::uint64_t card_bytes();
 std::uint64_t storage_total_bytes();

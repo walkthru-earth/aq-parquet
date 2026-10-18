@@ -26,12 +26,12 @@ int main() {
   view.uptime_seconds = view.interval_seconds = view.buffered = view.finalized =
       view.dropped = view.errors = view.total_kib = view.used_kib =
           view.heap_free = view.partials = view.quarantined = view.open_rows =
-              view.open_groups = maximum;
+              view.open_groups = view.mount_epoch = maximum;
   view.disconnects = std::numeric_limits<std::uint16_t>::max();
   view.last_disconnect = std::numeric_limits<std::uint8_t>::max();
-  // Include the extra minus sign even though runtime miss/generation counts
-  // are nonnegative: this also covers every signed representable length.
-  view.missed = std::numeric_limits<std::int64_t>::min();
+  // The formatter clamps miss, utc_ms and clk_age_s, so the largest inputs
+  // print their clamp bounds. The generation keeps its extra minus sign.
+  view.missed = std::numeric_limits<std::int64_t>::max();
   view.generation = std::numeric_limits<std::int32_t>::min();
   view.clock_source = view.rtc_state = std::numeric_limits<std::uint8_t>::max();
   view.quarantine_bytes = std::numeric_limits<std::uint64_t>::max();
@@ -46,7 +46,7 @@ int main() {
     const auto length =
         aqlogger::format_status(view, buffer.data(), buffer.size());
     // Keep room for a small key without crossing the 480-byte bound.
-    constexpr std::size_t kHeadroom = 4;
+    constexpr std::size_t kHeadroom = 10;
     assert(length && length + kHeadroom <= ble::kMaxJson);
     assert(!ble::snapshot_notification_fits(length, 23));
     assert(!ble::snapshot_notification_fits(length, 247));
@@ -70,6 +70,17 @@ int main() {
   assert(length && length <= ble::kMaxJson);
   assert(std::strstr(buffer.data(), "\"utc_ms\":null,\"clk_age_s\":null}"));
   assert(std::strstr(buffer.data(), "\"dc\":0,\"dr\":null,"));
+  // Unreachable negative counts print 0 rather than a sign.
+  view.utc = true;
+  view.missed = view.utc_ms = view.clock_age_seconds = -5;
+  view.mount_epoch = 0x1234abcdU;
+  assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
+  assert(std::strstr(buffer.data(), "\"miss\":0,"));
+  assert(std::strstr(buffer.data(),
+                     "\"ls\":305441741,\"utc_ms\":0,\"clk_age_s\":0}"));
+  view.utc = false;
+  view.mount_epoch = maximum;
+  assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
   std::cout << buffer.data() << '\n';
   // sd_state is the documented wire number: 0 ready, 1 degraded, 2 full,
   // 3 retry.

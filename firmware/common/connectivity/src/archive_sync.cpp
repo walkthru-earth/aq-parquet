@@ -292,7 +292,7 @@ void ArchiveSession::cancel_list(bool notify, ble::Error code,
         static_cast<unsigned long>(list_.count), detail ? detail : "storage");
     archive_.log(archive_.context, line);
   }
-  error(ble::kOpList, code,
+  error(list_.op, code,
         detail && payload_max() >= 3 + std::strlen(detail) ? detail : nullptr);
   request_link_ = link;
   request_peer_ = peer;
@@ -350,8 +350,13 @@ void ArchiveSession::step(bool storage_ready) {
   } else {
     const bool begin = !list_.begun;
     list_.begun = true;
-    status = archive_.list(archive_.context, begin, kListStepEntries, emit_file,
-                           this, list_.partials);
+    if (list_.op == ble::kOpListSince)
+      status = archive_.list_since(archive_.context, begin, list_.cursor,
+                                   list_.since, kListStepEntries, emit_file,
+                                   this, list_.partials);
+    else
+      status = archive_.list(archive_.context, begin, kListStepEntries,
+                             emit_file, this, list_.partials);
   }
   if (status != ListStatus::More)
     finish_list(status);
@@ -378,30 +383,81 @@ void ArchiveSession::finish_list(ListStatus status) {
   }
   // An ABORT wins over a walk error, since the client asked to stop.
   if (list.aborted) {
-    stop_aborted(ble::kOpList);
+    stop_aborted(list.op);
     return;
   }
   if (status == ListStatus::Failed) {
-    error(ble::kOpList, ble::kErrStorage);
+    error(list.op, ble::kErrStorage);
     return;
   }
   if (!list.ok || status == ListStatus::Stopped) {
     // Always try a terminal ERROR so the client never waits for LIST_END.
     const char *detail = list.failure_detail ? list.failure_detail : "refused";
-    error(ble::kOpList, ble::kErrBusy,
+    error(list.op, ble::kErrBusy,
           payload_max() >= 3 + std::strlen(detail) ? detail : nullptr);
     return;
   }
-  std::uint8_t frame[15];
-  frame[0] = ble::kFrameListEnd;
+  const bool since = list.op == ble::kOpListSince;
+  // LIST_SINCE_END needs 48 bytes. A link that shrank below that since the
+  // job started gets the LIST reply for a frame that does not fit.
+  if (since && payload_max() < kListSinceEndBytes) {
+    error(list.op, ble::kErrBusy, "mtu");
+    return;
+  }
+  // LIST_END is the first 15 bytes of LIST_SINCE_END.
+  std::uint8_t frame[kListSinceEndBytes];
+  frame[0] = since ? ble::kFrameListSinceEnd : ble::kFrameListEnd;
   put_u32(frame + 1, list.count);
   put_u16(frame + 5, static_cast<std::uint16_t>(
                          list.partials > 65535 ? 65535 : list.partials));
   put_u32(frame + 7, archive_.total_kib(archive_.context));
   put_u32(frame + 11, archive_.used_kib(archive_.context));
+  std::size_t length = 15;
+  if (since) {
+    frame[15] = list.since.flags;
+    encode_cursor(list.since.next, std::span<std::uint8_t, kListCursorBytes>(
+                                       frame + 16, kListCursorBytes));
+    length = kListSinceEndBytes;
+  }
   // A failed terminal delivery leaves the client without a complete snapshot.
-  if (respond(frame, sizeof(frame)) && archive_.listed)
+  if (respond(frame, length) && archive_.listed)
     archive_.listed(archive_.context);
+}
+
+void ArchiveSession::start_list(ble::Op op, const ble::ControlRequest &request,
+                                bool storage_ready) {
+  ListCursor cursor;
+  if (op == ble::kOpListSince) {
+    if (request.length != kListSinceRequestBytes) {
+      error(op, ble::kErrMalformed, "cursor");
+      return;
+    }
+    cursor = decode_cursor(std::span<const std::uint8_t, kListCursorBytes>(
+        request.bytes + 1, kListCursorBytes));
+    if (cursor.day != 0 && !valid_list_day(cursor.day)) {
+      error(op, ble::kErrMalformed, "cursor");
+      return;
+    }
+  }
+  if (!storage_ready) {
+    error(op, ble::kErrStorage);
+  } else if (list_.active) {
+    // One LIST runs at a time. Only the job's own peer waits for it.
+    error(op, ble::kErrBusy, payload_max() >= 7 ? "list" : nullptr);
+  } else if (archive_.preempted && archive_.preempted(archive_.context)) {
+    // A close is already due, so the job would end on its first step.
+    error(op, ble::kErrBusy, payload_max() >= 12 ? "preempted" : nullptr);
+  } else if (op == ble::kOpListSince && payload_max() < kListSinceEndBytes) {
+    // LIST_SINCE_END could never be delivered.
+    error(op, ble::kErrBusy, "mtu");
+  } else {
+    // step() walks it, one bounded step per worker pass.
+    list_ = ListJob{};
+    list_.op = op;
+    list_.active = true;
+    list_.tag = abort::tag(request);
+    list_.cursor = cursor;
+  }
 }
 
 void ArchiveSession::open(const std::uint8_t *name_bytes,
@@ -609,8 +665,8 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   if (request.length > sizeof(request.bytes))
     return true;
   const auto op = static_cast<ble::Op>(request.bytes[0]);
-  if (op != ble::kOpList && op != ble::kOpOpen && op != ble::kOpRead &&
-      op != ble::kOpClose)
+  if (op != ble::kOpList && op != ble::kOpListSince && op != ble::kOpOpen &&
+      op != ble::kOpRead && op != ble::kOpClose)
     return false;
   reconcile();
   if ((request.link == ble::Link::Lan && request.peer >= ble::kMaxLanClients) ||
@@ -629,28 +685,24 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   serve(abort::tag(request));
   const std::uint8_t *body = request.bytes + 1;
   const std::size_t length = request.length - 1;
+  // Without the hook the op does not exist on this board. The client then
+  // falls back to LIST.
+  if (op == ble::kOpListSince && !archive_.list_since) {
+    error(op, ble::kErrUnknownOp);
+    request_ = nullptr;
+    return true;
+  }
   // A LIST or READ queued before an ABORT on its link never starts.
-  if ((op == ble::kOpList || op == ble::kOpRead) && aborted()) {
+  if ((op == ble::kOpList || op == ble::kOpListSince || op == ble::kOpRead) &&
+      aborted()) {
     stop_aborted(op);
     request_ = nullptr;
     return true;
   }
   switch (op) {
   case ble::kOpList:
-    if (!storage_ready) {
-      error(op, ble::kErrStorage);
-    } else if (list_.active) {
-      // One LIST runs at a time. Only the job's own peer waits for it.
-      error(op, ble::kErrBusy, payload_max() >= 7 ? "list" : nullptr);
-    } else if (archive_.preempted && archive_.preempted(archive_.context)) {
-      // A close is already due, so the job would end on its first step.
-      error(op, ble::kErrBusy, payload_max() >= 12 ? "preempted" : nullptr);
-    } else {
-      // step() walks it, one bounded step per worker pass.
-      list_ = ListJob{};
-      list_.active = true;
-      list_.tag = abort::tag(request);
-    }
+  case ble::kOpListSince:
+    start_list(op, request, storage_ready);
     break;
   case ble::kOpOpen:
     if (!storage_ready)

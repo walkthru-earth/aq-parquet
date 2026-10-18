@@ -860,6 +860,9 @@ bool telemetry::remount_sd() {
 std::uint32_t telemetry::sd_cluster_bytes() {
   return aq::storage::fat_cluster_bytes(sd_card);
 }
+std::uint32_t telemetry::sd_volume_serial() {
+  return aq::storage::fat_volume_serial(sd_card);
+}
 bool telemetry::sd_free_bytes(std::uint64_t &free_bytes) {
   return sd_card && aq::storage::fat_free_bytes("/sd", free_bytes);
 }

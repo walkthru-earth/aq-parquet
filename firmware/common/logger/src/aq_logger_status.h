@@ -42,6 +42,9 @@ struct StatusSnapshot {
   // (#protocol-3-contract), and the `status` table (#status-read-notify).
   std::uint16_t disconnects = 0;
   std::uint8_t last_disconnect = 0;
+  // "ls", the LIST_SINCE mount epoch (FAT volume serial, 0 when unknown).
+  // The key's presence tells the phone the board serves LIST_SINCE.
+  std::uint32_t mount_epoch = 0;
 };
 // Returns zero on insufficient capacity, never reports truncated JSON as valid.
 std::size_t format_status(const StatusSnapshot &, char *, std::size_t capacity);

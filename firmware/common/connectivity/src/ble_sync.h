@@ -15,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 namespace ble {
 constexpr std::uint8_t kProtocolVersion = 3;
@@ -54,6 +55,9 @@ enum Op : std::uint8_t {
   kOpGetToken = 0x0d,
   kOpGetDiag = 0x0e,
   kOpAbort = 0x0f,
+  // Opcodes and frame types are separate number spaces. LIST_SINCE shares
+  // 0x10 with the FILE frame, which is never sent to the device.
+  kOpListSince = 0x10,
 };
 enum Frame : std::uint8_t {
   kFrameFile = 0x10,
@@ -78,8 +82,27 @@ enum Frame : std::uint8_t {
   kFrameBye = 0x4b,
   kFrameDiag = 0x4c,
   kFrameAborted = 0x4d,
+  kFrameListSinceEnd = 0x4e,
   kFrameError = 0x7f,
 };
+// Every frame type the device sends, for the uniqueness check below.
+inline constexpr Frame kFrames[] = {
+    kFrameFile,    kFrameListEnd, kFrameOpened,       kFrameChunk,
+    kFrameReadEnd, kFrameClosed,  kFrameTimeSet,      kFrameFlushed,
+    kFrameConfig,  kFrameWifiAp,  kFrameWifiScanEnd,  kFrameRebooting,
+    kFrameLog,     kFrameLogEnd,  kFrameToken,        kFrameHello,
+    kFrameStatus,  kFrameLive,    kFrameConfigChunk,  kFrameBye,
+    kFrameDiag,    kFrameAborted, kFrameListSinceEnd, kFrameError,
+};
+consteval bool frames_unique() {
+  for (std::size_t i = 0; i < std::size(kFrames); ++i)
+    for (std::size_t j = i + 1; j < std::size(kFrames); ++j)
+      if (kFrames[i] == kFrames[j])
+        return false;
+  return true;
+}
+static_assert(frames_unique(), "two frame types share a number");
+
 enum Error : std::uint8_t {
   kErrMalformed = 1,
   kErrInvalidName = 2,

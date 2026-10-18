@@ -100,6 +100,7 @@ bool remount_card() {
   return mount(true);
 }
 std::uint32_t cluster_bytes() { return aq::storage::fat_cluster_bytes(card); }
+std::uint32_t volume_serial() { return aq::storage::fat_volume_serial(card); }
 bool storage_free_bytes(std::uint64_t &free_bytes) {
   return card && aq::storage::fat_free_bytes("/sd", free_bytes);
 }

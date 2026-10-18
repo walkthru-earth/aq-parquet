@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <span>
 
 namespace aqsync {
 // Receives one finalized file of a listing. Returning false stops the walk at
@@ -31,6 +32,75 @@ struct FileCheck {
 // FILE frames already emitted are an incomplete snapshot. Stopped: the
 // emitter returned false. Only More leaves anything open.
 enum class ListStatus : std::uint8_t { More, Complete, Failed, Stopped };
+
+// LIST_SINCE cursor (docs/shared/ble-sync-protocol.md "LIST_SINCE"). The
+// request carries it after the opcode and LIST_SINCE_END returns the next one.
+// day is YYYYMMDD UTC, 0 for no floor. boot is the 16 raw bytes of the 32 hex
+// boot id in text order, all zero for no unsynced position. seq is the lowest
+// first sequence of that boot still to list. mount_epoch 0 never matches.
+struct ListCursor {
+  std::uint32_t mount_epoch = 0;
+  std::uint32_t day = 0;
+  std::array<std::uint8_t, 16> boot{};
+  std::uint64_t seq = 0;
+};
+inline constexpr std::size_t kListCursorBytes = 4 + 4 + 16 + 8;
+inline constexpr std::size_t kListSinceRequestBytes = 1 + kListCursorBytes;
+inline constexpr std::size_t kListSinceEndBytes = 15 + 1 + kListCursorBytes;
+static_assert(kListSinceRequestBytes == 33 && kListSinceEndBytes == 48);
+// LIST_SINCE_END flags.
+inline constexpr std::uint8_t kListSinceFull = 1U << 0;
+inline constexpr std::uint8_t kListSinceUnsyncedFull = 1U << 1;
+
+// A real UTC calendar day from 2020-01-01 to 2100-12-31.
+constexpr bool valid_list_day(std::uint32_t day) {
+  const std::uint32_t year = day / 10000, month = day / 100 % 100,
+                      date = day % 100;
+  if (year < 2020 || year > 2100 || month < 1 || month > 12 || date < 1)
+    return false;
+  constexpr std::uint8_t kDays[] = {31, 28, 31, 30, 31, 30,
+                                    31, 31, 30, 31, 30, 31};
+  const bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  return date <= kDays[month - 1] + (month == 2 && leap ? 1U : 0U);
+}
+
+// Little-endian cursor bytes, the layout of the request after the opcode and
+// of LIST_SINCE_END after its flags byte.
+constexpr void encode_cursor(const ListCursor &cursor,
+                             std::span<std::uint8_t, kListCursorBytes> out) {
+  auto put = [&](std::size_t at, std::uint64_t value, std::size_t bytes) {
+    for (std::size_t i = 0; i < bytes; ++i)
+      out[at + i] = static_cast<std::uint8_t>(value >> (8 * i));
+  };
+  put(0, cursor.mount_epoch, 4);
+  put(4, cursor.day, 4);
+  for (std::size_t i = 0; i < cursor.boot.size(); ++i)
+    out[8 + i] = cursor.boot[i];
+  put(24, cursor.seq, 8);
+}
+constexpr ListCursor
+decode_cursor(std::span<const std::uint8_t, kListCursorBytes> in) {
+  auto get = [&](std::size_t at, std::size_t bytes) {
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < bytes; ++i)
+      value |= static_cast<std::uint64_t>(in[at + i]) << (8 * i);
+    return value;
+  };
+  ListCursor cursor;
+  cursor.mount_epoch = static_cast<std::uint32_t>(get(0, 4));
+  cursor.day = static_cast<std::uint32_t>(get(4, 4));
+  for (std::size_t i = 0; i < cursor.boot.size(); ++i)
+    cursor.boot[i] = in[8 + i];
+  cursor.seq = get(24, 8);
+  return cursor;
+}
+
+// What a LIST_SINCE walk decided at its start: the flags and the cursor that
+// LIST_SINCE_END returns.
+struct ListSinceResult {
+  std::uint8_t flags = 0;
+  ListCursor next;
+};
 
 // Board/archive policy: enumerating and resolving the mounted archive,
 // checking finalized Parquet files, storage statistics and its bus mutex.
@@ -74,6 +144,14 @@ struct ArchiveHooks {
   // read or FILE frame, and a new LIST gets the same reply at once. Must not
   // consume the request it reports.
   bool (*preempted)(void *) = nullptr;
+  // Optional resumable LIST_SINCE walk with the contract of list. On the
+  // begin step it reads `cursor` and fills `result` before any directory
+  // read, so the next cursor covers every file finalized after the walk
+  // starts. Without it LIST_SINCE answers ERROR unknown op, the client's
+  // signal to fall back to LIST.
+  ListStatus (*list_since)(void *, bool begin, const ListCursor &cursor,
+                           ListSinceResult &result, unsigned budget,
+                           FileEmitter, void *, unsigned &partials) = nullptr;
 };
 
 // Transport adapters are independent of the filesystem and may be faked in
@@ -125,8 +203,10 @@ public:
   ArchiveSession(const ArchiveSession &) = delete;
   ArchiveSession &operator=(const ArchiveSession &) = delete;
 
-  // Returns true for LIST/OPEN/READ/CLOSE (including error responses), false
-  // for other operations so the board's clock/config/logger handler can run.
+  // Returns true for LIST/LIST_SINCE/OPEN/READ/CLOSE (including error
+  // responses), false for other operations so the board's
+  // clock/config/logger handler can run. LIST_SINCE without the list_since
+  // hook answers ERROR unknown op.
   bool handle(const ble::ControlRequest &request, bool storage_ready);
   // True while a LIST job is in progress.
   bool listing() const { return list_.active; }
@@ -182,6 +262,8 @@ private:
   };
   enum class Recheck { Same, Changed, Unreadable };
   struct ListJob {
+    // kOpList or kOpListSince. Every reply of the job names it.
+    ble::Op op = ble::kOpList;
     bool active = false;
     bool begun = false;
     bool ok = true;
@@ -190,6 +272,8 @@ private:
     std::uint32_t count = 0;
     unsigned partials = 0;
     const char *failure_detail = nullptr;
+    ListCursor cursor;
+    ListSinceResult since;
   };
   static constexpr std::size_t kPayloadCapacity = 1024;
   ArchiveHooks archive_;
@@ -235,6 +319,8 @@ private:
   void serve(const abort::Tag &tag);
   bool list_connected() const;
   void finish_list(ListStatus status);
+  void start_list(ble::Op op, const ble::ControlRequest &request,
+                  bool storage_ready);
   void cancel_list(bool notify, ble::Error code = ble::kErrStorage,
                    const char *detail = nullptr);
   void open(const std::uint8_t *name_bytes, std::size_t name_length);

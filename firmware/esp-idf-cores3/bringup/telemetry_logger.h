@@ -24,6 +24,7 @@ void begin_logger(bool sd_mounted);
 // held. remount unmounts and mounts again, never formats.
 bool remount_sd();
 std::uint32_t sd_cluster_bytes(); // 0 when unknown
+std::uint32_t sd_volume_serial(); // FAT volume serial, 0 when unknown
 bool sd_free_bytes(std::uint64_t &free_bytes);
 // Call on every application loop; takes one snapshot when the 10s deadline is
 // due.

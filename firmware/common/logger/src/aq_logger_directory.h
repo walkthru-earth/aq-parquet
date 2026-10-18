@@ -85,6 +85,14 @@ public:
   // Reads at most `budget` directory entries (at least one) and passes each
   // file to visit(name, info), where name is relative to `base`.
   template <class Visitor> Status step(unsigned budget, Visitor &visit) {
+    auto every = [](const char *) { return true; };
+    return step(budget, visit, every);
+  }
+
+  // As above, but descends into a directory only when enter(name) is true,
+  // with name relative to `base`. A skipped directory costs its one entry.
+  template <class Visitor, class Enter>
+  Status step(unsigned budget, Visitor &visit, Enter &enter) {
     if (!open_)
       return Status::Done;
     if (budget == 0)
@@ -125,6 +133,10 @@ public:
       if (io_->inspect(path, &info) != 0)
         return fail(Status::Failed);
       if (S_ISDIR(info.st_mode)) {
+        if (!enter(static_cast<const char *>(relative_))) {
+          relative_[parent] = '\0';
+          continue;
+        }
         if (first_depth_ + open_ > kMaxDepth) {
           errno = EOVERFLOW;
           return fail(Status::Failed);

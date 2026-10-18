@@ -47,6 +47,28 @@ inline std::uint32_t fat_cluster_bytes(sdmmc_card_t *card) {
   return static_cast<std::uint32_t>(volume->csize) * sector_bytes;
 }
 
+// f_getlabel needs CONFIG_FATFS_USE_LABEL from tools/idf-sdkconfig.defaults.
+// An older build directory sdkconfig keeps the old value, so delete it.
+#if !defined(CONFIG_FATFS_USE_LABEL) || !CONFIG_FATFS_USE_LABEL
+#error "CONFIG_FATFS_USE_LABEL must be set for the LIST_SINCE mount epoch"
+#endif
+
+// The volume serial number of the FAT volume mounted from `card`, or 0 when
+// unknown. A format writes a new one, so LIST_SINCE uses it as the mount
+// epoch that tells one card from another. The caller serializes card access.
+inline std::uint32_t fat_volume_serial(sdmmc_card_t *card) {
+  if (!card)
+    return 0;
+  const BYTE drive_number = ff_diskio_get_pdrv_card(card);
+  if (drive_number == 0xFF)
+    return 0;
+  const char drive[] = {static_cast<char>('0' + drive_number), ':', '\0'};
+  DWORD serial = 0;
+  if (f_getlabel(drive, nullptr, &serial) != FR_OK)
+    return 0;
+  return static_cast<std::uint32_t>(serial);
+}
+
 // Fresh free space of the volume at `base`. FatFs keeps the free cluster
 // count current as files grow; a remount re-reads it after an external edit.
 inline bool fat_free_bytes(const char *base, std::uint64_t &free_bytes) {

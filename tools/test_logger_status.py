@@ -31,25 +31,26 @@ def main() -> None:
     expected_keys = {"up_s", "int_s", "buf", "fin", "drop", "err", "miss", "fail",
                      "codec", "utc", "gen", "clk", "rtc", "sd", "sd_state", "sd_kib",
                      "sd_used_kib", "heap", "part", "qf", "qb", "open", "open_rg",
-                     "dc", "dr", "utc_ms", "clk_age_s"}
+                     "dc", "dr", "ls", "utc_ms", "clk_age_s"}
     assert len(snapshots) == 3
     assert {row["codec"] for row in snapshots} == {"UNCOMPRESSED", "LZ4_RAW"}
     for row in snapshots[:2]:
         assert row.keys() == expected_keys
-        assert row["miss"] == -(2**63)
+        assert row["miss"] == 2**32 - 1
         assert row["qb"] == 2**64 - 1
         assert row["gen"] == -(2**31) and row["clk"] == row["rtc"] == 255
         assert row["fail"] == row["utc"] == row["sd"] == 1
         assert row["sd_state"] == 3  # 0 ready, 1 degraded, 2 full, 3 retry
-        assert row["utc_ms"] == row["clk_age_s"] == 2**63 - 1
+        assert row["utc_ms"] == 10**13 - 1 and row["clk_age_s"] == 2**32 - 1
         assert row["dc"] == 2**16 - 1 and row["dr"] == 255
-        for key in expected_keys - {"miss", "qb", "gen", "clk", "rtc", "fail", "utc", "sd", "sd_state", "codec", "dc", "dr", "utc_ms", "clk_age_s"}:
+        for key in expected_keys - {"qb", "gen", "clk", "rtc", "fail", "utc", "sd", "sd_state", "codec", "dc", "dr", "utc_ms", "clk_age_s"}:
             assert row[key] == 2**32 - 1
     assert snapshots[2]["utc"] == 0
     assert snapshots[2]["utc_ms"] is None and snapshots[2]["clk_age_s"] is None
     assert snapshots[2]["dc"] == 0 and snapshots[2]["dr"] is None
     assert snapshots[2].keys() == expected_keys
     lengths = [len(line) for line in result.stdout.splitlines()]
+    assert all(length + 10 <= 480 for length in lengths)
     print(f"Actual STATUS formatter worst numeric payloads: {lengths} bytes; all keys retained within 480")
 
 

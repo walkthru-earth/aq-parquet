@@ -73,6 +73,10 @@ struct Hooks {
   std::uint64_t (*storage_used_bytes)(void *) = nullptr;
   bool (*storage_free_bytes)(std::uint64_t &free_bytes, void *) = nullptr;
   std::uint32_t (*storage_cluster_bytes)(void *) = nullptr; // 0 when unknown
+  // Optional. FAT volume serial of the mounted card, read after every
+  // successful mount and remount with the bus lock held. 0 when unknown. It
+  // is the LIST_SINCE mount epoch, so a swapped card gets a full listing.
+  std::uint32_t (*storage_volume_serial)(void *) = nullptr;
   // Optional. Unmount and mount the card again so a reinserted card or space
   // freed on a PC becomes visible. Called by the storage worker with the bus
   // lock held and no file open. Never formats. Returns true when mounted.

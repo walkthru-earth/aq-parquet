@@ -173,6 +173,7 @@ const aqlogger::Hooks kHooks{
           return board::storage_free_bytes(free_bytes);
         },
     .storage_cluster_bytes = [](void *) { return board::cluster_bytes(); },
+    .storage_volume_serial = [](void *) { return board::volume_serial(); },
     .storage_remount = [](void *) { return board::remount_card(); },
 };
 } // namespace

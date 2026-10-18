@@ -205,6 +205,7 @@ void begin_logger(bool sd_mounted) {
       .storage_free_bytes = [](std::uint64_t &free_bytes,
                                void *) { return sd_free_bytes(free_bytes); },
       .storage_cluster_bytes = [](void *) { return sd_cluster_bytes(); },
+      .storage_volume_serial = [](void *) { return sd_volume_serial(); },
       .storage_remount = [](void *) { return remount_sd(); },
       .rtc_read = rtc_read,
       .rtc_write = rtc_write,
