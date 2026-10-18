@@ -301,10 +301,19 @@ def command(port, args) -> int:
         raise ValueError("supported commands: parquet status/schema/list/flush/interval 600|900|1800|3600/"
                          "codec none/codec lz4/codec-test/erase-archive CONFIRM; use fetch for get")
     send_command(port, text)
+    # A refused NVS save still switches the running codec. The firmware then
+    # prints PARQUET CONFIG ... persistent=false, so read that reply before
+    # failing on the save error.
+    store_error = None
     for line in lines_until(port, time.monotonic() + args.timeout):
         print(line, flush=True)
+        if text.startswith("parquet codec ") and line.startswith("PARQUET ERROR operation=codec-store"):
+            store_error = line
+            continue
         if line.startswith("PARQUET ERROR"):
             raise RuntimeError(line)
+        if store_error and line.startswith("PARQUET CONFIG"):
+            raise RuntimeError(store_error)
         if text == "parquet erase-archive CONFIRM":
             # Native ESP-IDF output can share the UART line with a physical
             # owner reply. Match the exact sentinel after an unrelated prefix.
