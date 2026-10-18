@@ -2352,11 +2352,9 @@ void storage_worker(void *) {
                      storage::state_name(governor.state()));
         continue;
       }
-      selected_codec =
+      const Codec requested =
           command.text[14] == 'l' ? Codec::Lz4Raw : Codec::Uncompressed;
-      // The running session switches even when NVS refuses the write, and
-      // the reply says whether the choice survives a reboot.
-      const auto saved = codec_store::store(selected_codec);
+      const auto saved = codec_store::select(selected_codec, requested);
       if (!saved)
         aqlog.printf("PARQUET ERROR operation=codec-store reason=%s\n",
                      codec_store::error_name(saved.error()));
@@ -2752,8 +2750,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   }
   // A failed read never stops logging. It falls back to the default codec and
   // says why, and the stored value is left for the owner to replace.
-  const auto boot_codec = codec_store::resolve(codec_store::load());
-  selected_codec = boot_codec.codec;
+  const auto boot_codec = codec_store::apply_boot(selected_codec);
   if (boot_codec.fallback)
     aqlog.printf("PARQUET CODEC codec=%s source=default reason=%s\n",
                  codec_name(boot_codec.codec),

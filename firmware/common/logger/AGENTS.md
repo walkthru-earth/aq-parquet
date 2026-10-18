@@ -10,8 +10,9 @@ initialization and each board's schema/provenance remain in its own trial.
   mounted and capacity callbacks borrow the board's filesystem instance.
 - Preserve the `parquet` NVS namespace, its `station` string key and its `codec`
   u8 key (Parquet codec value, 0 or 7). A missing or unreadable `codec` boots
-  LZ4_RAW and logs why, it is never erased or rewritten except by a codec command. Radio initialization
-  belongs to AQConnectivity; retain its shared identity and protocol contract.
+  LZ4_RAW and logs why. It is never erased, and only a codec command rewrites
+  it. Radio initialization belongs to AQConnectivity; retain its shared
+  identity and protocol contract.
 - Only the worker accesses the filesystem after startup. Acquisition and RTC
   callbacks run only on the main task through begin/poll; a host clock command
   must enqueue an RTC request rather than performing hardware IO on the worker.

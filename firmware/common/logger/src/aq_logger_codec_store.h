@@ -3,6 +3,7 @@
 #include "parquet_writer.h"
 #include <nvs.h>
 
+#include <atomic>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -64,11 +65,14 @@ decode(std::uint8_t raw) {
   return std::unexpected(Error::Corrupt);
 }
 
-// Reads the stored codec. It never writes, so a corrupt value stays as
-// evidence until the owner selects a codec again.
+// Reads the stored codec. It opens read-only and never writes, so a corrupt
+// value stays as evidence until the owner selects a codec again.
 [[nodiscard]] inline std::expected<telemetry::Codec, Error> load() {
   nvs_handle_t handle;
-  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK)
+  const esp_err_t opened = nvs_open(kNamespace, NVS_READONLY, &handle);
+  if (opened == ESP_ERR_NVS_NOT_FOUND)
+    return std::unexpected(Error::Missing); // namespace never created
+  if (opened != ESP_OK)
     return std::unexpected(Error::Open);
   std::uint8_t raw = 0;
   const esp_err_t found = nvs_get_u8(handle, kKey, &raw);
@@ -109,5 +113,21 @@ resolve(const std::expected<telemetry::Codec, Error> &loaded) {
   if (committed != ESP_OK)
     return std::unexpected(Error::Commit);
   return {};
+}
+
+// Boot step. begin() calls it before the storage worker exists. The logger
+// runs with whatever it returns, and the caller logs the source.
+[[nodiscard]] inline Boot apply_boot(std::atomic<telemetry::Codec> &selected) {
+  const Boot boot = resolve(load());
+  selected = boot.codec;
+  return boot;
+}
+
+// Command step. The running session switches even when NVS refuses the
+// write, and the result says whether the choice survives a reboot.
+[[nodiscard]] inline std::expected<void, Error>
+select(std::atomic<telemetry::Codec> &selected, telemetry::Codec codec) {
+  selected = codec;
+  return store(codec);
 }
 } // namespace aqlogger::codec_store

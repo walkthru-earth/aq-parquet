@@ -18,6 +18,7 @@ constexpr esp_err_t ESP_OK = 0;
 constexpr esp_err_t ESP_FAIL = -1;
 constexpr esp_err_t ESP_ERR_NVS_NOT_FOUND = 0x1102;
 constexpr esp_err_t ESP_ERR_NVS_TYPE_MISMATCH = 0x1103;
+constexpr esp_err_t ESP_ERR_NVS_READ_ONLY = 0x1107;
 constexpr unsigned NVS_READONLY = 0;
 constexpr unsigned NVS_READWRITE = 1;
 
@@ -33,11 +34,12 @@ struct State {
   std::map<Key, Entry> pending;
   std::string open_namespace;
   bool opened = false;
+  bool read_only = false;
   bool fail_open = false;
   esp_err_t fail_get = ESP_OK;
   bool fail_set = false;
   bool fail_commit = false;
-  unsigned opens = 0, closes = 0, sets = 0, commits = 0;
+  unsigned opens = 0, read_only_opens = 0, closes = 0, sets = 0, commits = 0;
 };
 inline State state;
 inline void reset() { state = State{}; }
@@ -47,12 +49,24 @@ inline void put(const char *ns, const char *key, Type type,
 }
 } // namespace fake_nvs
 
-inline esp_err_t nvs_open(const char *name, unsigned, nvs_handle_t *handle) {
+// Like the IDF, a read-only open of a namespace that holds no key yet fails
+// with ESP_ERR_NVS_NOT_FOUND, and writes through a read-only handle fail.
+inline esp_err_t nvs_open(const char *name, unsigned mode,
+                          nvs_handle_t *handle) {
   auto &s = fake_nvs::state;
   ++s.opens;
   if (s.fail_open)
     return ESP_FAIL;
+  if (mode == NVS_READONLY) {
+    ++s.read_only_opens;
+    bool exists = false;
+    for (const auto &[id, entry] : s.committed)
+      exists = exists || id.first == name;
+    if (!exists)
+      return ESP_ERR_NVS_NOT_FOUND;
+  }
   s.opened = true;
+  s.read_only = mode == NVS_READONLY;
   s.open_namespace = name;
   s.pending.clear();
   *handle = 1;
@@ -90,6 +104,8 @@ inline esp_err_t nvs_get_u8(nvs_handle_t, const char *key, std::uint8_t *out) {
 inline esp_err_t nvs_set_u8(nvs_handle_t, const char *key, std::uint8_t value) {
   auto &s = fake_nvs::state;
   ++s.sets;
+  if (s.opened && s.read_only)
+    return ESP_ERR_NVS_READ_ONLY;
   if (!s.opened || s.fail_set)
     return ESP_FAIL;
   s.pending[{s.open_namespace, key}] =
@@ -100,6 +116,8 @@ inline esp_err_t nvs_set_u8(nvs_handle_t, const char *key, std::uint8_t value) {
 inline esp_err_t nvs_commit(nvs_handle_t) {
   auto &s = fake_nvs::state;
   ++s.commits;
+  if (s.opened && s.read_only)
+    return ESP_ERR_NVS_READ_ONLY;
   if (!s.opened || s.fail_commit)
     return ESP_FAIL;
   for (const auto &[id, entry] : s.pending)
