@@ -7,6 +7,7 @@
 #include "aq_logger_directory.h"
 #include "archive_sync.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -33,10 +34,7 @@ inline constexpr BootId kUnknownBoot = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
                                         0xff, 0xff, 0xff, 0xff};
 
 constexpr bool is_zero(const BootId &boot) {
-  for (const auto byte : boot)
-    if (byte)
-      return false;
-  return true;
+  return std::ranges::all_of(boot, [](std::uint8_t byte) { return byte == 0; });
 }
 
 // The 32 hex boot id text, as in "boot=<text>", to its 16 bytes in text
@@ -180,9 +178,9 @@ private:
     case Load::Found:
       if (length > blob.size())
         return false;
-      if (const auto ring = Ring::decode(
+      if (const auto decoded = Ring::decode(
               std::span<const std::uint8_t>(blob.data(), length))) {
-        ring_ = *ring;
+        ring_ = *decoded;
         loaded_ = true;
         return true;
       }
@@ -444,12 +442,12 @@ public:
   using Status = typename Walk::Status;
 
   // `root` must outlive the walk. The plan and ring are copied.
-  bool begin(IO &io, const char *root, const char *station, const Plan &plan,
+  bool begin(IO &io, const char *root, const char *station, const Plan &chosen,
              const Ring &ring) {
     cancel();
     io_ = &io;
     root_ = root;
-    plan_ = plan;
+    plan_ = chosen;
     ring_ = ring;
     const int length =
         std::snprintf(station_, sizeof(station_), "station=%s", station);
@@ -458,7 +456,7 @@ public:
       return false;
     }
     phase_ = Phase::Dated;
-    age_ = plan.first_age;
+    age_ = chosen.first_age;
     return open(walk_.begin(io, root, station_, 1));
   }
 
@@ -504,7 +502,7 @@ private:
   enum class Phase : std::uint8_t { Dated, Unsynced, Boots, Done };
 
   // A missing folder is an empty one. Any other failure fails the walk.
-  bool open(bool opened) { return opened || errno == ENOENT; }
+  static bool open(bool opened) { return opened || errno == ENOENT; }
 
   // Opens the next folder after the current phase ran out. False on a
   // failure other than a missing folder.
@@ -523,7 +521,7 @@ private:
         phase_ = Phase::Done;
         return true;
       }
-      char boot[33];
+      char boot[33] = {};
       format_boot(ring_.at(age_), boot);
       std::snprintf(relative, sizeof(relative), "%s/unsynced/boot=%s", station_,
                     boot);

@@ -999,11 +999,12 @@ std::uint32_t utc_yesterday() {
 // files. Sets bad_entry for a file the wire cannot describe. Shared by the
 // plain LIST walk and the LIST_SINCE walk.
 struct ListVisitor {
-  const char *prefix;
-  FileEmitter emit;
-  void *context;
-  unsigned &partials;
-  bool &bad_entry;
+  const char *prefix = "";
+  FileEmitter emit = nullptr;
+  void *context = nullptr;
+  unsigned *partials = nullptr;
+  // Set for a file the wire cannot describe.
+  bool bad_entry = false;
 
   bool operator()(const char *name, const struct stat &info) {
     if (S_ISREG(info.st_mode) && safe_name(name)) {
@@ -1023,8 +1024,8 @@ struct ListVisitor {
       }
       return emit(context, exported, static_cast<std::uint32_t>(info.st_size));
     }
-    if (std::strstr(name, ".partial") && partials != UINT32_MAX)
-      ++partials;
+    if (std::strstr(name, ".partial") && *partials != UINT32_MAX)
+      ++*partials;
     return true;
   }
 };
@@ -1040,17 +1041,15 @@ public:
       if (!walk_.begin(io_, kDirectory))
         return fail();
     }
-    bool bad_entry = false;
     ListVisitor visit{.prefix = legacy_ ? "legacy-parquet/" : "",
                       .emit = emit,
                       .context = context,
-                      .partials = partials,
-                      .bad_entry = bad_entry};
+                      .partials = &partials};
     using Walk = aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>;
     const auto status = walk_.step(budget, visit);
     if (status == Walk::Status::More)
       return aqsync::ListStatus::More;
-    if (status == Walk::Status::Failed || bad_entry)
+    if (status == Walk::Status::Failed || visit.bad_entry)
       return fail();
     if (status == Walk::Status::Stopped) {
       cancel();
@@ -1121,17 +1120,13 @@ public:
     }
     if (!incremental_)
       return step(false, budget, emit, context, partials);
-    bool bad_entry = false;
-    ListVisitor visit{.prefix = "",
-                      .emit = emit,
-                      .context = context,
-                      .partials = partials,
-                      .bad_entry = bad_entry};
+    ListVisitor visit{
+        .prefix = "", .emit = emit, .context = context, .partials = &partials};
     using Walk = list_since::IncrementalWalk<ArchiveDirectoryIO>;
     const auto status = since_.step(budget, visit);
     if (status == Walk::Status::More)
       return aqsync::ListStatus::More;
-    if (status == Walk::Status::Failed || bad_entry)
+    if (status == Walk::Status::Failed || visit.bad_entry)
       return fail();
     if (status == Walk::Status::Stopped) {
       cancel();
