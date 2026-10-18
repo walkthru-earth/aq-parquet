@@ -26,10 +26,11 @@ file. It is a static estimate, a bench high water mark (`parquet mem`) is the
 measured counterpart.
 
 `--check` also fails on a tracked task with no budget, and it scans repo
-firmware (comments skipped) for every `xTaskCreate` an image links. Each one
-must name a tracked task (`task_name`, the task key by default) whose
-`stack_bytes` equals the stack size in source, so a new task or a resized
-stack cannot pass unnoticed.
+firmware (comments skipped) for every `xTaskCreate*` call in a file the image
+links (any of its functions in the call graph). Each one must name a tracked
+task (`task_name`, the task key by default) whose `stack_bytes` equals the
+stack size in source, so a new task or a resized stack cannot pass unnoticed.
+A call it cannot parse, such as a lambda entry or a name in a variable, fails.
 
 Usage:
   pixi run stack-budget                         # every image with a build
@@ -379,7 +380,11 @@ EXTERNAL_STACK_CONFIG = "CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY"
 EXTERNAL_STACK_RE = re.compile(r"\b(xTaskCreateWithCaps|xTaskCreatePinnedToCoreWithCaps|xTaskCreateStatic"
                                r"|xTaskCreateStaticPinnedToCore|xTaskCreateRestrictedStatic)\s*\(")
 # xTaskCreate(entry, "name", stack, ...). The stack is a constant expression
-# or a member whose single default the scan finds in the same sources.
+# or a member whose single default the scan finds in the same sources. Every
+# other xTaskCreate* call (a lambda entry, a name in a variable, a Static or
+# WithCaps variant, a call split by a macro) is kept as an unparsed site and
+# fails in any image that links its file, so the scan fails closed.
+TASK_TOKEN_RE = re.compile(r"\bxTaskCreate\w*\s*\(")
 TASK_CREATE_RE = re.compile(r'\bxTaskCreate(?:PinnedToCore)?\s*\(\s*([A-Za-z_]\w*)\s*,\s*"([^"]*)"\s*,\s*([^,]+?)\s*,')
 CONSTANT_RE = re.compile(r"^[0-9\s*+()]+$")
 COMMENT_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\*.*?\*/', re.S)
@@ -394,6 +399,7 @@ class TaskSite:
     name: str
     stack: int | None
     stack_text: str
+    parsed: bool = True
 
 
 @dataclass
@@ -438,9 +444,13 @@ def scan_sources(root: Path) -> SourceScan:
     for name, text in texts.items():
         for match in EXTERNAL_STACK_RE.finditer(text):
             scan.external.append(f"{name}:{text.count(chr(10), 0, match.start()) + 1}")
-        for match in TASK_CREATE_RE.finditer(text):
+        for token in TASK_TOKEN_RE.finditer(text):
+            where = f"{name}:{text.count(chr(10), 0, token.start()) + 1}"
+            if not (match := TASK_CREATE_RE.match(text, token.start())):
+                call = " ".join(text[token.start():token.start() + 80].split(";")[0].split())
+                scan.sites.append(TaskSite(where, name, "", "", None, call, parsed=False))
+                continue
             entry, task, stack_text = match.groups()
-            where = f"{name}:{text.count(chr(10), 0, match.start()) + 1}"
             scan.sites.append(TaskSite(where, name, entry, task, constant(stack_text), " ".join(stack_text.split())))
     for site in scan.sites:
         if site.stack is None and (words := re.findall(r"[A-Za-z_]\w*", site.stack_text)):
@@ -461,18 +471,22 @@ def stack_memory_findings(config: dict[str, str], sources: list[str]) -> list[st
 
 
 def task_site_findings(graph: Graph, spec: dict, budgets: dict, sites: list[TaskSite]) -> list[str]:
-    """Every xTaskCreate this image links names a tracked task, and its stack
-    in source matches the copied `stack_bytes`, so neither can drift."""
-    def linked(site: TaskSite) -> bool:
-        pattern = re.compile(rf"\b{site.entry}\(")
-        return any(function.location.startswith(site.path + ":") and pattern.search(function.name)
-                   for function in graph.functions.values())
+    """Every xTaskCreate in a file this image links names a tracked task, and
+    its stack in source matches the copied `stack_bytes`, so neither can
+    drift. A file counts as linked when any of its functions is in the graph,
+    whatever file the entry lives in."""
+    linked_files = {function.location.split(":", 1)[0] for function in graph.functions.values()
+                    if function.location}
 
     names = {task_name: image_task.get("task_name", budgets["tasks"][task_name].get("task_name", task_name))
              for task_name, image_task in spec["tasks"].items()}
-    here = [site for site in sites if linked(site)]
+    here = [site for site in sites if site.path in linked_files]
     findings = []
     for site in here:
+        if not site.parsed:
+            findings.append(f"{site.where} creates a task the scan cannot parse ({site.stack_text}). "
+                            'Use xTaskCreate(entry, "literal name", stack, ...) with a named entry')
+            continue
         tracked = [task_name for task_name, name in names.items() if name == site.name]
         if not tracked:
             findings.append(f'{site.where} creates task "{site.name}", which no task in this image tracks. '
@@ -584,7 +598,8 @@ def render(report: ImageReport, spec: dict, budgets: dict, show_path: bool) -> t
         failures += [f"{report.name} task source: {item}" for item in report.task_sites]
         lines += ["", *[f"Task source check failed. {item}." for item in report.task_sites]]
     else:
-        lines += ["", "Task source check passed. Every xTaskCreate this image links is tracked with its stack size."]
+        lines += ["", "Task source check passed. Every xTaskCreate in a file this image links is tracked with its "
+                  "stack size."]
     if report.stack_memory:
         failures += [f"{report.name} internal stack: {item}" for item in report.stack_memory]
         lines += ["", *[f"Internal stack check failed. {item}." for item in report.stack_memory]]

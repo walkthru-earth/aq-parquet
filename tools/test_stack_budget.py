@@ -183,8 +183,8 @@ def make_build(root: Path, sections: dict[str, int]) -> tuple[Path, dict]:
     return build, budgets
 
 
-def site(name: str, stack: int | None, entry: str = "main_task") -> sb.TaskSite:
-    return sb.TaskSite("src/a.c:7", "src/a.c", entry, name, stack, str(stack))
+def site(name: str, stack: int | None, entry: str = "main_task", path: str = "src/a.c") -> sb.TaskSite:
+    return sb.TaskSite(f"{path}:7", path, entry, name, stack, str(stack))
 
 
 def run(argv: list[str], sites: list[sb.TaskSite] | None = None) -> tuple[int, str, str]:
@@ -246,10 +246,20 @@ def check_cli(root: Path) -> None:
     assert code == 1 and 'creates task "aq-new-task", which no task in this image tracks' in err, err
     code, _, err = run(["--budgets", str(path), "--check"], [site("tight", None)])
     assert code == 1 and "with a stack the scan cannot read" in err, err
-    # A site whose entry this image does not link belongs to another image, so
+    # A site in a file this image does not link belongs to another image, so
     # the tracked stack_bytes here is stale.
-    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000, entry="other_task")])
+    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000, path="src/other.c")])
     assert code == 1 and 'tight has stack_bytes but this image creates no task "tight"' in err, err
+    # The file links, so its sites count even when the entry is defined in
+    # another file the graph never saw.
+    code, _, err = run(["--budgets", str(path), "--check"],
+                       [site("tight", 1000), site("aq-new-task", 2048, entry="defined_elsewhere")])
+    assert code == 1 and 'creates task "aq-new-task", which no task in this image tracks' in err, err
+    # A call the scan cannot parse (a lambda entry or a name in a variable)
+    # fails closed in an image that links its file.
+    unparsed = sb.TaskSite("src/a.c:9", "src/a.c", "", "", None, "xTaskCreate(task_name_var", parsed=False)
+    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000), unparsed])
+    assert code == 1 and "src/a.c:9 creates a task the scan cannot parse (xTaskCreate(task_name_var" in err, err
     # --write-budgets refuses while the stack sizes disagree.
     assert run(["--budgets", str(path), "--write-budgets"], [site("tight", 2000)])[0] == 2
     assert path.read_text() == clean
@@ -289,6 +299,18 @@ def check_internal_stacks(root: Path) -> None:
     assert sites["aq-lan"].entry == "lan_task"
     assert sites["board"].stack == 16384
     assert sites["w"].stack is None, "two values for one member are ambiguous"
+    assert all(item.parsed for item in sites.values())
+    # A lambda entry, a name in a variable and any other xTaskCreate* form are
+    # kept unparsed, so the image check fails closed on them.
+    source.write_text("void a(const char *n) {\n"
+                      "  xTaskCreate([](void *) {}, \"lambda\", 2048, nullptr, 1, nullptr);\n"
+                      "  xTaskCreatePinnedToCore(task, n, 2048, nullptr, 1, nullptr, 0);\n"
+                      "  xTaskCreate(defined_elsewhere, \"ok\", 2048, nullptr, 1, nullptr);\n}\n")
+    sites = sb.scan_sources(root).sites
+    assert [(item.where, item.parsed) for item in sites] == [
+        ("firmware/common/x.cpp:2", False), ("firmware/common/x.cpp:3", False),
+        ("firmware/common/x.cpp:4", True)], sites
+    assert sites[0].stack_text.startswith("xTaskCreate([](void *)") and sites[2].entry == "defined_elsewhere"
     assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}
     findings = sb.stack_memory_findings(allowed, ["firmware/common/x.cpp:2"])
@@ -297,7 +319,7 @@ def check_internal_stacks(root: Path) -> None:
     # The committed firmware only uses xTaskCreate, and the scan reads every stack.
     scan = sb.scan_sources(sb.ROOT)
     assert scan.external == []
-    assert scan.sites and all(item.stack for item in scan.sites), scan.sites
+    assert scan.sites and all(item.parsed and item.stack for item in scan.sites), scan.sites
 
 
 def check_runtime_report() -> None:

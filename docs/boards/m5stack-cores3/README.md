@@ -36,8 +36,9 @@ the build, and the measured high water mark comes from the board.
   The figure is a static estimate, not a bound. Pointer calls follow reviewed
   rules and an uncovered one counts as zero, ROM code counts as zero, and
   recursion is cut and flagged, see `pixi run stack-budget --help`. The check
-  also fails on an `xTaskCreate` it does not track or a stack size in source
-  that differs from the budget file.
+  also fails when a source file the image links calls `xTaskCreate` for a task
+  it does not track, with a stack size that differs from the budget file, or
+  in a form it cannot parse (a lambda entry or a task name in a variable).
 - **Measured.** The logger prints two lines to serial and the LOG ring 60 s
   after boot, then hourly. `parquet mem` on the USB console prints them at
   once from the board task, so it answers even while the storage worker is busy.
