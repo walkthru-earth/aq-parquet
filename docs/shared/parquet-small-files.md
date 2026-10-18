@@ -8,7 +8,7 @@ Raw results sit next to this page in [`parquet-small-files/`](parquet-small-file
 
 - [`parquet_writer.cpp`](../../firmware/common/src/parquet_writer.cpp) writes one PLAIN DataPageV1 per column chunk, RLE definition levels, UNCOMPRESSED or LZ4_RAW, and per chunk statistics with exact min and max. It writes no dictionary, no column index, no offset index and no bloom filter.
 - The footer carries `field_id`, `TIMESTAMP(MICROS, UTC)`, `sorting_columns` on the sequence column, `TYPE_ORDER` column orders and the key value metadata.
-- [`aq_logger.cpp`](../../firmware/common/logger/src/aq_logger.cpp) caps a row group at `kMaxRows = 90` and boots with `Codec::Uncompressed`. `parquet codec lz4` is a runtime switch that is lost on reboot.
+- [`aq_logger.cpp`](../../firmware/common/logger/src/aq_logger.cpp) caps a row group at `kMaxRows = 90`. When this survey ran it booted with `Codec::Uncompressed` and `parquet codec lz4` was lost on reboot. Since #25 the choice is saved in NVS and LZ4_RAW is the default when nothing is saved.
 - Rotation is 600, 900, 1800 or 3600 s with a 10 s sample. Row groups are 60x1, 90x1, 90x2 and 90x4 rows.
 
 ## Survey of device files
@@ -83,7 +83,7 @@ The sample is small, so read it as a direction. At about 93 B per row a 256 MB f
 These are not decided. Issue #25 tracks each one as a task.
 
 1. Keep the device writer small. One page per chunk, row group statistics, `field_id`, MICROS UTC and `sorting_columns` stay. No page index or bloom filters on device.
-2. Make LZ4_RAW the persisted default once a paired bench on the current IDF builds confirms the Arduino result.
+2. Make LZ4_RAW the persisted default. Done in #25 on the strength of the Arduino bench, the host survey and the phone reader. A paired `codec-test` bench on the current IDF builds is still owed to confirm the size and timing on device.
 3. Move long static key value entries behind a short versioned URI and hash. This is a wire contract change and needs its own decision.
 4. Prefer fewer row groups per file, since each one costs about 4.4 KB of footer.
 5. Treat DELTA_BINARY_PACKED for integers as the largest future win, after the phone reader supports it. Measure dictionary RAM on device before using it.

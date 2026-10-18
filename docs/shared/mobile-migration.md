@@ -8,6 +8,38 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## LZ4_RAW by default and a saved codec choice (feat/25-persist-codec, issue #25)
+
+**What changed.** `parquet codec none` and `parquet codec lz4` now save the
+choice in NVS (u8 key `codec` in the existing `parquet` namespace), so it
+survives a reboot. A board with nothing saved, which is every board updating
+from an earlier image, now writes LZ4_RAW files instead of UNCOMPRESSED.
+What the phone can see.
+
+- New files carry LZ4_RAW column chunks and footer `compression=LZ4_RAW`
+  unless the owner chose `codec none`. Columns, field ids, types, the schema
+  string, the dictionary digest and file names are unchanged.
+- STATUS JSON `codec` reads `"LZ4_RAW"` right after boot instead of
+  `"UNCOMPRESSED"`. The key and its two values are unchanged.
+- LOG_TAIL gains a boot line `PARQUET CODEC codec=<name> source=nvs`, or
+  `source=default reason=missing|open|read|corrupt` when nothing usable is
+  saved. `PARQUET BEGIN codec=` now names the boot codec instead of always
+  `UNCOMPRESSED`. The codec command reply is
+  `PARQUET CONFIG codec=<name> persistent=true`, or `persistent=false` after
+  `PARQUET ERROR operation=codec-store reason=open|write|commit`.
+- No firmware identity string moves in this change, the next release image
+  carries it.
+
+**Why.** LZ4_RAW halved complete files on the CoreS3 bench (28,537 to
+14,080 B) and finalized faster, and the host survey shows about 59 % fewer
+data bytes on a 90 row file. Before this change every reboot fell back to
+UNCOMPRESSED, so the saving was lost after the first reset.
+
+**What the app must do.** Nothing required. `:core:parquet` already decodes
+LZ4_RAW on Android and iOS, and files already stored keep their own codec. The
+app does not parse the LOG_TAIL lines. An app that shows the STATUS `codec`
+value should expect `LZ4_RAW` on most boards.
+
 ## COREDUMP line in the LOG ring (fix/49-coredump-report, part of issue #49)
 
 **What changed.** The first boot after a new core dump is saved to flash

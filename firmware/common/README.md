@@ -65,7 +65,8 @@ AQRuntime replaces Preferences with native NVS while preserving namespaces,
 keys and value types, including station identity. DebugLog uses `LogOutput`
 and the native physical console. AQConnectivity uses native NimBLE GATT/GAP,
 Wi-Fi events and `esp_netif_sntp`, plus managed mDNS 1.14.0. Driver credential
-storage is RAM only; `aqcfg` remains the sole persistent settings owner.
+storage is RAM only; `aqcfg` remains the sole persistent settings owner. The
+logger keeps only its `station` and `codec` keys in the `parquet` namespace.
 Existing Arduino-era BLE bonds need hardware qualification and may require
 phone re-pairing. This does not authorize erasing identity or settings.
 

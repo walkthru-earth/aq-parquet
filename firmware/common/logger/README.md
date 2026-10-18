@@ -106,7 +106,15 @@ enters the logger. Country and source/precision metadata describe the whole file
 See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,
-`interval` (600/900/1800/3600), `codec none`, `codec lz4`, and `codec-test`. Codec
+`interval` (600/900/1800/3600), `codec none`, `codec lz4`, and `codec-test`. The
+codec choice is saved as the u8 key `codec` in the `parquet` NVS namespace, holding
+the Parquet codec value (0 UNCOMPRESSED, 7 LZ4_RAW), and the reply reads
+`PARQUET CONFIG codec=... persistent=true`. A failed save keeps the running choice,
+prints `PARQUET ERROR operation=codec-store reason=...` and replies
+`persistent=false`. At boot `PARQUET CODEC codec=... source=nvs` reports the saved
+codec. With no key, or a key that cannot be read, the logger uses LZ4_RAW and prints
+`source=default reason=missing|open|read|corrupt`. A bad value is left in place
+until the next `codec` command replaces it. The interval is still not saved. Codec
 comparison files remain separately labeled duplicate-row benchmark artifacts under
 `Config::benchmark_directory` (`/sd/bench`), outside the listed archive. Their 4 KiB
 staging buffer is borrowed from PSRAM only while the command runs.

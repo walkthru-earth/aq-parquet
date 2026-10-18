@@ -19,7 +19,7 @@ Every DataPageV1 payload, including its definition-level stream, is compressed a
 
 The benchmarked logger has 73 columns and at most 90 rows; newer source has 77 columns with the same row limit. Uncompressed streaming supports the larger generic writer limits; compressed calls must fit the supplied page scratch or fail before output starts. Firmware reserves 1,024 bytes of raw scratch, enough for its 90-row flat numeric schema, plus `LZ4_COMPRESSBOUND(1024)` output scratch and aligned external LZ4 state with `LZ4_MEMORY_USAGE=12`. There is no per-page codec heap allocation. The format workspace grew from 2,048 to **2,816 bytes** to track original column sizes. These buffers are in the PSRAM writer allocation, not on the task stack; the 16 KiB task stack and 4 KiB stdio staging remain unchanged. Static bounds/free-heap observations are not a whole-system allocation trace or radio-load memory guarantee.
 
-`parquet codec none` and `parquet codec lz4` first finalize pending normal rows under the old codec, then change the running session. Reboot returns to UNCOMPRESSED. Existing files are never recompressed or overwritten. Uncompressed is an explicit user-selectable fallback, not silent fallback on codec failure.
+`parquet codec none` and `parquet codec lz4` first finalize pending normal rows under the old codec, then change the running session and save the choice in NVS, so it survives a reboot. A board with no saved choice boots LZ4_RAW (before #25 it booted UNCOMPRESSED). Existing files are never recompressed or overwritten. Uncompressed is an explicit user-selectable fallback, not silent fallback on codec failure.
 
 `parquet codec-test` writes two diagnostic copies of the **same buffered rows**, first uncompressed and then LZ4, under `output/benchmarks/boot=<boot>/`. It retains the original batch for normal rotation. Copies carry `purpose=codec-comparison-duplicate-rows` metadata; normal output carries `purpose=telemetry`. Do not include benchmark copies in station telemetry queries. The finalized-file counter includes these diagnostic writes.
 
@@ -53,7 +53,7 @@ LZ4 reduced total bytes by **50.7%** and median observed finalization by **21.4%
 
 Final comparison status: 60 normal rows still buffered, six diagnostic files finalized, zero drops/errors, queue high-water 1. The original rows remained available for normal telemetry. All three copies for each codec were byte-identical. [Exact hashes, cadence and image](bench-verified.md#board-1-lz4-compression).
 
-Evidence is retained in `firmware/esp-idf-cores3/artifacts/compression-20260908/`: `report.json`, `device.log` and all six files. Current normal logging can use LZ4, while reboot retains the conservative UNCOMPRESSED default. Compression does not change the RAM-loss or SD power-loss limitations.
+Evidence is retained in `firmware/esp-idf-cores3/artifacts/compression-20260908/`: `report.json`, `device.log` and all six files. At the time of this benchmark reboot returned to UNCOMPRESSED. Since #25 the codec choice is saved and LZ4_RAW is the default when nothing is saved. Compression does not change the RAM-loss or SD power-loss limitations.
 
 The follow-up normal 64-row file retained the original 60 rows unchanged, plus contiguous post-comparison sequences 60–63, with no recorded drops/deadline misses/storage errors. A subsequent three-row **normal LZ4 Hive file** passed both readers and UTC partition checks after host time was restored. Both codec configuration commands acknowledged successfully; the device was left at 900 seconds with LZ4 selected.
 
