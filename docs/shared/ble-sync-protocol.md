@@ -207,11 +207,11 @@ PM keys appear only when `pms == 4`. The snapshot is the same row that was queue
 
 #### LIVE key stability
 
-- A LIVE key never changes meaning once released. Meaning is the quantity, the unit, the source (board or ambient air) and every code value. A new meaning gets a new key. A retired key is never reused.
+- A LIVE key never changes meaning once released. Meaning is the quantity, the unit, the source (board or ambient air) and what each existing code value means. Adding a new code value is allowed and counts as a layout change below. Changing what an existing code value means is not allowed. A new meaning gets a new key. A retired key is never reused.
 - Each key in the table above means the same thing on every board. `imu_t` is always the IMU die temperature, never air. `t` is always ambient air temperature. A board that has no valid value for a key leaves the key out.
 - Firmware may add or drop keys. Clients read keys by name and ignore keys they do not know, so an app that meets an unknown digest can still show the keys in this table and hide the rest. It never guesses a meaning from a device name, a firmware string or a value.
-- CoreS3 builds on dictionaries `cores3-telemetry-v2` to `-v4`, and the e166978 build under `22291d3a…` (v6.12), sent the IMU die temperature as `t`. They predate this rule. Clients handle them by digest, and no later release may do the same.
-- Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, or a new code value. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry, but older apps keep their live readings.
+- CoreS3 digests `20f85085…` (Arduino, dictionary `cores3-telemetry-v2`) and `f35d7398…` (v6.9 to v6.11), and the e166978 build under `22291d3a…` (v6.12), sent the IMU die temperature as `t`. They predate this rule. Clients handle them by digest, and no later release may do the same. The digest alone cannot tell the two `22291d3a…` builds apart, so for that digest a client reads `imu_t`, and when it is missing reads `t` as board temperature (see the v6.13 entry in [mobile-migration.md](mobile-migration.md)).
+- Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, or a new code value. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry. Apps with the unknown digest fallback (opensensor-space-mobile #153) keep their live readings. Apps without it still show no live readings until they map the new digest.
 
 ### `control` (write) and `response` (notify)
 

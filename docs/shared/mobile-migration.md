@@ -291,7 +291,9 @@ needs no app change.
   change without a new digest, or when a new digest has no fixture.
 - The digest is the SHA-256 of the raw `telemetry_fields.inc` bytes, so a
   comment, whitespace or line ending edit also moves it and needs an app
-  release.
+  release until the unknown digest fallback ships (opensensor-space-mobile
+  #153). The LIVE key stability rule above supersedes this for apps that have
+  the fallback.
 - Phone side code may break freely. Firmware keeps every released wire contract
   readable, and any new LIVE key set gets a new dictionary digest.
 
