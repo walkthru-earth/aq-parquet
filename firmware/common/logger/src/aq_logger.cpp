@@ -1,5 +1,6 @@
 #include "aq_logger.h"
 #include "aq_logger_archive_reset.h"
+#include "aq_logger_codec_store.h"
 #include "aq_logger_directory.h"
 #include "aq_logger_emergency_close.h"
 #include "aq_logger_list_job.h"
@@ -218,7 +219,9 @@ std::atomic<std::int32_t> rtc_state{0}; // 0 unread, 1 seeded, 2 unusable
 bool mounted = false;
 bool accepting = false;
 std::atomic<bool> archive_reset{false};
-std::atomic<Codec> selected_codec{Codec::Uncompressed};
+// begin() replaces this with the stored codec, or the default when nothing
+// usable is stored, before the worker starts.
+std::atomic<Codec> selected_codec{codec_store::kDefault};
 const char *codec_name(Codec codec) {
   return codec == Codec::Lz4Raw ? "LZ4_RAW" : "UNCOMPRESSED";
 }
@@ -2351,8 +2354,14 @@ void storage_worker(void *) {
       }
       selected_codec =
           command.text[14] == 'l' ? Codec::Lz4Raw : Codec::Uncompressed;
-      aqlog.printf("PARQUET CONFIG codec=%s persistent=false\n",
-                   codec_name(selected_codec));
+      // The running session switches even when NVS refuses the write, and
+      // the reply says whether the choice survives a reboot.
+      const auto saved = codec_store::store(selected_codec);
+      if (!saved)
+        aqlog.printf("PARQUET ERROR operation=codec-store reason=%s\n",
+                     codec_store::error_name(saved.error()));
+      aqlog.printf("PARQUET CONFIG codec=%s persistent=%s\n",
+                   codec_name(selected_codec), saved ? "true" : "false");
     } else if (std::strcmp(command.text, "parquet flush") == 0) {
       flush_batch(count, storage_ready);
     } else if (std::strncmp(command.text, "parquet interval ", 17) == 0 &&
@@ -2741,6 +2750,17 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
     aqlog.println("PARQUET ERROR operation=station-identity logging=false");
     return false;
   }
+  // A failed read never stops logging. It falls back to the default codec and
+  // says why, and the stored value is left for the owner to replace.
+  const auto boot_codec = codec_store::resolve(codec_store::load());
+  selected_codec = boot_codec.codec;
+  if (boot_codec.fallback)
+    aqlog.printf("PARQUET CODEC codec=%s source=default reason=%s\n",
+                 codec_name(boot_codec.codec),
+                 codec_store::error_name(*boot_codec.fallback));
+  else
+    aqlog.printf("PARQUET CODEC codec=%s source=nvs\n",
+                 codec_name(boot_codec.codec));
   std::uint8_t mac[6]{};
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
     aqlog.println("PARQUET ERROR operation=identity");
@@ -2809,10 +2829,10 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       "PARQUET BEGIN schema=%s columns=%u sample_s=10 "
       "interval_s=900 max_rows=90 max_row_groups=%u psram_workspace_bytes=%u "
       "row_bytes=%u boot=%s station=%s "
-      "codec=UNCOMPRESSED crc32_check=%s\n",
+      "codec=%s crc32_check=%s\n",
       config.schema_name, unsigned(field_count), unsigned(kMaxRowGroups),
       unsigned(sizeof(WriterState)), unsigned(sizeof(Sample)), boot_text,
-      station_text, crc_check);
+      station_text, codec_name(selected_codec), crc_check);
   return true;
 }
 
