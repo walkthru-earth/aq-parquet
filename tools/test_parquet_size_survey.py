@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 
 import parquet_size_survey as survey
 
-# The whole body takes about a second. A step that stalls past this bound
+# The whole body takes a few seconds. A step that stalls past this bound
 # prints every Python thread and exits 1 instead of reaching the gate timeout.
 BODY_LIMIT_S = 120
 
@@ -85,10 +85,12 @@ def main() -> None:
         status = 1
     # Issue #60. Runs 39042291160 and 39121587458 hung after the ok line until
     # the gate timeout, while a 60 s faulthandler watchdog armed after it never
-    # fired. Py_FinalizeEx cancels that watchdog, so the stall was later, in
-    # native teardown of the Arrow C++ runtime (static destructors, thread
-    # pools, allocator) that the test cannot observe. Every check has already
-    # run and the temporary directory is gone, so skip that teardown.
+    # fired. Py_FinalizeEx cancels that watchdog, so the stall came after that
+    # point. The most likely cause, not confirmed, is native teardown of the
+    # Arrow C++ runtime (static destructors, thread pools, allocator). Another
+    # native destructor or the pixi wrapper after Python exited would look the
+    # same. Every check has already run and the temporary directory is gone,
+    # so skip interpreter and native teardown.
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(status)
