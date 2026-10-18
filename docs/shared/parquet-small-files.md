@@ -38,7 +38,7 @@ Raw results sit next to this page in [`parquet-small-files/`](parquet-small-file
 
 | Variant | Data bytes | Change | Phone reads it today |
 |---|---|---|---|
-| PLAIN, UNCOMPRESSED (current default) | 43,050 | baseline | yes |
+| PLAIN, UNCOMPRESSED (default before #25) | 43,050 | baseline | yes |
 | PLAIN, LZ4_RAW | 17,842 | −59 % | yes |
 | PLAIN, ZSTD | 14,303 | −67 % | Android only |
 | Dictionary, UNCOMPRESSED | 21,025 | −51 % | yes |
