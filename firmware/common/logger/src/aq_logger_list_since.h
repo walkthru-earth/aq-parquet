@@ -440,7 +440,7 @@ constexpr Plan plan(const Inputs &in) {
 // relative to the archive root, exactly as plain LIST names it.
 template <class IO> class IncrementalWalk {
 public:
-  using Walk = DirectoryWalk<IO>;
+  using Walk = aq::logger::detail::DirectoryWalk<IO>;
   using Status = typename Walk::Status;
 
   // `root` must outlive the walk. The plan and ring are copied.

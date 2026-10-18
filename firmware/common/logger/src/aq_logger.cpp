@@ -995,6 +995,40 @@ std::uint32_t utc_yesterday() {
       aq::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000);
 }
 
+// Emits each finalized file as `<prefix><name>` and counts the .partial
+// files. Sets bad_entry for a file the wire cannot describe. Shared by the
+// plain LIST walk and the LIST_SINCE walk.
+struct ListVisitor {
+  const char *prefix;
+  FileEmitter emit;
+  void *context;
+  unsigned &partials;
+  bool &bad_entry;
+
+  bool operator()(const char *name, const struct stat &info) {
+    if (S_ISREG(info.st_mode) && safe_name(name)) {
+      if (info.st_size < 0 ||
+          static_cast<std::uint64_t>(info.st_size) > UINT32_MAX) {
+        errno = EOVERFLOW;
+        bad_entry = true;
+        return false;
+      }
+      char exported[400];
+      const int length =
+          std::snprintf(exported, sizeof(exported), "%s%s", prefix, name);
+      if (length < 0 || static_cast<std::size_t>(length) >= sizeof(exported)) {
+        errno = ENAMETOOLONG;
+        bad_entry = true;
+        return false;
+      }
+      return emit(context, exported, static_cast<std::uint32_t>(info.st_size));
+    }
+    if (std::strstr(name, ".partial") && partials != UINT32_MAX)
+      ++partials;
+    return true;
+  }
+};
+
 class ArchiveList {
 public:
   aqsync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
@@ -1007,8 +1041,11 @@ public:
         return fail();
     }
     bool bad_entry = false;
-    auto visit = visitor(legacy_ ? "legacy-parquet/" : "", emit, context,
-                         partials, bad_entry);
+    ListVisitor visit{.prefix = legacy_ ? "legacy-parquet/" : "",
+                      .emit = emit,
+                      .context = context,
+                      .partials = partials,
+                      .bad_entry = bad_entry};
     using Walk = aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>;
     const auto status = walk_.step(budget, visit);
     if (status == Walk::Status::More)
@@ -1085,7 +1122,11 @@ public:
     if (!incremental_)
       return step(false, budget, emit, context, partials);
     bool bad_entry = false;
-    auto visit = visitor("", emit, context, partials, bad_entry);
+    ListVisitor visit{.prefix = "",
+                      .emit = emit,
+                      .context = context,
+                      .partials = partials,
+                      .bad_entry = bad_entry};
     using Walk = list_since::IncrementalWalk<ArchiveDirectoryIO>;
     const auto status = since_.step(budget, visit);
     if (status == Walk::Status::More)
@@ -1115,37 +1156,6 @@ public:
   }
 
 private:
-  // Emits each finalized file as `<prefix><name>` and counts the .partial
-  // files. Sets bad_entry for a file the wire cannot describe.
-  static auto visitor(const char *prefix, FileEmitter emit, void *context,
-                      unsigned &partials, bool &bad_entry) {
-    return
-        [=, &partials, &bad_entry](const char *name, const struct stat &info) {
-          if (S_ISREG(info.st_mode) && safe_name(name)) {
-            if (info.st_size < 0 ||
-                static_cast<std::uint64_t>(info.st_size) > UINT32_MAX) {
-              errno = EOVERFLOW;
-              bad_entry = true;
-              return false;
-            }
-            char exported[400];
-            const int length =
-                std::snprintf(exported, sizeof(exported), "%s%s", prefix, name);
-            if (length < 0 ||
-                static_cast<std::size_t>(length) >= sizeof(exported)) {
-              errno = ENAMETOOLONG;
-              bad_entry = true;
-              return false;
-            }
-            return emit(context, exported,
-                        static_cast<std::uint32_t>(info.st_size));
-          }
-          if (std::strstr(name, ".partial") && partials != UINT32_MAX)
-            ++partials;
-          return true;
-        };
-  }
-
   aqsync::ListStatus fail() {
     const int failure = errno;
     cancel();

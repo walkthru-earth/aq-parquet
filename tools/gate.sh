@@ -61,6 +61,7 @@ tasks=(
   "logger-status-test"
   "logger-rotation-test"
   "logger-directory-test"
+  "logger-list-since-test"
   "logger-archive-reset-test"
   "logger-provision-test"
   "logger-live-test"
