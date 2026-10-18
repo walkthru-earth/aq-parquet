@@ -185,6 +185,8 @@ jobs:
           if [[ -n "${EXTRA_TASK}" ]]; then
             pixi run "${EXTRA_TASK}"
           fi
+          # A build that rewrites a committed lock means the lock is stale.
+          git diff --exit-code -- '*dependencies.lock'
       - name: ccache statistics
         if: always()
         run: pixi run ccache --show-stats

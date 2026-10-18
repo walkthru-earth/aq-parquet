@@ -10,9 +10,10 @@ the older shapes it has stored, or the owner clears them.
 
 ## One BLE HCI fail line per refused interval run (fix/52-followup-nits, after #52)
 
-**What changed.** The board retries a refused connection interval request
-every second while the central runs a procedure of its own. Each retry used
-to add `BLE HCI fail cmd=conn op=0x2013 rc=15 timeout=0` to serial and
+**What changed.** The board retries a connection interval request that is
+refused while the central runs a procedure of its own. The link setup and the
+idle timer retry every second, and a refused request from a `control` write
+is retried by the next write. Each retry used to add `BLE HCI fail cmd=conn op=0x2013 rc=15 timeout=0` to serial and
 `LOG_TAIL`. Now only the first refusal of a run logs it. A different `rc`, a
 success, a new connection or a host reset starts a new run. The
 `BLE CONN request=` line in `LOG_TAIL` still records every attempt with its
