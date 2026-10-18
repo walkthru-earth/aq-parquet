@@ -296,7 +296,7 @@ jobs:
       - name: Check every job result
         env:
           NEEDS: ${{ toJSON(needs) }}
-          # Space separated job ids that may report skipped.
+          # Job ids that may report skipped, separated by any whitespace.
           ALLOWED_SKIPS: ""
         run: |
           jq -r 'to_entries[] | "\(.key) \(.value.result)"' <<<"${NEEDS}"
@@ -304,7 +304,7 @@ jobs:
           # needs object or an allowed name that is not a job also blocks.
           blocked="$(jq -r --arg allowed "${ALLOWED_SKIPS}" '
             . as $needs
-            | ($allowed | split(" ") | map(select(. != ""))) as $skip
+            | ([$allowed | splits("\\s+")] | map(select(. != ""))) as $skip
             | (if length == 0 then "no job results" else empty end),
               ($skip[] | select(. as $k | $needs | has($k) | not)
                 | "ALLOWED_SKIPS names \(.), which is not in needs"),
