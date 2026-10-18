@@ -198,8 +198,10 @@ and by hand from the Actions tab (`workflow_dispatch`).
   the change is measured against the green build of its base commit, else
   against the newest green `main` build, and the summary names which commit
   was used.
-- **CI result** waits for every other job and fails unless each one passed or
-  was skipped. It is the single required check.
+- **CI result** waits for every other job and fails unless each one passed.
+  A skipped job passes only when its id is listed in `ALLOWED_SKIPS` in that
+  job, which is empty today because no job has an `if:`. It is the single
+  required check.
 - Dependabot opens one grouped pull request a week for action pin updates,
   only for releases at least 7 days old (`.github/dependabot.yml`).
 
@@ -215,9 +217,10 @@ or create the `main` branch ruleset, enable Require status checks to pass, add
 
 `CI result` needs every other job, so jobs and board matrix entries can be
 added or renamed without a ruleset change. A new job must be added to its
-`needs` list, or its failure will not block a merge. Keep the job name
-`CI result` stable. If a merge queue is enabled later, add a `merge_group`
-trigger to the workflow at the same time.
+`needs` list, or its failure will not block a merge. A job that gains an `if:`
+must also be added to `ALLOWED_SKIPS`, or its skip blocks the merge. Keep the
+job name `CI result` stable. If a merge queue is enabled later, add a
+`merge_group` trigger to the workflow at the same time.
 
 | Changed area | Additional Pixi tasks |
 | --- | --- |
