@@ -19,3 +19,42 @@ On 2026-09-28, identification, full backup, diagnostic/full logger boot, TF moun
 - [Native ESP-IDF application and historical image notes](../../../firmware/esp-idf-waveshare-sim7670g/README.md)
 
 The board's product name includes a modem, but local sampling and SD copies must continue to work without a SIM or internet. A later cellular upload path cannot replace the card or local archive.
+
+## Stack and heap budgets
+
+Issue #37 sizes task stacks from two numbers. The static worst case comes from
+the build, and the measured high water mark comes from the board.
+
+- **Static.** `pixi run stack-budget --image waveshare/logger --path` prints each
+  tracked task's deepest call path from the GCC call graphs of the last build,
+  plus the linker section sizes. CI fails the board leg when a task or section
+  grows past [tools/stack_budget.json](../../../tools/stack_budget.json).
+  The figure is an upper bound with stated limits (pointer calls follow
+  reviewed rules, recursion is cut and flagged), see `pixi run stack-budget --help`.
+- **Measured.** The logger prints two lines to serial and the LOG ring 60 s
+  after boot, then hourly. `parquet mem` on the USB console prints them at
+  once from the board task, so it answers even while the storage worker is busy.
+  `DIAG tasks` gives the bytes never used on each task stack (`aq-board`,
+  `parquet-sd`, `aq-lan`, `aq_ble_error`, `nimble_host`, `tcpip`, `esp_timer`
+  and `sys_evt`, with `-1` for a task that is not running). `DIAG heap` gives
+  free, minimum free and largest free block for internal, DMA capable and PSRAM
+  heap. Nothing new crosses BLE or LAN except these lines in `LOG_TAIL`.
+
+Bench recipe, about 75 min.
+
+1. Flash a checked image and note its `aq-build-sha256.json` hash. A high water
+   mark only grows until the next reset, so do not reset the board until step 4.
+2. Wait for the first `DIAG tasks` line (60 s after boot) as the idle baseline.
+3. Exercise the deep paths. Sync a full day over BLE, then over LAN, run
+   `parquet flush`, and let one hourly rotation close a file.
+4. Opening the CH343 console resets this board and clears the marks, so read
+   them without a new serial session. Wait for the hourly report and pull it
+   with `pixi run ble-sync log`, or keep one capture running from before step 1
+   with its stdout redirected to a file. Send `parquet mem` only from a console
+   session that was already open.
+5. Record the smallest value seen per task and heap below, with the date,
+   image hash and what was exercised. A task with less than a quarter of its
+   stack left (aq-board has 12,288 B) is a finding to raise on issue #37.
+
+| Date | Image hash | Exercised | aq-board | parquet-sd | aq-lan | aq_ble_error | nimble_host | internal_min | internal_largest | dma_largest | psram_largest |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

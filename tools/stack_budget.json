@@ -330,8 +330,8 @@
         ".iram0.text": 126859,
         ".dram0.data": 35349,
         ".dram0.bss": 57096,
-        ".flash.text": 1176454,
-        ".flash.rodata": 253936,
+        ".flash.text": 1176518,
+        ".flash.rodata": 253984,
         ".noinit": 3
       }
     },
@@ -383,8 +383,8 @@
         ".iram0.text": 119863,
         ".dram0.data": 33348,
         ".dram0.bss": 54280,
-        ".flash.text": 1054266,
-        ".flash.rodata": 224788,
+        ".flash.text": 1054318,
+        ".flash.rodata": 224836,
         ".noinit": 0
       }
     },

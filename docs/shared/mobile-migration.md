@@ -8,6 +8,20 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Longer DIAG tasks and DIAG heap lines (fix-37-stack-budgets, issue #37)
+
+**What changed.** The hourly `DIAG tasks` line in `LOG_TAIL` gains
+`esp_timer=<bytes>` and `sys_evt=<bytes>` after `uptime_s`, and `DIAG heap`
+gains `psram_largest=<bytes>` after `psram_min`. The board also prints both
+lines when the owner sends `parquet mem` on the USB console. Existing fields
+keep their names, order and meaning.
+
+**Why.** Bench runs size task stacks and check heap fragmentation from these
+lines, next to the static budgets in `tools/stack_budget.json`.
+
+**What the app must do.** Nothing. The app does not parse these lines. A
+reader that splits `key=value` pairs should ignore keys it does not know.
+
 ## Incremental LIST_SINCE with a saved cursor (fix-38-list-since, issue #38)
 
 **What changed.** A new control opcode `LIST_SINCE` (`0x10`) lists only the

@@ -11,6 +11,8 @@ import stat
 import struct
 import sys
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import stack_budget as sb
 
@@ -211,6 +213,27 @@ def check_internal_stacks(root: Path) -> None:
     assert sb.external_stack_sources(sb.ROOT) == []
 
 
+def check_runtime_report() -> None:
+    """`parquet mem` is answered on the board task and parquet_device waits for the heap line."""
+    source = (sb.ROOT / "firmware" / "common" / "logger" / "src" / "aq_logger.cpp").read_text()
+    code = " ".join(source.split())
+    assert 'std::strcmp(input.text, "parquet mem") == 0) report_runtime(input.received_mono_us, true);' in code
+    # New fields go at the end so a reader of the older lines keeps working.
+    assert '"nimble_host=%ld tcpip=%ld uptime_s=%lld esp_timer=%ld sys_evt=%ld\\n"' in code
+    assert '"psram_min=%lu psram_largest=%lu\\n"' in code
+
+    import parquet_device
+    tasks = "DIAG tasks aq-board=5000 parquet-sd=12000 aq-lan=-1 aq_ble_error=900"
+    heap = "DIAG heap internal_free=1 internal_min=1 internal_largest=1 psram_largest=1"
+    printed: list[str] = []
+    with patch.object(parquet_device, "send_command") as send, \
+            patch.object(parquet_device, "lines_until", return_value=iter([tasks, heap, "PARQUET ROW"])), \
+            patch("builtins.print", side_effect=lambda line, **_: printed.append(line)):
+        assert parquet_device.command(None, SimpleNamespace(text="parquet  mem", timeout=1)) == 0
+    send.assert_called_once_with(None, "parquet mem")
+    assert printed == [tasks, heap]
+
+
 def check_committed_budgets() -> None:
     budgets = json.loads(sb.DEFAULT_BUDGETS.read_text())
     policy = budgets["policy"]
@@ -233,6 +256,7 @@ def main() -> None:
         check_graph(root / "graph")
         check_cli(root / "cli")
         check_internal_stacks(root / "src")
+    check_runtime_report()
     check_committed_budgets()
     print("stack_budget tests passed")
 

@@ -110,7 +110,9 @@ enters the logger. Country and source/precision metadata describe the whole file
 See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,
-`interval` (600/900/1800/3600), `codec none`, `codec lz4`, and `codec-test`. The
+`interval` (600/900/1800/3600), `codec none`, `codec lz4`, `codec-test` and `mem`.
+`parquet mem` prints the `DIAG tasks` stack high water marks and the `DIAG heap`
+line at once, from the board task (see the board README's stack and heap budgets). The
 codec choice is saved as the u8 key `codec` in the `parquet` NVS namespace, holding
 the Parquet codec value (0 UNCOMPRESSED, 7 LZ4_RAW), and the reply reads
 `PARQUET CONFIG codec=... persistent=true`. A failed save keeps the running choice,

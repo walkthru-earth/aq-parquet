@@ -294,11 +294,11 @@ def capture(port, args) -> int:
 
 def command(port, args) -> int:
     text = " ".join(args.text.split())
-    if text not in {"parquet status", "parquet schema", "parquet list", "parquet flush",
+    if text not in {"parquet status", "parquet schema", "parquet list", "parquet flush", "parquet mem",
                     "parquet erase-archive CONFIRM",
                     "parquet interval 600", "parquet interval 900", "parquet interval 1800",
                     "parquet interval 3600", "parquet codec none", "parquet codec lz4", "parquet codec-test"}:
-        raise ValueError("supported commands: parquet status/schema/list/flush/interval 600|900|1800|3600/"
+        raise ValueError("supported commands: parquet status/schema/list/flush/mem/interval 600|900|1800|3600/"
                          "codec none/codec lz4/codec-test/erase-archive CONFIRM; use fetch for get")
     send_command(port, text)
     # A refused NVS save still switches the running codec. The firmware then
@@ -332,6 +332,10 @@ def command(port, args) -> int:
                 return 0
         elif text == "parquet flush":
             if line.startswith(("PARQUET READY", "PARQUET FLUSH")):
+                return 0
+        elif text == "parquet mem":
+            # DIAG tasks comes first, DIAG heap closes the report.
+            if line.startswith("DIAG heap "):
                 return 0
         elif line.startswith(("PARQUET STATUS", "PARQUET INTERVAL", "PARQUET CONFIG")):
             return 0

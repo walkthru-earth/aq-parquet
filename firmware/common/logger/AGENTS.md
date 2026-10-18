@@ -24,8 +24,11 @@ initialization and each board's schema/provenance remain in its own trial.
 - Task priorities: board task `kBoardTaskPriority` (2) < `parquet-sd` worker
   (`Config::worker_priority`, 3) < `aq-lan` (4). The worker stack stays in
   internal RAM because it writes NVS. `poll()` prints `DIAG tasks` stack
-  high-water marks and `DIAG heap` (internal, DMA, PSRAM) 60 s after begin,
-  then hourly.
+  high-water marks and `DIAG heap` (internal, DMA, PSRAM free, minimum and
+  largest block) 60 s after begin, then hourly, and at once on the serial
+  `parquet mem` command, which `poll()` answers itself without the worker.
+  Append new fields at the end of those lines. A task stack change updates
+  `tools/stack_budget.json` (`pixi run stack-budget --write-budgets`).
 - The worker is a task watchdog user (`CONFIG_AQ_LOGGER_WORKER_WDT`, 60 s).
   A radio LIST runs as bounded `ArchiveSession::step()` calls from the worker
   loop, one per pass after samples and commits. Never walk a whole tree for a

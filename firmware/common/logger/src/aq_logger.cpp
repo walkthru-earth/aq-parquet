@@ -2676,31 +2676,36 @@ void collect(std::int64_t now, std::int64_t scheduled) {
 // Hourly, and once a minute after begin: stack high water marks (bytes left)
 // for every app task and the heap minimums, so stacks are sized from
 // measurements. Called on the board task, which reports itself by name.
-void report_runtime(std::int64_t now) {
+// `parquet mem` on the serial console forces a report without moving the
+// schedule. tools/stack_budget.py gives the static counterpart (issue #37).
+void report_runtime(std::int64_t now, bool force = false) {
   static std::int64_t next_report_us = 0;
   if (!next_report_us)
     next_report_us = now + 60LL * 1000000LL;
-  if (now < next_report_us)
-    return;
-  next_report_us = now + 3600LL * 1000000LL;
+  if (!force) {
+    if (now < next_report_us)
+      return;
+    next_report_us = now + 3600LL * 1000000LL;
+  }
   const auto stack_free = [](const char *name) {
     TaskHandle_t task = xTaskGetHandle(name);
     return task ? long(uxTaskGetStackHighWaterMark(task)) : -1L;
   };
   aqlog.printf(
       "DIAG tasks %s=%u parquet-sd=%ld aq-lan=%ld aq_ble_error=%ld "
-      "nimble_host=%ld tcpip=%ld uptime_s=%lld\n",
+      "nimble_host=%ld tcpip=%ld uptime_s=%lld esp_timer=%ld sys_evt=%ld\n",
       pcTaskGetName(nullptr), unsigned(uxTaskGetStackHighWaterMark(nullptr)),
       worker_task ? long(uxTaskGetStackHighWaterMark(worker_task)) : -1L,
       stack_free("aq-lan"), stack_free("aq_ble_error"),
       stack_free("nimble_host"), stack_free("tcpip"),
-      static_cast<long long>(now / 1000000));
+      static_cast<long long>(now / 1000000), stack_free("esp_timer"),
+      stack_free("sys_evt"));
   constexpr auto kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   constexpr auto kDma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
   aqlog.printf(
       "DIAG heap internal_free=%lu internal_min=%lu internal_largest=%lu "
       "dma_free=%lu dma_min=%lu dma_largest=%lu psram_free=%lu "
-      "psram_min=%lu\n",
+      "psram_min=%lu psram_largest=%lu\n",
       static_cast<unsigned long>(heap_caps_get_free_size(kInternal)),
       static_cast<unsigned long>(heap_caps_get_minimum_free_size(kInternal)),
       static_cast<unsigned long>(heap_caps_get_largest_free_block(kInternal)),
@@ -2709,7 +2714,9 @@ void report_runtime(std::int64_t now) {
       static_cast<unsigned long>(heap_caps_get_largest_free_block(kDma)),
       static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
       static_cast<unsigned long>(
-          heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)));
+          heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)),
+      static_cast<unsigned long>(
+          heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
 }
 } // namespace
 
@@ -3120,7 +3127,10 @@ void poll() {
     if (byte == '\n') {
       input.text[length] = '\0';
       input.received_mono_us = esp_timer_get_time();
-      if (overflow || !work::enqueue(commands, &input, worker_wakeup))
+      // Answered here, so the board task reports even while the worker is busy.
+      if (!overflow && std::strcmp(input.text, "parquet mem") == 0)
+        report_runtime(input.received_mono_us, true);
+      else if (overflow || !work::enqueue(commands, &input, worker_wakeup))
         aqlog.println(
             "PARQUET ERROR operation=command reason=too-long-or-busy");
       length = 0;
