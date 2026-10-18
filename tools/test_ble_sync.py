@@ -6,6 +6,8 @@ touches a radio. This proves the host parser's reading of the contract, not
 the firmware.
 """
 import asyncio
+import contextlib
+import io
 import binascii
 from pathlib import Path
 import struct
@@ -195,7 +197,19 @@ async def run_list_since():
         assert ble.load_cursor(path, "abc") == end["cursor"]
         assert ble.load_cursor(path, "other") == cursor
         assert ble.load_cursor(path, "new") == ble.ZERO_CURSOR
-    print("PASS ble_sync LIST_SINCE: request and end goldens, cursor per station, ERROR 11 fallback signal")
+        # A corrupt file or entry warns and falls back to a full listing.
+        for text in ("{not json", "[1, 2]", '{"abc": {"boot": "zz"}}', '{"abc": 7}', "\udcff"):
+            path.write_text(text, errors="surrogateescape")
+            warnings = io.StringIO()
+            with contextlib.redirect_stderr(warnings):
+                assert ble.load_cursor(path, "abc") == ble.ZERO_CURSOR, text
+            assert "warning: ignoring" in warnings.getvalue(), text
+        # Saving over a corrupt file replaces it with a valid one.
+        path.write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            ble.save_cursor(path, "abc", end["cursor"])
+        assert ble.load_cursor(path, "abc") == end["cursor"]
+    print("PASS ble_sync LIST_SINCE: request and end goldens, cursor per station, corrupt cursor fallback, ERROR 11 fallback signal")
 
 
 async def run():

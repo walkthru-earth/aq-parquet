@@ -678,24 +678,41 @@ def decode_list_since_end(frame: bytes) -> dict:
             "cursor": decode_cursor(frame[16:48])}
 
 
-def load_cursor(path: Path, station: str) -> dict:
-    """The saved cursor for `station`, or the zero cursor, which lists everything."""
+def read_cursors(path: Path) -> dict:
+    """Every saved cursor by station. A missing file is empty. A corrupt one
+    warns and is treated as empty, so the next listing is a full one."""
     try:
         saved = json.loads(path.read_text())
     except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        print(f"warning: ignoring unreadable cursor file {path} ({error}), listing everything",
+              file=sys.stderr)
+        return {}
+    if not isinstance(saved, dict):
+        print(f"warning: ignoring cursor file {path} that is not a JSON object, listing everything",
+              file=sys.stderr)
+        return {}
+    return saved
+
+
+def load_cursor(path: Path, station: str) -> dict:
+    """The saved cursor for `station`, or the zero cursor, which lists everything."""
+    cursor = read_cursors(path).get(station)
+    if cursor is None:
         return dict(ZERO_CURSOR)
-    cursor = saved.get(station) if isinstance(saved, dict) else None
-    return dict(cursor) if isinstance(cursor, dict) else dict(ZERO_CURSOR)
+    try:
+        encode_cursor(cursor)
+    except (TypeError, KeyError, ValueError, struct.error) as error:
+        print(f"warning: ignoring bad cursor for station {station} in {path} ({error!r}), listing everything",
+              file=sys.stderr)
+        return dict(ZERO_CURSOR)
+    return dict(cursor)
 
 
 def save_cursor(path: Path, station: str, cursor: dict) -> None:
     """Keeps one cursor per station. The cursor carries its mount epoch."""
-    try:
-        saved = json.loads(path.read_text())
-    except FileNotFoundError:
-        saved = {}
-    if not isinstance(saved, dict):
-        saved = {}
+    saved = read_cursors(path)
     saved[station] = cursor
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(saved, indent=1, sort_keys=True) + "\n")
