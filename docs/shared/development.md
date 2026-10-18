@@ -108,7 +108,10 @@ or when a `tools/test_*.py` hardcodes a C++ `-std` instead of importing
 which repeats that check and reads `build/<variant>/compile_commands.json`. It
 fails when the last `-std` on any repo-owned `.cpp` is not the pinned GNU
 dialect, or when a repo `.c` file gets a C++ standard. `managed_components` and
-build outputs are skipped. Style rules live at the top of
+build outputs are skipped. The logger compile test, the connectivity
+fixture and the PSRAM probe have no board target, so they run only that
+per-file check with `check_idf_target.py --compile-dialect <build>`, and
+`compile-dialect-test` fails if one of them stops calling it. Style rules live at the top of
 [`AGENTS.md`](../../AGENTS.md#c-standard-and-style).
 
 On 2026-10-17 one `std::format_to_n` call added to the CoreS3 image at `-Og`

@@ -115,7 +115,9 @@ max17048-test = "python tools/test_max17048.py --sanitize"
 battery-health-test = "python tools/test_battery_health.py --sanitize"
 coredump-report-test = "python tools/test_coredump_report.py --sanitize"
 connectivity-build-test = "tools/build_connectivity_fixture.sh"
-waveshare-psram-build = "tools/idf.sh -C tools/fixtures/waveshare_psram_probe -B tools/fixtures/waveshare_psram_probe/build build"
+# Fixture dialect check on crafted compiler databases, and every SDK fixture calls it (#45).
+compile-dialect-test = "python tools/test_compile_dialect.py"
+waveshare-psram-build = "tools/idf.sh -C tools/fixtures/waveshare_psram_probe -B tools/fixtures/waveshare_psram_probe/build build && python tools/check_idf_target.py --compile-dialect tools/fixtures/waveshare_psram_probe/build"
 compression-bench = "python tools/benchmark_compression.py"
 hooks = "pre-commit install"
 

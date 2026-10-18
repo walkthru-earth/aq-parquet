@@ -128,6 +128,13 @@ def check_compile_dialect(commands: list[dict], firmware_std: str) -> int:
     return checked
 
 
+def check_fixture_dialect(build: Path) -> int:
+    """Per-file dialect check for an SDK fixture build, which has no board target to verify."""
+    commands = json.loads(build_file(build, "compile_commands.json").read_text())
+    require(isinstance(commands, list) and bool(commands), "empty compiler database")
+    return check_compile_dialect(commands, check_cxx_dialect_sources())
+
+
 def build_file(build: Path, name: str) -> Path:
     path = (build / name).resolve()
     require(path.is_relative_to(build) and path.is_file(), "missing/outside-build artifact: " + name)
@@ -369,6 +376,9 @@ def main() -> None:
     parser.add_argument("--sdk-only", type=Path)
     parser.add_argument("--cxx-dialect", action="store_true",
                         help="only check that every C++ dialect source names the same standard")
+    parser.add_argument("--compile-dialect", type=Path, metavar="BUILD",
+                        help="only check the -std of every repo C and C++ file in a fixture build's "
+                             "compile_commands.json")
     parser.add_argument("--allow-missing-submodules", action="store_true")
     parser.add_argument("--backup", type=Path)
     manifests = parser.add_mutually_exclusive_group()
@@ -378,6 +388,10 @@ def main() -> None:
     try:
         if args.cxx_dialect:
             print(f"C++ dialect sources agree on {check_cxx_dialect_sources()}")
+            return
+        if args.compile_dialect:
+            checked = check_fixture_dialect(args.compile_dialect.resolve())
+            print(f"{checked} repo C++ files in {args.compile_dialect} build with {check_cxx_dialect_sources()}")
             return
         if args.sdk_only:
             check_sdk(args.sdk_only.resolve(), args.allow_missing_submodules)
