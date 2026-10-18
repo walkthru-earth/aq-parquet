@@ -13,6 +13,8 @@ C++ contract tests and cannot prove behavior on a physical board.
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
 | Router/local/public NTP order and H3 privacy geometry | `network-time-test`, `location-test`, `config-test`, `control-sync-test` |
 | Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
+| Footer rebuild for a quarantined `.partial` from its page headers and the board field table, output in a separate directory and checked by PyArrow and DuckDB | `rebuild-partial --board waveshare --out <dir> <files>`, `rebuild-partial-test --sanitize` |
+| Power cut cycles at the write, footer and rename stages, per boot loss account, baseline SHA-256 manifest and compare (owner bench only, tests use a fake port) | `bench-power-cut run|analyze|manifest|compare`, `bench-power-cut-test` |
 | Full-flash backup publication (offline fake esptool) | `backup-test` |
 | Native FAT mount root and archive directory creation | `logger-directory-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
