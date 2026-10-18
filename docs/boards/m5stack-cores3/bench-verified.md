@@ -869,3 +869,56 @@ ends at about 112 s because the board was unplugged, so endurance and a full
 iPad transfer on this board are not established. The BLE link sequencing change
 recorded for the Waveshare on the same date is not flashed to this board yet.
 Logs are in ignored `firmware/esp-idf-cores3/artifacts/ble-reboot-20261012/`.
+
+## Main 67f25dc USB install, fixed PIN and owner archive reset (2026-10-18)
+
+CoreS3 MAC `44:1b:f6:e2:6b:40`, checked native USB port `/dev/cu.usbmodem1401`.
+`pixi run ports`, `chip`, `flash-id` and `efuse` confirmed ESP32-S3 QFN56
+rev v0.2, flash manufacturer 46 device 4018 at 16 MB, `SECURE_BOOT_EN=False`,
+`SPI_BOOT_CRYPT_CNT=0` and `DIS_DOWNLOAD_MODE=False`. Buffered rows were
+flushed into one more file before the backup. The full backup
+`backup/m5stack-cores3-flash-20261018T071245Z.bin` is 16,777,216 bytes,
+SHA-256 `caa0e62548b033e455c4ee19a8220c6c7052e3264411cd3065779072f812ccfe`.
+Its partition table matches the current build, with NVS at `0x9000` and
+`coredump` at `0xc10000`.
+
+A phone app connected to the board over BLE by mistake at 07:12:46Z, sent
+STATUS and a successful SET_TIME, and the link closed at 07:12:51Z. The backup
+started at 07:12:45Z, so the phone set the board clock in the same second
+esptool reset it into the ROM download path. The 54 s read ran under the
+esptool stub with the application halted, so no flash write could happen during
+the read. The image still parses, is the full 16,777,216 bytes, and its NVS
+region passes the IDF `nvs_tool.py` integrity check, with every written page
+CRC32 OK and the `aqcfg`, `parquet` and `nimble_bond` namespaces present. A
+reread cannot be compared because the board was flashed afterwards.
+
+`pixi run cores3-build` on `main` at `67f25dc` passed the target checks. App
+BIN SHA-256 `3cbc304a2a5a6ebd537069ed6fd1990d51c139477e10a19afbbd1e03a722b420`.
+`pixi run cores3-flash` wrote only bootloader, partition table, otadata and
+app0, and esptool verified every region hash. No eFuse write, NVS erase, full
+chip erase or card format.
+
+| Check | Before | After |
+| :--- | :--- | :--- |
+| Image | `idf-cores3-parquet-v6.11`, app version `7384e03-dirty`, compiled 2026-10-12, schema `cores3-telemetry-v4` | `idf-cores3-parquet-v6.13`, app version `67f25dc`, schema `cores3-telemetry-v5`, 81 columns, config `cores3-acquisition-v3` |
+| Protocol | Not read over radio | Proto 3 from `kProtocolVersion` in the flashed source. Not read over BLE or LAN in this run |
+| Settings and NVS | `CONFIG LOADED first_boot=false pair=random pin_default=false wifi_on=false ssid_set=true lan_on=true` | Same line after the flash, same station `f3c3fdc1-6f18-4be8-b7bb-fb27692bb60a` |
+| SD and archive | Mounted at 20 MHz, `PARQUET SCAN files=209`, then 210 after the flush | Mounted at 20 MHz, `PARQUET SCAN files=210`, no partials or quarantine |
+| Sensors | PMSA003 valid frames | PMSA003 valid frames, for example PM2.5 22 ug/m3 atmospheric, zero checksum or length failures. LTR553, BMI270, AXP2101 and BM8563 answer on I2C |
+| Watchdog | Not present on v6.11 | `PARQUET WATCHDOG mode=armed consecutive=0` |
+
+After the flash and verification the owner asked for two changes. Physical
+serial `parquet config-hex` set `ble.pair=fixed` and an owner-chosen
+`ble.pin`. The board answered `CONFIG SET pair=fixed pin_default=false ...
+reboot_required=true` and `AQ CONFIG ok=1`. The PIN digits are kept out of
+every log and this record. Then `parquet erase-archive CONFIRM` returned
+`PARQUET ERASE_ARCHIVE ok=1 files=210 directories=13 reboot_required=1`. No copy
+was kept, at the owner's request. After a reset the board booted the same
+image with `CONFIG LOADED ... pair=fixed pin_default=false`, `PARQUET SCAN
+files=0`, card used bytes 131,072 and new PMSA003 readings.
+
+Limits. `DIAG rtc enabled=false_or_read_failed` and implausible AXP2101 battery
+values (9 to 16,381 mV) appear on both the old and the new image, so this
+install did not cause them. BLE pairing with the new PIN, phone sync, LAN and
+Parquet readback were not run. Logs and the image are in ignored
+`firmware/esp-idf-cores3/artifacts/install-20261018/`.

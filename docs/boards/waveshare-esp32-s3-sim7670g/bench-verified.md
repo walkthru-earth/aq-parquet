@@ -378,3 +378,50 @@ evidence for [#18](https://github.com/walkthru-earth/aq-parquet/issues/18),
 
 Logs, images, the raw dump, its decode and the readback are in ignored
 `firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261017/`.
+
+## Main 67f25dc USB install and owner archive reset (2026-10-18)
+
+Board ESP32-S3 QFN56 rev v0.2, MAC a4:cb:8f:d7:75:00, flash manufacturer 85
+device 2018 at 16 MB, 8 MB AP_3v3 PSRAM, WCH bridge 1A86:55D3 on
+`/dev/cu.wchusbserial5B901533371`. The four `QualComm Compo` 05C6:9330 ports on
+the same hub are the SIM7670G modem, not an ESP32 console. `pixi run ports`,
+`chip`, `flash-id` and `efuse` showed `SECURE_BOOT_EN=False`,
+`SPI_BOOT_CRYPT_CNT=0` and `DIS_DOWNLOAD_MODE=False`. The full backup
+`backup/waveshare-sim7670g-v2-flash-20261018T072052Z.bin` is 16,777,216 bytes,
+SHA-256 `45efeebc0147313d33de2f02a2324e75ff5bff218e07fc86df5fc9476057cc02`, read
+in about 25 minutes at the default baud. Its partition table matches the current
+build, with NVS at `0x9000` and `coredump` at `0xc10000`.
+
+The board already ran app version `67f25dc`, compiled 2026-10-17 21:17. This
+install replaced it with a clean `pixi run waveshare-build logger` of the same
+commit, app BIN SHA-256
+`fe123b93fff432f29b7b6e4a6704be3a3902d68748d744b5ab836820003807e0`.
+`pixi run waveshare-flash` wrote only bootloader, partition table, otadata and
+app0, and esptool verified every region hash. No eFuse write, NVS erase, full
+chip erase or card format.
+
+| Check | Before | After |
+| :--- | :--- | :--- |
+| Image | `idf-waveshare-parquet-v2.7`, app version `67f25dc`, compiled 2026-10-17 21:17 | `idf-waveshare-parquet-v2.7`, app version `67f25dc`, compiled 2026-10-18 10:15, schema v5, 62 columns |
+| Protocol | Not read over radio | Proto 3 from `kProtocolVersion` in the flashed source. Not read over BLE or LAN in this run |
+| Settings and NVS | `CONFIG LOADED first_boot=false pair=fixed pin_default=false wifi_on=false ssid_set=false lan_on=true` | Same line, same station `5272567d-356b-489d-9f60-c24812540bbf`. A bonded phone reconnected with `BLE BONDED authenticated=true bonds=3` |
+| TF and archive | `AQ TF mounted=1 ... format_attempted=false`, `PARQUET SCAN files=36` | Mounted the same way, `PARQUET SCAN files=38`. The two extra files are normal rotations by the old image before the backup, one `PARQUET READY` is in the pre-flash log |
+| Sensors | PMS5003T UART ready | PMS5003T and MAX17048 readings, see the readback row |
+| Watchdog | `mode=armed consecutive=0` | `mode=armed consecutive=0` |
+
+After the flash and verification the owner asked for a fresh archive.
+`parquet erase-archive CONFIRM` returned `PARQUET ERASE_ARCHIVE ok=1 files=38
+directories=27 reboot_required=1`. No copy was kept, at the owner's request.
+After a reset the board printed `PARQUET SCAN files=0` with the same config
+line. The phone then sent host time (`PARQUET TIME ... source=host`) and the
+logger closed the first new unsynced file.
+
+| Readback | Result |
+| :--- | :--- |
+| File | `data_unsynced_7948c748..._0-3-0.parquet`, 4 rows, 62 columns, 12,057 bytes, CRC-32 `c6b201a0`, SHA-256 `68de6b280f77c3ca0c2490dbb6444e1f1655aa0d682909e9e39e8757f07d9b16`, `readers_match=true`, cadence deviation at most 1,017 us |
+| Values | Two PMS warm-up rows are null, then PM1 17 and 16, PM2.5 22, PM10 22 ug/m3 (CF1 and atmospheric), ambient 23.8 C, RH 44.3%, `pms_error=0`, PMS firmware 152. `battery_mv` 4,275 to 4,277 |
+
+Limits. No phone transfer, LAN or Wi-Fi run, no endurance run. The USB fetch
+reset the board through the CH343 bridge, so a few buffered rows after the
+fetch were lost. Logs, image and readback are in ignored
+`firmware/esp-idf-waveshare-sim7670g/artifacts/install-20261018/`.
