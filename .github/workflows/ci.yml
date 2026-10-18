@@ -55,9 +55,8 @@ jobs:
   host-gate:
     name: Host gate
     runs-on: ubuntu-24.04
-    # The gate takes about 6.5 min on ubuntu-24.04, almost 5 of them in
-    # logger-directory-test under ASan. Each task has its own 600 s bound in
-    # tools/gate.sh, so this only catches a stall outside the gate.
+    # Each gate task has its own 300 s bound in tools/gate.sh, so this only
+    # catches a stall outside the gate.
     timeout-minutes: 25
     permissions:
       contents: read
