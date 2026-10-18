@@ -309,6 +309,29 @@ void check_keeper() {
     assert(keeper.appended() && !keeper.current_unlisted());
     assert(!keeper.needs_marker());
     assert(keeper.ring(nvs.store())->holds_newest(boot_of(3)));
+    // The marker is stale once the append succeeds. A failed removal keeps
+    // it stale, so the next unsynced file does not retry, and it lasts.
+    assert(keeper.stale_marker());
+    keeper.marker_removed();
+    assert(!keeper.stale_marker() && !keeper.needs_marker());
+  }
+  // A boot that never needed a marker never has a stale one.
+  {
+    ls::RingKeeper keeper;
+    keeper.set_current(boot_of(6));
+    assert(!keeper.stale_marker());
+    keeper.note_unsynced(nvs.store());
+    assert(keeper.appended() && !keeper.stale_marker());
+  }
+  // The marker path, and a buffer too small for it.
+  {
+    char path[96];
+    assert(ls::marker_path(path, "/sdcard/output", "ab", "0011"));
+    assert(std::string(path) ==
+           "/sdcard/output/station=ab/unsynced/ringless=0011");
+    char small[20];
+    assert(!ls::marker_path(small, "/sdcard/output", "ab", "0011"));
+    assert(!ls::marker_path(std::span<char>{}, "/sdcard/output", "ab", "0011"));
   }
   // A failing read gives no ring, so LIST_SINCE walks every unsynced boot.
   {

@@ -168,6 +168,11 @@ public:
   // boot's LIST_SINCE still finds this boot's folder.
   bool needs_marker() const { return current_unlisted() && !marked_; }
   void marker_made() { marked_ = true; }
+  // A later append of this boot succeeded, so its marker is no longer
+  // needed. The logger removes it, best effort. Otherwise a marker lasts
+  // until the serial `parquet erase-archive CONFIRM`.
+  bool stale_marker() const { return held_ && marked_; }
+  void marker_removed() { marked_ = false; }
 
 private:
   bool load(const RingStore &store) {
@@ -482,6 +487,18 @@ private:
 inline constexpr char kRinglessPrefix[] = "ringless=";
 // Ringless boots one walk reads by name. More widen it to the whole tree.
 inline constexpr std::size_t kMaxRingless = 4;
+
+// Writes "<directory>/station=<station>/unsynced/ringless=<boot>". False
+// when it does not fit.
+inline bool marker_path(std::span<char> out, const char *directory,
+                        const char *station, const char *boot) {
+  if (out.empty())
+    return false;
+  const int length =
+      std::snprintf(out.data(), out.size(), "%s/station=%s/unsynced/%s%s",
+                    directory, station, kRinglessPrefix, boot);
+  return length > 0 && static_cast<std::size_t>(length) < out.size();
+}
 
 // The incremental LIST_SINCE walk of one station: the dated tree above the
 // floor, then the unsynced tree, or the planned ring boot folders followed by

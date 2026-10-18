@@ -620,10 +620,30 @@ void note_unsynced_boot() {
   if (boot_ring.appended())
     return;
   boot_ring.note_unsynced(ring_store);
+  char marker[192] = {};
+  const bool named =
+      list_since::marker_path(marker, kDirectory, station_text, boot_text);
   if (boot_ring.appended()) {
     const auto *ring = boot_ring.ring(ring_store);
     aqlog.printf("PARQUET BOOT_RING appended=%lu\n",
                  static_cast<unsigned long>(ring ? ring->appended() : 0));
+    if (!boot_ring.stale_marker())
+      return;
+    // The ring names this boot now, so its marker would only make walks
+    // read the folder again once the boot ages out of the ring.
+    int failure = 0;
+    if (named) {
+      BusLock lock;
+      if (::rmdir(marker) != 0)
+        failure = errno;
+    } else {
+      failure = ENAMETOOLONG;
+    }
+    if (failure)
+      aqlog.printf("PARQUET WARN operation=boot-ring-marker-remove errno=%d\n",
+                   failure);
+    else
+      boot_ring.marker_removed();
     return;
   }
   aqlog.println("PARQUET WARN operation=boot-ring list_since=unsynced-full");
@@ -631,12 +651,7 @@ void note_unsynced_boot() {
     return;
   // A later boot's ring will not name this boot, so its LIST_SINCE finds
   // the boot folder through this marker.
-  char marker[192];
-  const int length = std::snprintf(
-      marker, sizeof(marker), "%s/station=%s/unsynced/%s%s", kDirectory,
-      station_text, list_since::kRinglessPrefix, boot_text);
-  if (length > 0 && static_cast<std::size_t>(length) < sizeof(marker) &&
-      make_directories(marker))
+  if (named && make_directories(marker))
     boot_ring.marker_made();
   else
     aqlog.println("PARQUET ERROR operation=boot-ring-marker");

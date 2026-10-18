@@ -26,10 +26,14 @@ def check_wiring(source: str) -> None:
             r"if \(!make_directories\(directory\)\)",
         "the unsynced boot joins the ring, or gets a marker, before its folder":
             r"void note_unsynced_boot\(\) \{ if \(boot_ring\.appended\(\)\) return; "
-            r"boot_ring\.note_unsynced\(ring_store\);.*?"
+            r"boot_ring\.note_unsynced\(ring_store\); char marker\[192\] = \{\}; "
+            r"const bool named = list_since::marker_path\(marker, kDirectory, "
+            r"station_text, boot_text\); if \(boot_ring\.appended\(\)\) \{.*?"
+            r"if \(!boot_ring\.stale_marker\(\)\) return;.*?"
+            r"if \(::rmdir\(marker\) != 0\).*?"
+            r"else boot_ring\.marker_removed\(\); return; \}.*?"
             r"if \(!boot_ring\.needs_marker\(\)\) return;.*?"
-            r"list_since::kRinglessPrefix, boot_text\);.*?"
-            r"make_directories\(marker\)\) boot_ring\.marker_made\(\);",
+            r"if \(named && make_directories\(marker\)\) boot_ring\.marker_made\(\);",
         "a renamed unsynced file moves the cursor seq":
             r"::rename\(target\.partial, ready\) == 0;.*?\+\+finalized; "
             r"unlisted_files = true; since_state\.finalized\(target\.benchmark, "

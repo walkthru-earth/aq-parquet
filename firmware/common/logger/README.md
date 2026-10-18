@@ -72,6 +72,10 @@ The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never
 mix; station location snapshots never mix either. Unknown UTC uses the `unsynced`
 Hive tree and rotates on the same window measured on the boot's monotonic clock.
+An empty `unsynced/ringless=<boot>/` folder marks a boot whose NVS boot ring
+append failed, so a later `LIST_SINCE` still lists that boot's unsynced files.
+The logger removes it, best effort, when a later append in the same boot
+succeeds. Otherwise it stays until the archive is erased.
 Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
 `.partial` files are retained under `quarantine/<station>/<partition>/`, at boot
