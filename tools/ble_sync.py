@@ -56,12 +56,15 @@ INFO, STATUS, LIVE, CONTROL, RESPONSE = (BASE.format(i) for i in range(2, 7))
 OP_LIST, OP_OPEN, OP_READ, OP_CLOSE, OP_SET_TIME, OP_FLUSH, OP_STATUS = range(1, 8)
 OP_GET_CONFIG, OP_SET_CONFIG, OP_WIFI_SCAN, OP_REBOOT, OP_LOG_TAIL, OP_GET_TOKEN = range(8, 14)
 OP_GET_DIAG, OP_ABORT = 0x0E, 0x0F
+# Opcodes and frame types are separate number spaces, so OP_LIST_SINCE and
+# F_FILE share the value 0x10.
+OP_LIST_SINCE = 0x10
 F_FILE, F_LIST_END = 0x10, 0x11
 F_OPENED, F_CHUNK, F_READ_END, F_CLOSED = 0x20, 0x21, 0x22, 0x23
 F_TIME_SET, F_FLUSHED, F_ERROR = 0x30, 0x31, 0x7F
 F_CONFIG, F_WIFI_AP, F_WIFI_SCAN_END, F_REBOOTING = 0x40, 0x41, 0x42, 0x43
 F_LOG, F_LOG_END, F_TOKEN, F_HELLO, F_STATUS, F_LIVE = 0x44, 0x45, 0x46, 0x47, 0x48, 0x49
-F_BYE, F_DIAG, F_ABORTED = 0x4B, 0x4C, 0x4D
+F_BYE, F_DIAG, F_ABORTED, F_LIST_SINCE_END = 0x4B, 0x4C, 0x4D, 0x4E
 ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed",
           5: "bad-handle", 6: "range", 7: "busy", 8: "storage-unavailable",
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
@@ -225,6 +228,10 @@ class ProtocolError(RuntimeError):
     pass
 
 
+class ListSinceUnsupported(ProtocolError):
+    """The device answered LIST_SINCE with ERROR 11, so the client lists with LIST."""
+
+
 class LinkClosedByDevice(ProtocolError):
     """The device sent BYE (0x4B) and closed the LAN session.
 
@@ -348,6 +355,28 @@ class Session:
                 return listed, end
             else:
                 raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during LIST")
+
+    async def list_since(self, cursor: dict) -> tuple[dict[str, int], dict]:
+        """LIST_SINCE (0x10) from `cursor`. Raises ListSinceUnsupported on ERROR 11."""
+        await self.request(bytes([OP_LIST_SINCE]) + encode_cursor(cursor))
+        listed: dict[str, int] = {}
+        while True:
+            data = await self.frame(raise_error=False)
+            if data[0] == F_ERROR:
+                if len(data) >= 3 and data[1] == OP_LIST_SINCE and data[2] == 11:
+                    raise ListSinceUnsupported("device has no LIST_SINCE (ERROR 11)")
+                raise self._device_error(data)
+            if data[0] == F_FILE:
+                (size,) = struct.unpack_from("<I", data, 1)
+                name = device.safe_name(data[5:].decode("utf-8"))
+                listed[name] = size
+            elif data[0] == F_LIST_SINCE_END:
+                end = decode_list_since_end(data)
+                if end["count"] != len(listed):
+                    raise ProtocolError(f"LIST_SINCE_END count {end['count']} != {len(listed)} received entries")
+                return listed, end
+            else:
+                raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during LIST_SINCE")
 
     async def open(self, name: str) -> tuple[int, int, int]:
         await self.request(bytes([OP_OPEN]) + name.encode("ascii"))
@@ -618,6 +647,61 @@ def decode_list_end(frame: bytes) -> dict:
     return {"count": count, "partials": partials, "sd_kib": sd_kib, "sd_used_kib": used_kib}
 
 
+ZERO_CURSOR = {"mount_epoch": 0, "day": 0, "boot": "00" * 16, "seq": 0}
+LIST_SINCE_FULL, LIST_SINCE_UNSYNCED_FULL = 0x01, 0x02
+
+
+def encode_cursor(cursor: dict) -> bytes:
+    """The 32-byte LIST_SINCE cursor: mount_epoch u32, day u32, boot[16], seq u64."""
+    boot = bytes.fromhex(cursor["boot"])
+    if len(boot) != 16:
+        raise ValueError("cursor boot must be 32 hex digits")
+    return struct.pack("<II", cursor["mount_epoch"], cursor["day"]) + boot + struct.pack("<Q", cursor["seq"])
+
+
+def decode_cursor(raw: bytes) -> dict:
+    if len(raw) != 32:
+        raise ProtocolError(f"cursor must be 32 bytes, got {len(raw)}")
+    mount_epoch, day = struct.unpack_from("<II", raw)
+    (seq,) = struct.unpack_from("<Q", raw, 24)
+    return {"mount_epoch": mount_epoch, "day": day, "boot": raw[8:24].hex(), "seq": seq}
+
+
+def decode_list_since_end(frame: bytes) -> dict:
+    """LIST_SINCE_END (0x4E): the 15 LIST_END bytes, flags u8, next cursor, 48 bytes."""
+    if len(frame) != 48 or frame[0] != F_LIST_SINCE_END:
+        raise ProtocolError(f"LIST_SINCE_END must be 48 bytes, got {len(frame)}")
+    count, partials, sd_kib, used_kib = struct.unpack_from("<IHII", frame, 1)
+    flags = frame[15]
+    return {"count": count, "partials": partials, "sd_kib": sd_kib, "sd_used_kib": used_kib,
+            "full": bool(flags & LIST_SINCE_FULL), "unsynced_full": bool(flags & LIST_SINCE_UNSYNCED_FULL),
+            "cursor": decode_cursor(frame[16:48])}
+
+
+def load_cursor(path: Path, station: str) -> dict:
+    """The saved cursor for `station`, or the zero cursor, which lists everything."""
+    try:
+        saved = json.loads(path.read_text())
+    except FileNotFoundError:
+        return dict(ZERO_CURSOR)
+    cursor = saved.get(station) if isinstance(saved, dict) else None
+    return dict(cursor) if isinstance(cursor, dict) else dict(ZERO_CURSOR)
+
+
+def save_cursor(path: Path, station: str, cursor: dict) -> None:
+    """Keeps one cursor per station. The cursor carries its mount epoch."""
+    try:
+        saved = json.loads(path.read_text())
+    except FileNotFoundError:
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    saved[station] = cursor
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(saved, indent=1, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
 def decode_bye(frame: bytes) -> dict:
     """BYE (0x4B), protocol 3: reason u8, generation u32, err i16, queued_frames u16, uptime_s u32."""
     if len(frame) != 14 or frame[0] != F_BYE:
@@ -705,7 +789,18 @@ async def cmd_live(args):
 async def cmd_list(args):
     client, session = await connect(args)
     try:
-        listed, end = await session.list_files()
+        if args.since:
+            station = (await session.info()).get("station", "")
+            cursor = load_cursor(args.since, station)
+            try:
+                listed, end = await session.list_since(cursor)
+            except ListSinceUnsupported:
+                print("BLE LIST_SINCE unsupported, falling back to LIST", flush=True)
+                listed, end = await session.list_files()
+            else:
+                save_cursor(args.since, station, end["cursor"])
+        else:
+            listed, end = await session.list_files()
         for name, size in sorted(listed.items()):
             print(f"BLE FILE name={name} bytes={size}")
         print("BLE LIST END " + " ".join(f"{k}={v}" for k, v in end.items()))
@@ -894,7 +989,11 @@ def main():
     live = sub.add_parser("live")
     live.add_argument("--seconds", type=float, default=35.0)
     live.set_defaults(run=cmd_live)
-    sub.add_parser("list").set_defaults(run=cmd_list)
+    listing = sub.add_parser("list")
+    listing.add_argument("--since", type=Path, metavar="CURSOR_FILE",
+                         help="list with LIST_SINCE from the station's cursor in this JSON file, then save "
+                              "the new one. A missing file or station lists everything")
+    listing.set_defaults(run=cmd_list)
     fetch = sub.add_parser("fetch")
     fetch.add_argument("name")
     fetch.add_argument("--out", type=Path, required=True)

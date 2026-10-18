@@ -7,7 +7,9 @@ the firmware.
 """
 import asyncio
 import binascii
+from pathlib import Path
 import struct
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -30,13 +32,21 @@ GOLDEN_DIAG = bytes.fromhex("4c0200" + "0000" + "0500" + "0000" + "0100" + "0000
 GOLDEN_BYE = bytes.fromhex("4b0104030201f5ff0300100e0000")
 GOLDEN_ABORTED_IDLE = bytes.fromhex("4d00")
 GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
+# LIST_SINCE request and LIST_SINCE_END, byte for byte from the protocol doc.
+GOLDEN_LIST_SINCE = bytes.fromhex("10d4c3b2a1db25350100112233445566778899aabbccddeeff0700000000000000")
+GOLDEN_LIST_SINCE_END = bytes.fromhex("4e020000000000e80300000a00000002d4c3b2a1dc253501"
+                                      "00112233445566778899aabbccddeeff2a00000000000000")
 
 
 class FakeClient:
     """Scripted device: LIST of two files, one openable file served in chunks."""
 
-    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False, att_error=None):
+    def __init__(self, chunk=100, drop_frame=False, list_end=None, auth_refused=False, att_error=None,
+                 list_since=True):
         self.chunk = chunk
+        # False answers LIST_SINCE with ERROR 11, as firmware without it does.
+        self.list_since = list_since
+        self.since_requests = []
         # Raise this from every Control write, as a backend does when NimBLE
         # rejects an unpaired write at the ATT layer. The normal BLE case.
         self.att_error = att_error
@@ -70,7 +80,15 @@ class FakeClient:
         if self.auth_refused:
             self.emit(bytes([ble.F_ERROR, op, 14]) + b"auth")
             return
-        if op == ble.OP_LIST:
+        if op == ble.OP_LIST_SINCE:
+            self.since_requests.append(bytes(data))
+            if not self.list_since:
+                self.emit(bytes([ble.F_ERROR, op, 11]))
+                return
+            self.emit(bytes([ble.F_FILE]) + struct.pack("<I", len(FILE)) + NAME.encode())
+            self.emit(bytes([ble.F_FILE]) + struct.pack("<I", 7) + b"legacy-parquet/x.parquet")
+            self.emit(GOLDEN_LIST_SINCE_END)
+        elif op == ble.OP_LIST:
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", len(FILE)) + NAME.encode())
             self.emit(bytes([ble.F_FILE]) + struct.pack("<I", 7) + b"legacy-parquet/x.parquet")
             self.emit(self.list_end or bytes([ble.F_LIST_END]) + struct.pack("<IHII", 2, 0, 1000, 10))
@@ -142,7 +160,46 @@ class FakeClient:
                 self.emit(GOLDEN_ABORTED_IDLE)
 
 
+async def run_list_since():
+    """LIST_SINCE request, LIST_SINCE_END, cursor file and the ERROR 11 fallback."""
+    cursor = {"mount_epoch": 0xA1B2C3D4, "day": 20260315, "boot": "00112233445566778899aabbccddeeff", "seq": 7}
+    assert bytes([ble.OP_LIST_SINCE]) + ble.encode_cursor(cursor) == GOLDEN_LIST_SINCE
+    end = ble.decode_list_since_end(GOLDEN_LIST_SINCE_END)
+    assert end == {"count": 2, "partials": 0, "sd_kib": 1000, "sd_used_kib": 10, "full": False,
+                   "unsynced_full": True,
+                   "cursor": {"mount_epoch": 0xA1B2C3D4, "day": 20260316,
+                              "boot": "00112233445566778899aabbccddeeff", "seq": 42}}, end
+    # LIST_END is its first 15 bytes.
+    assert ble.decode_list_end(bytes([ble.F_LIST_END]) + GOLDEN_LIST_SINCE_END[1:15])["count"] == 2
+    for frame in (GOLDEN_LIST_SINCE_END[:47], GOLDEN_LIST_SINCE_END + b"\0"):
+        expect_protocol_error(lambda frame=frame: ble.decode_list_since_end(frame), "must be 48 bytes")
+    client = FakeClient()
+    session = ble.Session(client)
+    await session.start()
+    listed, end = await session.list_since(cursor)
+    assert client.since_requests == [GOLDEN_LIST_SINCE]
+    assert listed == {NAME: len(FILE), "legacy-parquet/x.parquet": 7} and end["cursor"]["seq"] == 42
+    old = ble.Session(FakeClient(list_since=False))
+    await old.start()
+    try:
+        await old.list_since(ble.ZERO_CURSOR)
+    except ble.ListSinceUnsupported:
+        pass
+    else:
+        raise AssertionError("ERROR 11 must raise ListSinceUnsupported")
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "cursors.json"
+        assert ble.load_cursor(path, "abc") == ble.ZERO_CURSOR
+        ble.save_cursor(path, "abc", end["cursor"])
+        ble.save_cursor(path, "other", cursor)
+        assert ble.load_cursor(path, "abc") == end["cursor"]
+        assert ble.load_cursor(path, "other") == cursor
+        assert ble.load_cursor(path, "new") == ble.ZERO_CURSOR
+    print("PASS ble_sync LIST_SINCE: request and end goldens, cursor per station, ERROR 11 fallback signal")
+
+
 async def run():
+    await run_list_since()
     await run_discovery()
     await run_read_deadlines()
     client = FakeClient()
