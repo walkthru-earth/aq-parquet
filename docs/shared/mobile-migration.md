@@ -8,6 +8,44 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## Incremental LIST_SINCE with a saved cursor (fix-38-list-since, issue #38)
+
+**What changed.** A new control opcode `LIST_SINCE` (`0x10`) lists only the
+files of this station that are new since a 32-byte cursor. It answers `FILE`
+frames, then a 48-byte `LIST_SINCE_END` (`0x4E`) whose first 15 bytes match
+`LIST_END`, plus a `flags` byte and the next cursor. STATUS JSON gains
+`"ls":<u32>`, the FAT volume serial of the mounted card, 0 when unknown. To
+keep STATUS under 480 bytes, `utc_ms` is clamped to 13 digits and `clk_age_s`
+and `miss` to the u32 range, which no valid clock reaches. Plain `LIST`,
+`LIST_END` and every other frame are unchanged. The layouts, goldens and
+errors are in
+[ble-sync-protocol.md](ble-sync-protocol.md#list_since).
+
+**Why.** Plain `LIST` reads every directory entry on the card each sync, which
+grows with the archive. On a 5161-file test tree the incremental walk read 102
+entries against 6688 for the full walk.
+
+**What the app must do.**
+
+- Store the cursor per station, keyed by station id plus the cursor's
+  `mount_epoch`, as the 32 opaque bytes from `LIST_SINCE_END`. Never build or
+  edit one. Send the all-zero cursor when none is stored, or when STATUS `ls`
+  differs from the stored epoch.
+- Save the new cursor only after a valid `LIST_SINCE_END`. An `ERROR`, a lost
+  link or `ABORT` keeps the previous cursor, and the files already received
+  are still worth downloading.
+- On `ERROR` 11 with op `0x10`, fall back to plain `LIST` for that board and
+  stop sending `LIST_SINCE` until the firmware version changes.
+- Merge results into the local archive and dedupe by relative name plus CRC
+  from `OPENED`. A `full` or `unsynced_full` listing repeats files the phone
+  already holds, which is expected.
+- Run a periodic audit, a plain `LIST` or `LIST_SINCE` with the all-zero
+  cursor, for example once a day or every tenth sync. It catches a file
+  written below the floor after a clock moved back across a reboot, and the
+  unsynced files of a boot whose NVS ring write failed. Other stations,
+  `legacy-parquet/` and `benchmarks/` also appear only in a full listing.
+- Read `ls` as optional, absent on older firmware.
+
 ## One BLE HCI fail line per refused interval run (fix/52-followup-nits, after #52)
 
 **What changed.** The board retries a connection interval request that is
