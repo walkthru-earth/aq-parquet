@@ -7,6 +7,7 @@ Run: pixi run ble-policy-test
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -15,7 +16,9 @@ from host_cxx import CXX_STD
 
 def gate_body(source: str, name: str) -> str:
     """The body of the ble_sync.cpp function `name`, by brace matching."""
-    start = source.index("{", source.index(f" {name}("))
+    definition = re.search(rf"\n\S[^\n;]*\b{name}\([^;{{]*\)\s*{{", source)
+    assert definition, f"no definition of {name}"
+    start = definition.end() - 1
     depth = 0
     for index in range(start, len(source)):
         depth += {"{": 1, "}": -1}.get(source[index], 0)
@@ -66,6 +69,21 @@ def check_early_subscribe_wiring(source: str) -> None:
     assert "response_subscribe(" in body and "subscribed[which] = notify" in body, body
 
 
+def check_link_sequence_wiring(source: str) -> None:
+    """CoreS3 Android bench. The local PHY request must not cross the
+    central's own procedures. MTU, CONN_UPDATE and PHY_UPDATE_COMPLETE restart
+    its wait, and link_on_host reads the PHY before it asks for 2M."""
+    for event in ("BLE_GAP_EVENT_MTU", "BLE_GAP_EVENT_CONN_UPDATE",
+                  "BLE_GAP_EVENT_PHY_UPDATE_COMPLETE"):
+        assert "defer_link_step(" in case_body(source, event), \
+            f"{event} must restart the PHY wait"
+    body = gate_body(source, "defer_link_step")
+    assert "central_procedure_rearms(link_step)" in body and "kLinkSettleMs" in body, body
+    body = gate_body(source, "link_on_host")
+    assert "phy_request_needed(" in body, "link_on_host must skip a link already on 2M"
+    assert body.index("ble_gap_read_le_phy(") < body.index("ble_gap_set_prefered_le_phy("), body
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sanitize", action="store_true")
@@ -75,6 +93,7 @@ def main() -> None:
     transport = (connectivity / "ble_sync.cpp").read_text()
     check_gate_wiring(transport)
     check_early_subscribe_wiring(transport)
+    check_link_sequence_wiring(transport)
     with tempfile.TemporaryDirectory(prefix="aq-ble-policy-test-") as directory:
         executable = Path(directory) / "ble-policy-test"
         command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
@@ -91,8 +110,9 @@ def main() -> None:
           "and resubscribe, EALREADY stall close, boot flag baseline, advert "
           "window, interval mode, link limits, stale auth flag served, insecure link "
           "ERROR 14 fallback, no auth code 7, subscribe restored before or with "
-          "CONNECT, logged gate refusals, gate table and gate and subscribe "
-          "wiring passed")
+          "CONNECT, logged gate refusals, PHY request after central procedures "
+          "and skipped on 2M, gate table and gate, subscribe and link "
+          "sequence wiring passed")
 
 
 if __name__ == "__main__":

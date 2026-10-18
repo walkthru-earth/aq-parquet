@@ -869,6 +869,81 @@ void test_pending_cccd() {
   early.clear();
   assert(early.replay(7, count) == 0 && calls == 1);
 }
+
+// link_on_host()'s PHY step on a callout, in milliseconds. Central events and
+// the callout run in time order on the host task, as in ble_sync.cpp.
+struct LinkSequence {
+  static constexpr std::int64_t kSettleMs = 2000; // kLinkSettleMs
+  ble::LinkStep step = ble::LinkStep::Idle;
+  std::int64_t due_ms = -1;
+  std::int64_t requested_ms = -1;
+  std::uint8_t tx = 1, rx = 1; // 1M until a PHY update
+
+  // The latch, via CONNECT or ENC_CHANGE.
+  void start(std::int64_t now) {
+    step = ble::LinkStep::Phy;
+    due_ms = now + kSettleMs;
+  }
+  // Runs the callout if it fell due before `now`.
+  void advance(std::int64_t now) {
+    if (step != ble::LinkStep::Phy || due_ms < 0 || due_ms > now)
+      return;
+    step = ble::LinkStep::Interval;
+    if (ble::phy_request_needed(true, tx, rx))
+      requested_ms = due_ms;
+  }
+  void central(std::int64_t now) {
+    advance(now);
+    if (ble::central_procedure_rearms(step))
+      due_ms = now + kSettleMs;
+  }
+};
+
+// The CoreS3 Android bench (2026-10-18). The link is secure at CONNECT and
+// the phone's MTU exchange and connection update land around 2 s, where the
+// fixed wait sent the PHY request into the phone's own update.
+void test_phy_request_waits_for_central_procedures() {
+  using ble::LinkStep;
+  static_assert(ble::central_procedure_rearms(LinkStep::Phy));
+  static_assert(!ble::central_procedure_rearms(LinkStep::Idle));
+  static_assert(!ble::central_procedure_rearms(LinkStep::Interval));
+  static_assert(!ble::central_procedure_rearms(LinkStep::Done));
+  LinkSequence link;
+  link.start(0);
+  link.central(1900); // MTU 517
+  link.central(2200); // the phone's connection update
+  link.advance(10000);
+  assert(link.step == LinkStep::Interval);
+  assert(link.requested_ms == 2200 + LinkSequence::kSettleMs);
+  // Once the PHY step ran, a central event changes nothing.
+  link.central(4300);
+  assert(link.requested_ms == 4200 && link.step == LinkStep::Interval);
+  // A quiet central still gets the request after one settle.
+  LinkSequence quiet;
+  quiet.start(100);
+  quiet.advance(10000);
+  assert(quiet.requested_ms == 2100);
+}
+
+// A central that moved the link to 2M itself sees no local PHY procedure.
+void test_phy_request_skipped_on_2m() {
+  static_assert(!ble::phy_request_needed(true, ble::kPhy2M, ble::kPhy2M));
+  static_assert(ble::phy_request_needed(true, ble::kPhy2M, 1));
+  static_assert(ble::phy_request_needed(true, 1, ble::kPhy2M));
+  static_assert(ble::phy_request_needed(false, ble::kPhy2M, ble::kPhy2M));
+  LinkSequence link;
+  link.start(0);
+  link.tx = link.rx = ble::kPhy2M; // the phone's PHY update
+  link.central(800);
+  link.advance(10000);
+  assert(link.step == ble::LinkStep::Interval && link.requested_ms == -1);
+  // Only one direction on 2M still asks.
+  LinkSequence half;
+  half.start(0);
+  half.tx = ble::kPhy2M;
+  half.advance(10000);
+  assert(half.requested_ms == 2000);
+}
 } // namespace
 
 int main() {
@@ -899,6 +974,8 @@ int main() {
   test_secure_at_connect_restore_after_serves_first_list();
   test_unsubscribed_refusal_is_logged();
   test_pending_cccd();
+  test_phy_request_waits_for_central_procedures();
+  test_phy_request_skipped_on_2m();
   std::printf("ble policy passed\n");
   return 0;
 }

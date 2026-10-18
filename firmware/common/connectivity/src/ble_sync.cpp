@@ -51,6 +51,7 @@ ble_uuid128_t native_uuid(std::uint16_t selector) {
 const ble_uuid128_t uuids[] = {native_uuid(1), native_uuid(2), native_uuid(3),
                                native_uuid(4), native_uuid(5), native_uuid(6)};
 enum Characteristic : unsigned { Info, Status, Live, Control, Response, Count };
+static_assert(Count <= PendingCccd::kMax, "every CCCD restore must fit");
 char name_text[16]{};
 char info_text[400]{};
 char status_text[kMaxJson + 1] = "{}", live_text[kMaxJson + 1] = "{}";
@@ -126,8 +127,8 @@ FlagWatch flag_watch; // host task only
 std::atomic<bool> advert_published{false};
 ble_npl_callout retry_callout{}, relax_callout{}, advertise_callout{},
     link_callout{};
+static_assert(kPhy2M == BLE_GAP_LE_PHY_2M);
 // Where the post-connect link sequence is, see link_on_host().
-enum class LinkStep : std::uint8_t { Idle, Phy, Interval, Done };
 LinkStep link_step = LinkStep::Idle; // host task only
 AdvertWindow adv_window;             // host task only
 IntervalPolicy interval;             // host task only
@@ -170,8 +171,10 @@ bool may_send_frame(std::uint16_t handle, const std::uint8_t *data,
 // The response stream gate for one frame of `session` on `handle`. A fault
 // refusal (not subscribed, not secure) logs BLE REFUSE once per session, so
 // the bench sees why before the worker's ERROR and LIST ABORT lines.
-GateRefusal response_gate(std::uint32_t session, std::uint16_t handle,
-                          const std::uint8_t *data, std::size_t length) {
+[[nodiscard]] GateRefusal response_gate(std::uint32_t session,
+                                        std::uint16_t handle,
+                                        const std::uint8_t *data,
+                                        std::size_t length) {
   const auto refusal = response_refusal(
       connected.load(),
       generation.load() == session && conn_handle.load() == handle,
@@ -508,7 +511,12 @@ void link_on_host(ble_npl_event *) {
   const auto handle = conn_handle.load();
   if (link_step == LinkStep::Phy) {
     link_step = LinkStep::Interval;
-    if (options.prefer_2m_phy) {
+    std::uint8_t tx = 0, rx = 0;
+    if (options.prefer_2m_phy &&
+        !phy_request_needed(ble_gap_read_le_phy(handle, &tx, &rx) == 0, tx,
+                            rx)) {
+      aqlog.record_only().println("BLE LINK phy=2m by central");
+    } else if (options.prefer_2m_phy) {
       const int rc = ble_gap_set_prefered_le_phy(handle, BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_CODED_ANY);
@@ -552,6 +560,16 @@ void start_link_sequence() {
   link_step = LinkStep::Phy;
   ble_npl_callout_reset(&link_callout,
                         ble_npl_time_ms_to_ticks32(kLinkSettleMs));
+}
+
+// The central ran a procedure of its own on `handle`. While the PHY request
+// still waits, the wait starts over (ble_policy.h). Host task only.
+void defer_link_step(std::uint16_t handle, const char *after) {
+  if (handle != conn_handle.load() || !central_procedure_rearms(link_step))
+    return;
+  ble_npl_callout_reset(&link_callout,
+                        ble_npl_time_ms_to_ticks32(kLinkSettleMs));
+  aqlog.record_only().printf("BLE LINK wait phy after=%s\n", after);
 }
 
 // Host task only. Reads NimBLE's security state for `handle` and, the first
@@ -781,6 +799,7 @@ int gap_event(ble_gap_event *event, void *) {
     return 0;
   }
   case BLE_GAP_EVENT_MTU:
+    defer_link_step(event->mtu.conn_handle, "mtu");
     if (event->mtu.conn_handle == conn_handle.load()) {
       mtu = event->mtu.value;
       touch_ui();
@@ -875,6 +894,7 @@ int gap_event(ble_gap_event *event, void *) {
     }
     return 0;
   case BLE_GAP_EVENT_CONN_UPDATE: {
+    defer_link_step(event->conn_update.conn_handle, "conn");
     ble_gap_conn_desc desc{};
     if (event->conn_update.conn_handle == conn_handle.load() &&
         ble_gap_conn_find(event->conn_update.conn_handle, &desc) == 0)
@@ -885,6 +905,8 @@ int gap_event(ble_gap_event *event, void *) {
     return 0;
   }
   case BLE_GAP_EVENT_PHY_UPDATE_COMPLETE:
+    // A PHY update before our request is the central's own.
+    defer_link_step(event->phy_updated.conn_handle, "phy");
     if (event->phy_updated.conn_handle == conn_handle.load() &&
         link_step == LinkStep::Interval)
       ble_npl_callout_reset(&link_callout, ble_npl_time_ms_to_ticks32(200));

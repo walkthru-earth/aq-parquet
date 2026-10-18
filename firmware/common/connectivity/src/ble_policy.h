@@ -308,4 +308,29 @@ private:
   std::int64_t last_us_ = 0;
   bool relaxed_ = false;
 };
+
+// Where the post-connect link sequence is, see link_on_host() in ble_sync.cpp.
+enum class LinkStep : std::uint8_t { Idle, Phy, Interval, Done };
+
+// A procedure the central ran (MTU exchange, connection update, PHY update)
+// while the local PHY request still waits. The wait starts over, so the PHY
+// request goes out only after a full settle with no central procedure. An
+// Android central's MTU 517 exchange and connection update land about 2 s
+// after a link that was secure at CONNECT, where the old fixed wait put the
+// PHY request (CoreS3 bench 2026-10-18). The host sees a central's connection
+// update only after its instant, so this narrows the window for crossing it
+// (the lld_con.c 3275 controller assert) and cannot close it.
+[[nodiscard]] constexpr bool central_procedure_rearms(LinkStep step) {
+  return step == LinkStep::Phy;
+}
+
+// The 2M PHY code in HCI and NimBLE (BLE_GAP_LE_PHY_2M).
+constexpr std::uint8_t kPhy2M = 2;
+// The PHY step asks for 2M only when the link is not on 2M both ways, so a
+// central that already moved the link to 2M sees no local procedure. A failed
+// read asks, as before.
+[[nodiscard]] constexpr bool phy_request_needed(bool read_ok, std::uint8_t tx,
+                                                std::uint8_t rx) {
+  return !read_ok || tx != kPhy2M || rx != kPhy2M;
+}
 } // namespace ble
