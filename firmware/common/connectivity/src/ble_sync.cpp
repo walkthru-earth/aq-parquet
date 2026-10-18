@@ -506,7 +506,7 @@ void relax_on_host(ble_npl_event *) {
 // connection update both carry an instant, and the ESP32-S3 controller
 // asserted in its local connection update (lld_con.c 3275) when an iPad's
 // own CONNECTION_UPDATE_IND crossed ours during the bonded reconnect
-// (bench 2026-10-12). Nothing is sent from the CONNECT event. A data length
+// (bench 2026-10-12). No link request is sent from CONNECT. A data length
 // request there timed out while a bonded phone started encryption, and the
 // host reset that followed crashed on the stale ack (core dumps 2026-10-18).
 // Data length goes once the link is secure, PHY waits for the central to

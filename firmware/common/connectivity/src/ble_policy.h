@@ -52,7 +52,8 @@ struct Options {
   // Fast advertising after an advert flag flips, so a low-power scanner
   // filtering on the flag byte sees it within a minute.
   std::uint32_t flag_window_ms = 60000;
-  // LE data length request on connect: 251 octets at 1M PHY timing.
+  // LE data length request once the link is secure: 251 octets at 1M PHY
+  // timing.
   std::uint16_t data_len_octets = 251;
   std::uint16_t data_len_time_us = 2120;
   bool prefer_2m_phy = true;

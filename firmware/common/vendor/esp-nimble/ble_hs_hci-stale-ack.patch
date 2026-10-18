@@ -21,13 +21,15 @@ When its ack arrives late, ble_hs_hci_rx_ack() stores it and releases the
 semaphore, then the timed out call frees the ack and leaves the semaphore at 1.
 The reset's HCI_Reset takes that stale count at once and
 ble_hs_hci_process_ack() reads the NULL ack (LoadProhibited, CoreS3 bench
-2026-10-18). Draining first makes the reset wait for its own ack.
+2026-10-18). Draining first makes the reset wait for its own ack. As
+upstream, the assert before the lock goes, because with BLE_HS_DEBUG a late
+ack would trip it before the free runs.
 
 --- a/nimble/host/src/ble_hs_hci.c
 +++ b/nimble/host/src/ble_hs_hci.c
-@@ -592,6 +592,17 @@ ble_hs_hci_cmd_tx(uint16_t opcode, const void *cmd, uint8_t cmd_len,
+@@ -592,6 +592,16 @@ ble_hs_hci_cmd_tx(uint16_t opcode, const void *cmd, uint8_t cmd_len,
 
-     BLE_HS_DBG_ASSERT(l_ble_hs_hci_ack == NULL);
+-    BLE_HS_DBG_ASSERT(l_ble_hs_hci_ack == NULL);
      ble_hs_hci_lock();
 +    if (l_ble_hs_hci_ack != NULL) {
 +#if MYNEWT_VAL(MP_RUNTIME_ALLOC)

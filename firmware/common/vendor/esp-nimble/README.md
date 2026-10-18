@@ -21,7 +21,7 @@ skip the step.
 | File | SHA-256 |
 | --- | --- |
 | upstream `nimble/host/src/ble_hs_hci.c` (pinned in the CMake step) | 576e8582bf25dd56170ce1d47d5c64ccddf1fc5facd7dcfa818dc19629cbd7b1 |
-| ble_hs_hci-stale-ack.patch | 8f6afd6356400802f2c73b8db12709a63962a2cacfcf095e48a061bfb295b164 |
+| ble_hs_hci-stale-ack.patch | 380807492b52fef1d6acdf94b06a50a3dbcc6a7386a3441504c8dd22f572f81d |
 | LICENSE | 0deb15bc7df50b1d009c644b008f92e1062909e9521328d337c5fad3a5d4921c |
 | NOTICE | b838c4733a5020cd8e2bafbe70842acd8c8dc7816012965b77d10c1f4c0727f6 |
 

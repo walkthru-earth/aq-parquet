@@ -91,16 +91,37 @@ HCI_SENDERS = ("ble_gap_set_data_len(", "ble_gap_set_prefered_le_phy(",
                "request_conn_params(", "request_link_parameters(")
 
 
+def called_bodies(source: str, body: str, seen: set[str]):
+    """(name, body) of every ble_sync.cpp function `body` reaches by direct
+    calls, transitively. Calls into NimBLE or the standard library have no
+    definition here and are skipped."""
+    for name in sorted(set(re.findall(r"\b([A-Za-z_]\w*)\(", body))):
+        if name in seen:
+            continue
+        seen.add(name)
+        if not re.search(rf"\n\S[^\n;]*\b{name}\([^;{{]*\)\s*{{", source):
+            continue
+        callee = gate_body(source, name)
+        yield name, callee
+        yield from called_bodies(source, callee, seen)
+
+
 def check_hci_timeout_wiring(source: str) -> None:
     """Issue #51 core dumps. Data length sent from CONNECT timed out while a
-    bonded phone started encryption, and the host reset crashed. CONNECT and
-    the latch it calls send no HCI command, data length waits for the Dle
-    step before the PHY request, and every link command logs its failure."""
-    for name, body in (("CONNECT", case_body(source, "BLE_GAP_EVENT_CONNECT")),
-                       ("confirm_secure", gate_body(source, "confirm_secure")),
-                       ("start_link_sequence", gate_body(source, "start_link_sequence"))):
-        for sender in HCI_SENDERS:
-            assert sender not in body, f"{name} must not send {sender[:-1]}"
+    bonded phone started encryption, and the host reset crashed. CONNECT,
+    ENC_CHANGE and SUBSCRIBE, and every helper they call, send no link
+    command. Data length waits for the Dle step before the PHY request, and
+    every link command logs its failure."""
+    for event in ("BLE_GAP_EVENT_CONNECT", "BLE_GAP_EVENT_ENC_CHANGE",
+                  "BLE_GAP_EVENT_SUBSCRIBE"):
+        body = case_body(source, event)
+        reached = [(event, body), *called_bodies(source, body, set())]
+        names = {name for name, _ in reached}
+        assert {"confirm_secure", "start_link_sequence"} <= names or \
+            event == "BLE_GAP_EVENT_ENC_CHANGE", (event, names)
+        for name, callee in reached:
+            for sender in HCI_SENDERS:
+                assert sender not in callee, f"{event} reaches {sender[:-1]} through {name}"
     body = case_body(source, "BLE_GAP_EVENT_CONNECT")
     assert "link_step = LinkStep::Idle" in body and "dle_tx_octets = 0" in body, body
     assert body.index("link_step = LinkStep::Idle") < body.index("confirm_secure("), body

@@ -96,6 +96,16 @@ subscription was lost, so every frame of the first `LIST` was refused and
 its closing `ERROR` 7 never arrived. The board logs such a restore as
 `BLE SUBSCRIBE early=N response=1`, and a frame refused because `response`
 is not subscribed as `BLE REFUSE reason=unsubscribed`. No frame layout changed.
+The board also stopped rebooting on some bonded reconnects. It used to
+request the LE data length while handling the connection, and when that
+request got no answer while the phone started encryption, the BLE host reset
+and the board crashed. The data length request now goes once the link is
+secure, before the 2M PHY request, and is skipped when the phone already set
+251 octets. Serial and `LOG_TAIL` gain `BLE HCI fail cmd= op= rc= timeout=`
+when a link request fails (`timeout=1` means the BLE host resets), and
+`BLE LINK wait phy after=mtu`, `after=conn` or `after=phy`,
+`BLE LINK dle=N by central` and `BLE LINK phy=2m by central` while the link
+sequence runs. The app does not parse any of these lines.
 
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
@@ -105,7 +115,8 @@ unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
 like a bad LAN token. Never retry either as busy. Handle 7 as
 before, by its `detail`. A plain busy 7 can be retried later, while
 `detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
-repeating the same request.
+repeating the same request. Nothing for the new link lines. An app that shows
+device logs may flag `BLE HCI fail`.
 
 ## ABORT stops a LIST within one step (fix/33-abort-list-walk)
 

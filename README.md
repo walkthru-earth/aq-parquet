@@ -126,7 +126,8 @@ Licensed under [CC BY 4.0](LICENSE), matching other Walkthru.Earth repositories.
 The CC BY 4.0 license covers only original Walkthru.Earth work. Third-party code
 keeps its own license and notices, including vendored
 [LZ4 1.10.0](firmware/common/vendor/lz4/README.md) (BSD-2-Clause), vendored
-[Uber H3 4.5.0](firmware/common/location/vendor/h3/NOTICE) (Apache-2.0), and the
+[Uber H3 4.5.0](firmware/common/location/vendor/h3/NOTICE) (Apache-2.0), the
+[esp-nimble host patch](firmware/common/vendor/esp-nimble/README.md) (Apache-2.0), and the
 ESP-IDF, toolchain and managed components linked into firmware images. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list and ship it
 with any firmware binary you distribute.
