@@ -7,5 +7,7 @@ list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components/aq_cores3
 set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/../../tools/idf-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/../../tools/idf-connectivity-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_cxx_standard.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_nimble_patches.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(aq_cores3)
+aq_patch_nimble()

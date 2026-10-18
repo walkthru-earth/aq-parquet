@@ -1,0 +1,45 @@
+Licensed to the Apache Software Foundation (ASF) under one or more contributor
+license agreements. See the NOTICE file distributed with this work for
+additional information regarding copyright ownership. The ASF licenses this
+file to you under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License at http://www.apache.org/licenses/LICENSE-2.0 or in LICENSE next
+to this file. Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See
+the License for the specific language governing permissions and limitations
+under the License.
+
+Backport to esp-nimble 139cada (ESP-IDF v6.1) of the stale ack drain in
+ble_hs_hci_cmd_tx() from espressif/esp-nimble
+  d7061976e9a10b18ddd41ecdf118f039b8d34477 (free a stale ack before sending)
+  79316193f942060e9c79200ddd032157453b041d (always drain the semaphore)
+Both are on nimble-1.10.0-idf and in ESP-IDF master, not in release/v6.1.
+
+A command that times out after BLE_HCI_CMD_TIMEOUT_MS schedules a host reset.
+When its ack arrives late, ble_hs_hci_rx_ack() stores it and releases the
+semaphore, then the timed out call frees the ack and leaves the semaphore at 1.
+The reset's HCI_Reset takes that stale count at once and
+ble_hs_hci_process_ack() reads the NULL ack (LoadProhibited, CoreS3 bench
+2026-10-18). Draining first makes the reset wait for its own ack.
+
+--- a/nimble/host/src/ble_hs_hci.c
++++ b/nimble/host/src/ble_hs_hci.c
+@@ -592,6 +592,17 @@ ble_hs_hci_cmd_tx(uint16_t opcode, const void *cmd, uint8_t cmd_len,
+
+     BLE_HS_DBG_ASSERT(l_ble_hs_hci_ack == NULL);
+     ble_hs_hci_lock();
++    if (l_ble_hs_hci_ack != NULL) {
++#if MYNEWT_VAL(MP_RUNTIME_ALLOC)
++        ble_transport_free(BLE_HCI_EVT, (uint8_t *)l_ble_hs_hci_ack);
++#else
++        ble_transport_free((uint8_t *)l_ble_hs_hci_ack);
++#endif
++        l_ble_hs_hci_ack = NULL;
++    }
++    /* A late ack of a timed out command left the count at 1. */
++    ble_npl_sem_pend(&ble_hs_hci_sem, 0);
++    BLE_HS_DBG_ASSERT(l_ble_hs_hci_ack == NULL);
+
+     rc = ble_hs_hci_cmd_send_buf(opcode, cmd, cmd_len);
+     if (rc != 0) {

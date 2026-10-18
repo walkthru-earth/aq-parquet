@@ -26,6 +26,7 @@ manifests in that source tree. Only ESP32-S3 is hardware verified.
 | :--- | :--- | :--- | :--- | :--- |
 | LZ4 library | [`firmware/common/vendor/lz4`](firmware/common/vendor/lz4) | 1.10.0 | BSD-2-Clause, see [`LICENSE`](firmware/common/vendor/lz4/LICENSE) | Copyright (c) 2011-2023 Yann Collet |
 | Uber H3 | [`firmware/common/location/vendor/h3`](firmware/common/location/vendor/h3) | 4.5.0 | Apache-2.0, see [`LICENSE`](firmware/common/location/vendor/h3/LICENSE) and [`NOTICE`](firmware/common/location/vendor/h3/NOTICE) | Copyright 2017-2021 Uber Technologies, Inc. |
+| esp-nimble host patch | [`firmware/common/vendor/esp-nimble`](firmware/common/vendor/esp-nimble) | backport of esp-nimble `d7061976e9` and `79316193f9` onto `139cada` | Apache-2.0, see [`LICENSE`](firmware/common/vendor/esp-nimble/LICENSE) and [`NOTICE`](firmware/common/vendor/esp-nimble/NOTICE) | Copyright 2015-2022 The Apache Software Foundation, modifications Copyright 2017-2022 Espressif Systems (Shanghai) CO., LTD. |
 
 Notes
 
@@ -37,6 +38,11 @@ Notes
 - The H3 sources are unmodified upstream files verified against
   [`manifest.json`](firmware/common/location/vendor/h3/manifest.json). The
   Apache-2.0 `NOTICE` file must accompany any binary that contains H3 code.
+- The esp-nimble patch changes one NimBLE host file, `ble_hs_hci.c`, at
+  build time. The build compiles a patched copy in place of the SDK file, and
+  the patched code stays Apache-2.0. See
+  [`firmware/common/vendor/esp-nimble/README.md`](firmware/common/vendor/esp-nimble/README.md)
+  for the pinned hashes and the upstream commits.
 
 ## 2. Algorithms reused without copied code
 
