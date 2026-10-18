@@ -45,7 +45,7 @@ to their recorded Arduino images and do not establish native hardware behavior.
 [Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe
 later host/cloud work; dictionaries do not claim SensorThings API compliance.
 
-An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **UNCOMPRESSED** and opt-in **LZ4_RAW** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v2. Reboot restores uncompressed output. Persistent station identity and UTC-aligned Hive partitions use:
+An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v2. The codec choice is saved in NVS and survives a reboot. Persistent station identity and UTC-aligned Hive partitions use:
 
 ```text
 output/station=<UUID>/year=YYYY/month=MM/day=DD/

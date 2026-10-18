@@ -80,7 +80,7 @@ The sample is small, so read it as a direction. At about 93 B per row a 256 MB f
 
 ## Proposals
 
-These are not decided. Issue #25 tracks each one as a task.
+Issue #25 tracks each one as a task. Item 2 is done, the others are not decided.
 
 1. Keep the device writer small. One page per chunk, row group statistics, `field_id`, MICROS UTC and `sorting_columns` stay. No page index or bloom filters on device.
 2. Make LZ4_RAW the persisted default. Done in #25 on the strength of the Arduino bench, the host survey and the phone reader. A paired `codec-test` bench on the current IDF builds is still owed to confirm the size and timing on device.
