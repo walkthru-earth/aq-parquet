@@ -53,7 +53,7 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
-    print("Archive reset checks passed: exact roots, partials, legacy, symlinks, exact depth and entry caps and post-order removal")
+    print("Archive reset checks passed: exact roots, partials, legacy, symlinks, exact depth and entry caps, post-order removal and close before rmdir")
 
 
 if __name__ == "__main__":

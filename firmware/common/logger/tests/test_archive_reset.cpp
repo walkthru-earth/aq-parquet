@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -46,6 +47,32 @@ int record_file(const char *path) {
 }
 int record_directory(const char *path) {
   removed.emplace_back(std::string(path) + "/");
+  return remove_directory(path);
+}
+
+// Like FAT, rmdir refuses a directory that still has an open handle.
+std::vector<std::pair<DIR *, std::string>> open_directories;
+DIR *tracked_open(const char *path) {
+  DIR *directory = open(path);
+  if (directory)
+    open_directories.emplace_back(directory, path);
+  return directory;
+}
+int tracked_close(DIR *directory) {
+  for (auto it = open_directories.begin(); it != open_directories.end(); ++it)
+    if (it->first == directory) {
+      open_directories.erase(it);
+      return ::closedir(directory);
+    }
+  assert(false);
+  return -1;
+}
+int busy_rmdir(const char *path) {
+  for (const auto &entry : open_directories)
+    if (entry.second == path) {
+      errno = EBUSY;
+      return -1;
+    }
   return remove_directory(path);
 }
 
@@ -121,6 +148,22 @@ void check_depth_cap() {
     for (std::size_t j = i + 1; j < removed.size(); ++j)
       assert(removed[j].rfind(removed[i], 0) != 0);
   assert(removed.back() == "/sd/caps/");
+}
+
+// Each directory is closed before it is removed, so a FAT card that refuses
+// rmdir on an open directory still erases the whole tree.
+void check_close_before_rmdir() {
+  std::uint32_t files = 0, directories = 0;
+  write(card / "busy/station=a/day/x.parquet");
+  write(card / "busy/station=b/y.parquet");
+  auto busy_io = io;
+  busy_io.open = tracked_open;
+  busy_io.close = tracked_close;
+  busy_io.remove_directory = busy_rmdir;
+  assert(aq::logger::detail::erase_archive("/sd/busy", "/sd/busy", nullptr,
+                                           files, directories, busy_io));
+  assert(files == 2 && directories == 4);
+  assert(open_directories.empty() && !fs::exists(card / "busy"));
 }
 
 void check_entry_cap() {
@@ -252,6 +295,7 @@ int main() {
   assert(!erase_archive("/sd/output", files, directories, io));
   assert(fs::exists(card / "unrelated.txt"));
   check_depth_cap();
+  check_close_before_rmdir();
   fs::remove_all(card);
   check_entry_cap();
 }
