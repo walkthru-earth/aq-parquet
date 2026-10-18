@@ -627,10 +627,16 @@ STATUS `part` count, which follows the last full walk.
 **Known limits and the audit.** The lowest dated day this boot wrote is kept in
 RAM only, so the board writes nothing to NVS per listing. A clock moved back
 across a reboot can put a file in a day folder below the next floor. A boot
-whose ring writes failed for the whole boot, and that no `LIST_SINCE` listed
-while it ran, is missing from the ring of later boots. The phone therefore runs a periodic audit,
-a plain `LIST` or a `LIST_SINCE` with the all-zero cursor, for example once a
-day or every tenth sync, and merges its result the same way.
+whose ring append fails makes an empty marker folder
+`station=<id>/unsynced/ringless=<boot>` before its first unsynced file. Every
+incremental walk reads the entries of `unsynced/` once and lists each marked
+boot that is not in the ring in full, so a later boot still finds it. The
+phone drops the names it already holds. More than 4 such markers widen the
+walk to the whole unsynced tree and set `unsynced_full`. A boot that could not
+make its marker either, after both NVS and the card failed, can still be
+missed. The phone therefore runs a periodic audit, a plain `LIST` or a
+`LIST_SINCE` with the all-zero cursor, for example once a day or every tenth
+sync, and merges its result the same way.
 
 The STATUS JSON stays at most 480 bytes. Since `ls` was added, `utc_ms` is
 clamped to 13 digits and `clk_age_s` and `miss` to the u32 range, values a

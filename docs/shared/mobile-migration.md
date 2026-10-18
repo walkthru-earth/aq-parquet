@@ -22,7 +22,7 @@ errors are in
 [ble-sync-protocol.md](ble-sync-protocol.md#list_since).
 
 **Why.** Plain `LIST` reads every directory entry on the card each sync, which
-grows with the archive. On a 5161-file test tree the incremental walk read 102
+grows with the archive. On a 5161-file test tree the incremental walk read 107
 entries against 6688 for the full walk.
 
 **What the app must do.**
@@ -42,7 +42,10 @@ entries against 6688 for the full walk.
 - Run a periodic audit, a plain `LIST` or `LIST_SINCE` with the all-zero
   cursor, for example once a day or every tenth sync. It catches a file
   written below the floor after a clock moved back across a reboot, and the
-  unsynced files of a boot whose NVS ring write failed. Other stations,
+  unsynced files of a boot whose NVS ring write and `ringless=` marker
+  folder both failed. A boot with only a failed ring write leaves the marker,
+  and every later listing repeats its files in full, so dedupe
+  them as above. Other stations,
   `legacy-parquet/` and `benchmarks/` also appear only in a full listing.
 - Read `ls` as optional, absent on older firmware.
 
