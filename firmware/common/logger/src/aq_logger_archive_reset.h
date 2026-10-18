@@ -35,90 +35,130 @@ constexpr unsigned kMaximumDepth = 8;
 constexpr std::uint32_t kMaximumEntries = 65536;
 constexpr std::size_t kPathBytes = 512;
 
-// Preflight the complete tree before deleting anything. Only ordinary files
-// and directories are allowed; host lstat rejects links, and board FAT cannot
-// contain them.
+// One pass over the tree at `root`, root at depth 0. Only ordinary files and
+// directories are allowed. Host lstat rejects links, and board FAT cannot
+// contain them. With `remove` false it only checks the tree. With `remove`
+// true it deletes each file when it is read and each directory right after
+// its last entry was read and it was closed, so children always go before
+// their directory. The walk is iterative. It keeps one open directory per
+// level in a fixed array and builds every path in one buffer, so its stack
+// does not grow with the tree. An entry deeper than kMaximumDepth, or more
+// than kMaximumEntries entries, fail the pass with EOVERFLOW.
 // The caller has stopped every producer and holds exclusive filesystem access.
-inline bool visit(const char *path, unsigned depth, bool remove,
-                  std::uint32_t &entries, std::uint32_t &files,
-                  std::uint32_t &directories, const ArchiveResetIo &io) {
-  if (depth > kMaximumDepth || ++entries > kMaximumEntries) {
-    errno = EOVERFLOW;
-    return false;
-  }
-  if (io.progress)
-    io.progress();
-  struct stat info{};
-  if (io.inspect(path, &info) != 0)
-    return depth == 0 && errno == ENOENT;
-  if (S_ISREG(info.st_mode)) {
-    if (depth == 0) {
-      errno = ENOTDIR;
-      return false;
-    }
-    if (!remove)
-      return true;
-    if (files == std::numeric_limits<std::uint32_t>::max()) {
+inline bool walk(const char *root, bool remove, std::uint32_t &files,
+                 std::uint32_t &directories, const ArchiveResetIo &io) {
+  std::uint32_t entries = 0;
+  auto count = [&] {
+    if (++entries > kMaximumEntries) {
       errno = EOVERFLOW;
       return false;
     }
-    if (io.remove_file(path) != 0)
-      return false;
-    ++files;
+    if (io.progress)
+      io.progress();
     return true;
+  };
+  char path[kPathBytes];
+  const std::size_t root_length = std::strlen(root);
+  if (root_length >= sizeof(path)) {
+    errno = ENAMETOOLONG;
+    return false;
+  }
+  std::memcpy(path, root, root_length + 1);
+  if (!count())
+    return false;
+  struct stat info{};
+  if (io.inspect(path, &info) != 0)
+    return errno == ENOENT;
+  if (S_ISREG(info.st_mode)) {
+    errno = ENOTDIR;
+    return false;
   }
   if (!S_ISDIR(info.st_mode)) {
     errno = EINVAL;
     return false;
   }
-  DIR *directory = io.open(path);
-  if (!directory)
+  // open[i] is the directory at depth i, and lengths[i] is the length of its
+  // path in `path`.
+  DIR *open[kMaximumDepth + 1]{};
+  std::size_t lengths[kMaximumDepth + 1]{};
+  unsigned levels = 0;
+  // Closes every open directory and keeps the errno that ended the pass.
+  auto fail = [&] {
+    const int error = errno;
+    while (levels)
+      io.close(open[--levels]);
+    errno = error;
     return false;
-  bool ok = true;
-  for (;;) {
+  };
+  if (!(open[0] = io.open(path)))
+    return false;
+  lengths[0] = root_length;
+  levels = 1;
+  while (levels) {
+    const std::size_t parent = lengths[levels - 1];
+    path[parent] = '\0';
     errno = 0;
-    const dirent *entry = io.next(directory);
+    const dirent *entry = io.next(open[levels - 1]);
     if (!entry) {
-      ok = errno == 0;
-      break;
+      if (errno != 0)
+        return fail();
+      if (io.close(open[--levels]) != 0)
+        return fail();
+      if (!remove)
+        continue;
+      if (directories == std::numeric_limits<std::uint32_t>::max()) {
+        errno = EOVERFLOW;
+        return fail();
+      }
+      if (io.remove_directory(path) != 0)
+        return fail();
+      ++directories;
+      continue;
     }
     if (std::strcmp(entry->d_name, ".") == 0 ||
         std::strcmp(entry->d_name, "..") == 0)
       continue;
     if (!entry->d_name[0] || std::strchr(entry->d_name, '/')) {
       errno = EINVAL;
-      ok = false;
-      break;
+      return fail();
     }
-    char child[kPathBytes];
-    const int length =
-        std::snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(child)) {
+    const int length = std::snprintf(path + parent, sizeof(path) - parent,
+                                     "/%s", entry->d_name);
+    if (length < 0 ||
+        parent + static_cast<std::size_t>(length) >= sizeof(path)) {
       errno = ENAMETOOLONG;
-      ok = false;
-      break;
+      return fail();
     }
-    if (!visit(child, depth + 1, remove, entries, files, directories, io)) {
-      ok = false;
-      break;
+    // The entry sits one level below the directory it was read from.
+    if (levels > kMaximumDepth) {
+      errno = EOVERFLOW;
+      return fail();
     }
+    if (!count())
+      return fail();
+    if (io.inspect(path, &info) != 0)
+      return fail();
+    if (S_ISREG(info.st_mode)) {
+      if (!remove)
+        continue;
+      if (files == std::numeric_limits<std::uint32_t>::max()) {
+        errno = EOVERFLOW;
+        return fail();
+      }
+      if (io.remove_file(path) != 0)
+        return fail();
+      ++files;
+      continue;
+    }
+    if (!S_ISDIR(info.st_mode)) {
+      errno = EINVAL;
+      return fail();
+    }
+    if (!(open[levels] = io.open(path)))
+      return fail();
+    lengths[levels] = parent + static_cast<std::size_t>(length);
+    ++levels;
   }
-  const int error = errno;
-  if (io.close(directory) != 0 && ok)
-    return false;
-  if (!ok) {
-    errno = error;
-    return false;
-  }
-  if (!remove)
-    return true;
-  if (directories == std::numeric_limits<std::uint32_t>::max()) {
-    errno = EOVERFLOW;
-    return false;
-  }
-  if (io.remove_directory(path) != 0)
-    return false;
-  ++directories;
   return true;
 }
 } // namespace archive_reset
@@ -160,13 +200,11 @@ inline bool erase_archive(const char *root, const char *output_root,
     errno = EINVAL;
     return false;
   }
-  std::uint32_t entries = 0;
-  if (!archive_reset::visit(root, 0, false, entries, files_removed,
-                            directories_removed, io))
+  // Check the whole tree before deleting anything, then delete it.
+  if (!archive_reset::walk(root, false, files_removed, directories_removed, io))
     return false;
-  entries = 0;
-  return archive_reset::visit(root, 0, true, entries, files_removed,
-                              directories_removed, io);
+  return archive_reset::walk(root, true, files_removed, directories_removed,
+                             io);
 }
 
 } // namespace aq::logger::detail

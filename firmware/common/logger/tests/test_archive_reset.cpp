@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
 namespace fs = std::filesystem;
@@ -36,6 +37,107 @@ int delete_failure(const char *) {
 }
 unsigned progress_calls = 0;
 void count_progress() { ++progress_calls; }
+
+// Records every removal in order, to check children go before their parent.
+std::vector<std::string> removed;
+int record_file(const char *path) {
+  removed.emplace_back(path);
+  return remove_file(path);
+}
+int record_directory(const char *path) {
+  removed.emplace_back(std::string(path) + "/");
+  return remove_directory(path);
+}
+
+// A virtual "/sd/flat" holding `flat_files` files, for the entry cap without
+// creating tens of thousands of real files.
+std::uint32_t flat_files = 0, flat_read = 0, flat_removed = 0;
+unsigned flat_open = 0;
+int flat_handle = 0;
+dirent flat_entry{};
+int flat_inspect(const char *path, struct stat *info) {
+  *info = {};
+  info->st_mode = std::strcmp(path, "/sd/flat") == 0 ? S_IFDIR : S_IFREG;
+  return 0;
+}
+DIR *flat_opendir(const char *path) {
+  assert(std::strcmp(path, "/sd/flat") == 0);
+  ++flat_open;
+  flat_read = 0;
+  return reinterpret_cast<DIR *>(&flat_handle);
+}
+dirent *flat_next(DIR *) {
+  if (flat_read == flat_files)
+    return nullptr;
+  std::snprintf(flat_entry.d_name, sizeof(flat_entry.d_name), "f%u",
+                static_cast<unsigned>(flat_read++));
+  return &flat_entry;
+}
+int flat_closedir(DIR *) {
+  --flat_open;
+  return 0;
+}
+int flat_unlink(const char *) {
+  ++flat_removed;
+  return 0;
+}
+int flat_rmdir(const char *) { return 0; }
+const aq::logger::detail::ArchiveResetIo flat_io{
+    flat_inspect, flat_opendir, flat_next, flat_closedir,
+    flat_unlink,  flat_rmdir,   nullptr};
+
+// The root counts as one entry, so kMaximumEntries - 1 files fit and one
+// more is refused in the check pass with nothing deleted.
+// The depth cap is exact. kMaximumDepth levels below the root are erased,
+// one more entry fails the check pass with nothing gone, and every removal
+// comes before the directory that holds it.
+void check_depth_cap() {
+  namespace fs = std::filesystem;
+  using aq::logger::detail::archive_reset::kMaximumDepth;
+  std::uint32_t files = 0, directories = 0;
+  const auto erase = [&](const char *root,
+                         const aq::logger::detail::ArchiveResetIo &x) {
+    return aq::logger::detail::erase_archive(root, root, nullptr, files,
+                                             directories, x);
+  };
+  fs::path deep = card / "caps";
+  for (unsigned i = 0; i + 1 < kMaximumDepth; ++i)
+    deep /= "d";
+  write(deep / "at-cap.parquet");
+  write(deep / "d/past-cap.parquet");
+  assert(!erase("/sd/caps", io));
+  assert(errno == EOVERFLOW && files == 0 && directories == 0);
+  assert(fs::exists(deep / "at-cap.parquet"));
+  fs::remove(deep / "d/past-cap.parquet");
+  auto record_io = io;
+  record_io.remove_file = record_file;
+  record_io.remove_directory = record_directory;
+  assert(erase("/sd/caps", record_io));
+  assert(files == 1 && directories == kMaximumDepth + 1);
+  assert(!fs::exists(card / "caps"));
+  // Post order. No removal lies below a directory removed before it.
+  assert(removed.size() == kMaximumDepth + 2);
+  for (std::size_t i = 0; i < removed.size(); ++i)
+    for (std::size_t j = i + 1; j < removed.size(); ++j)
+      assert(removed[j].rfind(removed[i], 0) != 0);
+  assert(removed.back() == "/sd/caps/");
+}
+
+void check_entry_cap() {
+  using aq::logger::detail::archive_reset::kMaximumEntries;
+  std::uint32_t files = 0, directories = 0;
+  flat_files = kMaximumEntries;
+  flat_removed = 0;
+  assert(!aq::logger::detail::erase_archive("/sd/flat", "/sd/flat", nullptr,
+                                            files, directories, flat_io));
+  assert(errno == EOVERFLOW && flat_removed == 0 && flat_open == 0);
+  assert(files == 0 && directories == 0);
+  flat_files = kMaximumEntries - 1;
+  assert(aq::logger::detail::erase_archive("/sd/flat", "/sd/flat", nullptr,
+                                           files, directories, flat_io));
+  assert(files == kMaximumEntries - 1 && directories == 1);
+  assert(flat_removed == kMaximumEntries - 1 && flat_open == 0);
+}
 } // namespace
 
 int main() {
@@ -149,5 +251,7 @@ int main() {
   fs::create_directory_symlink(card, card / "output");
   assert(!erase_archive("/sd/output", files, directories, io));
   assert(fs::exists(card / "unrelated.txt"));
+  check_depth_cap();
   fs::remove_all(card);
+  check_entry_cap();
 }
