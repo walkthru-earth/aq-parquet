@@ -239,7 +239,7 @@ async def run_auth_refused():
                     "Protocol Error 0x05: Insufficient Authentication",
                     "Protocol Error 0x0C: Insufficient Encryption Key Size",
                     "Protocol Error 0x0F: Insufficient Encryption",
-                    "Insufficient encryption"):
+                    "Insufficient encryption", "Not paired"):
         client = FakeClient(att_error=RuntimeError(wording))
         session = ble.Session(client)
         await session.start()

@@ -72,6 +72,14 @@ def check_host_command() -> None:
     assert run([store, refused]) == (store, [store, refused]), "the reply must print before the save error"
     storage = "PARQUET ERROR operation=codec reason=storage-full"
     assert run([storage, config]) == (storage, [storage]), "other errors still stop at once"
+    lost = f"{store} (no PARQUET CONFIG reply before deadline)"
+    assert run([store]) == (lost, [store]), "a save error without a reply still raises the save error"
+    try:
+        run([])
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("no reply at all must time out")
 
 
 def main() -> None:

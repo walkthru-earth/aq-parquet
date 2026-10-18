@@ -14,11 +14,18 @@ import tempfile
 from host_cxx import CXX_STD
 
 
+def definition(source: str, name: str) -> re.Match[str] | None:
+    """The top level definition of `name`, up to its opening brace. A line
+    comment never starts one. Qualifiers between the parameters and the brace
+    (noexcept, const, a trailing return type) still match."""
+    return re.search(rf"\n(?!/)\S[^\n;]*\b{name}\([^;{{]*\)[^;{{}}()]*{{", source)
+
+
 def gate_body(source: str, name: str) -> str:
     """The body of the ble_sync.cpp function `name`, by brace matching."""
-    definition = re.search(rf"\n\S[^\n;]*\b{name}\([^;{{]*\)\s*{{", source)
-    assert definition, f"no definition of {name}"
-    start = definition.end() - 1
+    match = definition(source, name)
+    assert match, f"no definition of {name}"
+    start = match.end() - 1
     depth = 0
     for index in range(start, len(source)):
         depth += {"{": 1, "}": -1}.get(source[index], 0)
@@ -99,7 +106,7 @@ def called_bodies(source: str, body: str, seen: set[str]):
         if name in seen:
             continue
         seen.add(name)
-        if not re.search(rf"\n\S[^\n;]*\b{name}\([^;{{]*\)\s*{{", source):
+        if not definition(source, name):
             continue
         callee = gate_body(source, name)
         yield name, callee
@@ -142,7 +149,11 @@ def check_hci_timeout_wiring(source: str) -> None:
                             ("phy", "BLE_HCI_OCF_LE_SET_PHY")):
         call = rf'log_hci_fail\("{command}",\s*BLE_HCI_OP\(BLE_HCI_OGF_LE, {opcode}\)'
         assert re.search(call, body), f"link_on_host must log a failed {command}"
-    assert 'log_hci_fail("conn",' in gate_body(source, "request_conn_params")
+    body = gate_body(source, "request_conn_params")
+    assert re.search(r'if \(conn_fail_log\.on_result\(rc\)\)\s*log_hci_fail\("conn",', body), \
+        "request_conn_params must log a failed conn once per run"
+    assert "conn_fail_log.reset()" in case_body(source, "BLE_GAP_EVENT_CONNECT")
+    assert "conn_fail_log.reset()" in gate_body(source, "on_reset")
     body = gate_body(source, "log_hci_fail")
     assert "aqlog.printf(" in body and "record_only" not in body, body
     assert "BLE_HS_ETIMEOUT_HCI" in body, body
@@ -177,6 +188,7 @@ def main() -> None:
           "ERROR 14 fallback, no auth code 7, subscribe restored before or with "
           "CONNECT, logged gate refusals, PHY request after central procedures "
           "and skipped on 2M, data length after the latch and skipped when set, "
+          "conn HCI fail once per run, "
           "gate table and gate, subscribe, link sequence and HCI timeout "
           "wiring passed")
 

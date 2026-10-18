@@ -994,6 +994,25 @@ void test_dle_skipped_when_central_set_it() {
   short_central.advance(10000);
   assert(short_central.dle_ms == 0);
 }
+
+// A connection update refused while the central's procedure runs is retried
+// every second. Only the first refusal of a run logs BLE HCI fail.
+void test_conn_fail_logged_once_per_run() {
+  constexpr int kBusy = 15, kAlready = 2, kTimeout = 19;
+  ble::HciFailLog log;
+  assert(!log.on_result(0));
+  assert(log.on_result(kBusy));
+  assert(!log.on_result(kBusy) && !log.on_result(kBusy));
+  // A different failure is news, the same one after it again is not.
+  assert(log.on_result(kAlready) && !log.on_result(kAlready));
+  assert(log.on_result(kBusy));
+  // A success ends the run.
+  assert(!log.on_result(0) && log.on_result(kBusy));
+  // A new connection or a host reset ends it too.
+  log.reset();
+  assert(log.on_result(kBusy));
+  assert(log.on_result(kTimeout) && !log.on_result(kTimeout));
+}
 } // namespace
 
 int main() {
@@ -1028,6 +1047,7 @@ int main() {
   test_phy_request_skipped_on_2m();
   test_dle_waits_for_latch_and_precedes_phy();
   test_dle_skipped_when_central_set_it();
+  test_conn_fail_logged_once_per_run();
   std::printf("ble policy passed\n");
   return 0;
 }

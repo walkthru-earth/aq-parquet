@@ -38,7 +38,9 @@ evidence records which component versions each qualified image used. LZ4 remains
 [official latest release](https://github.com/lz4/lz4/releases/tag/v1.10.0) was
 still 1.10.0 when checked on 2026-10-09.
 Commit each board’s generated `dependencies.lock` to pin transitive component
-resolution; downloaded `managed_components/` and build outputs are ignored. Use the [ESP-IDF 6.1 programming guide](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html),
+resolution. The Waveshare diagnostic variant keeps its own in
+`diagnostic/dependencies.lock`, so building it leaves the logger lock alone. Downloaded
+`managed_components/` and build outputs are ignored. Use the [ESP-IDF 6.1 programming guide](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html),
 [native NimBLE APIs](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/bluetooth/nimble/index.html)
 and [netif/SNTP manual](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/network/esp_netif_programming.html)
 when changing integrations.

@@ -132,8 +132,9 @@ static_assert(kPhy2M == BLE_GAP_LE_PHY_2M);
 LinkStep link_step = LinkStep::Idle; // host task only
 // The last DATA_LEN_CHG max_tx_octets on this link, 0 for none. Host task.
 std::uint16_t dle_tx_octets = 0;
-AdvertWindow adv_window; // host task only
-IntervalPolicy interval; // host task only
+HciFailLog conn_fail_log; // host task only
+AdvertWindow adv_window;  // host task only
+IntervalPolicy interval;  // host task only
 std::atomic<bool> adv_fast{false};
 std::atomic<unsigned> pending_snapshots{0};
 std::atomic<bool> startup_ok{false}, host_requested{false};
@@ -474,8 +475,9 @@ int request_conn_params(std::uint16_t handle, const ConnParams &p,
       "BLE CONN request=%s itvl=%u-%u lat=%u to=%u rc=%d\n", label,
       unsigned(p.itvl_min), unsigned(p.itvl_max), unsigned(p.latency),
       unsigned(p.supervision_timeout), rc);
-  log_hci_fail("conn", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_CONN_UPDATE),
-               rc);
+  if (conn_fail_log.on_result(rc))
+    log_hci_fail("conn", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_CONN_UPDATE),
+                 rc);
   return rc;
 }
 
@@ -770,6 +772,7 @@ int gap_event(ble_gap_event *event, void *) {
     std::fill(std::begin(subscribed), std::end(subscribed), false);
     link_step = LinkStep::Idle;
     dle_tx_octets = 0;
+    conn_fail_log.reset();
     {
       const auto now = esp_timer_get_time();
       portENTER_CRITICAL(&tx_lock);
@@ -984,6 +987,7 @@ void on_reset(int reason) {
   std::fill(std::begin(subscribed), std::end(subscribed), false);
   early_cccd.clear();
   dle_tx_octets = 0;
+  conn_fail_log.reset();
   close_responses();
   ble_npl_callout_stop(&relax_callout);
   ble_npl_callout_stop(&link_callout);

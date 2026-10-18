@@ -23,7 +23,9 @@ namespace aq::coredump {
 // ESP-IDF 6.1 always uses SHA-256 for core dumps in flash.
 inline constexpr std::size_t kChecksumBytes = 32;
 inline constexpr std::size_t kTaskNameBytes = 16;
-// Hex characters of the crashed application's ELF SHA-256 that are printed.
+// At most this many hex characters of the crashed application's ELF SHA-256
+// are printed. ESP-IDF supplies CONFIG_APP_RETRIEVE_LEN_ELF_SHA - 1 of them,
+// 8 with the default.
 inline constexpr std::size_t kElfShaChars = 16;
 // Record layout, version byte, dump bytes (u32 little endian), checksum.
 inline constexpr std::uint8_t kRecordVersion = 1;

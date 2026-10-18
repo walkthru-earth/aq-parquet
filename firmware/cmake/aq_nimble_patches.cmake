@@ -39,13 +39,17 @@ function(aq_patch_nimble)
             "79316193f9, then drop or rebase ${patch_file} and update this pin.")
     endif()
 
+    # The patch runs on a fresh copy in work/ each configure. The compiled
+    # file is replaced only when its content changes, so a reconfigure does
+    # not rebuild it.
     set(stage "${CMAKE_BINARY_DIR}/aq_nimble_patch")
-    file(REMOVE_RECURSE "${stage}")
-    configure_file("${upstream}" "${stage}/${relative}" COPYONLY)
+    set(work "${stage}/work")
+    file(REMOVE_RECURSE "${work}")
+    configure_file("${upstream}" "${work}/${relative}" COPYONLY)
     find_program(AQ_PATCH_PROGRAM patch REQUIRED)
     # -F0 refuses fuzz, -N refuses a reversed or already applied patch.
     execute_process(
-        COMMAND "${AQ_PATCH_PROGRAM}" -p1 -N -F0 -s -d "${stage}" -i "${patch_file}"
+        COMMAND "${AQ_PATCH_PROGRAM}" -p1 -N -F0 -s -d "${work}" -i "${patch_file}"
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)
@@ -53,6 +57,12 @@ function(aq_patch_nimble)
         message(FATAL_ERROR "aq_patch_nimble: ${patch_file} does not apply\n${output}")
     endif()
     set(patched "${stage}/${relative}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${work}/${relative}" "${patched}"
+        RESULT_VARIABLE result)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "aq_patch_nimble: cannot stage ${patched}")
+    endif()
 
     get_target_property(sources "${bt_lib}" SOURCES)
     set(matches "")

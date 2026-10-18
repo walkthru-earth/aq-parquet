@@ -335,6 +335,10 @@ def command(port, args) -> int:
                 return 0
         elif line.startswith(("PARQUET STATUS", "PARQUET INTERVAL", "PARQUET CONFIG")):
             return 0
+    # A save error with no reply after it (a lost UART line) still names the
+    # save error, not only the deadline.
+    if store_error:
+        raise RuntimeError(f"{store_error} (no PARQUET CONFIG reply before deadline)")
     raise TimeoutError("deadline reached before command response")
 
 

@@ -8,6 +8,21 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## One BLE HCI fail line per refused interval run (fix/52-followup-nits, after #52)
+
+**What changed.** The board retries a refused connection interval request
+every second while the central runs a procedure of its own. Each retry used
+to add `BLE HCI fail cmd=conn op=0x2013 rc=15 timeout=0` to serial and
+`LOG_TAIL`. Now only the first refusal of a run logs it. A different `rc`, a
+success, a new connection or a host reset starts a new run. The
+`BLE CONN request=` line in `LOG_TAIL` still records every attempt with its
+`rc`.
+
+**Why.** Serial showed the same failure every second for as long as the
+central's procedure ran, which buried the lines around it (PR #52 review).
+
+**What the app must do.** Nothing. The app does not parse these lines.
+
 ## LZ4_RAW by default and a saved codec choice (feat/25-persist-codec, issue #25)
 
 **What changed.** `parquet codec none` and `parquet codec lz4` now save the
@@ -59,8 +74,10 @@ crashed task, `pc`, `exc_cause` and `exc_vaddr` the exception registers, and
 `unknown` (the saved record could not be read). `saved` is `1` once the
 device has recorded the dump as reported. When the dump cannot be identified
 the line is `COREDUMP present=unknown valid=0 error=read-failed` or
-`COREDUMP present=1 valid=0 error=invalid-size`. Later boots stay quiet for
-the same dump unless the record could not be read or saved. The dump is never
+`COREDUMP present=1 valid=0 error=invalid-size`. Nothing is saved for such a
+dump, so that line repeats on every boot until the partition changes. Later
+boots stay quiet for an identified dump unless the record could not be read or
+saved. The dump is never
 erased. No frame layout, opcode, error code, LIVE key or column changed.
 
 **Why.** ESP-IDF printed the saved dump on the console only, so a crash in the
@@ -82,10 +99,9 @@ sees what it saw before. NimBLE refuses its unencrypted Control write with an
 ATT Insufficient Encryption, Encryption Key Size or Authentication error, which
 starts pairing. It can still subscribe to `response`, because the CCCD has
 no security flag, but receives nothing there except a possible `ERROR` 14.
-`ERROR` 14 with
-`detail="auth"` over BLE is only a guarded fallback, for a Control write that
-passes ATT but fails the firmware check. In this configuration both apply
-the same rule, so an app should not expect to see it.
+`ERROR` 14 with `detail="auth"` over BLE is only a guarded fallback, for a
+Control write that passes ATT but fails the firmware check. In this
+configuration both apply the same rule, so an app should not expect to see it.
 Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
 via=access`, `via=connect` or `via=subscribe` when the board learns the link
 is secure without the encryption event. A later encryption event on that
@@ -94,8 +110,10 @@ before the board processes the connection (macOS does) now keeps the
 `response` subscription NimBLE restores from the bond. Before, that
 subscription was lost, so every frame of the first `LIST` was refused and
 its closing `ERROR` 7 never arrived. The board logs such a restore as
-`BLE SUBSCRIBE early=N response=1`, and a frame refused because `response`
-is not subscribed as `BLE REFUSE reason=unsubscribed`. No frame layout changed.
+`BLE SUBSCRIBE early=N response=1`. A response frame refused because
+`response` is not subscribed logs `BLE REFUSE reason=unsubscribed`, and one
+refused because the link is not secure logs `BLE REFUSE reason=insecure`,
+each once per session. No frame layout changed.
 The board also stopped rebooting on some bonded reconnects. It used to
 request the LE data length while handling the connection, and when that
 request got no answer while the phone started encryption, the BLE host reset
@@ -110,8 +128,8 @@ sequence runs. The app does not parse any of these lines.
 **Why.** Issue #51, a reconnect looked like a hung sync.
 
 **What the app must do.** Keep treating an ATT Insufficient Authentication,
-Encryption or Encryption Key Size error on a Control write as "pair again". That is the normal
-unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
+Encryption or Encryption Key Size error on a Control write as "pair again".
+That is the normal unpaired case. Should `ERROR` 14 ever arrive on BLE, treat it the same way,
 like a bad LAN token. Never retry either as busy. Handle 7 as
 before, by its `detail`. A plain busy 7 can be retried later, while
 `detail="mtu"` needs a larger MTU and `detail="count"` will not succeed by
