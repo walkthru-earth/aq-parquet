@@ -35,15 +35,20 @@ def check_wiring(source: str) -> None:
             r"unlisted_files = true; since_state\.finalized\(target\.benchmark, "
             r"target\.dated, target\.last\);",
         "LIST_SINCE plans from the tracker when its walk starts":
-            r"if \(start\) \{ cancel\(\); const auto in = since_state\.inputs\(cursor, "
+            r"if \(start\) \{ cancel\(\); if \(!since_\) \{ errno = ENOTSUP; return fail\(\); \} "
+            r"const auto in = since_state\.inputs\(cursor, "
             r"mount_epoch\.load\(\), utc_yesterday\(\), boot_ring, ring_store\); "
             r"const auto plan = list_since::plan\(in\); result = plan\.result;",
         "a widened walk reports unsynced_full":
-            r"if \(since_\.widened\(\)\) result\.flags \|= aqsync::kListSinceUnsyncedFull;",
+            r"if \(since_->widened\(\)\) result\.flags \|= aqsync::kListSinceUnsyncedFull;",
         "the ring knows this boot":
             r"if \(list_since::parse_boot\(boot_text, boot\)\) boot_ring\.set_current\(boot\);",
         "a remount forgets the mount epoch":
             r"archive_session\.remounted\(\);.*?mount_epoch = 0;",
+        "only the radio list owns the incremental walk":
+            r"ArchiveList archive_list\{&archive_since\};",
+        "list_all keeps the incremental walk off the worker stack":
+            r"bool list_all\(FileEmitter emit, void \*context, unsigned &partials\) \{ ArchiveList list;",
         "STATUS reports the mount epoch":
             r"view\.mount_epoch = mount_epoch\.load\(\);",
     }

@@ -1040,6 +1040,12 @@ struct ListVisitor {
 // LIST_SINCE walk through the same IO, one walk at a time.
 class ArchiveList {
 public:
+  // `since` holds the LIST_SINCE walk, about 1 KiB, so the full walk of
+  // list_all() keeps it off the worker stack. Without it step_since fails.
+  explicit ArchiveList(
+      list_since::IncrementalWalk<ArchiveDirectoryIO> *since = nullptr)
+      : since_(since) {}
+
   aqsync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
                           void *context, unsigned &partials) {
     if (start) {
@@ -1101,6 +1107,10 @@ public:
                                 void *context, unsigned &partials) {
     if (start) {
       cancel();
+      if (!since_) {
+        errno = ENOTSUP;
+        return fail();
+      }
       const auto in = since_state.inputs(
           cursor, mount_epoch.load(), utc_yesterday(), boot_ring, ring_store);
       const auto plan = list_since::plan(in);
@@ -1115,16 +1125,16 @@ public:
         return step(true, budget, emit, context, partials);
       incremental_ = true;
       finalized_at_start_ = finalized.load();
-      if (!since_.begin(io_, kDirectory, station_text, plan,
-                        in.ring ? *in.ring : list_since::Ring{}))
+      if (!since_->begin(io_, kDirectory, station_text, plan,
+                         in.ring ? *in.ring : list_since::Ring{}))
         return fail();
     }
-    if (!incremental_)
+    if (!incremental_ || !since_)
       return step(false, budget, emit, context, partials);
     ListVisitor visit{
         .prefix = "", .emit = emit, .context = context, .partials = &partials};
     using Walk = list_since::IncrementalWalk<ArchiveDirectoryIO>;
-    const auto status = since_.step(budget, visit);
+    const auto status = since_->step(budget, visit);
     if (status == Walk::Status::More)
       return aqsync::ListStatus::More;
     if (status == Walk::Status::Failed || visit.bad_entry)
@@ -1136,7 +1146,7 @@ public:
     // Ringless markers past kMaxRingless made it walk the whole unsynced
     // tree. Its partials count covers only the folders it read, so STATUS
     // keeps the count of the last full walk.
-    if (since_.widened())
+    if (since_->widened())
       result.flags |= aqsync::kListSinceUnsyncedFull;
     cancel();
     return aqsync::ListStatus::Complete;
@@ -1144,7 +1154,8 @@ public:
 
   void cancel() {
     walk_.cancel();
-    since_.cancel();
+    if (since_)
+      since_->cancel();
     legacy_ = false;
   }
 
@@ -1164,15 +1175,16 @@ private:
   }
 
   aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO> walk_;
-  list_since::IncrementalWalk<ArchiveDirectoryIO> since_;
+  list_since::IncrementalWalk<ArchiveDirectoryIO> *since_;
   ArchiveDirectoryIO io_;
   std::uint32_t finalized_at_start_ = 0;
   bool legacy_ = false;
   bool incremental_ = false;
 };
 
-// The radio LIST job's walk. Only the storage worker touches it.
-ArchiveList archive_list;
+// The radio LIST and LIST_SINCE walks. Only the storage worker touches them.
+list_since::IncrementalWalk<ArchiveDirectoryIO> archive_since;
+ArchiveList archive_list{&archive_since};
 
 bool partial_name(const char *name) {
   const std::size_t length = std::strlen(name);
