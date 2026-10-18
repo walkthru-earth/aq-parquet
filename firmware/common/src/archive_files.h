@@ -17,7 +17,11 @@ constexpr std::size_t kArchiveReadHandles = 4;
 constexpr std::size_t kMaxOpenFiles =
     kWriterFiles + kTransientFiles + kArchiveReadHandles + 1;
 // FF_FS_LOCK also counts open directories. The archive walk keeps one open
-// per level, depth 0 through 6 (aq_logger_directory.h).
+// per level, depth 0 through 6 (aq_logger_directory.h), next to any open
+// files. The serial archive reset keeps up to 9 open, depth 0 through 8
+// (aq_logger_archive_reset.h). It fits because the reset first closes the
+// writer files and every archive read stream, so the walk has the table to
+// itself.
 constexpr std::size_t kArchiveWalkDirectories = 7;
 constexpr std::size_t kMinFsLock = kMaxOpenFiles + kArchiveWalkDirectories;
 } // namespace aq::storage
