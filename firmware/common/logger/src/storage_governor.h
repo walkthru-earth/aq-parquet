@@ -126,7 +126,7 @@ public:
   // A write, close, rename or mount failed. Repeated failures back off.
   void write_failed(std::int64_t now_seconds) {
     if (state_ == State::Retry && failure_) {
-      probe_failed(now_seconds);
+      back_off(now_seconds);
       return;
     }
     state_ = State::Retry;
@@ -142,9 +142,7 @@ public:
       write_failed(now_seconds);
       return;
     }
-    if (attempts_ < std::numeric_limits<std::uint32_t>::max())
-      ++attempts_;
-    next_probe_ = now_seconds + backoff_seconds(attempts_);
+    back_off(now_seconds);
   }
 
   void probe_succeeded(std::uint64_t measured_free, std::int64_t now_seconds) {
@@ -178,6 +176,14 @@ public:
   const Thresholds &limits() const { return limits_; }
 
 private:
+  // One more failed attempt while in Retry. Both failure paths share it, so
+  // neither calls back into the other.
+  void back_off(std::int64_t now_seconds) {
+    if (attempts_ < std::numeric_limits<std::uint32_t>::max())
+      ++attempts_;
+    next_probe_ = now_seconds + backoff_seconds(attempts_);
+  }
+
   bool settle() {
     const State next = next_space_state(state_, free_, limits_);
     const bool changed = next != state_;
