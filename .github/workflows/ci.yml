@@ -290,8 +290,17 @@ jobs:
           VARIANT: ${{ matrix.variant }}
         run: |
           status=0
-          pixi run stack-budget --check --image "${NAME%%-*}/${VARIANT}" > stack-budget.md || status=$?
-          cat stack-budget.md >> "$GITHUB_STEP_SUMMARY"
+          pixi run stack-budget --check --image "${NAME%%-*}/${VARIANT}" \
+            > stack-budget.md 2> stack-budget.err || status=$?
+          cat stack-budget.err >&2
+          {
+            cat stack-budget.md
+            if [ -s stack-budget.err ]; then
+              printf '\n### Exit %s\n\n```text\n' "${status}"
+              cat stack-budget.err
+              printf '```\n'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
           exit "${status}"
 
   # The one required status check. It fails unless every job above passed,

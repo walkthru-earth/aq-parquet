@@ -287,31 +287,32 @@
       "tasks": {
         "parquet-sd": {
           "stack_bytes": 24576,
-          "measured": 11568,
-          "budget": 12736
+          "measured": 12128,
+          "budget": 13376
         },
         "nimble_host": {
-          "measured": 4768,
-          "budget": 5248
+          "measured": 5840,
+          "budget": 6464
         },
         "aq_ble_error": {
-          "stack_bytes": 3072,
+          "stack_bytes": 4096,
           "measured": 2544,
-          "budget": 2560
+          "budget": 2816
         },
         "aq-lan": {
           "stack_bytes": 8192,
-          "measured": 4128,
-          "budget": 4544
+          "measured": 4832,
+          "budget": 5376
         },
         "board": {
+          "task_name": "cores3-board",
           "stack_bytes": 16384,
-          "measured": 5024,
-          "budget": 5568
+          "measured": 5184,
+          "budget": 5760
         },
         "esp_timer": {
-          "measured": 528,
-          "budget": 640
+          "measured": 592,
+          "budget": 704
         },
         "sys_evt": {
           "measured": 1040,
@@ -330,7 +331,7 @@
         ".iram0.text": 126859,
         ".dram0.data": 35349,
         ".dram0.bss": 57096,
-        ".flash.text": 1176518,
+        ".flash.text": 1176514,
         ".flash.rodata": 253984,
         ".noinit": 3
       }
@@ -340,31 +341,32 @@
       "tasks": {
         "parquet-sd": {
           "stack_bytes": 24576,
-          "measured": 10480,
-          "budget": 11584
+          "measured": 11184,
+          "budget": 12352
         },
         "nimble_host": {
-          "measured": 4768,
-          "budget": 5248
+          "measured": 5840,
+          "budget": 6464
         },
         "aq_ble_error": {
-          "stack_bytes": 3072,
+          "stack_bytes": 4096,
           "measured": 2544,
-          "budget": 2560
+          "budget": 2816
         },
         "aq-lan": {
           "stack_bytes": 8192,
-          "measured": 4128,
-          "budget": 4544
+          "measured": 4832,
+          "budget": 5376
         },
         "board": {
+          "task_name": "aq-board",
           "stack_bytes": 12288,
-          "measured": 4512,
-          "budget": 4992
+          "measured": 5072,
+          "budget": 5632
         },
         "esp_timer": {
-          "measured": 528,
-          "budget": 640
+          "measured": 592,
+          "budget": 704
         },
         "sys_evt": {
           "measured": 1040,
@@ -383,7 +385,7 @@
         ".iram0.text": 119863,
         ".dram0.data": 33348,
         ".dram0.bss": 54280,
-        ".flash.text": 1054318,
+        ".flash.text": 1054314,
         ".flash.rodata": 224836,
         ".noinit": 0
       }
@@ -392,13 +394,14 @@
       "build": "firmware/esp-idf-waveshare-sim7670g/build/diagnostic",
       "tasks": {
         "board": {
+          "task_name": "aq-diagnostic",
           "stack_bytes": 12288,
-          "measured": 3184,
-          "budget": 3520
+          "measured": 3744,
+          "budget": 4160
         },
         "esp_timer": {
-          "measured": 528,
-          "budget": 640
+          "measured": 592,
+          "budget": 704
         }
       },
       "sections": {

@@ -119,6 +119,39 @@ def check_graph(root: Path) -> None:
     assert loose == [(None, ["relay"])]
 
 
+def check_aliases_and_cycles(root: Path) -> None:
+    # A frameless C1 or D1 alias keeps its edge to the body, a declaration stays unknown.
+    ci = write_ci(root / "alias.ci", [
+        node("caller", "void caller()", 32),
+        'node: { title: "_ZN4LockD1Ev" label: "Lock::~Lock()\\nsrc/lock.cpp:9:3" shape : triangle }',
+        node("_ZN4LockD2Ev", "Lock::~Lock()", 48),
+        'node: { title: "xQueueGenericSend" label: "xQueueGenericSend\\nqueue.h:1:1" shape : ellipse }',
+        node("send", "void send()", 64),
+        edge("caller", "_ZN4LockD1Ev"), edge("_ZN4LockD1Ev", "_ZN4LockD2Ev"), edge("_ZN4LockD2Ev", "send"),
+        edge("send", "xQueueGenericSend"),
+    ])
+    graph = sb.load_ci([ci])
+    alias = graph.functions["_ZN4LockD1Ev"]
+    assert alias.frame == 0 and alias.calls == {"_ZN4LockD2Ev"} and alias.source == "ci", alias
+    assert "xQueueGenericSend" not in graph.functions
+    assert sb.analyse(graph, ["caller"], [], 2).worst == 32 + 48 + 64
+
+    # b is first reached inside the a and b cycle, where the cut hides a's
+    # 900 B. The entry later reaches b through c without a, which counts a.
+    # a's complete result already holds b's frame, so b counts twice there.
+    # That errs high, never low.
+    ci = write_ci(root / "cycle.ci", [
+        node("entry", "void entry()", 8),
+        node("a", "void a()", 900),
+        node("b", "void b()", 16),
+        node("c", "void c()", 1000),
+        edge("entry", "a"), edge("entry", "c"), edge("a", "b"), edge("b", "a"), edge("c", "b"),
+    ])
+    result = sb.analyse(sb.load_ci([ci]), ["entry"], [], 2)
+    assert result.worst == 8 + 1000 + 16 + 900 + 16, result.worst
+    assert [frame for _, frame in result.path] == [8, 1000, 16, 900], result.path
+
+
 def make_build(root: Path, sections: dict[str, int]) -> tuple[Path, dict]:
     build = root / "build"
     build.mkdir()
@@ -150,9 +183,16 @@ def make_build(root: Path, sections: dict[str, int]) -> tuple[Path, dict]:
     return build, budgets
 
 
-def run(argv: list[str]) -> tuple[int, str, str]:
+def site(name: str, stack: int | None, entry: str = "main_task") -> sb.TaskSite:
+    return sb.TaskSite("src/a.c:7", "src/a.c", entry, name, stack, str(stack))
+
+
+def run(argv: list[str], sites: list[sb.TaskSite] | None = None) -> tuple[int, str, str]:
+    """main() with the repo source scan replaced by task sites in the fake build."""
+    scan = sb.SourceScan(sites=[site("tight", 1000)] if sites is None else sites)
     out, err = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+            patch.object(sb, "scan_sources", return_value=scan):
         code = sb.main(argv)
     return code, out.getvalue(), err.getvalue()
 
@@ -178,6 +218,8 @@ def check_cli(root: Path) -> None:
     code, out, err = run(["--budgets", str(path), "--check", "--path"])
     assert code == 0, err
     assert "       300  void main_task(void*)" in out and "       160  blob" in out, out
+    assert "Task source check passed" in out and "Internal stack check skipped" in out, out
+    clean = path.read_text()
 
     # Mutation: a lowered task budget fails, and so does a stack the worst case outgrows.
     mutated = json.loads(path.read_text())
@@ -188,6 +230,30 @@ def check_cli(root: Path) -> None:
     assert code == 1
     assert "main: static worst 460 B is past its budget 400 B" in err, err
     assert "tight: static worst 460 B plus the 512 B reserve is past the 900 B stack" in err, err
+    assert "tight stack_bytes 900 does not match the 1000 B stack at src/a.c:7" in err, err
+
+    # Mutation: a deleted budget fails instead of passing with a flag.
+    mutated = json.loads(clean)
+    del mutated["images"]["fake/app"]["tasks"]["main"]["budget"]
+    path.write_text(json.dumps(mutated))
+    code, out, err = run(["--budgets", str(path), "--check"])
+    assert code == 1 and "fake/app main: no budget" in err and "NO BUDGET" in out, err
+
+    # Mutation: a new xTaskCreate the budget file does not track fails, and so
+    # does a stack the source scan cannot read.
+    path.write_text(clean)
+    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000), site("aq-new-task", 2048)])
+    assert code == 1 and 'creates task "aq-new-task", which no task in this image tracks' in err, err
+    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", None)])
+    assert code == 1 and "with a stack the scan cannot read" in err, err
+    # A site whose entry this image does not link belongs to another image, so
+    # the tracked stack_bytes here is stale.
+    code, _, err = run(["--budgets", str(path), "--check"], [site("tight", 1000, entry="other_task")])
+    assert code == 1 and 'tight has stack_bytes but this image creates no task "tight"' in err, err
+    # --write-budgets refuses while the stack sizes disagree.
+    assert run(["--budgets", str(path), "--write-budgets"], [site("tight", 2000)])[0] == 2
+    assert path.read_text() == clean
+    assert run(["--budgets", str(path), "--check"])[0] == 0
 
     # A missing build or an unknown image is a usage error, not a pass.
     assert run(["--budgets", str(path), "--image", "nope/none"])[0] == 2
@@ -205,12 +271,33 @@ def check_internal_stacks(root: Path) -> None:
     assert sb.external_stack_sources(root) == []
     source.write_text("void a() {\n  xTaskCreateStatic (f, \"psram\", 4096, nullptr, 1, stack, &tcb);\n}\n")
     assert sb.external_stack_sources(root) == ["firmware/common/x.cpp:2"]
+    # Comments do not count, and a string holding // does not hide the rest of its line.
+    source.write_text("// xTaskCreateStatic(f, ...)\n/* xTaskCreateWithCaps(\n */ const char *u = \"http://x\";"
+                      " xTaskCreateStatic(f, \"s\", 1, 0, 1, 0, 0);\n")
+    assert sb.external_stack_sources(root) == ["firmware/common/x.cpp:3"]
+
+    # The scan reads names and stacks, a constant expression or a member default.
+    source.write_text("struct O { std::uint32_t task_stack_bytes = 8192; };\n"
+                      "void a(O o) {\n  xTaskCreate(lan_task, \"aq-lan\",\n    o.task_stack_bytes, nullptr, 1, nullptr);\n"
+                      "  xTaskCreate(board_task, \"board\", 16 * 1024, nullptr, 1, nullptr);\n"
+                      "  // xTaskCreate(old_task, \"old\", 1024, nullptr, 1, nullptr);\n"
+                      "  xTaskCreate(w, \"w\", static_cast<std::uint32_t>(c.worker_stack_bytes), nullptr, 1, 0);\n}\n"
+                      "struct C { std::size_t worker_stack_bytes = 2048; };\nvoid b(C c) { c.worker_stack_bytes = 4096; }\n")
+    sites = {item.name: item for item in sb.scan_sources(root).sites}
+    assert set(sites) == {"aq-lan", "board", "w"}, sites
+    assert sites["aq-lan"].stack == 8192 and sites["aq-lan"].where == "firmware/common/x.cpp:3"
+    assert sites["aq-lan"].entry == "lan_task"
+    assert sites["board"].stack == 16384
+    assert sites["w"].stack is None, "two values for one member are ambiguous"
+    assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}
     findings = sb.stack_memory_findings(allowed, ["firmware/common/x.cpp:2"])
     assert findings and "firmware/common/x.cpp:2" in findings[0]
     assert sb.stack_memory_findings({}, ["firmware/common/x.cpp:2"]) == []
-    # The committed firmware only uses xTaskCreate.
-    assert sb.external_stack_sources(sb.ROOT) == []
+    # The committed firmware only uses xTaskCreate, and the scan reads every stack.
+    scan = sb.scan_sources(sb.ROOT)
+    assert scan.external == []
+    assert scan.sites and all(item.stack for item in scan.sites), scan.sites
 
 
 def check_runtime_report() -> None:
@@ -240,7 +327,8 @@ def check_committed_budgets() -> None:
     for name, spec in budgets["images"].items():
         for task_name, task in spec["tasks"].items():
             assert task_name in budgets["tasks"], f"{name} names an undefined task {task_name}"
-            assert task.get("budget", 0) >= task.get("measured", 0), f"{name} {task_name} budget below measured"
+            assert "budget" in task and "measured" in task, f"{name} {task_name} has no budget"
+            assert task["budget"] >= task["measured"], f"{name} {task_name} budget below measured"
             if "stack_bytes" in task and "budget" in task:
                 assert task["budget"] + policy["reserve_bytes"] <= task["stack_bytes"], f"{name} {task_name}"
         for section, budget in spec["sections"].items():
@@ -254,6 +342,8 @@ def main() -> None:
         (root / "cli").mkdir()
         (root / "src").mkdir()
         check_graph(root / "graph")
+        (root / "alias").mkdir()
+        check_aliases_and_cycles(root / "alias")
         check_cli(root / "cli")
         check_internal_stacks(root / "src")
     check_runtime_report()

@@ -1156,7 +1156,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
                        advertise_on_host, nullptr);
   ble_npl_callout_init(&link_callout, nimble_port_get_dflt_eventq(),
                        link_on_host, nullptr);
-  if (xTaskCreate(error_task, "aq_ble_error", 3072, nullptr, 4, nullptr) !=
+  if (xTaskCreate(error_task, "aq_ble_error", 4096, nullptr, 4, nullptr) !=
       pdPASS)
     return false;
   host_requested = true;

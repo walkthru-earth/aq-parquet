@@ -25,6 +25,12 @@ spills that FreeRTOS keeps on a task stack, see `reserve_bytes` in the budget
 file. It is a static estimate, a bench high water mark (`parquet mem`) is the
 measured counterpart.
 
+`--check` also fails on a tracked task with no budget, and it scans repo
+firmware (comments skipped) for every `xTaskCreate` an image links. Each one
+must name a tracked task (`task_name`, the task key by default) whose
+`stack_bytes` equals the stack size in source, so a new task or a resized
+stack cannot pass unnoticed.
+
 Usage:
   pixi run stack-budget                         # every image with a build
   pixi run stack-budget --image cores3/bringup --path
@@ -35,6 +41,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import json
 import math
@@ -111,6 +118,7 @@ def load_ci(paths: list[Path]) -> Graph:
     graph = Graph()
     for path in paths:
         defined: dict[str, Function] = {}
+        frameless: dict[str, Function] = {}
         edges: list[tuple[str, str]] = []
         for line in path.read_text(errors="replace").splitlines():
             if match := NODE_RE.match(line):
@@ -123,10 +131,18 @@ def load_ci(paths: list[Path]) -> Graph:
                     defined[title] = Function(
                         name=name, location=short_path(parts[1]),
                         frame=int(frame.group(1)), qualifier=frame.group(2))
+                elif len(parts) == 2:
+                    # A frameless node with a location is a definition GCC
+                    # emitted as an alias, such as the C1 and D1 complete-object
+                    # constructor and destructor that call their C2 and D2 body.
+                    frameless[title] = Function(name=parts[0], location=short_path(parts[1]))
             elif match := EDGE_RE.match(line):
                 edges.append(match.groups())
         for source, target in edges:
             function = defined.get(source)
+            if function is None and source in frameless:
+                # Kept only as an edge source, so a plain declaration stays unknown.
+                function = defined[source] = frameless.pop(source)
             if function is None:
                 continue
             if target == INDIRECT:
@@ -218,7 +234,12 @@ def analyse(graph: Graph, entries: list[str], indirect: list[IndirectRule], dept
     # it. Without the cap every hook could reach every other hook and the
     # worst case would be a chain no event loop can run.
     Key = tuple[str, int]
-    memo: dict[Key, tuple[int, Key | None]] = {}
+    # A result cut short where a cycle closed above the function depends on
+    # the path that reached it. It keeps the cycle heads it was cut at and is
+    # reused only while all of them are on the path again, which cuts the
+    # same cycles. On any other path it is computed again. A complete result
+    # reused inside a cycle can count a frame twice, which errs high.
+    memo: dict[Key, tuple[int, Key | None, frozenset[str]]] = {}
     on_stack: list[Key] = []
     on_stack_titles: set[str] = set()
     cycles: dict[frozenset[str], list[str]] = {}
@@ -240,9 +261,10 @@ def analyse(graph: Graph, entries: list[str], indirect: list[IndirectRule], dept
                 unresolved.add(title)
         return out
 
-    def visit(key: Key) -> int:
-        if key in memo:
-            return memo[key][0]
+    def visit(key: Key) -> tuple[int, frozenset[str]]:
+        """The worst cost below key and the functions above it where a cycle was cut."""
+        if key in memo and memo[key][2] <= on_stack_titles:
+            return memo[key][0], memo[key][2]
         function = graph.functions[key[0]]
         if function.source == "unknown":
             unknown.add(function.name)
@@ -250,7 +272,7 @@ def analyse(graph: Graph, entries: list[str], indirect: list[IndirectRule], dept
             dynamic.add(f"{display(function)} ({function.qualifier}, {function.frame} B)")
         on_stack.append(key)
         on_stack_titles.add(key[0])
-        best, best_key = 0, None
+        best, best_key, heads = 0, None, set()
         for child in callees(key):
             # A function already on the path closes a cycle. Direct recursion
             # is listed. A cycle closed through a pointer call is usually the
@@ -258,29 +280,35 @@ def analyse(graph: Graph, entries: list[str], indirect: list[IndirectRule], dept
             # through a hook), so it is only counted.
             if child[0] in on_stack_titles:
                 start = next(i for i, (name, _) in enumerate(on_stack) if name == child[0])
+                heads.add(child[0])
                 names = sorted({display(graph.functions[name]) for name, _ in on_stack[start:]})
                 if on_stack[start] == child:
                     cycles.setdefault(frozenset(names), names)
                 else:
                     pointer_cycles.add(frozenset(names))
                 continue
-            cost = visit(child)
+            cost, child_heads = visit(child)
+            heads |= child_heads
             if cost > best:
                 best, best_key = cost, child
         on_stack.pop()
         on_stack_titles.discard(key[0])
         total = function.frame + best
-        memo[key] = (total, best_key)
-        return total
+        heads.discard(key[0])
+        memo[key] = (total, best_key, frozenset(heads))
+        return total, memo[key][2]
 
     worst, start = 0, None
     for entry in entries:
-        cost = visit((entry, 0))
+        cost, _ = visit((entry, 0))
         if cost > worst or start is None:
             worst, start = cost, (entry, 0)
-    path = []
+    # A result recomputed on a later path replaces the one an earlier caller
+    # chose, so the printed chain stops where it would repeat a function.
+    path, titles = [], set()
     key = start
-    while key is not None:
+    while key is not None and key[0] not in titles:
+        titles.add(key[0])
         function = graph.functions[key[0]]
         path.append((display(function), function.frame))
         key = memo[key][1]
@@ -336,28 +364,94 @@ class ImageReport:
     tasks: dict[str, dict]
     sections: dict[str, int]
     stack_memory: list[str] = field(default_factory=list)
+    stack_memory_checked: bool = True
+    task_sites: list[str] = field(default_factory=list)
 
 
 # NVS and SPI flash writes disable the cache, so a task that writes NVS must
 # run on an internal RAM stack. xTaskCreate always allocates its stack from
 # internal RAM. CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY (an ESP-IDF default
 # with PSRAM) only lets the calls below take a PSRAM stack, so any of them in
-# repo firmware fails the check until it is reviewed.
+# repo firmware fails the check until it is reviewed. Comments are skipped.
+# There is no allowlist, so a reviewed internal RAM static task means
+# extending this check rather than silencing it.
 EXTERNAL_STACK_CONFIG = "CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY"
 EXTERNAL_STACK_RE = re.compile(r"\b(xTaskCreateWithCaps|xTaskCreatePinnedToCoreWithCaps|xTaskCreateStatic"
                                r"|xTaskCreateStaticPinnedToCore|xTaskCreateRestrictedStatic)\s*\(")
+# xTaskCreate(entry, "name", stack, ...). The stack is a constant expression
+# or a member whose single default the scan finds in the same sources.
+TASK_CREATE_RE = re.compile(r'\bxTaskCreate(?:PinnedToCore)?\s*\(\s*([A-Za-z_]\w*)\s*,\s*"([^"]*)"\s*,\s*([^,]+?)\s*,')
+CONSTANT_RE = re.compile(r"^[0-9\s*+()]+$")
+COMMENT_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\*.*?\*/', re.S)
 SOURCE_SKIP = {"build", "managed_components", "vendor"}
 
 
-def external_stack_sources(root: Path) -> list[str]:
-    found = []
+@dataclass
+class TaskSite:
+    where: str  # path:line
+    path: str
+    entry: str
+    name: str
+    stack: int | None
+    stack_text: str
+
+
+@dataclass
+class SourceScan:
+    external: list[str] = field(default_factory=list)
+    sites: list[TaskSite] = field(default_factory=list)
+
+
+def strip_comments(text: str) -> str:
+    """Blank out comments and keep string literals and line numbers."""
+    def blank(match: re.Match) -> str:
+        token = match.group(0)
+        return token if token[0] in "\"'" else re.sub(r"[^\n]", " ", token)
+    return COMMENT_RE.sub(blank, text)
+
+
+def constant(text: str) -> int | None:
+    """Digits, spaces, `*`, `+` and parentheses only, such as `16 * 1024`."""
+    def value(node: ast.expr) -> int:
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mult, ast.Add)):
+            left, right = value(node.left), value(node.right)
+            return left * right if isinstance(node.op, ast.Mult) else left + right
+        raise ValueError(ast.dump(node))
+
+    if not CONSTANT_RE.match(text.strip()):
+        return None
+    try:
+        return value(ast.parse(text.strip(), mode="eval").body)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def scan_sources(root: Path) -> SourceScan:
+    texts = {}
     for path in sorted((root / "firmware").rglob("*")):
-        if path.suffix not in {".c", ".cc", ".cpp", ".h", ".hpp"} or SOURCE_SKIP & set(path.parts):
-            continue
-        for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
-            if EXTERNAL_STACK_RE.search(line):
-                found.append(f"{path.relative_to(root)}:{number}")
-    return found
+        relative = path.relative_to(root)
+        if path.suffix in {".c", ".cc", ".cpp", ".h", ".hpp"} and not SOURCE_SKIP & set(relative.parts):
+            texts[relative.as_posix()] = strip_comments(path.read_text(errors="replace"))
+    scan = SourceScan()
+    for name, text in texts.items():
+        for match in EXTERNAL_STACK_RE.finditer(text):
+            scan.external.append(f"{name}:{text.count(chr(10), 0, match.start()) + 1}")
+        for match in TASK_CREATE_RE.finditer(text):
+            entry, task, stack_text = match.groups()
+            where = f"{name}:{text.count(chr(10), 0, match.start()) + 1}"
+            scan.sites.append(TaskSite(where, name, entry, task, constant(stack_text), " ".join(stack_text.split())))
+    for site in scan.sites:
+        if site.stack is None and (words := re.findall(r"[A-Za-z_]\w*", site.stack_text)):
+            member = re.compile(rf"\b{words[-1]}\s*(?:=|\{{)\s*([0-9\s*+()]+?)\s*[;}},]")
+            values = {constant(match.group(1)) for text in texts.values() for match in member.finditer(text)}
+            site.stack = values.pop() if len(values) == 1 else None
+    return scan
+
+
+def external_stack_sources(root: Path) -> list[str]:
+    return scan_sources(root).external
 
 
 def stack_memory_findings(config: dict[str, str], sources: list[str]) -> list[str]:
@@ -366,8 +460,40 @@ def stack_memory_findings(config: dict[str, str], sources: list[str]) -> list[st
     return [f"{where} creates a task with a caller-chosen stack, check it is internal RAM" for where in sources]
 
 
+def task_site_findings(graph: Graph, spec: dict, budgets: dict, sites: list[TaskSite]) -> list[str]:
+    """Every xTaskCreate this image links names a tracked task, and its stack
+    in source matches the copied `stack_bytes`, so neither can drift."""
+    def linked(site: TaskSite) -> bool:
+        pattern = re.compile(rf"\b{site.entry}\(")
+        return any(function.location.startswith(site.path + ":") and pattern.search(function.name)
+                   for function in graph.functions.values())
+
+    names = {task_name: image_task.get("task_name", budgets["tasks"][task_name].get("task_name", task_name))
+             for task_name, image_task in spec["tasks"].items()}
+    here = [site for site in sites if linked(site)]
+    findings = []
+    for site in here:
+        tracked = [task_name for task_name, name in names.items() if name == site.name]
+        if not tracked:
+            findings.append(f'{site.where} creates task "{site.name}", which no task in this image tracks. '
+                            "Add it to tools/stack_budget.json")
+            continue
+        copied = spec["tasks"][tracked[0]].get("stack_bytes")
+        if site.stack is None:
+            findings.append(f'{site.where} creates "{site.name}" with a stack the scan cannot read '
+                            f"({site.stack_text}). Use a constant or a member with one default")
+        elif copied != site.stack:
+            findings.append(f"{tracked[0]} stack_bytes {copied} does not match the {site.stack} B "
+                            f"stack at {site.where}")
+    created = {site.name for site in here}
+    for task_name, image_task in spec["tasks"].items():
+        if "stack_bytes" in image_task and names[task_name] not in created:
+            findings.append(f'{task_name} has stack_bytes but this image creates no task "{names[task_name]}"')
+    return findings
+
+
 def measure_image(name: str, spec: dict, budgets: dict, require_objdump: bool,
-                  sources: list[str] | None = None) -> ImageReport:
+                  scan: SourceScan | None = None) -> ImageReport:
     build = ROOT / spec["build"]
     description = build / "project_description.json"
     if not description.is_file():
@@ -387,6 +513,8 @@ def measure_image(name: str, spec: dict, budgets: dict, require_objdump: bool,
                                  capture_output=True, text=True).stdout
         add_disassembly(graph, listing)
     config = sdkconfig(build)
+    scan = scan or SourceScan()
+    sites = task_site_findings(graph, spec, budgets, scan.sites)
     tasks = {}
     for task_name, image_task in spec["tasks"].items():
         task = budgets["tasks"][task_name]
@@ -402,7 +530,8 @@ def measure_image(name: str, spec: dict, budgets: dict, require_objdump: bool,
             stack = int(config.get(task["stack_sdkconfig"], "0")) or None
         tasks[task_name] = {"result": result, "stack": stack, "indirect_targets": len({t for _, targets in indirect for t in targets})}
     sections = elf_sections(elf)
-    return ImageReport(name, tasks, sections, stack_memory_findings(config, sources or []))
+    return ImageReport(name, tasks, sections, stack_memory_findings(config, scan.external),
+                       config.get(EXTERNAL_STACK_CONFIG) == "y", sites)
 
 
 def headroom(value: int, percent: float, step: int) -> int:
@@ -441,7 +570,9 @@ def render(report: ImageReport, spec: dict, budgets: dict, show_path: bool) -> t
             failures.append(f"{report.name} {task_name}: static worst {result.worst} B plus the "
                             f"{reserve} B reserve is past the {stack} B stack")
         if budget is None:
-            flags.append("no budget")
+            flags.append("NO BUDGET")
+            failures.append(f"{report.name} {task_name}: no budget, review it and run `pixi run stack-budget "
+                            f"--write-budgets --image {report.name}`")
         elif result.worst > budget:
             flags.append("OVER BUDGET")
             failures.append(f"{report.name} {task_name}: static worst {result.worst} B is past "
@@ -449,12 +580,20 @@ def render(report: ImageReport, spec: dict, budgets: dict, show_path: bool) -> t
         lines.append(f"| {task_name} | {'' if stack is None else kib(stack)} | {kib(result.worst)} | "
                      f"{kib(with_reserve)} | {margin} | {'' if budget is None else kib(budget)} | "
                      f"{', '.join(flags)} |")
+    if report.task_sites:
+        failures += [f"{report.name} task source: {item}" for item in report.task_sites]
+        lines += ["", *[f"Task source check failed. {item}." for item in report.task_sites]]
+    else:
+        lines += ["", "Task source check passed. Every xTaskCreate this image links is tracked with its stack size."]
     if report.stack_memory:
         failures += [f"{report.name} internal stack: {item}" for item in report.stack_memory]
         lines += ["", *[f"Internal stack check failed. {item}." for item in report.stack_memory]]
-    else:
+    elif report.stack_memory_checked:
         lines += ["", "Internal stack check passed. Repo firmware creates every task with xTaskCreate, so "
                       "every task stack (the NVS writers included) is internal RAM."]
+    else:
+        lines += ["", f"Internal stack check skipped. {EXTERNAL_STACK_CONFIG} is off in this image, so no "
+                      "task stack can be in PSRAM."]
     lines += ["", "| Section | Bytes | Budget |", "| --- | ---: | ---: |"]
     for section, budget in spec.get("sections", {}).items():
         used = report.sections.get(section, 0)
@@ -515,14 +654,14 @@ def main(argv: list[str] | None = None) -> int:
         print("error: no board build found, run cores3-build or waveshare-build first", file=sys.stderr)
         return 2
     reports, failures, output = [], [], []
-    sources = external_stack_sources(ROOT)
+    scan = scan_sources(ROOT)
     try:
         for name in names:
             if name not in budgets["images"]:
                 raise BudgetError(f"unknown image {name}, known: {', '.join(budgets['images'])}")
             spec = budgets["images"][name]
             report = measure_image(name, spec, budgets, require_objdump=args.check or args.write_budgets,
-                                   sources=sources)
+                                   scan=scan)
             reports.append(report)
             lines, image_failures = render(report, spec, budgets, args.path)
             output += lines + [""]
@@ -537,6 +676,12 @@ def main(argv: list[str] | None = None) -> int:
           f"{policy['section_headroom_percent']} % on sections over the committed measurement.\n")
     print("\n".join(output))
     if args.write_budgets:
+        if stale := [item for report in reports for item in report.task_sites]:
+            print("error: fix the task source findings before writing budgets, the stack cap reads stack_bytes",
+                  file=sys.stderr)
+            for item in stale:
+                print(f"  {item}", file=sys.stderr)
+            return 2
         write_budgets(args.budgets, budgets, reports)
         print(f"wrote {args.budgets.relative_to(ROOT) if args.budgets.is_relative_to(ROOT) else args.budgets}")
         return 0

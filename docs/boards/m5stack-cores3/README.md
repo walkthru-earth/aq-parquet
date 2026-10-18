@@ -33,8 +33,11 @@ the build, and the measured high water mark comes from the board.
   tracked task's deepest call path from the GCC call graphs of the last build,
   plus the linker section sizes. CI fails the board leg when a task or section
   grows past [tools/stack_budget.json](../../../tools/stack_budget.json).
-  The figure is an upper bound with stated limits (pointer calls follow
-  reviewed rules, recursion is cut and flagged), see `pixi run stack-budget --help`.
+  The figure is a static estimate, not a bound. Pointer calls follow reviewed
+  rules and an uncovered one counts as zero, ROM code counts as zero, and
+  recursion is cut and flagged, see `pixi run stack-budget --help`. The check
+  also fails on an `xTaskCreate` it does not track or a stack size in source
+  that differs from the budget file.
 - **Measured.** The logger prints two lines to serial and the LOG ring 60 s
   after boot, then hourly. `parquet mem` on the USB console prints them at
   once from the board task, so it answers even while the storage worker is busy.
@@ -59,5 +62,5 @@ Bench recipe, about 75 min.
    image hash and what was exercised. A task with less than a quarter of its
    stack left (cores3-board has 16,384 B) is a finding to raise on issue #37.
 
-| Date | Image hash | Exercised | cores3-board | parquet-sd | aq-lan | aq_ble_error | nimble_host | internal_min | internal_largest | dma_largest | psram_largest |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Date | Image hash | Exercised | cores3-board | parquet-sd | aq-lan | aq_ble_error | nimble_host | tcpip | esp_timer | sys_evt | internal_min | internal_largest | dma_largest | psram_largest |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
