@@ -18,7 +18,9 @@ if(AQ_VARIANT STREQUAL "diagnostic")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_cxx_standard.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_nimble_patches.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_stack_usage.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+aq_enable_stack_usage()
 # The diagnostic variant pulls different component manifests, so it keeps its
 # own lock and building it never rewrites the logger's manifest_hash.
 if(AQ_VARIANT STREQUAL "diagnostic")

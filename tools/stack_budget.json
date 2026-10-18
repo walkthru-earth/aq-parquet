@@ -1,0 +1,422 @@
+{
+  "policy": {
+    "about": "Static stack and linker section budgets checked by tools/stack_budget.py in CI (issue #37). A budget is the committed measurement plus the stated headroom, rounded up. Growth past it fails CI. Review the growth, then refresh with pixi run stack-budget --write-budgets.",
+    "stack_headroom_percent": 10,
+    "stack_round_bytes": 64,
+    "section_headroom_percent": 2,
+    "section_round_bytes": 256,
+    "reserve_bytes": 512
+  },
+  "shared_indirect": [
+    {
+      "about": "picolibc printf writes through the FILE put hook, and stdio buffers call the POSIX file functions.",
+      "from": [
+        "__d_vfprintf",
+        "__i_vfprintf",
+        "fputs",
+        "puts",
+        "fputc",
+        "putc",
+        "putchar"
+      ],
+      "to": [
+        "__file_str_put",
+        "__bufio_put"
+      ]
+    },
+    {
+      "from": [
+        "__bufio_*"
+      ],
+      "to": [
+        "read",
+        "write",
+        "lseek",
+        "close"
+      ]
+    },
+    {
+      "about": "The VFS layer dispatches to the FAT, console and socket drivers.",
+      "from": [
+        "esp_vfs_*",
+        "get_vfs_for_*"
+      ],
+      "to": [
+        "vfs_fat_*",
+        "console_*",
+        "uart_read",
+        "uart_write",
+        "usb_serial_jtag_read",
+        "usb_serial_jtag_write",
+        "lwip_*_r_wrapper"
+      ]
+    },
+    {
+      "about": "FatFs disk I/O goes to the SD card driver, which calls the host transaction hook.",
+      "from": [
+        "ff_disk_*"
+      ],
+      "to": [
+        "ff_sdmmc_*"
+      ]
+    },
+    {
+      "from": [
+        "sdmmc_*"
+      ],
+      "to": [
+        "sdmmc_host_do_transaction",
+        "sdspi_host_do_transaction"
+      ]
+    },
+    {
+      "about": "Our code reaches the log sinks through Print and the DebugLog ring hook.",
+      "from": [
+        "firmware/common/*::*",
+        "firmware/esp-idf-*/bringup/*::*",
+        "firmware/esp-idf-*/components/*::*"
+      ],
+      "to": [
+        "*DebugLog::*write*",
+        "*RingOutput::write(*",
+        "firmware/common/runtime/*::*::_FUN(*"
+      ]
+    }
+  ],
+  "tasks": {
+    "parquet-sd": {
+      "about": "Storage worker. Owns the card, the writer, control requests from BLE and LAN, and NVS writes for codec, station and config.",
+      "entry": [
+        "*aqlogger::{anonymous}::storage_worker(*"
+      ],
+      "indirect": [
+        {
+          "about": "Archive and control session hooks the logger hands to the shared sync code.",
+          "from": [
+            "firmware/common/connectivity/*::*"
+          ],
+          "to": [
+            "firmware/common/logger/*::*::_FUN(*"
+          ]
+        },
+        {
+          "about": "Board hooks the logger calls, such as the SD remount and the clock.",
+          "from": [
+            "firmware/common/logger/*::*"
+          ],
+          "to": [
+            "firmware/esp-idf-*/bringup/*::*::_FUN(*",
+            "firmware/esp-idf-*/components/*::*::_FUN(*"
+          ]
+        }
+      ]
+    },
+    "nimble_host": {
+      "about": "NimBLE host task. Runs our GAP and GATT callbacks, host events and callouts, and the bond store, which writes NVS.",
+      "entry": [
+        "*ble::{anonymous}::host_task(*"
+      ],
+      "indirect": [
+        {
+          "about": "Host task events, callouts and HCI and L2CAP dispatch inside NimBLE.",
+          "from": [
+            "ble_*",
+            "nimble_*",
+            "npl_*"
+          ],
+          "to": [
+            "ble_hs_event_*",
+            "ble_hs_timer_exp",
+            "ble_hs_hci_evt_*",
+            "ble_l2cap_sig_rx",
+            "ble_att_rx",
+            "ble_sm_rx",
+            "ble_att_svr_rx_*",
+            "ble_att_clt_rx_*",
+            "ble_sm_*_rx",
+            "ble_store_config_*",
+            "ble_store_util_status_rr",
+            "ble_gattc_*_cb*",
+            "ble_gattc_*_rx*",
+            "ble_l2cap_sig_*_rx",
+            "ble_hs_flow_*"
+          ]
+        },
+        {
+          "about": "Our GAP event, GATT access, sync, reset and on-host closures.",
+          "from": [
+            "ble_*",
+            "nimble_*",
+            "npl_*"
+          ],
+          "to": [
+            "*ble::{anonymous}::*"
+          ]
+        },
+        {
+          "about": "The control request handler the logger passes to the BLE and LAN links.",
+          "from": [
+            "*ble::{anonymous}::access(*",
+            "*lan::{anonymous}::handle_client_bytes(*"
+          ],
+          "to": [
+            "*aqlogger::enqueue_request(*"
+          ]
+        },
+        {
+          "about": "Wait steps the logger passes with each frame it delivers.",
+          "from": [
+            "*WaitStep*"
+          ],
+          "to": [
+            "*aqlogger::{anonymous}::error_wait_step(*",
+            "*aqlogger::{anonymous}::data_wait_step(*"
+          ]
+        }
+      ],
+      "stack_sdkconfig": "CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE"
+    },
+    "aq_ble_error": {
+      "about": "Sends ERROR responses that NimBLE callbacks defer.",
+      "entry": [
+        "*ble::{anonymous}::error_task(*"
+      ],
+      "indirect": [
+        {
+          "about": "Wait steps the logger passes with each frame it delivers.",
+          "from": [
+            "*WaitStep*"
+          ],
+          "to": [
+            "*aqlogger::{anonymous}::error_wait_step(*",
+            "*aqlogger::{anonymous}::data_wait_step(*"
+          ]
+        }
+      ]
+    },
+    "aq-lan": {
+      "about": "LAN server task. Parses HTTP control requests and streams archive files.",
+      "entry": [
+        "*lan::{anonymous}::lan_task(*"
+      ],
+      "indirect": [
+        {
+          "about": "The control request handler the logger passes to the BLE and LAN links.",
+          "from": [
+            "*ble::{anonymous}::access(*",
+            "*lan::{anonymous}::handle_client_bytes(*"
+          ],
+          "to": [
+            "*aqlogger::enqueue_request(*"
+          ]
+        },
+        {
+          "about": "Wait steps the logger passes with each frame it delivers.",
+          "from": [
+            "*WaitStep*"
+          ],
+          "to": [
+            "*aqlogger::{anonymous}::error_wait_step(*",
+            "*aqlogger::{anonymous}::data_wait_step(*"
+          ]
+        }
+      ]
+    },
+    "board": {
+      "about": "Board task. Acquisition, logger poll, console input and the runtime DIAG lines.",
+      "entry": [
+        "*{anonymous}::board_task(*"
+      ],
+      "indirect": [
+        {
+          "about": "Board hooks the logger calls from poll, the row collect, the RTC and the captureless lambdas.",
+          "from": [
+            "firmware/common/logger/*::*"
+          ],
+          "to": [
+            "*{anonymous}::collect(aqlogger::Row&*",
+            "*{anonymous}::rtc_read(int64_t&, void*)",
+            "*{anonymous}::rtc_write(int64_t, void*)",
+            "firmware/esp-idf-*/bringup/*::*::_FUN(*",
+            "firmware/esp-idf-*/components/*::*::_FUN(*"
+          ]
+        }
+      ]
+    },
+    "esp_timer": {
+      "about": "esp_timer task. Runs the worker watchdog supervisor.",
+      "entry": [
+        "timer_task"
+      ],
+      "indirect": [
+        {
+          "from": [
+            "timer_task",
+            "esp_timer_*",
+            "timer_process_alarm"
+          ],
+          "to": [
+            "*aqlogger::{anonymous}::supervise_worker(*"
+          ]
+        }
+      ],
+      "stack_sdkconfig": "CONFIG_ESP_TIMER_TASK_STACK_SIZE"
+    },
+    "sys_evt": {
+      "about": "Default event loop task. Runs the Wi-Fi and IP station event handler.",
+      "entry": [
+        "esp_event_loop_run_task"
+      ],
+      "indirect": [
+        {
+          "from": [
+            "esp_event_*",
+            "handler_execute"
+          ],
+          "to": [
+            "*lan::{anonymous}::station_event(*"
+          ]
+        }
+      ],
+      "stack_sdkconfig": "CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE"
+    }
+  },
+  "images": {
+    "cores3/bringup": {
+      "build": "firmware/esp-idf-cores3/build/bringup",
+      "tasks": {
+        "parquet-sd": {
+          "stack_bytes": 24576,
+          "measured": 11568,
+          "budget": 12736
+        },
+        "nimble_host": {
+          "measured": 4768,
+          "budget": 5248
+        },
+        "aq_ble_error": {
+          "stack_bytes": 3072,
+          "measured": 2544,
+          "budget": 2560
+        },
+        "aq-lan": {
+          "stack_bytes": 8192,
+          "measured": 4128,
+          "budget": 4544
+        },
+        "board": {
+          "stack_bytes": 16384,
+          "measured": 5024,
+          "budget": 5568
+        },
+        "esp_timer": {
+          "measured": 528,
+          "budget": 640
+        },
+        "sys_evt": {
+          "measured": 1040,
+          "budget": 1152
+        }
+      },
+      "sections": {
+        ".iram0.text": 129536,
+        ".dram0.data": 36096,
+        ".dram0.bss": 58368,
+        ".flash.text": 1200128,
+        ".flash.rodata": 259072,
+        ".noinit": 256
+      },
+      "sections_measured": {
+        ".iram0.text": 126859,
+        ".dram0.data": 35349,
+        ".dram0.bss": 57096,
+        ".flash.text": 1176454,
+        ".flash.rodata": 253936,
+        ".noinit": 3
+      }
+    },
+    "waveshare/logger": {
+      "build": "firmware/esp-idf-waveshare-sim7670g/build/logger",
+      "tasks": {
+        "parquet-sd": {
+          "stack_bytes": 24576,
+          "measured": 10480,
+          "budget": 11584
+        },
+        "nimble_host": {
+          "measured": 4768,
+          "budget": 5248
+        },
+        "aq_ble_error": {
+          "stack_bytes": 3072,
+          "measured": 2544,
+          "budget": 2560
+        },
+        "aq-lan": {
+          "stack_bytes": 8192,
+          "measured": 4128,
+          "budget": 4544
+        },
+        "board": {
+          "stack_bytes": 12288,
+          "measured": 4512,
+          "budget": 4992
+        },
+        "esp_timer": {
+          "measured": 528,
+          "budget": 640
+        },
+        "sys_evt": {
+          "measured": 1040,
+          "budget": 1152
+        }
+      },
+      "sections": {
+        ".iram0.text": 122368,
+        ".dram0.data": 34048,
+        ".dram0.bss": 55552,
+        ".flash.text": 1075456,
+        ".flash.rodata": 229376,
+        ".noinit": 0
+      },
+      "sections_measured": {
+        ".iram0.text": 119863,
+        ".dram0.data": 33348,
+        ".dram0.bss": 54280,
+        ".flash.text": 1054266,
+        ".flash.rodata": 224788,
+        ".noinit": 0
+      }
+    },
+    "waveshare/diagnostic": {
+      "build": "firmware/esp-idf-waveshare-sim7670g/build/diagnostic",
+      "tasks": {
+        "board": {
+          "stack_bytes": 12288,
+          "measured": 3184,
+          "budget": 3520
+        },
+        "esp_timer": {
+          "measured": 528,
+          "budget": 640
+        }
+      },
+      "sections": {
+        ".iram0.text": 57344,
+        ".dram0.data": 14848,
+        ".dram0.bss": 7424,
+        ".flash.text": 167936,
+        ".flash.rodata": 65024,
+        ".noinit": 0
+      },
+      "sections_measured": {
+        ".iram0.text": 56131,
+        ".dram0.data": 14392,
+        ".dram0.bss": 7240,
+        ".flash.text": 164610,
+        ".flash.rodata": 63620,
+        ".noinit": 0
+      }
+    }
+  }
+}

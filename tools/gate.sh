@@ -31,6 +31,7 @@ tasks=(
   "parquet-test --sanitize"
   "reader-test"
   "size-survey-test"
+  "stack-budget-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
   # Sensor drivers on fake buses

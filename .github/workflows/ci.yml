@@ -280,6 +280,19 @@ jobs:
             ${{ matrix.project }}/build/${{ matrix.variant }}/flash_args
           if-no-files-found: error
           retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+      # Static task stack worst case and linker section sizes against
+      # tools/stack_budget.json (issue #37). The image key is the board before
+      # the first dash of the leg name plus the variant, such as cores3/bringup.
+      - name: Check stack and section budgets
+        if: matrix.project
+        env:
+          NAME: ${{ matrix.name }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          status=0
+          pixi run stack-budget --check --image "${NAME%%-*}/${VARIANT}" > stack-budget.md || status=$?
+          cat stack-budget.md >> "$GITHUB_STEP_SUMMARY"
+          exit "${status}"
 
   # The one required status check. It fails unless every job above passed,
   # so adding, renaming or splitting a job never needs a ruleset change. A
