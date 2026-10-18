@@ -226,6 +226,39 @@ inline bool has_suffix(const char *name, const char *suffix) {
   return length > tail && std::strcmp(name + length - tail, suffix) == 0;
 }
 
+// Hands every ".partial" below `root` to move(relative), except those in the
+// top level "quarantine" directory. move() may rename the file it is given.
+// A directory deeper than DirectoryWalk::kMaxDepth is not entered. It goes
+// to too_deep(relative) instead, so a deep tree is reported and never
+// skipped silently. True only when every entry the walk reached was read.
+template <class IO, class Move, class TooDeep>
+bool find_partials(IO &io, const char *root, Move &move, TooDeep &too_deep) {
+  using Walk = DirectoryWalk<IO>;
+  auto visit = [&](const char *name, const struct stat &) {
+    if (has_suffix(name, ".partial"))
+      move(name);
+    return true;
+  };
+  auto enter = [&](const char *name) {
+    if (std::strcmp(name, "quarantine") == 0)
+      return false;
+    unsigned depth = 1;
+    for (const char *c = name; *c; ++c)
+      depth += *c == '/' ? 1U : 0U;
+    if (depth <= Walk::kMaxDepth)
+      return true;
+    too_deep(name);
+    return false;
+  };
+  Walk walk;
+  if (!walk.begin(io, root))
+    return false;
+  typename Walk::Status status;
+  while ((status = walk.step(1024, visit, enter)) == Walk::Status::More) {
+  }
+  return status == Walk::Status::Done;
+}
+
 // Quarantine keeps provenance. A ".partial" at `relative` below `root` moves
 // to "<root>/quarantine/<station>/<partition>/<name>-<boot>-<counter>.partial"
 // where <station> is the "station=..." segment (or "no-station") and the

@@ -80,7 +80,9 @@ Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
 `.partial` files are retained under `quarantine/<station>/<partition>/`, at boot
 and right after a same-boot failure; a partial whose finalized sibling exists is
-left in place as a crosslink suspect. Automated logging and sync never repair,
+left in place as a crosslink suspect. The boot walk is iterative and opens
+directories six levels deep. A deeper directory is not entered and prints
+`PARQUET ERROR operation=quarantine-depth`. Automated logging and sync never repair,
 delete or rewrite owner archives, and never format or upload. The separate
 physical serial [archive reset](../../../docs/shared/development.md#owner-maintenance)
 requires an explicitly requested destructive reset and is unavailable over radio.

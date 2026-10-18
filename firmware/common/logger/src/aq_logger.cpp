@@ -1208,57 +1208,24 @@ bool partial_name(const char *name) {
 
 // Move interrupted files out of active station trees without deleting or
 // pretending to repair them. Each lands under output/quarantine/ in a
-// directory that keeps its station and partition provenance.
-void quarantine_directory(const char *relative, unsigned depth,
-                          unsigned &quarantined) {
-  if (depth > 6)
-    return;
-  char directory_path[416];
-  std::snprintf(directory_path, sizeof(directory_path), "%s/%s", kDirectory,
-                relative);
-  DIR *directory;
-  {
-    BusLock lock;
-    directory = ::opendir(directory_path);
-  }
-  if (!directory)
-    return;
-  for (;;) {
-    stamp_heartbeat();
-    const struct dirent *entry;
-    {
-      BusLock lock;
-      entry = ::readdir(directory);
-    }
-    if (!entry)
-      break;
-    if (entry->d_name[0] == '.')
-      continue;
-    char name[384], path[416];
-    const int length = std::snprintf(name, sizeof(name), "%s%s%s", relative,
-                                     *relative ? "/" : "", entry->d_name);
-    if (length < 0 || std::size_t(length) >= sizeof(name) ||
-        std::strncmp(name, "quarantine/", 11) == 0)
-      continue;
-    std::snprintf(path, sizeof(path), "%s/%s", kDirectory, name);
-    struct stat info{};
-    {
-      BusLock lock;
-      if (::stat(path, &info) != 0)
-        continue;
-    }
-    if (S_ISDIR(info.st_mode)) {
-      quarantine_directory(name, depth + 1, quarantined);
-      continue;
-    }
-    if (!partial_name(name))
-      continue;
+// directory that keeps its station and partition provenance. The walk is
+// iterative with a fixed depth, and a directory past it is logged.
+void quarantine_directory(unsigned &quarantined) {
+  ArchiveDirectoryIO io;
+  auto move = [&](const char *name) {
     if (quarantine_one(kDirectory, name, "boot"))
       ++quarantined;
-  }
-  {
-    BusLock lock;
-    ::closedir(directory);
+  };
+  auto too_deep = [](const char *name) {
+    ++errors;
+    aqlog.printf(
+        "PARQUET ERROR operation=quarantine-depth dir=%s "
+        "max_depth=%u\n",
+        name, aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>::kMaxDepth);
+  };
+  if (!aq::logger::detail::find_partials(io, kDirectory, move, too_deep)) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=quarantine-walk errno=%d\n", errno);
   }
 }
 
@@ -1292,7 +1259,7 @@ unsigned quarantine_partials() {
     return 0;
   }
   unsigned quarantined = 0;
-  quarantine_directory("", 0, quarantined);
+  quarantine_directory(quarantined);
   unsigned total = 0;
   std::uint64_t bytes = 0;
   count_quarantine(total, bytes);
