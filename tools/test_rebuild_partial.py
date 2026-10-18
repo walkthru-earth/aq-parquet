@@ -199,8 +199,81 @@ def check_board(name: str, inc: Path, exe: Path, work: Path, sanitize: bool) -> 
             report = rp.rebuild(_cut_file(work, f"{label}-lz4", bytes(broken), len(broken)),
                                 work / "out" / f"{label}-lz4", fields)
             require(report["status"] == "rebuilt" and report["row_groups"] == 1, f"{label}: corrupt lz4 {report}")
-        checked += 5
+        checked += 5 + check_page_guards(work, label, data, info, fields, codec)
     return checked
+
+
+def page_header_bytes(raw_size: int, stored_size: int, rows: int) -> bytes:
+    """Encode a page header the way the writer does, for crafted pages."""
+    out = rp.Out()
+    header = rp.Struct(out)
+    header.number(1, rp.I32, 0)
+    header.number(2, rp.I32, raw_size)
+    header.number(3, rp.I32, stored_size)
+    header.field(5, rp.STRUCT)
+    body = rp.Struct(out)
+    for field_id, value in ((1, rows), (2, 0), (3, 3), (4, 3)):
+        body.number(field_id, rp.I32, value)
+    body.end()
+    header.end()
+    return bytes(out.buf)
+
+
+def torn(call, *args) -> str | None:
+    """Return the Torn message of a call, or None when it was accepted."""
+    try:
+        call(*args)
+    except rp.Torn as error:
+        return str(error)
+    return None
+
+
+def check_page_guards(work: Path, label: str, data: bytes, info: dict, fields: list[rp.Field], codec: str) -> int:
+    """Crafted pages in group 2 that a strict walk must refuse."""
+    code = rp.CODECS[codec]
+    pos = info["group_ends"][0]
+    index = next(i for i, f in enumerate(fields) if f.name == "sequence")
+    for f in fields[:index]:
+        start, _, stored, _ = rp.page_header(data, pos)
+        pos = start + stored
+    start, raw_size, stored_size, rows = rp.page_header(data, pos)
+    end = start + stored_size
+    require(data[pos:start] == page_header_bytes(raw_size, stored_size, rows), f"{label}: header encoder")
+    kind = fields[index].type
+
+    # A page whose row count differs from the first page of its group.
+    message = torn(rp.parse_page, data, pos, kind, code, rows - 1)
+    require(message is not None and "rows" in message, f"{label}: page row mismatch {message}")
+    if codec == "none":
+        return 1
+
+    # A short LZ4 block that keeps the header raw size. Arrow fills the
+    # missing tail with whatever was in memory, so only an exact length check
+    # refuses it.
+    raw = rp.pa.decompress(data[start:end], decompressed_size=raw_size, codec="lz4_raw", asbytes=True)
+    short = rp.pa.compress(raw[:-8], codec="lz4_raw", asbytes=True)
+    page = page_header_bytes(raw_size, len(short), rows) + short
+    crafted = data[:pos] + page + data[end : info["group_ends"][1]]
+    message = torn(rp.parse_page, crafted, pos, kind, code, rows)
+    require(message is not None and "fewer bytes" in message, f"{label}: short lz4 block {message}")
+    report = rp.rebuild(_cut_file(work, f"{label}-short", crafted, len(crafted)), work / "out" / f"{label}-short",
+                        fields)
+    require(report["status"] == "rebuilt" and report["row_groups"] == 1, f"{label}: short lz4 block {report}")
+
+    # A header asking for more bytes than any writer page is never allocated.
+    huge = data[:pos] + page_header_bytes(2**31 - 1, stored_size, rows) + data[start:end]
+    message = torn(rp.parse_page, huge, pos, kind, code, rows)
+    require(message is not None and "writer layout" in message, f"{label}: huge raw size {message}")
+    return 3
+
+
+def check_levels() -> None:
+    """A definition level above 1 is refused even when the sizes add up."""
+    payload = b"\x02\x00\x00\x00\x06\x02"  # one RLE run of 3 rows at level 2
+    message = torn(rp.decode_payload, payload, 3, rp.INT32)
+    require(message is not None and "max level" in message, f"level above 1 {message}")
+    message = torn(rp.decode_payload, b"\x02\x00\x00\x00\x06\x00", 3, rp.INT32)
+    require(message is None, "an all null run decodes")
 
 
 def _cut_file(work: Path, label: str, data: bytes, cut: int) -> Path:
@@ -273,6 +346,7 @@ def main() -> None:
         waveshare = rp.BOARD_FIELDS["waveshare"]
         check_older_prefix(waveshare, work / "fixture-older", work, args.sanitize)
         check_cli(waveshare, work)
+        check_levels()
     suffix = " (ASan + UBSan fixture)" if args.sanitize else ""
     print(f"PASS partial rebuild, {checked} cuts and corruptions across both boards and codecs{suffix}")
 

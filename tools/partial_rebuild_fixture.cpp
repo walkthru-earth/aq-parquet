@@ -64,9 +64,12 @@ void put_float(Row &row, std::size_t field, float value) {
 }
 
 // Deterministic rows. Global row r spans every group. Identity and clock
-// fields are always present, other fields have nulls, and float fields carry
-// NaN and a negative zero in the first group so the rebuilt statistics follow
-// the writer rules.
+// fields are always present and other fields have nulls. Float fields carry a
+// NaN in the first group. In that group every third float field starts at a
+// positive zero and only grows, so its minimum is +0.0 and the writer stores
+// -0.0. The next field only falls and holds a negative zero, so its maximum is
+// -0.0 and the writer stores +0.0. That pins both signed zero rules in the
+// rebuilt statistics.
 void fill(Row &row, std::size_t r) {
   for (std::size_t i = 0; i < kFieldCount; ++i) {
     const auto &field = kFields[i];
@@ -95,9 +98,13 @@ void fill(Row &row, std::size_t r) {
     } else {
       float value =
           static_cast<float>(r) * 0.5F - 20.0F + static_cast<float>(i) * 0.01F;
+      if (i % 3 == 0)
+        value = static_cast<float>(r) * 0.5F;
+      else if (i % 3 == 1)
+        value = -static_cast<float>(r) * 0.5F - 0.25F;
       if (r == 1 && i % 2 == 0)
         value = std::numeric_limits<float>::quiet_NaN();
-      if (r == 2)
+      if (r == 2 && i % 3 != 0)
         value = -0.0F;
       put_float(row, i, value);
     }

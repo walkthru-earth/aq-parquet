@@ -179,6 +179,11 @@ def parse_page(data: bytes, pos: int, kind: int, codec: int, rows: int | None) -
         raise Torn(f"page at {pos} has {page_rows} rows, the group has {rows}")
     if start + stored_size > len(data):
         raise Torn(f"page at {pos} ends past the bytes on the card")
+    # The writer emits at most one RLE run per row (a varint of at most 3
+    # bytes for 65536 rows, plus the value byte) and one value per row, so a
+    # larger raw size is not a writer page and is never allocated.
+    if raw_size > 4 + page_rows * (4 + WIDTH[kind]):
+        raise Torn(f"page at {pos} declares more bytes than the writer layout allows")
     stored = data[start : start + stored_size]
     if codec == UNCOMPRESSED:
         if stored_size != raw_size:
@@ -189,8 +194,15 @@ def parse_page(data: bytes, pos: int, kind: int, codec: int, rows: int | None) -
             raw = pa.decompress(stored, decompressed_size=raw_size, codec="lz4_raw", asbytes=True)
         except (OSError, ValueError) as error:
             raise Torn(f"page at {pos} does not decompress: {error}") from None
-        if len(raw) != raw_size:
-            raise Torn(f"page at {pos} decompressed to the wrong size")
+        # Arrow returns raw_size bytes even when the block decodes to fewer
+        # and leaves the tail uninitialized. A block that also fits in one
+        # byte less is short, so only an exact length passes.
+        try:
+            pa.decompress(stored, decompressed_size=raw_size - 1, codec="lz4_raw", asbytes=True)
+        except (OSError, ValueError):
+            pass
+        else:
+            raise Torn(f"page at {pos} decompresses to fewer bytes than its header says")
     present, values = decode_payload(raw, page_rows, kind)
     header_size = start - pos
     return Chunk(pos, header_size + stored_size, header_size + raw_size, present, values)
