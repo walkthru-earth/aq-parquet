@@ -8,6 +8,22 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## LIVE key stability rule (docs only, opensensor-space-mobile #153)
+
+**What changed.** [ble-sync-protocol.md](ble-sync-protocol.md#live-key-stability)
+now states that a LIVE key never changes meaning once released, and that a new
+meaning gets a new key. Firmware releases that change the LIVE layout say
+**needs app update** in their release notes and in their entry here. No
+firmware, key, digest or identity string changes.
+
+**Why.** A digest that moves only because of a comment or whitespace edit used
+to stop live readings on every app that did not know it yet.
+
+**What the app must do.** Keep mapping known digests to their reviewed
+profiles. For an unknown digest, read only the keys in the LIVE table, by
+name, and ignore the rest. `imu_t` stays board temperature and `t` stays
+ambient air.
+
 ## Longer DIAG tasks and DIAG heap lines (fix-37-stack-budgets, issue #37)
 
 **What changed.** The hourly `DIAG tasks` line in `LOG_TAIL` gains

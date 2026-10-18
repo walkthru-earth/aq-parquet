@@ -180,7 +180,7 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null** (invalid, unavailable or non-finite), never zero. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
-Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it and needs a phone release.
+Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its reviewed LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
 
 ```json
 {"seq":15021,"mono":150210000000,"utc":1757990410000000000,"pms":4,
@@ -204,6 +204,14 @@ Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (th
 | `als` | CoreS3 `light_ch0_raw` |
 
 PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
+
+#### LIVE key stability
+
+- A LIVE key never changes meaning once released. Meaning is the quantity, the unit, the source (board or ambient air) and every code value. A new meaning gets a new key. A retired key is never reused.
+- Each key in the table above means the same thing on every board. `imu_t` is always the IMU die temperature, never air. `t` is always ambient air temperature. A board that has no valid value for a key leaves the key out.
+- Firmware may add or drop keys. Clients read keys by name and ignore keys they do not know, so an app that meets an unknown digest can still show the keys in this table and hide the rest. It never guesses a meaning from a device name, a firmware string or a value.
+- CoreS3 builds on dictionaries `cores3-telemetry-v2` to `-v4`, and the e166978 build under `22291d3a…` (v6.12), sent the IMU die temperature as `t`. They predate this rule. Clients handle them by digest, and no later release may do the same.
+- Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, or a new code value. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry, but older apps keep their live readings.
 
 ### `control` (write) and `response` (notify)
 
