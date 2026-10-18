@@ -189,11 +189,8 @@ std::atomic<bool> unlisted_files{false};
 namespace list_since = aq::logger::list_since;
 std::atomic<std::uint32_t> mount_epoch{0};
 list_since::RingKeeper boot_ring;
-// Lowest day= folder this boot created a dated file in, 0 for none. RAM only,
-// so a clock moved back across a reboot is caught by the periodic audit.
-std::uint32_t lowest_dated_day = 0;
-// Last sequence of this boot's newest finalized unsynced file.
-std::optional<std::uint64_t> last_unsynced_seq;
+// The lowest dated day and the last unsynced sequence of this boot.
+list_since::Tracker since_state;
 std::int64_t boot_hi = 0, boot_lo = 0, device = 0, next_sample_us = 0;
 std::int64_t sample_sequence = 0;
 std::atomic<std::int64_t> missed_deadlines{0};
@@ -627,9 +624,22 @@ void note_unsynced_boot() {
     const auto *ring = boot_ring.ring(ring_store);
     aqlog.printf("PARQUET BOOT_RING appended=%lu\n",
                  static_cast<unsigned long>(ring ? ring->appended() : 0));
-  } else {
-    aqlog.println("PARQUET WARN operation=boot-ring list_since=unsynced-full");
+    return;
   }
+  aqlog.println("PARQUET WARN operation=boot-ring list_since=unsynced-full");
+  if (!boot_ring.needs_marker())
+    return;
+  // A later boot's ring will not name this boot, so its LIST_SINCE finds
+  // the boot folder through this marker.
+  char marker[192];
+  const int length = std::snprintf(
+      marker, sizeof(marker), "%s/station=%s/unsynced/%s%s", kDirectory,
+      station_text, list_since::kRinglessPrefix, boot_text);
+  if (length > 0 && static_cast<std::size_t>(length) < sizeof(marker) &&
+      make_directories(marker))
+    boot_ring.marker_made();
+  else
+    aqlog.println("PARQUET ERROR operation=boot-ring-marker");
 }
 
 // Creates `<partition>/<prefix>_<boot>_<first>-<attempt>.partial` from the
@@ -662,11 +672,9 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
     std::snprintf(prefix, sizeof(prefix), "data_%02d%02d", utc.tm_hour,
                   utc.tm_min);
     target.dated = true;
-    lowest_dated_day = list_since::min_known(
-        lowest_dated_day,
-        static_cast<std::uint32_t>(utc.tm_year + 1900) * 10000 +
-            static_cast<std::uint32_t>(utc.tm_mon + 1) * 100 +
-            static_cast<std::uint32_t>(utc.tm_mday));
+    since_state.dated(static_cast<unsigned>(utc.tm_year + 1900),
+                      static_cast<unsigned>(utc.tm_mon + 1),
+                      static_cast<unsigned>(utc.tm_mday));
   } else {
     partition_length =
         std::snprintf(partition, sizeof(partition),
@@ -899,8 +907,7 @@ bool finalize_file(OutputFile &target) {
   }
   ++finalized;
   unlisted_files = true;
-  if (!target.benchmark && !target.dated && target.last >= 0)
-    last_unsynced_seq = static_cast<std::uint64_t>(target.last);
+  since_state.finalized(target.benchmark, target.dated, target.last);
   if (!target.benchmark)
     remember_crc(ready, size, crc);
   aqlog.printf(
@@ -976,9 +983,6 @@ bool emit_file_serial(void *, const char *name, std::uint32_t bytes) {
   return true;
 }
 
-// Walks the main archive tree, then the legacy tree, in bounded steps. Only a
-// complete scan replaces the partial counter. Holds its directories open
-// between steps until it ends or cancel() runs.
 // The UTC day before today, 0 without UTC.
 std::uint32_t utc_yesterday() {
   std::int32_t generation;
@@ -1030,6 +1034,10 @@ struct ListVisitor {
   }
 };
 
+// Walks the main archive tree, then the legacy tree, in bounded steps. Only a
+// complete scan replaces the partial counter. Holds its directories open
+// between steps until it ends or cancel() runs. step_since() runs the
+// LIST_SINCE walk through the same IO, one walk at a time.
 class ArchiveList {
 public:
   aqsync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
@@ -1093,15 +1101,8 @@ public:
                                 void *context, unsigned &partials) {
     if (start) {
       cancel();
-      list_since::Inputs in;
-      in.cursor = cursor;
-      in.mount_epoch = mount_epoch.load();
-      in.yesterday = utc_yesterday();
-      in.lowest_dated = lowest_dated_day;
-      in.ring = boot_ring.ring(ring_store);
-      in.current = boot_ring.current();
-      in.current_unlisted = boot_ring.current_unlisted();
-      in.current_last_seq = last_unsynced_seq;
+      const auto in = since_state.inputs(
+          cursor, mount_epoch.load(), utc_yesterday(), boot_ring, ring_store);
       const auto plan = list_since::plan(in);
       result = plan.result;
       aqlog.printf("LIST_SINCE plan full=%u floor=%lu unsynced_full=%u "
@@ -1132,8 +1133,11 @@ public:
       cancel();
       return aqsync::ListStatus::Stopped;
     }
-    // Its partials count covers only the folders it read, so STATUS keeps
-    // the count of the last full walk.
+    // Ringless markers past kMaxRingless made it walk the whole unsynced
+    // tree. Its partials count covers only the folders it read, so STATUS
+    // keeps the count of the last full walk.
+    if (since_.widened())
+      result.flags |= aqsync::kListSinceUnsyncedFull;
     cancel();
     return aqsync::ListStatus::Complete;
   }

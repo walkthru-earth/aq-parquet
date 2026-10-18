@@ -163,6 +163,11 @@ public:
   // This boot made an unsynced folder the ring does not name.
   bool current_unlisted() const { return unsynced_ && !held_; }
   bool appended() const { return held_; }
+  // The append failed and no ringless= marker names this boot yet. The
+  // logger then makes "station=<id>/unsynced/ringless=<boot>", so a later
+  // boot's LIST_SINCE still finds this boot's folder.
+  bool needs_marker() const { return current_unlisted() && !marked_; }
+  void marker_made() { marked_ = true; }
 
 private:
   bool load(const RingStore &store) {
@@ -196,6 +201,7 @@ private:
   bool loaded_ = false;
   bool unsynced_ = false;
   bool held_ = false;
+  bool marked_ = false;
 };
 
 // Days since 1970-01-01 of a civil date (proleptic Gregorian).
@@ -432,10 +438,56 @@ constexpr Plan plan(const Inputs &in) {
   return out;
 }
 
+// What this boot wrote that the next LIST_SINCE must know. RAM only, so a
+// clock moved back across a reboot is caught by the periodic audit. The
+// logger calls dated() before it creates a dated file, finalized() after a
+// file was renamed into place, and inputs() when a LIST_SINCE starts.
+class Tracker {
+public:
+  constexpr void dated(unsigned year, unsigned month, unsigned day) {
+    lowest_dated_ =
+        min_known(lowest_dated_,
+                  static_cast<std::uint32_t>(year) * 10000 + month * 100 + day);
+  }
+  // Only an unsynced station file moves the sequence the cursor resumes at.
+  constexpr void finalized(bool benchmark, bool dated_file, std::int64_t last) {
+    if (!benchmark && !dated_file && last >= 0)
+      last_unsynced_seq_ = static_cast<std::uint64_t>(last);
+  }
+  Inputs inputs(const aqsync::ListCursor &cursor, std::uint32_t mount_epoch,
+                std::uint32_t yesterday, RingKeeper &keeper,
+                const RingStore &store) const {
+    Inputs in;
+    in.cursor = cursor;
+    in.mount_epoch = mount_epoch;
+    in.yesterday = yesterday;
+    in.lowest_dated = lowest_dated_;
+    in.ring = keeper.ring(store);
+    in.current = keeper.current();
+    in.current_unlisted = keeper.current_unlisted();
+    in.current_last_seq = last_unsynced_seq_;
+    return in;
+  }
+  constexpr std::uint32_t lowest_dated() const { return lowest_dated_; }
+  constexpr std::optional<std::uint64_t> last_unsynced_seq() const {
+    return last_unsynced_seq_;
+  }
+
+private:
+  std::uint32_t lowest_dated_ = 0;
+  std::optional<std::uint64_t> last_unsynced_seq_;
+};
+
+// The folder name that marks a boot whose ring append failed.
+inline constexpr char kRinglessPrefix[] = "ringless=";
+// Ringless boots one walk reads by name. More widen it to the whole tree.
+inline constexpr std::size_t kMaxRingless = 4;
+
 // The incremental LIST_SINCE walk of one station: the dated tree above the
-// floor, then the unsynced tree or the planned ring boot folders. Same step
-// contract as DirectoryWalk. visit(name, info) sees every file, with name
-// relative to the archive root, exactly as plain LIST names it.
+// floor, then the unsynced tree, or the planned ring boot folders followed by
+// one read of "unsynced/" for ringless= markers and the boot folders they
+// name. Same step contract as DirectoryWalk. visit(name, info) sees every file,
+// with name relative to the archive root, exactly as plain LIST names it.
 template <class IO> class IncrementalWalk {
 public:
   using Walk = aq::logger::detail::DirectoryWalk<IO>;
@@ -457,6 +509,7 @@ public:
     }
     phase_ = Phase::Dated;
     age_ = chosen.first_age;
+    widened_ = false;
     return open(walk_.begin(io, root, station_, 1));
   }
 
@@ -472,6 +525,19 @@ public:
         return enter_dated(relative, plan_.floor);
       };
       status = walk_.step(budget, visit, enter);
+    } else if (phase_ == Phase::Unsynced && widened_) {
+      // The ring folders this walk already read are not read again.
+      auto enter = [this](const char *relative) {
+        return !read_in_boots(relative);
+      };
+      status = walk_.step(budget, visit, enter);
+    } else if (phase_ == Phase::Scan) {
+      auto skip = [](const char *, const struct stat &) { return true; };
+      auto note = [this](const char *relative) {
+        note_marker(relative);
+        return false;
+      };
+      status = walk_.step(budget, skip, note);
     } else if (phase_ == Phase::Boots && age_ == plan_.first_age &&
                plan_.first_seq) {
       auto filtered = [&](const char *name, const struct stat &info) {
@@ -498,8 +564,63 @@ public:
     phase_ = Phase::Done;
   }
 
+  // True when ringless markers made the walk read the whole unsynced tree.
+  bool widened() const { return widened_; }
+
 private:
-  enum class Phase : std::uint8_t { Dated, Unsynced, Boots, Done };
+  enum class Phase : std::uint8_t {
+    Dated,
+    Unsynced,
+    Boots,
+    Scan,
+    Ringless,
+    Done
+  };
+
+  // Whether `relative` is a boot= folder the Boots phase read.
+  bool read_in_boots(const char *relative) const {
+    const char *name = std::strrchr(relative, '/');
+    name = name ? name + 1 : relative;
+    BootId boot{};
+    if (!detail::starts(name, "boot=") || !parse_boot(name + 5, boot))
+      return false;
+    const auto age = ring_.find(boot);
+    return age && *age >= plan_.first_age;
+  }
+
+  // Notes a ringless=<boot> folder of a boot the ring does not hold.
+  void note_marker(const char *relative) {
+    const char *name = std::strrchr(relative, '/');
+    name = name ? name + 1 : relative;
+    if (!detail::starts(name, kRinglessPrefix))
+      return;
+    BootId boot{};
+    if (!parse_boot(name + sizeof(kRinglessPrefix) - 1, boot) ||
+        ring_.find(boot))
+      return;
+    const auto known = std::span(ringless_).first(ringless_count_);
+    if (std::ranges::any_of(known,
+                            [&](const BootId &seen) { return seen == boot; }))
+      return;
+    if (ringless_count_ == ringless_.size()) {
+      overflow_ = true;
+      return;
+    }
+    ringless_[ringless_count_++] = boot;
+  }
+
+  bool open_unsynced(char (&relative)[160]) {
+    std::snprintf(relative, sizeof(relative), "%s/unsynced", station_);
+    return open(walk_.begin(*io_, root_, relative, 2));
+  }
+
+  bool open_boot(const BootId &id, char (&relative)[160]) {
+    char boot[33] = {};
+    format_boot(id, boot);
+    std::snprintf(relative, sizeof(relative), "%s/unsynced/boot=%s", station_,
+                  boot);
+    return walk_.begin(*io_, root_, relative, 3);
+  }
 
   // A missing folder is an empty one. Any other failure fails the walk.
   static bool open(bool opened) { return opened || errno == ENOENT; }
@@ -509,27 +630,51 @@ private:
   bool next_phase() {
     char relative[160];
     for (;;) {
-      if (phase_ == Phase::Dated) {
-        phase_ = plan_.unsynced_full ? Phase::Unsynced : Phase::Boots;
-        if (phase_ == Phase::Unsynced) {
-          std::snprintf(relative, sizeof(relative), "%s/unsynced", station_);
-          return open(walk_.begin(*io_, root_, relative, 2));
+      switch (phase_) {
+      case Phase::Dated:
+        if (plan_.unsynced_full) {
+          phase_ = Phase::Unsynced;
+          return open_unsynced(relative);
         }
+        phase_ = Phase::Boots;
         continue;
-      }
-      if (phase_ == Phase::Unsynced || age_ >= ring_.size()) {
+      case Phase::Boots:
+        if (age_ < ring_.size()) {
+          if (open_boot(ring_.at(age_), relative))
+            return true;
+          if (errno != ENOENT)
+            return false;
+          ++age_;
+          continue;
+        }
+        phase_ = Phase::Scan;
+        ringless_count_ = 0;
+        overflow_ = false;
+        return open_unsynced(relative);
+      case Phase::Scan:
+        if (overflow_) {
+          widened_ = true;
+          phase_ = Phase::Unsynced;
+          return open_unsynced(relative);
+        }
+        phase_ = Phase::Ringless;
+        next_ringless_ = 0;
+        continue;
+      case Phase::Ringless:
+        if (next_ringless_ < ringless_count_) {
+          if (open_boot(ringless_[next_ringless_++], relative))
+            return true;
+          if (errno != ENOENT)
+            return false;
+          continue;
+        }
+        phase_ = Phase::Done;
+        return true;
+      case Phase::Unsynced:
+      case Phase::Done:
         phase_ = Phase::Done;
         return true;
       }
-      char boot[33] = {};
-      format_boot(ring_.at(age_), boot);
-      std::snprintf(relative, sizeof(relative), "%s/unsynced/boot=%s", station_,
-                    boot);
-      if (walk_.begin(*io_, root_, relative, 3))
-        return true;
-      if (errno != ENOENT)
-        return false;
-      ++age_;
     }
   }
 
@@ -541,6 +686,11 @@ private:
   Ring ring_{};
   Phase phase_ = Phase::Done;
   std::size_t age_ = 0;
+  std::array<BootId, kMaxRingless> ringless_{};
+  std::size_t ringless_count_ = 0;
+  std::size_t next_ringless_ = 0;
+  bool overflow_ = false;
+  bool widened_ = false;
 };
 
 } // namespace aq::logger::list_since

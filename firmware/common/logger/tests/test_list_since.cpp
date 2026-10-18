@@ -86,6 +86,7 @@ std::string unsynced(const ls::BootId &boot, unsigned first) {
 struct Listing {
   std::set<std::string> names;
   unsigned reads = 0;
+  bool widened = false;
 };
 
 Listing run(const ls::Plan &plan, const ls::Ring &ring, unsigned budget = 32) {
@@ -109,6 +110,7 @@ Listing run(const ls::Plan &plan, const ls::Ring &ring, unsigned budget = 32) {
     assert(status == Status::More);
   }
   out.reads = io.reads;
+  out.widened = walk.widened();
   return out;
 }
 
@@ -262,7 +264,7 @@ void check_keeper() {
   {
     ls::RingKeeper keeper;
     keeper.set_current(boot_of(1));
-    assert(!keeper.current_unlisted());
+    assert(!keeper.current_unlisted() && !keeper.needs_marker());
     keeper.note_unsynced(nvs.store());
     keeper.note_unsynced(nvs.store());
     assert(nvs.saves == 1 && keeper.appended() && !keeper.current_unlisted());
@@ -282,6 +284,10 @@ void check_keeper() {
     nvs.fail_save = true;
     keeper.note_unsynced(nvs.store());
     assert(!keeper.appended() && keeper.current_unlisted());
+    // The logger then marks the boot folder once.
+    assert(keeper.needs_marker());
+    keeper.marker_made();
+    assert(!keeper.needs_marker());
     // The RAM ring keeps what NVS holds.
     assert(keeper.ring(nvs.store())->size() == 2);
     ls::Inputs in{
@@ -301,6 +307,7 @@ void check_keeper() {
     nvs.fail_save = false;
     keeper.note_unsynced(nvs.store());
     assert(keeper.appended() && !keeper.current_unlisted());
+    assert(!keeper.needs_marker());
     assert(keeper.ring(nvs.store())->holds_newest(boot_of(3)));
   }
   // A failing read gives no ring, so LIST_SINCE walks every unsynced boot.
@@ -332,6 +339,43 @@ void check_keeper() {
     keeper.note_unsynced(odd.store());
     assert(odd.saves == 0 && !keeper.ring(odd.store()));
   }
+}
+
+// The state the logger keeps per boot and hands to plan().
+void check_tracker() {
+  ls::Tracker tracker;
+  assert(tracker.lowest_dated() == 0 && !tracker.last_unsynced_seq());
+  tracker.dated(2026, 3, 15);
+  tracker.dated(2026, 3, 16);
+  assert(tracker.lowest_dated() == 20260315);
+  // A clock moved back lowers it.
+  tracker.dated(2025, 12, 31);
+  assert(tracker.lowest_dated() == 20251231);
+  // Benchmark files, dated files and a negative sequence leave it alone.
+  tracker.finalized(false, false, 40);
+  tracker.finalized(true, false, 90);
+  tracker.finalized(false, true, 91);
+  tracker.finalized(false, false, -1);
+  assert(tracker.last_unsynced_seq() == 40);
+  tracker.finalized(false, false, 44);
+  assert(tracker.last_unsynced_seq() == 44);
+
+  FakeStore nvs;
+  ls::RingKeeper keeper;
+  keeper.set_current(boot_of(6));
+  keeper.note_unsynced(nvs.store());
+  const aqsync::ListCursor cursor{
+      .mount_epoch = 5, .day = 20260316, .boot = boot_of(6), .seq = 30};
+  const auto in = tracker.inputs(cursor, 5, 20260317, keeper, nvs.store());
+  assert(in.cursor.day == 20260316 && in.cursor.seq == 30);
+  assert(in.mount_epoch == 5 && in.yesterday == 20260317);
+  assert(in.lowest_dated == 20251231 && in.current_last_seq == 44);
+  assert(in.ring && in.ring->holds_newest(boot_of(6)));
+  assert(in.current == boot_of(6) && !in.current_unlisted);
+  // The backdated day lowers the floor, and the cursor resumes after 44.
+  const auto plan = ls::plan(in);
+  assert(plan.floor == 20251231 && plan.first_seq == 30);
+  assert(plan.result.next.boot == boot_of(6) && plan.result.next.seq == 45);
 }
 
 ls::Inputs inputs(const aqsync::ListCursor &cursor, const ls::Ring *ring,
@@ -518,6 +562,42 @@ void check_walks() {
   assert(!listing.names.count(unsynced(later, 0)));
   assert(listing.names.count(dated(2025, 12, 31, later, 8)));
 
+  // A boot whose ring append failed all boot is in no ring. Its ringless=
+  // marker makes later walks read its whole folder. A marker for a boot the
+  // ring holds is ignored, so nothing is listed twice.
+  const auto ringless = boot_of(5);
+  const std::string unsynced_dir = station_dir() + "/unsynced/";
+  std::filesystem::create_directories(root_path / unsynced_dir /
+                                      ("ringless=" + hex(ringless)));
+  std::filesystem::create_directories(root_path / unsynced_dir /
+                                      ("ringless=" + hex(later)));
+  std::set<std::string> hidden;
+  hidden.insert(touch(unsynced(ringless, 0)));
+  hidden.insert(touch(unsynced(ringless, 5)));
+  plan = ls::plan(in);
+  assert(!plan.unsynced_full);
+  listing = run(plan, ring);
+  for (const auto &name : hidden)
+    assert(listing.names.count(name));
+  // The ring boot `later` was fully listed, so its marker reads nothing.
+  assert(!listing.names.count(unsynced(later, 0)));
+  assert(!listing.widened);
+  // Without the marker the boot stays hidden, the gap the marker closes.
+  std::filesystem::remove(root_path / unsynced_dir /
+                          ("ringless=" + hex(ringless)));
+  assert(!run(plan, ring).names.count(unsynced(ringless, 0)));
+  std::filesystem::create_directories(root_path / unsynced_dir /
+                                      ("ringless=" + hex(ringless)));
+  // More markers than one walk tracks widen it to the whole unsynced tree.
+  for (unsigned i = 10; i < 10 + ls::kMaxRingless; ++i)
+    std::filesystem::create_directories(root_path / unsynced_dir /
+                                        ("ringless=" + hex(boot_of(i))));
+  listing = run(plan, ring);
+  assert(listing.widened);
+  for (const auto &name : everything())
+    if (name.find("/unsynced/") != std::string::npos)
+      assert(listing.names.count(name));
+
   // A ring boot whose folder is gone is skipped, as is a missing station.
   ring.append(boot_of(4));
   in.cursor.boot = later;
@@ -538,6 +618,7 @@ int main(int argc, char **argv) {
   check_names_and_dates();
   check_ring();
   check_keeper();
+  check_tracker();
   check_plan();
   check_walks();
 }
