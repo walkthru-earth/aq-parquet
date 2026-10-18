@@ -269,8 +269,10 @@ writes nothing looking alive.
   bench task watchdog reset on the Waveshare board with Wi-Fi off wrote a
   24992 byte dump that `coredump-info` decoded. A dump larger than the
   partition is not saved at all, and the size with Wi-Fi, BLE and LAN running
-  is not measured yet (issue #49). The next boot reports a saved dump on the
-  console only, not in the LOG ring.
+  is not measured yet (issue #49). The first boot after a new dump also
+  writes one `COREDUMP` line to the LOG ring, see
+  `firmware/common/runtime/AGENTS.md`. Later boots stay quiet for the same
+  dump, and the dump stays in flash.
   Idle tasks keep their print-only behavior until a worker stall is declared.
 - If the worker stamps again before that period ends, the supervisor recovers.
   It withdraws the pending stall, restores the task watchdog config the IDF

@@ -8,6 +8,36 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## COREDUMP line in the LOG ring (fix/49-coredump-report, part of issue #49)
+
+**What changed.** The first boot after a new core dump is saved to flash
+writes one additive line to the LOG ring, which `LOG_TAIL` returns.
+
+```
+COREDUMP present=1 valid=1 bytes=24992 sha=0708090a0b0c0d0e task=parquet-sd pc=0x4037a1b2 exc_cause=1 exc_vaddr=0x00000000 elf=3f2a1b0c prior=none saved=1
+```
+
+`valid` is `1` when the stored checksum matches, `0` when the dump is
+corrupt and `unknown` when the flash could not be read. `bytes` is the image
+size, `sha` the first 8 bytes of its stored SHA-256 in hex, `task` the
+crashed task, `pc`, `exc_cause` and `exc_vaddr` the exception registers, and
+`elf` a prefix of the crashed image's ELF SHA-256. Each of `task`, `pc`,
+`exc_cause`, `exc_vaddr` and `elf` is `-` when the summary is not available.
+`prior` is `none`, `other` (an older dump was reported before), `corrupt` or
+`unknown` (the saved record could not be read). `saved` is `1` once the
+device has recorded the dump as reported. When the dump cannot be identified
+the line is `COREDUMP present=unknown valid=0 error=read-failed` or
+`COREDUMP present=1 valid=0 error=invalid-size`. Later boots stay quiet for
+the same dump unless the record could not be read or saved. The dump is never
+erased. No frame layout, opcode, error code, LIVE key or column changed.
+
+**Why.** ESP-IDF printed the saved dump on the console only, so a crash in the
+field left no trace in what the app collects.
+
+**What the app must do.** Nothing. The line is plain LOG text. An app that
+shows device logs may flag a `COREDUMP` line, and parse it as space separated
+`key=value` pairs that may grow new keys. The values hold no secrets.
+
 ## ABORT stops a LIST within one step (fix/33-abort-list-walk)
 
 **What changed.** The device walks the card for `LIST` in steps of at most 32
