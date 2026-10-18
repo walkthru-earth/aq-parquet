@@ -89,7 +89,13 @@ the same rule, so an app should not expect to see it.
 Serial and `LOG_TAIL` gain a line `BLE BONDED authenticated=true bonds=N
 via=access`, `via=connect` or `via=subscribe` when the board learns the link
 is secure without the encryption event. A later encryption event on that
-link logs no second `BLE BONDED` line. No frame layout changed.
+link logs no second `BLE BONDED` line. A bonded central that encrypts
+before the board processes the connection (macOS does) now keeps the
+`response` subscription NimBLE restores from the bond. Before, that
+subscription was lost, so every frame of the first `LIST` was refused and
+its closing `ERROR` 7 never arrived. The board logs such a restore as
+`BLE SUBSCRIBE early=N response=1`, and a frame refused because `response`
+is not subscribed as `BLE REFUSE reason=unsubscribed`. No frame layout changed.
 
 **Why.** Issue #51, a reconnect looked like a hung sync.
 

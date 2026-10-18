@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstring>
 #include <span>
+#include <string_view>
+#include <utility>
 
 using aqsync::EnqueueResult;
 using ble::AdvertWindow;
@@ -645,6 +647,228 @@ void test_no_auth_refusal_answers_busy() {
   assert(!ble::is_auth_refusal(not_error));
   assert(!ble::is_auth_refusal(std::span<const std::uint8_t>{}));
 }
+// The bonded reconnect from the 2026-10-18 bench. A model of ble_sync.cpp's
+// gap_event built from the same decisions, in NimBLE's event order.
+// test_ble_policy.py checks that ble_sync.cpp wires them the same way.
+constexpr unsigned kResponse = 4; // ble_sync.cpp Characteristic::Response
+struct Transport {
+  bool connected = false;
+  bool authenticated = false;
+  bool live_secure = false;
+  std::uint16_t handle = ble::PendingCccd::kNone;
+  std::uint32_t generation = 0;
+  std::array<bool, 5> subscribed{};
+  ble::PendingCccd early;
+  ResponseQueue queue = queue_for(0);
+  int fault_logs = 0;
+  std::uint32_t refusal_logged = ~0U;
+
+  void apply(unsigned which, bool notify, bool closing) {
+    subscribed[which] = notify;
+    if (which != kResponse || !connected)
+      return;
+    const auto change =
+        ble::response_subscribe(notify, closing, queue.open_for(generation));
+    if (change == StreamChange::Close)
+      queue.close();
+    else if (change == StreamChange::Reopen)
+      queue.open(++generation, 0);
+  }
+  void on_subscribe(std::uint16_t event_handle, unsigned which, bool notify,
+                    bool closing = false) {
+    switch (ble::route_subscribe(connected, event_handle == handle)) {
+    case ble::SubscribeRoute::Drop:
+      return;
+    case ble::SubscribeRoute::Hold:
+      early.hold(event_handle, which, notify);
+      return;
+    case ble::SubscribeRoute::Apply:
+      if (!closing && ble::should_latch(true, authenticated, live_secure))
+        authenticated = true;
+      apply(which, notify, closing);
+    }
+  }
+  // ENC_CHANGE before CONNECT goes nowhere, the handle is not known yet.
+  void on_enc_change(std::uint16_t event_handle) {
+    live_secure = true;
+    if (connected && event_handle == handle)
+      authenticated = true;
+  }
+  void on_connect(std::uint16_t event_handle) {
+    ++generation;
+    handle = event_handle;
+    authenticated = false;
+    connected = true;
+    subscribed.fill(false);
+    queue.open(generation, 0);
+    early.replay(event_handle, [this](unsigned which, bool notify) {
+      apply(which, notify, false);
+    });
+    if (ble::should_latch(true, authenticated, live_secure))
+      authenticated = true;
+  }
+  void on_disconnect() {
+    connected = false;
+    authenticated = false;
+    handle = ble::PendingCccd::kNone;
+    ++generation;
+    subscribed.fill(false);
+    early.clear();
+    queue.close();
+  }
+  // enqueue_response(): the gate, then a credit.
+  EnqueueResult send(std::span<const std::uint8_t> frame) {
+    Gate gate{
+        .cached = authenticated, .live_secure = live_secure, .lookups = 0};
+    const auto refusal =
+        ble::response_refusal(connected, true, subscribed[kResponse],
+                              [&] { return gate.send(frame); });
+    if (ble::refusal_is_fault(refusal) &&
+        std::exchange(refusal_logged, generation) != generation)
+      ++fault_logs;
+    if (refusal != ble::GateRefusal::None)
+      return EnqueueResult::Closed;
+    const auto r = queue.reserve(generation, 0);
+    if (r.result != EnqueueResult::Ok)
+      return r.result;
+    if (!queue.publish(r, generation, static_cast<std::uint16_t>(frame.size()),
+                       handle))
+      return EnqueueResult::Closed;
+    TxSlot slot;
+    std::uint8_t index = 0;
+    assert(queue.front(slot, index));
+    assert(queue.on_notify_tx(generation, NotifyStatus::Sent, 0).current);
+    return EnqueueResult::Ok;
+  }
+  // The first LIST: two FILE frames and LIST_END all reach the client.
+  bool first_list_served() {
+    const std::uint8_t file_a[] = {ble::kFrameFile, 1, 0, 0, 0, 'a'};
+    const std::uint8_t file_b[] = {ble::kFrameFile, 2, 0, 0, 0, 'b'};
+    const std::uint8_t list_end[] = {ble::kFrameListEnd, 2, 0, 0, 0};
+    return send(file_a) == EnqueueResult::Ok &&
+           send(file_b) == EnqueueResult::Ok &&
+           send(list_end) == EnqueueResult::Ok;
+  }
+};
+
+void test_restore_before_connect_serves_first_list() {
+  // NimBLE holds CONNECT back for the remote version and feature reads. The
+  // Mac encrypts with its bond meanwhile, so ENC_CHANGE and the RESTORE
+  // subscribe (Response and Status) arrive first, for an unknown handle.
+  Transport link;
+  link.on_disconnect();
+  link.on_enc_change(1);
+  link.on_subscribe(1, kResponse, true);
+  link.on_subscribe(1, 1, true);
+  link.on_connect(1); // logs via=connect, the link is already secure
+  assert(link.authenticated);
+  assert(link.subscribed[kResponse] && link.subscribed[1]);
+  // The held restore opened nothing new, it is the stream CONNECT opened.
+  const auto generation = link.generation;
+  assert(link.first_list_served() && link.fault_logs == 0);
+  assert(link.generation == generation);
+  // The Mac never writes the CCCD again on this link, yet a later LIST and an
+  // unsubscribe and resubscribe behave like after any CCCD write.
+  assert(link.first_list_served());
+  link.on_subscribe(1, kResponse, false);
+  link.on_subscribe(1, kResponse, true);
+  assert(link.generation == generation + 1 && link.first_list_served());
+}
+
+void test_secure_at_connect_restore_after_serves_first_list() {
+  // The CoreS3 phone order. CONNECT first, then ENC_CHANGE and the restore.
+  Transport link;
+  link.on_connect(3);
+  assert(!link.authenticated && !link.subscribed[kResponse]);
+  link.on_enc_change(3);
+  link.on_subscribe(3, kResponse, true);
+  assert(link.authenticated && link.first_list_served());
+  assert(link.fault_logs == 0 && link.early.held == ble::PendingCccd::kNone);
+  // And a link already secure at CONNECT whose client writes the CCCD after.
+  Transport later;
+  later.on_enc_change(4);
+  later.on_connect(4);
+  assert(later.authenticated && !later.subscribed[kResponse]);
+  later.on_subscribe(4, kResponse, true);
+  assert(later.first_list_served() && later.fault_logs == 0);
+}
+
+void test_unsubscribed_refusal_is_logged() {
+  // No restore and no CCCD write. Every frame is refused as unsubscribed, the
+  // log says so once per session, and it is never a silent code 7.
+  Transport link;
+  link.on_enc_change(2);
+  link.on_connect(2);
+  assert(link.authenticated && !link.first_list_served());
+  const auto busy = error_frame(ble::kOpList, ble::kErrBusy);
+  assert(link.send(busy) == EnqueueResult::Closed);
+  assert(link.fault_logs == 1);
+  static_assert(ble::refusal_is_fault(ble::GateRefusal::Unsubscribed));
+  static_assert(ble::refusal_is_fault(ble::GateRefusal::Insecure));
+  static_assert(!ble::refusal_is_fault(ble::GateRefusal::Stale));
+  static_assert(!ble::refusal_is_fault(ble::GateRefusal::Disconnected));
+  static_assert(std::string_view(ble::refusal_name(
+                    ble::GateRefusal::Unsubscribed)) == "unsubscribed");
+  // A new session logs again.
+  link.on_disconnect();
+  link.on_connect(2);
+  assert(link.send(busy) == EnqueueResult::Closed && link.fault_logs == 2);
+  // The order of refusals. A dead or stale session is not a fault, and the
+  // live lookup runs last.
+  int lookups = 0;
+  const auto live = [&] { return ++lookups, false; };
+  assert(ble::response_refusal(false, true, true, live) ==
+         ble::GateRefusal::Disconnected);
+  assert(ble::response_refusal(true, false, true, live) ==
+         ble::GateRefusal::Stale);
+  assert(ble::response_refusal(true, true, false, live) ==
+         ble::GateRefusal::Unsubscribed);
+  assert(lookups == 0);
+  assert(ble::response_refusal(true, true, true, live) ==
+         ble::GateRefusal::Insecure);
+  assert(lookups == 1);
+}
+
+void test_pending_cccd() {
+  using ble::route_subscribe;
+  using ble::SubscribeRoute;
+  static_assert(route_subscribe(false, false) == SubscribeRoute::Hold);
+  static_assert(route_subscribe(true, true) == SubscribeRoute::Apply);
+  static_assert(route_subscribe(true, false) == SubscribeRoute::Drop);
+  ble::PendingCccd early;
+  int calls = 0;
+  const auto count = [&](unsigned, bool) { ++calls; };
+  // Nothing held, nothing applied.
+  assert(early.replay(1, count) == 0 && calls == 0);
+  // The last state per characteristic wins.
+  early.hold(1, kResponse, true);
+  early.hold(1, 2, true);
+  early.hold(1, 2, false);
+  std::array<int, 8> state{-1, -1, -1, -1, -1, -1, -1, -1};
+  assert(early.replay(1, [&](unsigned i, bool on) { state[i] = on; }) == 2);
+  assert(state[kResponse] == 1 && state[2] == 0 && state[0] == -1);
+  // Replay forgets, so a second CONNECT sees nothing.
+  assert(early.replay(1, count) == 0);
+  // A held state of another handle is never applied, and is forgotten.
+  early.hold(5, kResponse, true);
+  assert(early.replay(6, count) == 0 && calls == 0);
+  assert(early.replay(5, count) == 0);
+  // A new handle replaces an older pending one.
+  early.hold(5, kResponse, true);
+  early.hold(6, 1, true);
+  assert(early.replay(6,
+                      [&](unsigned i, bool on) {
+                        assert(i == 1 && on);
+                        ++calls;
+                      }) == 1 &&
+         calls == 1);
+  // An index past the bit set is ignored.
+  early.hold(7, ble::PendingCccd::kMax, true);
+  assert(early.replay(7, count) == 0);
+  early.hold(7, kResponse, true);
+  early.clear();
+  assert(early.replay(7, count) == 0 && calls == 1);
+}
 } // namespace
 
 int main() {
@@ -671,6 +895,10 @@ int main() {
   test_stale_flag_secure_link_is_served();
   test_insecure_link_gets_visible_error_14();
   test_no_auth_refusal_answers_busy();
+  test_restore_before_connect_serves_first_list();
+  test_secure_at_connect_restore_after_serves_first_list();
+  test_unsubscribed_refusal_is_logged();
+  test_pending_cccd();
   std::printf("ble policy passed\n");
   return 0;
 }

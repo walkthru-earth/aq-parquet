@@ -65,6 +65,11 @@ std::atomic<bool> enabled{false}, advertising{false}, connected{false},
 std::atomic<std::uint16_t> conn_handle{BLE_HS_CONN_HANDLE_NONE}, mtu{0};
 std::atomic<std::uint32_t> passkey{0}, bonds{0}, generation{0}, ui{0};
 std::atomic<std::int64_t> pairing_deadline{0};
+// SUBSCRIBE events for a handle whose CONNECT has not run yet, applied at
+// CONNECT (ble_link_auth.h). Host task only.
+PendingCccd early_cccd;
+// The last session a fault refusal was logged for, so it logs once.
+std::atomic<std::uint32_t> refusal_logged{~0U};
 // Why this side asked the controller to terminate. The controller reports a
 // local termination as HCI 0x16, which carries no reason of its own.
 std::atomic<DisconnectReason> pending_reason{DisconnectReason::Unknown};
@@ -160,6 +165,21 @@ bool may_send_frame(std::uint16_t handle, const std::uint8_t *data,
   return may_send(authenticated.load(),
                   std::span<const std::uint8_t>(data, length),
                   [handle] { return secure(handle); });
+}
+
+// The response stream gate for one frame of `session` on `handle`. A fault
+// refusal (not subscribed, not secure) logs BLE REFUSE once per session, so
+// the bench sees why before the worker's ERROR and LIST ABORT lines.
+GateRefusal response_gate(std::uint32_t session, std::uint16_t handle,
+                          const std::uint8_t *data, std::size_t length) {
+  const auto refusal = response_refusal(
+      connected.load(),
+      generation.load() == session && conn_handle.load() == handle,
+      subscribed[Response].load(),
+      [&] { return may_send_frame(handle, data, length); });
+  if (refusal_is_fault(refusal) && refusal_logged.exchange(session) != session)
+    aqlog.printf("BLE REFUSE reason=%s\n", refusal_name(refusal));
+  return refusal;
 }
 
 bool apply_advert_data() {
@@ -338,11 +358,9 @@ void drain_responses(ble_npl_event *) {
     portEXIT_CRITICAL(&tx_lock);
     if (!any)
       break;
-    if (!connected.load() || !subscribed[Response].load() ||
-        generation.load() != slot.session ||
-        conn_handle.load() != slot.handle ||
-        !may_send_frame(slot.handle, tx_frames + std::size_t(head) * kMaxFrame,
-                        slot.length)) {
+    if (response_gate(slot.session, slot.handle,
+                      tx_frames + std::size_t(head) * kMaxFrame,
+                      slot.length) != GateRefusal::None) {
       // The phone unsubscribed or the session ended. The stream is over for
       // this session, but the link itself did nothing wrong.
       close_responses();
@@ -407,8 +425,7 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
   if (!data || !length || length > kMaxFrame || length > payload_max())
     return aqsync::EnqueueResult::Closed;
   const auto handle = conn_handle.load();
-  if (!connected.load() || !subscribed[Response].load() ||
-      generation.load() != session || !may_send_frame(handle, data, length))
+  if (response_gate(session, handle, data, length) != GateRefusal::None)
     return aqsync::EnqueueResult::Closed;
   portENTER_CRITICAL(&tx_lock);
   const auto reservation = responses.reserve(session, esp_timer_get_time());
@@ -659,15 +676,41 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   return 0;
 }
 
+// One characteristic's subscribe state on the current link, from a live
+// CCCD write or from a restore held until CONNECT. Host task only.
+void apply_subscribe(Characteristic which, bool notify, bool closing) {
+  subscribed[which] = notify;
+  if (which != Response || !connected.load())
+    return;
+  // Turning response notifications off ends the stream at once. On again
+  // starts a new generation, so requests and handles of the old stream end
+  // Closed or ERROR 5 instead of resuming mid stream.
+  portENTER_CRITICAL(&tx_lock);
+  const bool open = responses.open_for(generation.load());
+  portEXIT_CRITICAL(&tx_lock);
+  const auto change = response_subscribe(notify, closing, open);
+  if (change == StreamChange::Close) {
+    close_responses();
+  } else if (change == StreamChange::Reopen) {
+    const auto session = ++generation;
+    portENTER_CRITICAL(&tx_lock);
+    responses.open(session, esp_timer_get_time());
+    portEXIT_CRITICAL(&tx_lock);
+    aqlog.record_only().println("BLE STREAM reopen");
+  }
+}
+
 int gap_event(ble_gap_event *event, void *) {
   switch (event->type) {
   case BLE_GAP_EVENT_CONNECT:
     if (event->connect.status != 0) {
+      early_cccd.clear();
       if (enabled.load() && host_requested.load())
         start_advertising();
       return 0;
     }
     if (!host_requested.load()) {
+      early_cccd.clear();
       terminate(event->connect.conn_handle, DisconnectReason::ServerStop);
       return 0;
     }
@@ -690,6 +733,14 @@ int gap_event(ble_gap_event *event, void *) {
     }
     touch_ui();
     aqlog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
+    // Subscriptions NimBLE restored or the client wrote before this event
+    // count exactly like a CCCD write after it.
+    if (const auto held = early_cccd.replay(
+            event->connect.conn_handle, [](unsigned i, bool notify) {
+              apply_subscribe(static_cast<Characteristic>(i), notify, false);
+            }))
+      aqlog.printf("BLE SUBSCRIBE early=%u response=%u\n", held,
+                   unsigned(subscribed[Response].load()));
     request_link_parameters(event->connect.conn_handle);
     // Already secure at connect, which ENC_CHANGE would never report.
     confirm_secure(event->connect.conn_handle, "connect");
@@ -713,6 +764,7 @@ int gap_event(ble_gap_event *event, void *) {
     mtu = 0;
     ++generation;
     std::fill(std::begin(subscribed), std::end(subscribed), false);
+    early_cccd.clear();
     close_responses();
     ble_npl_callout_stop(&relax_callout);
     ble_npl_callout_stop(&link_callout);
@@ -735,41 +787,32 @@ int gap_event(ble_gap_event *event, void *) {
       aqlog.printf("BLE MTU mtu=%u\n", unsigned(event->mtu.value));
     }
     return 0;
-  case BLE_GAP_EVENT_SUBSCRIBE:
-    if (event->subscribe.conn_handle != conn_handle.load())
+  case BLE_GAP_EVENT_SUBSCRIBE: {
+    const auto route = route_subscribe(
+        connected.load(), event->subscribe.conn_handle == conn_handle.load());
+    if (route == SubscribeRoute::Drop)
       return 0;
+    const bool closing =
+        event->subscribe.reason == BLE_GAP_SUBSCRIBE_REASON_TERM;
+    const bool notify = event->subscribe.cur_notify != 0;
+    if (route == SubscribeRoute::Hold) {
+      // CONNECT has not run yet, typically a bonded CCCD that NimBLE restored
+      // when the central encrypted early. CONNECT applies it.
+      for (unsigned i = 0; i < Count; ++i)
+        if (event->subscribe.attr_handle == value_handles[i])
+          early_cccd.hold(event->subscribe.conn_handle, i, notify);
+      return 0;
+    }
     // A CCCD write proves nothing by itself, but it is the first event a
     // client sends after a reconnect, so a missed ENC_CHANGE latches here.
     // Not during teardown, which reports every CCCD as turned off.
-    if (event->subscribe.reason != BLE_GAP_SUBSCRIBE_REASON_TERM)
+    if (!closing)
       confirm_secure(event->subscribe.conn_handle, "subscribe");
-    for (unsigned i = 0; i < Count; ++i) {
-      if (event->subscribe.attr_handle != value_handles[i])
-        continue;
-      const bool notify = event->subscribe.cur_notify != 0;
-      subscribed[i] = notify;
-      if (i != Response || !connected.load())
-        continue;
-      // Turning response notifications off ends the stream at once. On again
-      // starts a new generation, so requests and handles of the old stream
-      // end Closed or ERROR 5 instead of resuming mid stream.
-      portENTER_CRITICAL(&tx_lock);
-      const bool open = responses.open_for(generation.load());
-      portEXIT_CRITICAL(&tx_lock);
-      const auto change = response_subscribe(
-          notify, event->subscribe.reason == BLE_GAP_SUBSCRIBE_REASON_TERM,
-          open);
-      if (change == StreamChange::Close) {
-        close_responses();
-      } else if (change == StreamChange::Reopen) {
-        const auto session = ++generation;
-        portENTER_CRITICAL(&tx_lock);
-        responses.open(session, esp_timer_get_time());
-        portEXIT_CRITICAL(&tx_lock);
-        aqlog.record_only().println("BLE STREAM reopen");
-      }
-    }
+    for (unsigned i = 0; i < Count; ++i)
+      if (event->subscribe.attr_handle == value_handles[i])
+        apply_subscribe(static_cast<Characteristic>(i), notify, closing);
     return 0;
+  }
   case BLE_GAP_EVENT_ENC_CHANGE: {
     if (event->enc_change.conn_handle != conn_handle.load())
       return 0;
@@ -883,6 +926,7 @@ void on_reset(int reason) {
   mtu = 0;
   ++generation;
   std::fill(std::begin(subscribed), std::end(subscribed), false);
+  early_cccd.clear();
   close_responses();
   ble_npl_callout_stop(&relax_callout);
   ble_npl_callout_stop(&link_callout);
