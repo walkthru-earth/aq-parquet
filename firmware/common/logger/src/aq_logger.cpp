@@ -1209,7 +1209,9 @@ bool partial_name(const char *name) {
 // Move interrupted files out of active station trees without deleting or
 // pretending to repair them. Each lands under output/quarantine/ in a
 // directory that keeps its station and partition provenance. The walk is
-// iterative with a fixed depth, and a directory past it is logged.
+// iterative with a fixed depth, and a directory past it is logged. An entry
+// that cannot be inspected or opened is logged and skipped, so the partials
+// after it still move. Only a directory read error ends the walk.
 void quarantine_directory(unsigned &quarantined) {
   ArchiveDirectoryIO io;
   auto move = [&](const char *name) {
@@ -1223,7 +1225,13 @@ void quarantine_directory(unsigned &quarantined) {
         "max_depth=%u\n",
         name, aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>::kMaxDepth);
   };
-  if (!aq::logger::detail::find_partials(io, kDirectory, move, too_deep)) {
+  auto unreadable = [](const char *name, int error) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=quarantine-entry name=%s errno=%d\n",
+                 name, error);
+  };
+  if (!aq::logger::detail::find_partials(io, kDirectory, move, too_deep,
+                                         unreadable)) {
     ++errors;
     aqlog.printf("PARQUET ERROR operation=quarantine-walk errno=%d\n", errno);
   }

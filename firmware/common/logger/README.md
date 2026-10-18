@@ -82,7 +82,9 @@ footer, checks structure and CRC, then renames to immutable `.parquet`. Interrup
 and right after a same-boot failure; a partial whose finalized sibling exists is
 left in place as a crosslink suspect. The boot walk is iterative and opens
 directories six levels deep. A deeper directory is not entered and prints
-`PARQUET ERROR operation=quarantine-depth`. Automated logging and sync never repair,
+`PARQUET ERROR operation=quarantine-depth`. An entry that cannot be inspected
+or opened prints `operation=quarantine-entry` and is skipped, and only a
+directory read error ends the walk with `operation=quarantine-walk`. Automated logging and sync never repair,
 delete or rewrite owner archives, and never format or upload. The separate
 physical serial [archive reset](../../../docs/shared/development.md#owner-maintenance)
 requires an explicitly requested destructive reset and is unavailable over radio.

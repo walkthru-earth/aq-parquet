@@ -93,6 +93,17 @@ public:
   // with name relative to `base`. A skipped directory costs its one entry.
   template <class Visitor, class Enter>
   Status step(unsigned budget, Visitor &visit, Enter &enter) {
+    auto never = [](const char *, int) { return false; };
+    return step(budget, visit, enter, never);
+  }
+
+  // As above, but an entry whose path is too long, whose inspect fails or
+  // whose directory cannot be opened goes to skip(name, error), with name
+  // relative to `base` or the bare entry name when the path did not fit.
+  // When skip returns true the walk moves on to the next entry, otherwise it
+  // fails. A directory read or close error always fails the walk.
+  template <class Visitor, class Enter, class Skip>
+  Status step(unsigned budget, Visitor &visit, Enter &enter, Skip &skip) {
     if (!open_)
       return Status::Done;
     if (budget == 0)
@@ -120,18 +131,31 @@ public:
       if (length < 0 ||
           parent + static_cast<std::size_t>(length) >= sizeof(relative_)) {
         relative_[parent] = '\0';
+        if (skip(static_cast<const char *>(entry->d_name), ENAMETOOLONG))
+          continue;
         errno = ENAMETOOLONG;
         return fail(Status::Failed);
       }
+      // Hands the entry to skip(). True when the walk goes on past it.
+      const auto skipped = [&](int error) {
+        const bool next = skip(static_cast<const char *>(relative_), error);
+        relative_[parent] = '\0';
+        errno = error;
+        return next;
+      };
       char path[416];
       length = std::snprintf(path, sizeof(path), "%s/%s", base_, relative_);
       if (length < 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
-        errno = ENAMETOOLONG;
+        if (skipped(ENAMETOOLONG))
+          continue;
         return fail(Status::Failed);
       }
       struct stat info{};
-      if (io_->inspect(path, &info) != 0)
+      if (io_->inspect(path, &info) != 0) {
+        if (skipped(errno))
+          continue;
         return fail(Status::Failed);
+      }
       if (S_ISDIR(info.st_mode)) {
         if (!enter(static_cast<const char *>(relative_))) {
           relative_[parent] = '\0';
@@ -141,8 +165,11 @@ public:
           errno = EOVERFLOW;
           return fail(Status::Failed);
         }
-        if (!push())
+        if (!push()) {
+          if (skipped(errno))
+            continue;
           return fail(Status::Failed);
+        }
         continue;
       }
       const bool keep = visit(static_cast<const char *>(relative_), info);
@@ -230,9 +257,13 @@ inline bool has_suffix(const char *name, const char *suffix) {
 // top level "quarantine" directory. move() may rename the file it is given.
 // A directory deeper than DirectoryWalk::kMaxDepth is not entered. It goes
 // to too_deep(relative) instead, so a deep tree is reported and never
-// skipped silently. True only when every entry the walk reached was read.
-template <class IO, class Move, class TooDeep>
-bool find_partials(IO &io, const char *root, Move &move, TooDeep &too_deep) {
+// skipped silently. An entry that cannot be named, inspected or opened goes
+// to unreadable(relative, error) and the walk moves on, so one damaged entry
+// does not hide the partials after it. Only a directory read or close error
+// ends the walk. True when every directory was read to its end.
+template <class IO, class Move, class TooDeep, class Unreadable>
+bool find_partials(IO &io, const char *root, Move &move, TooDeep &too_deep,
+                   Unreadable &unreadable) {
   using Walk = DirectoryWalk<IO>;
   auto visit = [&](const char *name, const struct stat &) {
     if (has_suffix(name, ".partial"))
@@ -250,11 +281,15 @@ bool find_partials(IO &io, const char *root, Move &move, TooDeep &too_deep) {
     too_deep(name);
     return false;
   };
+  auto skip = [&](const char *name, int error) {
+    unreadable(name, error);
+    return true;
+  };
   Walk walk;
   if (!walk.begin(io, root))
     return false;
   typename Walk::Status status;
-  while ((status = walk.step(1024, visit, enter)) == Walk::Status::More) {
+  while ((status = walk.step(1024, visit, enter, skip)) == Walk::Status::More) {
   }
   return status == Walk::Status::Done;
 }

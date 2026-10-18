@@ -488,7 +488,8 @@ void check_find_partials() {
     moved.emplace_back(name);
   };
   auto too_deep = [&](const char *name) { reported.emplace_back(name); };
-  assert(find_partials(io, root.c_str(), move, too_deep));
+  auto unreadable = [](const char *, int) { assert(false); };
+  assert(find_partials(io, root.c_str(), move, too_deep, unreadable));
   std::sort(moved.begin(), moved.end());
   assert(moved.size() == 3);
   assert(moved[0] == "l1/l2/l3/l4/l5/l6/at-cap.partial");
@@ -501,10 +502,11 @@ void check_find_partials() {
   // A second walk finds only what was left behind on purpose.
   moved.clear();
   reported.clear();
-  assert(find_partials(io, root.c_str(), move, too_deep));
+  assert(find_partials(io, root.c_str(), move, too_deep, unreadable));
   assert(moved.empty() && reported.size() == 1);
   // A missing root fails with its errno instead of looking empty.
-  assert(!find_partials(io, (root / "missing").c_str(), move, too_deep));
+  assert(!find_partials(io, (root / "missing").c_str(), move, too_deep,
+                        unreadable));
   assert(errno == ENOENT);
   fs::remove_all(temporary);
 }
@@ -580,6 +582,84 @@ void check_crosslink_guard() {
 }
 } // namespace
 
+// Fails inspect for names holding "bad", opendir for names holding
+// "locked" and every read of a directory named "broken".
+struct FaultyDirectoryIO : PosixDirectoryIO {
+  DIR *broken = nullptr;
+  DIR *open(const char *path) {
+    if (std::strstr(path, "locked")) {
+      errno = EACCES;
+      return nullptr;
+    }
+    DIR *directory = ::opendir(path);
+    if (directory && std::strstr(path, "broken"))
+      broken = directory;
+    return directory;
+  }
+  const struct dirent *read(DIR *directory) {
+    if (directory == broken) {
+      errno = EIO;
+      return nullptr;
+    }
+    return ::readdir(directory);
+  }
+  int inspect(const char *path, struct stat *info) {
+    if (std::strstr(path, "bad")) {
+      errno = EIO;
+      return -1;
+    }
+    return ::stat(path, info);
+  }
+};
+
+// One entry that cannot be inspected or opened is reported and skipped, and
+// the partials after it are still moved. A directory read error ends the
+// walk and is reported as a failed walk, never as a complete one.
+void check_find_partials_failures() {
+  namespace fs = std::filesystem;
+  using aq::logger::detail::find_partials;
+  char temporary[] = "/tmp/aq-find-faults-XXXXXX";
+  assert(::mkdtemp(temporary));
+  const fs::path root = fs::path(temporary) / "output";
+  const auto touch = [](const fs::path &path) {
+    fs::create_directories(path.parent_path());
+    std::ofstream(path) << "x";
+  };
+  touch(root / "a-bad.partial");
+  touch(root / "b-locked/inside-0.partial");
+  touch(root / "station=a/day/c-0.partial");
+  touch(root / "z-0.partial");
+  FaultyDirectoryIO io;
+  std::vector<std::string> moved, skipped;
+  std::vector<int> errors;
+  auto move = [&](const char *name) { moved.emplace_back(name); };
+  auto too_deep = [](const char *) { assert(false); };
+  auto unreadable = [&](const char *name, int error) {
+    skipped.emplace_back(name);
+    errors.push_back(error);
+  };
+  assert(find_partials(io, root.c_str(), move, too_deep, unreadable));
+  std::sort(moved.begin(), moved.end());
+  assert(moved.size() == 2);
+  assert(moved[0] == "station=a/day/c-0.partial" && moved[1] == "z-0.partial");
+  assert(skipped.size() == 2);
+  const bool bad_first = skipped[0] == "a-bad.partial";
+  assert(skipped[bad_first ? 0 : 1] == "a-bad.partial");
+  assert(skipped[bad_first ? 1 : 0] == "b-locked");
+  assert(errors[bad_first ? 0 : 1] == EIO);
+  assert(errors[bad_first ? 1 : 0] == EACCES);
+  // A directory that fails mid read stops the walk with its errno.
+  touch(root / "station=a/broken/d-0.partial");
+  moved.clear();
+  skipped.clear();
+  errno = 0;
+  assert(!find_partials(io, root.c_str(), move, too_deep, unreadable));
+  assert(errno == EIO);
+  assert(std::find(moved.begin(), moved.end(),
+                   "station=a/broken/d-0.partial") == moved.end());
+  fs::remove_all(temporary);
+}
+
 int main() {
   assert(check(Scenario::MountedRoot));
   assert(inspections == 1 && creations == 0);
@@ -598,5 +678,6 @@ int main() {
   check_quarantine_names();
   check_same_boot_quarantine();
   check_find_partials();
+  check_find_partials_failures();
   check_crosslink_guard();
 }
