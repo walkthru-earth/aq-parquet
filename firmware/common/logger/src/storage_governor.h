@@ -117,8 +117,8 @@ public:
   }
 
   // Fresh filesystem measurement. Returns true when the state changed.
-  bool observe_free(std::uint64_t free_bytes, std::int64_t now_seconds) {
-    free_ = free_bytes;
+  bool observe_free(std::uint64_t measured_free, std::int64_t now_seconds) {
+    free_ = measured_free;
     checked_ = now_seconds;
     return settle();
   }
@@ -147,10 +147,10 @@ public:
     next_probe_ = now_seconds + backoff_seconds(attempts_);
   }
 
-  void probe_succeeded(std::uint64_t free_bytes, std::int64_t now_seconds) {
+  void probe_succeeded(std::uint64_t measured_free, std::int64_t now_seconds) {
     failure_ = false;
     attempts_ = 0;
-    free_ = free_bytes;
+    free_ = measured_free;
     checked_ = now_seconds;
     // A Full or Degraded card keeps its hysteresis across a remount.
     state_ = next_space_state(state_ == State::Retry ? State::Ready : state_,
