@@ -57,6 +57,7 @@ tasks=(
   "coredump-report-test"
   "logger-work-queue-test"
   "logger-watchdog-test"
+  "logger-codec-store-test"
   "logger-status-test"
   "logger-rotation-test"
   "logger-directory-test"
