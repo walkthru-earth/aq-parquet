@@ -129,6 +129,10 @@ struct Fixture {
   ble::Link abort_link = ble::Link::Ble;
   std::uint8_t abort_peer = 0;
   std::vector<std::string> logs;
+  // LIST_SINCE hook. Records the cursor and answers since_result.
+  aqsync::ListCursor since_cursor{};
+  aqsync::ListSinceResult since_result{};
+  unsigned since_begins = 0;
   // The logger's battery close gate, run in front of the transport as the
   // firmware deliver hook does. The intent is raised once raise_close_after
   // frames were delivered, so 0 raises it before the first frame.
@@ -156,39 +160,41 @@ struct Fixture {
     abort_peer = 0;
     logs.clear();
   }
+  // The fake walk behind both LIST and LIST_SINCE.
+  static aqsync::ListStatus walk(void *ctx, bool begin, unsigned budget,
+                                 aqsync::FileEmitter emit, void *out,
+                                 unsigned &partials) {
+    auto &f = *static_cast<Fixture *>(ctx);
+    assert(budget > 0);
+    ++f.list_steps;
+    if (budget > f.list_budget_max)
+      f.list_budget_max = budget;
+    if (begin) {
+      f.list_cursor = 0;
+      f.list_open = true;
+    }
+    assert(f.list_open);
+    const std::size_t total = f.list_repeats * f.names.size();
+    for (unsigned read = 0; read < budget; ++read) {
+      if (f.list_cursor == total) {
+        f.list_open = false;
+        if (!f.listing_complete)
+          return aqsync::ListStatus::Failed;
+        partials += f.partials;
+        return aqsync::ListStatus::Complete;
+      }
+      ++f.list_reads;
+      const auto &name = f.names[f.list_cursor++ % f.names.size()];
+      if (!emit(out, name.c_str(), f.bytes.size())) {
+        f.list_open = false;
+        return aqsync::ListStatus::Stopped;
+      }
+    }
+    return aqsync::ListStatus::More;
+  }
   aqsync::ArchiveHooks archive() {
     return {
-        this,
-        [](void *ctx, bool begin, unsigned budget, aqsync::FileEmitter emit,
-           void *out, unsigned &partials) {
-          auto &f = *static_cast<Fixture *>(ctx);
-          assert(budget > 0);
-          ++f.list_steps;
-          if (budget > f.list_budget_max)
-            f.list_budget_max = budget;
-          if (begin) {
-            f.list_cursor = 0;
-            f.list_open = true;
-          }
-          assert(f.list_open);
-          const std::size_t total = f.list_repeats * f.names.size();
-          for (unsigned read = 0; read < budget; ++read) {
-            if (f.list_cursor == total) {
-              f.list_open = false;
-              if (!f.listing_complete)
-                return aqsync::ListStatus::Failed;
-              partials += f.partials;
-              return aqsync::ListStatus::Complete;
-            }
-            ++f.list_reads;
-            const auto &name = f.names[f.list_cursor++ % f.names.size()];
-            if (!emit(out, name.c_str(), f.bytes.size())) {
-              f.list_open = false;
-              return aqsync::ListStatus::Stopped;
-            }
-          }
-          return aqsync::ListStatus::More;
-        },
+        this, &Fixture::walk,
         [](void *ctx, const char *name, char *path, std::size_t size) {
           auto &f = *static_cast<Fixture *>(ctx);
           if (!safe_parquet_name(name))
@@ -250,6 +256,17 @@ struct Fixture {
           return f.preempt ||
                  (f.preempt_frame && f.frames.size() >= f.preempt_frame) ||
                  (f.close && f.close->preempt(0));
+        },
+        [](void *ctx, bool begin, const aqsync::ListCursor &cursor,
+           aqsync::ListSinceResult &result, unsigned budget,
+           aqsync::FileEmitter emit, void *out, unsigned &partials) {
+          auto &f = *static_cast<Fixture *>(ctx);
+          if (begin) {
+            ++f.since_begins;
+            f.since_cursor = cursor;
+            result = f.since_result;
+          }
+          return walk(ctx, begin, budget, emit, out, partials);
         }};
   }
   aqsync::ArchiveTransport transport() {
@@ -1447,6 +1464,177 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
   f.clear();
 }
 
+ble::ControlRequest since_request(Fixture &f, const aqsync::ListCursor &cursor,
+                                  ble::Link link = ble::Link::Ble) {
+  auto r = request(f, ble::kOpListSince, link);
+  aqsync::encode_cursor(cursor,
+                        std::span<std::uint8_t, aqsync::kListCursorBytes>(
+                            r.bytes + 1, aqsync::kListCursorBytes));
+  r.length = aqsync::kListSinceRequestBytes;
+  return r;
+}
+
+// LIST_SINCE shares the LIST job. It sends the same FILE frames, then a
+// LIST_SINCE_END whose first 15 bytes are LIST_END.
+void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
+  namespace abort = aqsync::abort;
+  static_assert(ble::kOpListSince == 0x10 && ble::kFrameListSinceEnd == 0x4e);
+  reset_abort();
+  f.payload = {517, 1024, 1024, 1024};
+  f.list_repeats = 3;
+  const aqsync::ListCursor cursor{
+      .mount_epoch = 0xa1b2c3d4,
+      .day = 20260315,
+      .boot = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+      .seq = 0x0102030405060708ULL};
+  f.since_result = {
+      .flags = aqsync::kListSinceUnsyncedFull,
+      .next = {.mount_epoch = 0xa1b2c3d4,
+               .day = 20260316,
+               .boot = {0xf0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0f},
+               .seq = 42}};
+  for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
+    f.clear();
+    const unsigned listed = f.listed;
+    f.since_begins = 0;
+    assert(serve(session, since_request(f, cursor, link), true));
+    assert(f.errors.empty() && f.since_begins == 1);
+    assert(f.since_cursor.mount_epoch == cursor.mount_epoch &&
+           f.since_cursor.day == cursor.day &&
+           f.since_cursor.boot == cursor.boot &&
+           f.since_cursor.seq == cursor.seq);
+    assert(f.frames.size() == 4 && f.listed == listed + 1);
+    for (std::size_t i = 0; i < 3; ++i)
+      assert(f.frames[i].bytes[0] == ble::kFrameFile &&
+             f.frames[i].link == link);
+    const auto &end = f.frames.back().bytes;
+    assert(end.size() == 48 && end[0] == ble::kFrameListSinceEnd);
+    assert(get_u32(end.data() + 1) == 3 && get_u16(end.data() + 5) == 65535);
+    assert(get_u32(end.data() + 7) == 123 && get_u32(end.data() + 11) == 45);
+    assert(end[15] == aqsync::kListSinceUnsyncedFull);
+    assert(get_u32(end.data() + 16) == 0xa1b2c3d4);
+    assert(get_u32(end.data() + 20) == 20260316);
+    assert(end[24] == 0xf0 && end[39] == 0x0f);
+    assert(get_u32(end.data() + 40) == 42 && get_u32(end.data() + 44) == 0);
+  }
+
+  // Plain LIST still ends with the 15 byte LIST_END.
+  f.clear();
+  serve(session, request(f, ble::kOpList), true);
+  assert(f.frames.back().bytes.size() == 15 &&
+         f.frames.back().bytes[0] == ble::kFrameListEnd);
+
+  // A cursor of the wrong length or with an impossible day is malformed.
+  const auto malformed = [&](ble::ControlRequest r) {
+    f.clear();
+    const unsigned listed = f.listed;
+    f.since_begins = 0;
+    serve(session, r, true);
+    assert(!session.listing() && f.frames.empty() && f.since_begins == 0);
+    assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpListSince &&
+           f.errors[0].code == ble::kErrMalformed &&
+           f.errors[0].detail == "cursor");
+    assert(f.listed == listed);
+  };
+  auto r = since_request(f, cursor);
+  r.length = 32;
+  malformed(r);
+  r = since_request(f, cursor);
+  r.length = 34;
+  malformed(r);
+  malformed(request(f, ble::kOpListSince));
+  for (const std::uint32_t day :
+       {20191231U, 21010101U, 20260230U, 20261301U, 20260100U, 1U}) {
+    auto bad = cursor;
+    bad.day = day;
+    malformed(since_request(f, bad));
+  }
+  // Day 0 is no floor, and an all zero cursor is a valid first request.
+  f.clear();
+  serve(session, since_request(f, aqsync::ListCursor{}), true);
+  assert(f.errors.empty() && f.frames.back().bytes.size() == 48);
+
+  // Storage, busy, preempted and a link too small for LIST_SINCE_END.
+  f.clear();
+  serve(session, since_request(f, cursor), false);
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpListSince &&
+         f.errors[0].code == ble::kErrStorage);
+  f.clear();
+  assert(session.handle(request(f, ble::kOpList), true) && session.listing());
+  session.handle(since_request(f, cursor), true);
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpListSince &&
+         f.errors[0].code == ble::kErrBusy && f.errors[0].detail == "list");
+  while (session.listing())
+    session.step(true);
+  f.clear();
+  f.preempt = true;
+  serve(session, since_request(f, cursor), true);
+  f.preempt = false;
+  assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrBusy &&
+         f.errors[0].op == ble::kOpListSince &&
+         f.errors[0].detail == "preempted");
+  for (const std::uint16_t small : {47, 20}) {
+    f.clear();
+    f.payload[0] = small;
+    serve(session, since_request(f, cursor), true);
+    assert(!session.listing() && f.frames.empty());
+    assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrBusy &&
+           f.errors[0].op == ble::kOpListSince && f.errors[0].detail == "mtu");
+  }
+  // A link that shrank during the walk gets ERROR mtu, not a cut frame.
+  f.payload[0] = 517;
+  f.clear();
+  const unsigned listed = f.listed;
+  session.handle(since_request(f, cursor), true);
+  f.payload[0] = 47;
+  while (session.listing())
+    session.step(true);
+  assert(f.frames.size() == 3 && f.listed == listed);
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpListSince &&
+         f.errors[0].detail == "mtu");
+  f.payload[0] = 517;
+
+  // ABORT stops it with ERROR aborted naming LIST_SINCE.
+  f.clear();
+  f.list_repeats = 1000;
+  auto stamped = since_request(f, cursor);
+  abort::stamp(stamped);
+  abort::commit(stamped);
+  session.handle(stamped, true);
+  session.step(true);
+  stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  session.step(true);
+  assert(!session.listing());
+  assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrAborted &&
+         f.errors[0].op == ble::kOpListSince);
+  auto marker = stamp_abort(ble::Link::Ble, 0, f.generation[0]);
+  assert(abort::take_stopped(marker) == ble::kOpListSince);
+  reset_abort();
+  // A walk error is a storage error, never a short success.
+  f.clear();
+  f.list_repeats = 2;
+  f.listing_complete = false;
+  serve(session, since_request(f, cursor), true);
+  f.listing_complete = true;
+  assert(f.errors.size() == 1 && f.errors[0].code == ble::kErrStorage &&
+         f.errors[0].op == ble::kOpListSince);
+  f.list_repeats = 1;
+
+  // A board without the hook answers ERROR unknown op, the phone's signal
+  // to fall back to LIST.
+  auto hooks = f.archive();
+  hooks.list_since = nullptr;
+  aqsync::ArchiveSession bare(hooks, f.transport());
+  f.clear();
+  assert(serve(bare, since_request(f, cursor), true));
+  assert(!bare.listing() && f.frames.empty());
+  assert(f.errors.size() == 1 && f.errors[0].op == ble::kOpListSince &&
+         f.errors[0].code == ble::kErrUnknownOp);
+  f.clear();
+  serve(bare, request(f, ble::kOpList), true);
+  assert(f.errors.empty() && f.frames.back().bytes.size() == 15);
+}
+
 int main(int argc, char **argv) {
   assert(argc == 2);
   Fixture f(argv[1]);
@@ -1542,6 +1730,7 @@ int main(int argc, char **argv) {
     f.list_repeats = 1;
   }
   list_job_cases(f, session);
+  list_since_cases(f, session);
   worker_glue_cases(f, session);
 
   auto handle = open(f, session);

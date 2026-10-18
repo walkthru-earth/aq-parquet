@@ -401,7 +401,7 @@ void ArchiveSession::finish_list(ListStatus status) {
   // LIST_SINCE_END needs 48 bytes. A link that shrank below that since the
   // job started gets the LIST reply for a frame that does not fit.
   if (since && payload_max() < kListSinceEndBytes) {
-    error(list.op, ble::kErrBusy, "mtu");
+    error(list.op, ble::kErrBusy, payload_max() >= 6 ? "mtu" : nullptr);
     return;
   }
   // LIST_END is the first 15 bytes of LIST_SINCE_END.
@@ -429,13 +429,13 @@ void ArchiveSession::start_list(ble::Op op, const ble::ControlRequest &request,
   ListCursor cursor;
   if (op == ble::kOpListSince) {
     if (request.length != kListSinceRequestBytes) {
-      error(op, ble::kErrMalformed, "cursor");
+      error(op, ble::kErrMalformed, payload_max() >= 9 ? "cursor" : nullptr);
       return;
     }
     cursor = decode_cursor(std::span<const std::uint8_t, kListCursorBytes>(
         request.bytes + 1, kListCursorBytes));
     if (cursor.day != 0 && !valid_list_day(cursor.day)) {
-      error(op, ble::kErrMalformed, "cursor");
+      error(op, ble::kErrMalformed, payload_max() >= 9 ? "cursor" : nullptr);
       return;
     }
   }
@@ -449,7 +449,7 @@ void ArchiveSession::start_list(ble::Op op, const ble::ControlRequest &request,
     error(op, ble::kErrBusy, payload_max() >= 12 ? "preempted" : nullptr);
   } else if (op == ble::kOpListSince && payload_max() < kListSinceEndBytes) {
     // LIST_SINCE_END could never be delivered.
-    error(op, ble::kErrBusy, "mtu");
+    error(op, ble::kErrBusy, payload_max() >= 6 ? "mtu" : nullptr);
   } else {
     // step() walks it, one bounded step per worker pass.
     list_ = ListJob{};
