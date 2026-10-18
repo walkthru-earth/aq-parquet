@@ -257,10 +257,10 @@ void poll_board() {
   const auto now = esp_timer_get_time();
   const bool fresh =
       latest.present && now - latest.received_mono_us <= 5000000LL;
-  const unsigned state =
-      !logging || !storage_mounted                                ? 0
-      : !fresh || now < kPmsWarmupUs || latest.frame.sensor_error ? 1
-                                                                  : 2;
+  const bool warming = pms_warming(now, latest.last_wake_mono_us);
+  const unsigned state = !logging || !storage_mounted                     ? 0
+                         : !fresh || warming || latest.frame.sensor_error ? 1
+                                                                          : 2;
   static unsigned previous_state = 3;
   if (state != previous_state) {
     board::indicator(state == 2 ? 0 : 8, state == 0 ? 0 : 8, 0);

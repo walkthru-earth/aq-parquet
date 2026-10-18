@@ -125,8 +125,19 @@ struct PmsSnapshot {
   std::uint32_t frames = 0;
   std::uint32_t checksum_errors = 0;
   std::uint32_t length_errors = 0;
+  // Monotonic time the PMS last woke. esp_timer starts at 0 on boot and the
+  // sensor is powered from boot, so the default is the boot wake. A future
+  // sleep or reset control sets it when the sensor wakes again.
+  std::int64_t last_wake_mono_us = 0;
   bool present = false;
 };
+// True while the PMS is inside its warm-up window after the last wake. A
+// clock reading earlier than the wake (a wake stamped after the snapshot
+// time) counts as warming, so a row never reads valid before the window.
+[[nodiscard]] constexpr bool pms_warming(std::int64_t now,
+                                         std::int64_t last_wake_mono_us) {
+  return now < last_wake_mono_us || now - last_wake_mono_us < kPmsWarmupUs;
+}
 enum PmsStatus : std::int32_t {
   kPmsMissing = 0,
   kPmsWarming = 1,
@@ -153,16 +164,16 @@ inline std::int64_t serial_code(const SensorProfile &sensor) {
 inline bool exact_batch(const SensorProfile &sensor) {
   return pms5003t::batch_eligible(sensor.vendor, sensor.model, sensor.serial);
 }
-// Sensor stays powered: warm-up uses boot uptime. Add a sensor-start anchor
-// if sleep/reset control is introduced. Apply only to a fresh, zeroed row.
+// Warm-up runs from the last PMS wake (pms_warming). Today that is boot.
+// Apply only to a fresh, zeroed row.
 inline void apply_pms(Sample &row, const PmsSnapshot &pms, std::int64_t now,
                       const SensorProfile &sensor = {}) {
   const auto &frame = pms.frame;
   const auto status =
-      !pms.present                    ? kPmsMissing
-      : now < kPmsWarmupUs            ? kPmsWarming
-      : pms.age_ms > kPmsStaleAfterMs ? kPmsStale
-      : frame.sensor_error            ? kPmsSensorError
+      !pms.present                              ? kPmsMissing
+      : pms_warming(now, pms.last_wake_mono_us) ? kPmsWarming
+      : pms.age_ms > kPmsStaleAfterMs           ? kPmsStale
+      : frame.sensor_error                      ? kPmsSensorError
       : !frame.has_temperature_humidity || frame.particle_count_fields != 4
           ? kPmsModelMismatch
           : kPmsValid;

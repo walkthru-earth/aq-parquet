@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 
 using namespace telemetry;
 using namespace telemetry::contract;
@@ -219,8 +220,41 @@ void assert_battery_gates() {
   last = monitor.update(battery_sample(3600000, reading, extended_ok()));
   assert(last.state == aq::battery::State::Ok && last.minutes_to_empty == 2177);
 }
+// Warm-up runs from the last PMS wake, not from boot.
+void assert_warmup_from_wake() {
+  // Boot wake is 0, so the window matches the boot uptime gate.
+  static_assert(pms_warming(0, 0) && pms_warming(kPmsWarmupUs - 1, 0));
+  static_assert(!pms_warming(kPmsWarmupUs, 0));
+  constexpr std::int64_t wake = 3600000000LL;
+  static_assert(pms_warming(wake, wake) &&
+                pms_warming(wake + kPmsWarmupUs - 1, wake));
+  static_assert(!pms_warming(wake + kPmsWarmupUs, wake));
+  // A wake stamped after the row time never reads as valid.
+  static_assert(pms_warming(wake - 1, wake) && pms_warming(0, wake));
+  // Large monotonic values near the end of the int64 range stay exact.
+  constexpr auto late = std::numeric_limits<std::int64_t>::max() - 1;
+  static_assert(pms_warming(late, late - kPmsWarmupUs + 1));
+  static_assert(!pms_warming(late, late - kPmsWarmupUs));
+
+  auto pms = parsed_snapshot();
+  Sample boot{}, woke{}, warming{}, ready{}, early{};
+  apply_pms(boot, pms, wake);
+  assert(boot.data[pms_status] == kPmsValid && boot.valid[pm1_cf1_ug_m3]);
+  pms.last_wake_mono_us = wake;
+  apply_pms(woke, pms, wake);
+  assert(woke.data[pms_status] == kPmsWarming && !woke.valid[pm1_cf1_ug_m3]);
+  apply_pms(warming, pms, wake + kPmsWarmupUs - 1);
+  assert(warming.data[pms_status] == kPmsWarming &&
+         !warming.valid[ambient_temperature_c]);
+  apply_pms(ready, pms, wake + kPmsWarmupUs);
+  // After the window the row matches the boot case value for value.
+  assert(ready.data == boot.data && ready.valid == boot.valid);
+  apply_pms(early, pms, wake - 1);
+  assert(early.data[pms_status] == kPmsWarming);
+}
 void assert_gates() {
   assert_identity_rules();
+  assert_warmup_from_wake();
   auto pms = parsed_snapshot();
   Sample warm{}, ready{}, stale{}, bad_model{}, bad_gauge{}, installed{};
   apply_pms(warm, pms, kPmsWarmupUs - 1);
