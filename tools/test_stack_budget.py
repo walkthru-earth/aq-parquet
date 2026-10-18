@@ -265,6 +265,15 @@ def check_cli(root: Path) -> None:
     code, _, err = run(["--budgets", str(path), "--check"],
                        [site("tight", 1000), sb.TaskSite("src/a.c:12", "src/a.c", "main_task", "tight", 1000, "1000")])
     assert code == 1 and 'task "tight" is created at 2 sites (src/a.c:7, src/a.c:12)' in err, err
+    # Two tracked keys that share one task name report the duplicate once.
+    shared = json.loads(clean)
+    shared["tasks"]["also"] = {"entry": ["main_task"], "task_name": "tight"}
+    shared["images"]["fake/app"]["tasks"]["also"] = {"stack_bytes": 1000}
+    path.write_text(json.dumps(shared))
+    code, _, err = run(["--budgets", str(path), "--check"],
+                       [site("tight", 1000), sb.TaskSite("src/a.c:12", "src/a.c", "main_task", "tight", 1000, "1000")])
+    assert code == 1 and err.count("is created at 2 sites") == 1, err
+    path.write_text(clean)
     # --write-budgets refuses while the stack sizes disagree.
     assert run(["--budgets", str(path), "--write-budgets"], [site("tight", 2000)])[0] == 2
     assert path.read_text() == clean
@@ -324,6 +333,27 @@ def check_internal_stacks(root: Path) -> None:
     assert scan.external == [], scan.external
     assert [(item.where, item.name, item.stack, item.parsed) for item in scan.sites] == [
         ("firmware/common/x.cpp:4", "board", 4096, True)], scan.sites
+    # A digit separator is not a character literal, so its quote cannot pair
+    # with a later one and hide the call between them.
+    source.write_text("int n = 4'096; xTaskCreate(t, \"ds\", 4096, nullptr, 1, nullptr); char c = 'x';\n"
+                      "auto w = L'\"'; xTaskCreate(u, \"wide\", 2048, nullptr, 1, nullptr);\n")
+    assert [(item.name, item.stack) for item in sb.scan_sources(root).sites] == [
+        ("ds", 4096), ("wide", 2048)], sb.scan_sources(root).sites
+    # A raw string ends only at its own delimiter, so a quote inside it does
+    # not open a literal that hides the call after it. Its text is not a call.
+    source.write_text('auto r = R"(he said ")"; xTaskCreate(t, "raw", 4096, nullptr, 1, nullptr); auto q = "z";\n'
+                      'auto d = u8R"x(xTaskCreate(f)" )x"; xTaskCreate(v, "delim", 1024, nullptr, 1, nullptr);\n'
+                      'auto m = R"(\nxTaskCreateStatic(\n)";\n')
+    scan = sb.scan_sources(root)
+    assert [(item.where, item.name) for item in scan.sites] == [
+        ("firmware/common/x.cpp:1", "raw"), ("firmware/common/x.cpp:2", "delim")], scan.sites
+    assert scan.external == [], scan.external
+    # Comment stripping uses the same literal rules, so a // inside a raw
+    # string does not hide the rest of its line, and one after 4'096 counts.
+    assert sb.strip_comments('R"(//)" x; 4\'0 // c') == 'R"(//)" x; 4\'0     '
+    # A string right after a macro name, as in "%"PRIu32"\n", is still a string.
+    assert sb.blank_literals('f("a"PRIu32"xTaskCreate(");') == 'f(" "PRIu32"            ");'
+
     assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}
     findings = sb.stack_memory_findings(allowed, ["firmware/common/x.cpp:2"])

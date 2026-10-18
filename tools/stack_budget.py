@@ -388,7 +388,14 @@ EXTERNAL_STACK_RE = re.compile(r"\b(xTaskCreateWithCaps|xTaskCreatePinnedToCoreW
 TASK_TOKEN_RE = re.compile(r"\bxTaskCreate\w*\s*\(")
 TASK_CREATE_RE = re.compile(r'\bxTaskCreate(?:PinnedToCore)?\s*\(\s*([A-Za-z_]\w*)\s*,\s*"([^"]*)"\s*,\s*([^,]+?)\s*,')
 CONSTANT_RE = re.compile(r"^[0-9\s*+()]+$")
-COMMENT_RE = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|//[^\n]*|/\*.*?\*/', re.S)
+# Comments and literals in one pass, so neither hides the other. A raw string
+# R"d(...)d" ends only at its own delimiter. A quote after a word character is
+# a digit separator such as 4'096, not a character literal, except after an
+# encoding prefix (u8, u, U, L).
+COMMENT_RE = re.compile(r'(?<!\w)(?:u8|[uUL])?R"([^()\\\s"]{0,16})\(.*?\)\1"'
+                        r'|"(?:\\.|[^"\\\n])*"'
+                        r'|(?<!\w)(?:u8|[uUL])?\'(?:\\.|[^\'\\\n])*\''
+                        r'|//[^\n]*|/\*.*?\*/', re.S)
 SOURCE_SKIP = {"build", "managed_components", "vendor"}
 
 
@@ -409,22 +416,28 @@ class SourceScan:
     sites: list[TaskSite] = field(default_factory=list)
 
 
+def is_comment(token: str) -> bool:
+    return token.startswith(("//", "/*"))
+
+
 def strip_comments(text: str) -> str:
     """Blank out comments and keep string literals and line numbers."""
     def blank(match: re.Match) -> str:
         token = match.group(0)
-        return token if token[0] in "\"'" else re.sub(r"[^\n]", " ", token)
+        return re.sub(r"[^\n]", " ", token) if is_comment(token) else token
     return COMMENT_RE.sub(blank, text)
 
 
 def blank_literals(text: str) -> str:
-    """Blank the inside of string and character literals, keeping the quotes,
-    the length and line numbers, so call names in log text are not calls."""
+    """Blank the inside of string and character literals, keeping any prefix,
+    the quotes, the length and line numbers, so call names in log text are not
+    calls."""
     def blank(match: re.Match) -> str:
         token = match.group(0)
-        if token[0] not in "\"'":
+        if is_comment(token):
             return token
-        return token[0] + re.sub(r"[^\n]", " ", token[1:-1]) + token[-1]
+        start = min(i for i in (token.find('"'), token.find("'")) if i >= 0) + 1
+        return token[:start] + re.sub(r"[^\n]", " ", token[start:-1]) + token[-1]
     return COMMENT_RE.sub(blank, text)
 
 
@@ -516,10 +529,11 @@ def task_site_findings(graph: Graph, spec: dict, budgets: dict, sites: list[Task
                             f"stack at {site.where}")
     # One creation site per tracked name. A second copy takes its own stack
     # from the heap, which no budget here counts.
-    for task_name, name in names.items():
+    # Keys that share a task name report it once.
+    for name in sorted(set(names.values())):
         copies = [site.where for site in here if site.parsed and site.name == name]
         if len(copies) > 1:
-            findings.append(f'{task_name}: task "{name}" is created at {len(copies)} sites ({", ".join(copies)}). '
+            findings.append(f'task "{name}" is created at {len(copies)} sites ({", ".join(copies)}). '
                             "Keep one creation site per tracked task")
     created = {site.name for site in here}
     for task_name, image_task in spec["tasks"].items():
