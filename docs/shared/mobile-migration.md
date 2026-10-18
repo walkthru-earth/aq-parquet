@@ -44,7 +44,8 @@ entries against 6688 for the full walk.
   written below the floor after a clock moved back across a reboot, and the
   unsynced files of a boot whose NVS ring write and `ringless=` marker
   folder both failed. A boot with only a failed ring write leaves the marker,
-  and every later listing repeats its files in full, so dedupe
+  and every later listing repeats its files in full until a later append in
+  that boot removes it or the archive is erased, so dedupe
   them as above. Other stations,
   `legacy-parquet/` and `benchmarks/` also appear only in a full listing.
 - Read `ls` as optional, absent on older firmware.
