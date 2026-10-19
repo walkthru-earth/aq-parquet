@@ -176,6 +176,7 @@ jobs:
           restore-keys: |
             ccache-${{ matrix.name }}-${{ steps.idf.outputs.commit }}-
       - name: Build
+        id: build
         env:
           TASK: ${{ matrix.task }}
           EXTRA_TASK: ${{ matrix.extra_task }}
@@ -297,7 +298,9 @@ jobs:
       # tools/stack_budget.json (issue #37). The image key is the board before
       # the first dash of the leg name plus the variant, such as cores3/bringup.
       - name: Check stack and section budgets
-        if: matrix.project
+        # Still runs when the OTA slot check above failed, so that leg keeps
+        # its stack and section table. The OTA failure still fails the job.
+        if: ${{ !cancelled() && matrix.project && steps.build.outcome == 'success' }}
         env:
           NAME: ${{ matrix.name }}
           VARIANT: ${{ matrix.variant }}

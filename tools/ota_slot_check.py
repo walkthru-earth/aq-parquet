@@ -13,10 +13,10 @@ Usage:
 
 Why half the slot (issue #45)
   Measured on main ed1038e (2026-10-19) every app slot is 0x600000 (6 MiB) and
-  the images built by CI are 1,606,990 bytes for cores3 bringup (25.5 %),
-  1,446,265 for waveshare logger (23.0 %) and 300,097 for waveshare diagnostic
-  (4.8 %), per `idf.py size`. A 50 % share fails at 3 MiB, so the largest image
-  can still grow by about 1.5 MB, roughly four times the 341 KB one
+  the app .bin this check measures is 1,607,104 bytes for cores3 bringup
+  (25.5 %) and 1,446,384 for waveshare logger (23.0 %). Waveshare diagnostic
+  is about 300,000 bytes (4.8 %) by `idf.py size`. A 50 % share fails at
+  3 MiB, so the largest image can still grow by about 1.5 MB, roughly four times the 341 KB one
   std::format_to_n call cost (AGENTS.md), which leaves room for #40 OTA and
   normal feature work without a false failure. Stopping at half instead of
   near 100 % makes the build fail while a slot still has 3 MiB spare, so there
@@ -34,7 +34,6 @@ import re
 import sys
 
 MAX_SHARE = 0.50
-APP_TYPES = {"app", "0", "0x0", "0x00"}
 SIZE = re.compile(r"(0x[0-9a-f]+|[0-9]+)([km]?)", re.IGNORECASE)
 
 
@@ -53,6 +52,16 @@ def parse_size(text: str) -> int:
     return value
 
 
+def is_app_type(kind: str) -> bool:
+    """ESP-IDF reads a numeric type with int(x, 0), so 0, 0x00 and 0x0000 all mean app."""
+    if kind.lower() == "app":
+        return True
+    try:
+        return int(kind, 0) == 0
+    except ValueError:
+        return False
+
+
 def app_slots(text: str) -> dict[str, int]:
     """Name and size of every app partition in a partitions.csv."""
     slots: dict[str, int] = {}
@@ -63,8 +72,8 @@ def app_slots(text: str) -> dict[str, int]:
         fields = [field.strip() for field in line.split(",")]
         if len(fields) < 5:
             raise CheckError(f"partitions.csv line {number} has {len(fields)} fields, expected at least 5")
-        name, kind, size = fields[0], fields[1].lower(), fields[4]
-        if kind not in APP_TYPES:
+        name, kind, size = fields[0], fields[1], fields[4]
+        if not is_app_type(kind):
             continue
         if name in slots:
             raise CheckError(f"partitions.csv names app partition {name} twice")
@@ -93,6 +102,8 @@ def check(partitions: Path, build: Path) -> tuple[int, str, int]:
         raise CheckError(f"cannot read partitions.csv {partitions}, {error}") from error
     slots = app_slots(text)
     image = image_path(build)
+    if not image.is_file():
+        raise CheckError(f"app image {image} is not a file")
     try:
         used = image.stat().st_size
     except OSError as error:

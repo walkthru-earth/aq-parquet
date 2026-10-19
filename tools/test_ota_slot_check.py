@@ -75,6 +75,17 @@ def main() -> None:
         table, out = build(root, 0)
         rejected(run(table, out), "empty")
 
+        # ESP-IDF reads a numeric type with int(x, 0), so 0x0000 is an app slot too.
+        table, out = build(root, 100_000, app0="6M")
+        table.write_text(table.read_text().replace("app1,     app,", "app1,     0x0000,"))
+        rejected(run(table, out), "app1")
+        assert check.app_slots("a, 0x0000, ota_0, , 4K,\nd, 0x01, nvs, , 4K,\n") == {"a": 4096}
+
+        # An app_bin that names a directory must not pass as an image.
+        table, out = build(root, 16)
+        (out / "project_description.json").write_text(json.dumps({"app_bin": "."}))
+        rejected(run(table, out), "not a file")
+
         table, out = build(root, 16)
         table.unlink()
         rejected(run(table, out), "partitions.csv")

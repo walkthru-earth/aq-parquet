@@ -34,6 +34,22 @@ FIXTURE_ENTRY_POINTS = (
 )
 
 
+def calls_check(text: str, call: str) -> bool:
+    """True when a live line runs the check with this call and keeps its exit status.
+
+    A commented out call, or one followed by `||` or a pipe, would let a
+    failing check pass, so it does not count."""
+    for line in text.splitlines():
+        code = line.strip()
+        if code.startswith("#") or "tools/check_idf_target.py" not in code or call not in code:
+            continue
+        rest = code.split(call, 1)[1]
+        if "||" in code or "|" in rest or "#" in code.split("tools/check_idf_target.py", 1)[0]:
+            continue
+        return True
+    return False
+
+
 def entry(source: Path, *flags: str) -> dict[str, str]:
     return {"directory": "/tmp", "file": str(source),
             "command": " ".join(["xtensa-esp32s3-elf-g++", *flags, "-c", str(source)])}
@@ -50,8 +66,17 @@ def main() -> None:
         assert anchor in text, f"{relative} no longer has {anchor}"
         # For pixi.toml only the PSRAM task line counts.
         lines = [line for line in text.splitlines() if anchor in line or relative != "pixi.toml"]
-        assert any("tools/check_idf_target.py" in line and call in line for line in lines), \
-            f"{relative} must run check_idf_target.py {call}"
+        assert calls_check("\n".join(lines), call), f"{relative} must run check_idf_target.py {call}"
+
+    good = 'python "${repo_root}/tools/check_idf_target.py" --compile-dialect "${fixture}/build"'
+    call = '--compile-dialect "${fixture}/build"'
+    assert calls_check(good, call)
+    assert calls_check('x = "tools/idf.sh build && python tools/check_idf_target.py ' + call + '"', call)
+    assert not calls_check("# " + good, call), "a commented out call must not count"
+    assert not calls_check(good + " || true", call), "a call that swallows its exit must not count"
+    assert not calls_check(good + " || :", call)
+    assert not calls_check(good + " | tee log", call)
+    assert not calls_check("true # " + good, call)
 
     cases = {
         "pinned": ([entry(REPO_CPP, SDK_DEFAULT, PINNED)], True),
