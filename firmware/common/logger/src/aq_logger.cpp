@@ -217,6 +217,13 @@ void stamp_heartbeat() {
 #endif
 }
 TaskHandle_t worker_task = nullptr;
+// The longest the worker waits for begin() to print PARQUET BEGIN.
+constexpr std::uint32_t kWorkerStartWaitMs = 5000;
+#if CONFIG_AQ_LOGGER_WORKER_WDT
+static_assert(kWorkerStartWaitMs <
+                  CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S * 1000U,
+              "the start wait must end before the worker watchdog trips");
+#endif
 char boot_text[33]{};
 char device_text[13]{};
 char station_text[37]{};
@@ -2265,6 +2272,12 @@ void bench_stall(const char *text) {
 }
 #endif
 void storage_worker(void *) {
+  // begin() gives the start signal right after it prints PARQUET BEGIN, so
+  // every worker line of a boot follows that boot's BEGIN. Nothing between
+  // the task create and the signal can fail, and the wait is bounded anyway.
+  // The wait is far below the worker watchdog timeout, which ages from the
+  // heartbeat begin() seeded, and a blocked task leaves the idle tasks free.
+  ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs));
   // Startup scans below are covered from the first instruction.
   stamp_heartbeat();
   bool storage_ready;
@@ -3041,6 +3054,8 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       config.schema_name, unsigned(field_count), unsigned(kMaxRowGroups),
       unsigned(sizeof(WriterState)), unsigned(sizeof(Sample)), boot_text,
       station_text, codec_name(selected_codec), crc_check);
+  // Releases the worker held in storage_worker() until BEGIN is out.
+  xTaskNotifyGive(worker_task);
   return true;
 }
 

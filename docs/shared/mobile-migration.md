@@ -8,6 +8,21 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## PARQUET BEGIN first in each boot (fix-35-begin-order, issue #35)
+
+**What changed.** The storage worker now waits until the logger has printed
+`PARQUET BEGIN`, so in `LOG_TAIL` each boot's `PARQUET BEGIN` comes before its
+worker lines, such as `PARQUET RECOVERY`, `PARQUET QUARANTINE`, `PARQUET SCAN`
+and the mount error. Before, a fast card could print those first. The text of
+every line is unchanged, only the order is now guaranteed.
+
+**Why.** Tools that split a log into boots at each `PARQUET BEGIN` could file a
+new boot's recovery lines under the boot before it.
+
+**What the app must do.** Nothing. An app that groups `LOG_TAIL` lines by boot
+may now start a boot at its `PARQUET BEGIN`. Lines from older firmware may
+still show the old order.
+
 ## Quarantine walk error lines (fix/iterative-dir-walk, issue #37)
 
 **What changed.** The startup partial quarantine can print three new lines in

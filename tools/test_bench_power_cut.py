@@ -315,6 +315,30 @@ def test_account() -> None:
     gap = bpc.account(bpc.parse_line(l) for l in ["PARQUET ROW sequence=1", "PARQUET ROW sequence=4"])
     require(gap["boots"][0]["boot"] == "unknown" and gap["boots"][0]["log_gap_rows"] == 2, "gaps before BEGIN")
 
+    # BEGIN prints before the storage worker runs (#35), so a boot's recovery
+    # lines sit right behind its own BEGIN and never under the boot before.
+    # Lines from before the first BEGIN of a log stay in an unknown boot.
+    strict = bpc.account(bpc.parse_line(l) for l in [
+        "PARQUET RECOVERY quarantined=7 repaired=0 deleted=0",
+        "PARQUET ROW sequence=40 buffered=1 dropped=0",
+        "PARQUET BEGIN boot=A columns=62",
+        "PARQUET QUARANTINE source=P/aq_Z_0-1.partial target=q/aq_Z_0-1.partial bytes=10 origin=boot",
+        "PARQUET RECOVERY quarantined=1 repaired=0 deleted=0",
+        "PARQUET SCAN files=0 retained_partials=0 quarantine_files=1 quarantine_bytes=10",
+        "PARQUET ROW sequence=0 buffered=1 dropped=0",
+        "PARQUET BEGIN boot=B columns=62",
+        "PARQUET RECOVERY quarantined=0 repaired=0 deleted=0",
+        "PARQUET SCAN files=0 retained_partials=0 quarantine_files=1 quarantine_bytes=10",
+    ])
+    early, first, second = strict["boots"]
+    require(early["boot"] == "unknown" and early["recovery_quarantined"] == 7 and early["rows_seen"] == 1,
+            f"lines before the first BEGIN {early}")
+    require(first["boot"] == "A" and first["recovery_quarantined"] == 1
+            and first["quarantined"] == ["P/aq_Z_0-1.partial"] and first["scan"]["files"] == 0
+            and first["rows_seen"] == 1, f"boot A keeps its own recovery {first}")
+    require(second["boot"] == "B" and second["recovery_quarantined"] == 0 and second["quarantined"] == []
+            and second["rows_seen"] == 0, f"boot B {second}")
+
 
 def test_classify_and_plan() -> None:
     lines = [(1.0, "PARQUET ROW sequence=0"), (2.0, "PARQUET GROUP file=x first=0 last=0"),

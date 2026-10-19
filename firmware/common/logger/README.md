@@ -259,6 +259,12 @@ writes nothing looking alive.
 
 - `begin()` seeds the heartbeat just before it creates the worker task, so a
   worker that blocks before its first stamp ages out like any other stall.
+  The new worker first waits for a task notification that `begin()` gives
+  right after it prints `PARQUET BEGIN`, so BEGIN always precedes every
+  worker line of that boot. No return sits between the task create and that
+  notification, and the wait is bounded at 5 s, below the shortest stall
+  timeout. A waiting worker is blocked, so idle tasks run and the supervisor
+  keeps feeding its user from the seeded heartbeat.
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
   watchdog=armed|warn|off`, at most every 30 s.
