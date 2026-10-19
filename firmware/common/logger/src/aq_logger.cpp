@@ -60,6 +60,10 @@
 #include <numeric>
 #include <sys/stat.h>
 #include <unistd.h>
+// After the ESP-IDF headers, which bring in sdkconfig.h.
+#if CONFIG_AQ_LOGGER_BENCH_STALL
+#include "aq_logger_bench_stall.h"
+#endif
 
 namespace aqlogger {
 namespace {
@@ -2242,6 +2246,24 @@ void serve_control(const ble::ControlRequest &request, std::size_t &count,
   current_request = nullptr;
 }
 
+#if CONFIG_AQ_LOGGER_BENCH_STALL
+// Bench only. Blocks the worker without stamping its heartbeat, so the
+// watchdog sees a real stall. 0 never returns.
+void bench_stall(const char *text) {
+  const auto seconds = bench::parse_stall_seconds(text);
+  if (!seconds) {
+    aqlog.printf("PARQUET ERROR operation=bench-stall reason=%s\n",
+                 bench::stall_error_name(seconds.error()));
+    return;
+  }
+  aqlog.printf("PARQUET BENCH stall_s=%lu\n",
+               static_cast<unsigned long>(*seconds));
+  const std::int64_t start = esp_timer_get_time();
+  while (bench::stall_continues(*seconds, start, esp_timer_get_time()))
+    vTaskDelay(pdMS_TO_TICKS(100));
+  aqlog.println("PARQUET BENCH stall-end");
+}
+#endif
 void storage_worker(void *) {
   // Startup scans below are covered from the first instruction.
   stamp_heartbeat();
@@ -2535,6 +2557,10 @@ void storage_worker(void *) {
                    codec_name(selected_codec), saved ? "true" : "false");
     } else if (std::strcmp(command.text, "parquet flush") == 0) {
       flush_batch(count, storage_ready);
+#if CONFIG_AQ_LOGGER_BENCH_STALL
+    } else if (bench::is_stall_command(command.text)) {
+      bench_stall(command.text);
+#endif
     } else if (std::strncmp(command.text, "parquet interval ", 17) == 0 &&
                (std::strcmp(command.text + 17, "600") == 0 ||
                 std::strcmp(command.text + 17, "900") == 0 ||

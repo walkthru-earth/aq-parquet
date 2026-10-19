@@ -331,6 +331,50 @@ Read a saved core dump with `tools/idf.sh -C <trial> -B <build dir>
 coredump-info` against the ELF that was flashed. Reading the partition does not
 write the board.
 
+### Bench stall command
+
+`CONFIG_AQ_LOGGER_BENCH_STALL` (default n) adds one serial command to the
+worker, `parquet bench-stall <s>`. It prints `PARQUET BENCH stall_s=<s>` and
+then sleeps in 100 ms steps without stamping the heartbeat, so the supervisor
+sees a real stall. `0` blocks forever, which ends in the task watchdog reset
+and core dump above. `1` to `3600` is a returning stall that prints
+`PARQUET BENCH stall-end`. Anything else gets
+`PARQUET ERROR operation=bench-stall reason=invalid-seconds` or
+`reason=seconds-out-of-range` and no stall. The parser and the deadline are
+pure in `aq_logger_bench_stall.h`, and `pixi run logger-bench-stall-test` runs
+them with sanitizers. It also fails when the Kconfig default is not n, when
+any shipped `sdkconfig.defaults` sets the option, or when bench code in
+`aq_logger.cpp` sits outside `#if CONFIG_AQ_LOGGER_BENCH_STALL`. With the
+option off the compiled `aq_logger.cpp` object is the same as before the
+command existed.
+
+Any serial user can stop logging with it, so it never ships. Build a bench
+image only through the overlay `tools/idf-bench-stall-sdkconfig.defaults`,
+which `AQ_BENCH=stall` appends after the board defaults. The image lands in
+its own `build/<variant>-bench-stall` directory, so the shipped
+`build/<variant>` sdkconfig never picks it up, and the flash script only
+writes it with the same `AQ_BENCH=stall`.
+
+```sh
+AQ_BENCH=stall pixi run waveshare-build logger
+AQ_BENCH=stall pixi run waveshare-flash <checked port> <full backup> logger
+AQ_BENCH=stall pixi run cores3-build
+```
+
+Keep the bench ELF, since a core dump decodes only against the exact ELF
+(`coredump-info -B <trial>/build/<variant>-bench-stall`). Opening the
+Waveshare CH343 console resets the board, so send the command on the same
+open that logs the run.
+
+```sh
+pixi run capture --port <checked port> --seconds 900 \
+  --send-on "PARQUET ROW" "parquet bench-stall 0" --out <artifacts>/stall.log
+```
+
+`--send-on PATTERN COMMAND` waits for PATTERN, sends COMMAND once and can
+repeat in order. Flash a shipped build back after the run, then power cycle
+once so the RTC stall count returns to `consecutive=0`.
+
 ## Verification
 
 `pixi run logger-build-test` compiles the minimal generic ESP32-S3

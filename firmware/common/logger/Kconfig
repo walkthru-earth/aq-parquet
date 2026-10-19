@@ -36,4 +36,18 @@ config AQ_LOGGER_WORKER_WDT_HEALTHY_S
         consecutive stall reset count returns to zero and a warn-only worker
         is armed again.
 
+config AQ_LOGGER_BENCH_STALL
+    bool "Bench only, the parquet bench-stall serial command"
+    default n
+    help
+        Adds the serial command `parquet bench-stall <s>`, which blocks the
+        storage worker for s seconds (1 to 3600) without stamping its
+        heartbeat, or forever when s is 0. It prints
+        `PARQUET BENCH stall_s=<s>` first and `PARQUET BENCH stall-end` when
+        a returning stall ends. Use it to force the worker watchdog, its
+        recovery and a core dump on a bench board. Turn it on only through
+        tools/idf-bench-stall-sdkconfig.defaults in a separate build
+        directory. Never ship an image with it, any serial user can stop
+        logging with it.
+
 endmenu

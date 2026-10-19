@@ -40,6 +40,9 @@ initialization and each board's schema/provenance remain in its own trial.
   the start and apply steps in `aq_logger_watchdog_apply.h` behind injected
   task watchdog and timer interfaces. The timer callback only wraps the IDF
   calls, and every arm or panic switch it applies has an unwind path. See the README section Worker watchdog.
+  The bench only `parquet bench-stall` command stays inside
+  `#if CONFIG_AQ_LOGGER_BENCH_STALL` (default n), set only by
+  `tools/idf-bench-stall-sdkconfig.defaults` through `AQ_BENCH=stall`.
 - Battery power policy stays pure in `aq_logger_power.h`,
   `aq_logger_emergency_close.h` and `firmware/common/power`.
   `report_battery()` runs on the main loop and only logs, calls the optional
