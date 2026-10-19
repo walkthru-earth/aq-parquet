@@ -43,6 +43,7 @@ tasks=(
   # Local signing key guard and sign task, throwaway keys only
   "secrets-check-test"
   "release-sign-test"
+  "release-workflow-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
   # Sensor drivers on fake buses

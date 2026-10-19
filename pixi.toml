@@ -62,6 +62,8 @@ ota-slot-check-test = "python tools/test_ota_slot_check.py"
 # See docs/shared/development.md#local-app-signing.
 release-sign = "python tools/release_sign.py"
 release-sign-test = "python tools/test_release_sign.py"
+# Safety rules of the tag release workflow, proved by mutation (#45).
+release-workflow-test = "python tools/test_release_workflow.py"
 # Nothing under secrets/ and no PEM private key tracked by git. lint runs it.
 secrets-check = "python tools/check_secrets.py"
 secrets-check-test = "python tools/test_check_secrets.py"

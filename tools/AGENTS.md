@@ -31,6 +31,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
 | Formatting and static diagnostics, no board-name `#if` in `firmware/common` (`check_board_conditionals.py`) | `fmt-check`, `lint`, `board-conditionals-test` |
 | Sign app images with the owner key in `secrets/` (owner machine only, never CI), verify them and write SHA256SUMS. Tests use throwaway keys in a temp dir | `release-sign --out <dir> <app.bin>`, `release-sign-test` |
+| Tag release workflow keeps least privilege per job, no credentials, cache or secrets, the push tag gate, `--draft`, the existing release guard and the tag pattern, each rule proved by mutation | `release-workflow-test` |
 | Nothing under `secrets/` and no PEM private key tracked by git, run by `lint` | `secrets-check`, `secrets-check-test` |
 | Full host gate, same entry point as CI | `gate` (`tools/gate.sh`, add new host test tasks to its list) |
 | CI image size table from `idf.py size --format json2`, absolute sizes with a warning when the baseline is malformed | `size_report.py`, `size-report-test` |
