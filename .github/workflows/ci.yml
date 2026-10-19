@@ -319,6 +319,48 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "${status}"
 
+  # One board built from two checkout paths must give the same images (#45).
+  # tools/check_repro_paths.sh builds the Waveshare logger, which compiles every
+  # common component, in two git worktrees of HEAD and compares the
+  # aq-build-sha256.json manifests. One board keeps the job to two builds.
+  # No ccache, a cache hit could hide a path that leaks at compile time.
+  repro-paths:
+    name: Reproducible image paths
+    runs-on: ubuntu-24.04
+    # Two uncached builds of about 4 min each, plus SDK setup.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          pixi-version: v0.82.0
+          locked: true
+          cache: true
+          cache-write: false
+      - name: Read pinned ESP-IDF identity
+        id: idf
+        run: |
+          source tools/idf-dependencies.lock
+          echo "version=${ESP_IDF_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "commit=${ESP_IDF_COMMIT}" >> "$GITHUB_OUTPUT"
+      # Same SDK cache key as the board builds, which alone write it.
+      - name: Restore ESP-IDF SDK and tools
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ~/.espressif
+            !~/.espressif/dist
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}
+      - name: Install pinned ESP-IDF
+        run: pixi run idf-setup
+      - name: Build from two paths and compare
+        run: pixi run repro-paths-check waveshare logger
+
   # The one required status check. It fails unless every job above passed,
   # so adding, renaming or splitting a job never needs a ruleset change. A
   # cancelled or timed out job counts as a failure. A skipped job also fails
@@ -328,7 +370,7 @@ jobs:
   ci-result:
     name: CI result
     if: always()
-    needs: [workflow-lint, host-gate, board-build]
+    needs: [workflow-lint, host-gate, board-build, repro-paths]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

@@ -3,3 +3,4 @@ idf_component_register(
     INCLUDE_DIRS "../../diagnostic"
     REQUIRES common sensors runtime fatfs sdmmc esp_driver_sdmmc esp_driver_uart spi_flash esp_driver_i2c led_strip esp_timer espcoredump)
 aq_pin_cxx_standard(${COMPONENT_LIB})
+aq_map_source_paths(${COMPONENT_LIB})

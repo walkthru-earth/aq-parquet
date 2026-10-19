@@ -1,8 +1,8 @@
 """Host tests for the fixture dialect check, `check_idf_target.py --compile-dialect`.
 
 The SDK fixtures (logger compile test, connectivity and PSRAM probe) have no
-board target, so they run only the per-file -std check on their compiler
-database. This test feeds that check crafted databases and makes sure every
+board target, so they run only the per-file -std and source path map check on
+their compiler database. This test feeds that check crafted databases and makes sure every
 fixture entry point calls it. It needs no SDK.
 """
 
@@ -34,23 +34,38 @@ FIXTURE_ENTRY_POINTS = (
 )
 
 
+# A lone `&` backgrounds the call. `&&` is fine, it only runs on success.
+BACKGROUND = re.compile(r"(?<!&)&(?!&)")
+# `!` before the call inverts its exit status.
+INVERTED = re.compile(r"(?:^|[\s;&|(])!\s")
+
+
 def calls_check(text: str, call: str) -> bool:
     """True when a live line runs the check with this call and keeps its exit status.
 
-    A commented out call, or one followed by `||` or a pipe, would let a
-    failing check pass, so it does not count."""
+    A commented out call, or one followed by `||`, a pipe, `;` or a lone `&`,
+    would let a failing check pass, so it does not count. Pixi tasks run
+    without `set -e`, so `call; true` exits 0. A `set +e` on the line or a `!`
+    before the call is rejected for the same reason."""
     for line in text.splitlines():
         code = line.strip()
         if code.startswith("#") or "tools/check_idf_target.py" not in code or call not in code:
             continue
-        rest = code.split(call, 1)[1]
-        if "||" in code or "|" in rest or "#" in code.split("tools/check_idf_target.py", 1)[0]:
+        before, rest = code.split("tools/check_idf_target.py", 1)[0], code.split(call, 1)[1]
+        if "||" in code or "|" in rest or ";" in rest or BACKGROUND.search(rest) or "#" in before:
+            continue
+        if "set +e" in code or INVERTED.search(before):
             continue
         return True
     return False
 
 
-def entry(source: Path, *flags: str) -> dict[str, str]:
+# What aq_map_source_paths() adds to every repo-owned component.
+SOURCE_MAP = f"-ffile-prefix-map={ROOT}=."
+
+
+def entry(source: Path, *flags: str, mapped: bool = True) -> dict[str, str]:
+    flags = (SOURCE_MAP, *flags) if mapped else flags
     return {"directory": "/tmp", "file": str(source),
             "command": " ".join(["xtensa-esp32s3-elf-g++", *flags, "-c", str(source)])}
 
@@ -77,6 +92,15 @@ def main() -> None:
     assert not calls_check(good + " || :", call)
     assert not calls_check(good + " | tee log", call)
     assert not calls_check("true # " + good, call)
+    assert not calls_check(good + "; true", call), "pixi runs tasks without set -e, so ; true hides a failure"
+    assert not calls_check(good + " ; exit 0", call)
+    assert not calls_check(good + " &", call), "a backgrounded call must not count"
+    assert not calls_check(good + " & wait", call)
+    assert not calls_check("set +e; " + good, call)
+    assert not calls_check("! " + good, call), "an inverted call must not count"
+    assert not calls_check("build && ! " + good, call)
+    assert calls_check(good + " && echo done", call), "&& keeps the exit status"
+    assert calls_check("tools/idf.sh build && " + good, call)
 
     cases = {
         "pinned": ([entry(REPO_CPP, SDK_DEFAULT, PINNED)], True),
@@ -85,6 +109,15 @@ def main() -> None:
         "no std": ([entry(REPO_CPP, "-Og")], False),
         "C file with a C++ std": ([entry(REPO_CPP, PINNED), entry(REPO_C, PINNED)], False),
         "only third party": ([entry(Path("/opt/esp/idf/components/log/log.cpp"), SDK_DEFAULT)], False),
+        "third party without a map": ([entry(REPO_CPP, PINNED),
+                                       entry(Path("/opt/esp/idf/components/log/log.cpp"), mapped=False)], True),
+        "C++ file without a map": ([entry(REPO_CPP, PINNED, mapped=False)], False),
+        "C file without a map": ([entry(REPO_CPP, PINNED), entry(REPO_C, "-std=gnu17", mapped=False)], False),
+        "map of a subdirectory": ([entry(REPO_CPP, PINNED, f"-ffile-prefix-map={ROOT / 'firmware'}=.",
+                                         mapped=False)], False),
+        "map to an absolute name": ([entry(REPO_CPP, PINNED, f"-ffile-prefix-map={ROOT}=/src",
+                                           mapped=False)], False),
+        "debug only map": ([entry(REPO_CPP, PINNED, f"-fdebug-prefix-map={ROOT}=.", mapped=False)], False),
         "empty database": ([], False),
     }
     with tempfile.TemporaryDirectory() as raw:

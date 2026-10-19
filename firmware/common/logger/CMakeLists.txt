@@ -4,3 +4,4 @@ idf_component_register(
     REQUIRES common runtime connectivity location power
     PRIV_REQUIRES nvs_flash esp_timer esp_hw_support heap)
 aq_pin_cxx_standard(${COMPONENT_LIB})
+aq_map_source_paths(${COMPONENT_LIB})

@@ -52,14 +52,25 @@ def parse_size(text: str) -> int:
     return value
 
 
+# The type keywords gen_esp32part.py in ESP-IDF 6.1 accepts, in any case.
+TYPE_KEYWORDS = {"app": 0x00, "data": 0x01, "bootloader": 0x02, "partition_table": 0x03}
+
+
 def is_app_type(kind: str) -> bool:
-    """ESP-IDF reads a numeric type with int(x, 0), so 0, 0x00 and 0x0000 all mean app."""
-    if kind.lower() == "app":
-        return True
-    try:
-        return int(kind, 0) == 0
-    except ValueError:
-        return False
+    """ESP-IDF reads a numeric type with int(x, 0), so 0, 0x00 and 0x0000 all mean app.
+
+    A type that is neither a keyword nor a number from 0 to 0xFE raises, so a
+    typo such as 0xZZ cannot hide an app slot from the check. gen_esp32part.py
+    rejects it at build time too, this keeps the check closed on its own."""
+    value = TYPE_KEYWORDS.get(kind.lower())
+    if value is None:
+        try:
+            value = int(kind, 0)
+        except ValueError:
+            raise CheckError(f"partition type {kind!r} is not a known keyword or a number") from None
+        if not 0 <= value <= 0xFE:
+            raise CheckError(f"partition type {kind!r} is outside 0x00 to 0xFE")
+    return value == 0
 
 
 def app_slots(text: str) -> dict[str, int]:

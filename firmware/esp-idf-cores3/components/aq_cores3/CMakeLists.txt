@@ -3,3 +3,4 @@ idf_component_register(
     INCLUDE_DIRS "../../bringup"
     REQUIRES common sensors runtime logger m5unified fatfs sdmmc esp_driver_sdspi esp_driver_uart esp_psram spi_flash nvs_flash esp_timer espcoredump)
 aq_pin_cxx_standard(${COMPONENT_LIB})
+aq_map_source_paths(${COMPONENT_LIB})

@@ -36,6 +36,7 @@ tasks=(
   "size-report-test"
   "ota-slot-check-test"
   "compile-dialect-test"
+  "repro-paths-test"
   "stack-budget-test"
   "board-conditionals-test"
   "telemetry-contract-test --sanitize"

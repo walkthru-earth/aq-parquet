@@ -124,6 +124,23 @@ and stays allowed. Lint passes only on exit 0, so a check that cannot run
 fails it. `board-conditionals-test` covers the rule. Shared code takes board
 capabilities from hooks, `ServiceConfig` and sdkconfig defaults instead.
 
+### Source paths
+
+Two checkouts of one commit build the same image. Every repo-owned component
+also calls `aq_map_source_paths(${COMPONENT_LIB})` from
+[`firmware/cmake/aq_source_paths.cmake`](../../firmware/cmake/aq_source_paths.cmake),
+which adds `-ffile-prefix-map=<repo root>=.`. `__FILE__` in asserts and
+`ESP_ERROR_CHECK` then reads `./firmware/common/...` instead of the checkout
+path, because the SDK's `CONFIG_COMPILER_HIDE_PATHS_MACROS` maps only the board
+project directory. Each board project also calls `aq_map_debug_paths()`, a
+`-fdebug-prefix-map` of the repo root for every component, since the app image
+embeds the ELF SHA-256 and third-party debug info (managed components, the
+NimBLE copy in the build directory) would otherwise still carry the path.
+Neither flag changes code. The board build and `--compile-dialect` fail when a
+repo C or C++ file misses the map. `pixi run repro-paths-check [board]
+[variant]` builds HEAD twice and compares, see CI below. It needs the SDK and
+the network for managed components, and it leaves uncommitted edits out.
+
 On 2026-10-17 one `std::format_to_n` call added to the CoreS3 image at `-Og`
 with xtensa GCC 15.2.0 cost about 341 KB of flash image and 5 KB of DIRAM
 against the same build with `snprintf`. Device code keeps `snprintf` until a
@@ -217,6 +234,14 @@ and by hand from the Actions tab (`workflow_dispatch`).
   uses more than half of the smallest app slot in that variant's
   `partitions.csv`. The share and the measurements behind it live in
   `tools/ota_slot_check.py`.
+- **Reproducible image paths** runs `repro-paths-check waveshare logger`. It
+  builds that image in two git worktrees of the commit at paths of different
+  length, with `SOURCE_DATE_EPOCH` set to the commit time, and fails unless
+  every file in the two `aq-build-sha256.json` manifests matches, the app,
+  bootloader, partition table, OTA data, `sdkconfig` and flash arguments. The
+  compiler database and project description hold absolute paths by design and
+  are left out. On a failure it names the file, the count of differing bytes
+  and whether a checkout path is in it. The job runs without ccache.
 - **CI result** waits for every other job and fails unless each one passed.
   A skipped job passes only when its id is listed in `ALLOWED_SKIPS` in that
   job, which is empty today because no job has an `if:`. It is the single
@@ -252,6 +277,7 @@ job name `CI result` stable. If a merge queue is enabled later, add a
 | Logger queues and lifecycle | `logger-build-test`, `logger-work-queue-test`, `logger-watchdog-test`, `logger-codec-store-test`, `logger-rotation-test`, `logger-directory-test`, `logger-archive-reset-test` |
 | Storage governor, CRC cache or DMA buffer | `storage-governor-test`, `crc-cache-test`, `sd-transfer-buffer-test` |
 | Backup tooling | `backup-test` with offline fake esptool |
+| CMake helpers, compile flags or `sdkconfig` defaults | `repro-paths-check`, `compile-dialect-test` |
 | Diagnostic or PSRAM configuration | `waveshare-build diagnostic`, `waveshare-psram-build` |
 
 Task definitions in `pixi.toml` own exact commands and sanitizer defaults. The

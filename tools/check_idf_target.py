@@ -103,8 +103,21 @@ def expand_response_files(arguments: list[str], directory: Path) -> list[str]:
     return expanded
 
 
+def maps_source_root(arguments: list[str]) -> bool:
+    """True when a -ffile-prefix-map from aq_map_source_paths() maps the repo root to "."."""
+    for argument in arguments:
+        old, separator, new = argument.removeprefix("-ffile-prefix-map=").rpartition("=")
+        if argument.startswith("-ffile-prefix-map=") and separator and new == "." and \
+                Path(old).resolve() == ROOT:
+            return True
+    return False
+
+
 def check_compile_dialect(commands: list[dict], firmware_std: str) -> int:
-    """Every repo-owned C++ file must end on the pinned -std, and repo C files get no C++ -std."""
+    """Every repo-owned C++ file must end on the pinned -std, and repo C files get no C++ -std.
+
+    Every repo-owned C and C++ file must also map the repo root, so the image
+    holds no checkout path."""
     checked = 0
     for entry in commands:
         source = Path(entry["file"]).resolve()
@@ -124,6 +137,10 @@ def check_compile_dialect(commands: list[dict], firmware_std: str) -> int:
             checked += 1
         elif source.suffix == ".c":
             require(not any("++" in standard for standard in standards), f"{relative} got a C++ -std")
+        if source.suffix in {".c", ".cpp"}:
+            require(maps_source_root(arguments),
+                    f"{relative} does not map the repo root with -ffile-prefix-map. "
+                    "Call aq_map_source_paths() in its component")
     require(checked > 0, "no repo-owned C++ files in the compiler database")
     return checked
 
@@ -377,8 +394,8 @@ def main() -> None:
     parser.add_argument("--cxx-dialect", action="store_true",
                         help="only check that every C++ dialect source names the same standard")
     parser.add_argument("--compile-dialect", type=Path, metavar="BUILD",
-                        help="only check the -std of every repo C and C++ file in a fixture build's "
-                             "compile_commands.json")
+                        help="only check the -std and the source path map of every repo C and C++ file "
+                             "in a fixture build's compile_commands.json")
     parser.add_argument("--allow-missing-submodules", action="store_true")
     parser.add_argument("--backup", type=Path)
     manifests = parser.add_mutually_exclusive_group()
@@ -391,7 +408,8 @@ def main() -> None:
             return
         if args.compile_dialect:
             checked = check_fixture_dialect(args.compile_dialect.resolve())
-            print(f"{checked} repo C++ files in {args.compile_dialect} build with {check_cxx_dialect_sources()}")
+            print(f"{checked} repo C++ files in {args.compile_dialect} build with {check_cxx_dialect_sources()} "
+                  "and every repo C and C++ file maps the repo root")
             return
         if args.sdk_only:
             check_sdk(args.sdk_only.resolve(), args.allow_missing_submodules)
@@ -413,7 +431,7 @@ def main() -> None:
         if args.backup:
             check_backup(args.backup, args.board)
         print(f"Verified native ESP32-S3 {args.board}/{args.variant}: "
-              "SDK, memory, console, components, C++ dialect, core dump, partitions and flash plan")
+              "SDK, memory, console, components, C++ dialect, source path map, core dump, partitions and flash plan")
     except (ValueError, OSError, KeyError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"native target rejected: {error}") from error
 

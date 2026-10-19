@@ -80,6 +80,16 @@ def main() -> None:
         table.write_text(table.read_text().replace("app1,     app,", "app1,     0x0000,"))
         rejected(run(table, out), "app1")
         assert check.app_slots("a, 0x0000, ota_0, , 4K,\nd, 0x01, nvs, , 4K,\n") == {"a": 4096}
+        # Keywords match in any case, and custom data types up to 0xFE are not app slots.
+        assert check.app_slots("a, APP, ota_0, , 4K,\nb, Bootloader, primary, , 4K,\n"
+                               "t, partition_table, primary, , 4K,\nc, 0x40, 0x00, , 4K,\n"
+                               "d, 0xFE, 0x00, , 4K,\n") == {"a": 4096}
+        try:
+            check.app_slots("a, app, ota_0, , 4K,\nb, 0xZZ, ota_1, , 4K,\n")
+        except check.CheckError as error:
+            assert "0xZZ" in str(error), error
+        else:
+            raise AssertionError("an unknown partition type must raise, not skip the row")
 
         # An app_bin that names a directory must not pass as an image.
         table, out = build(root, 16)
@@ -98,6 +108,11 @@ def main() -> None:
             "zero size": "app0, app, ota_0, 0x10000, 0,\n",
             "negative size": "app0, app, ota_0, 0x10000, -4K,\n",
             "duplicate name": "app0, app, ota_0, , 4K,\napp0, app, ota_1, , 4K,\n",
+            "unknown hex type": "app0, app, ota_0, , 4K,\napp1, 0xZZ, ota_1, , 4K,\n",
+            "unknown type word": "app0, app, ota_0, , 4K,\napp1, aap, ota_1, , 4K,\n",
+            "empty type": "app0, app, ota_0, , 4K,\napp1, , ota_1, , 4K,\n",
+            "type over 0xFE": "app0, app, ota_0, , 4K,\napp1, 0x100, ota_1, , 4K,\n",
+            "negative type": "app0, app, ota_0, , 4K,\napp1, -1, ota_1, , 4K,\n",
         }
         for name, text in malformed.items():
             table, out = build(root, 16)
