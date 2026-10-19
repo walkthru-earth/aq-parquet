@@ -20,7 +20,12 @@ several commands in order, each one waiting for its own pattern after the
 previous send. Opening the Waveshare CH343 console resets the board, so a
 second open to send a command would reboot it. Commands that answer with
 secrets (owner-pin, wifi-profile, config-hex) are refused, since everything
-the board prints lands in the capture.
+the board prints lands in the capture. Commands that destroy data
+(erase-archive) are refused too, so a typo in a cue cannot wipe a card.
+
+Exit codes are 0 for a capture with every cue sent, 1 when the port cannot
+open, 2 for a refused cue or an empty capture, 3 when a cue never fired and
+130 when stopped with Ctrl-C. An interrupted capture still writes --out.
 """
 
 from __future__ import annotations
@@ -42,6 +47,24 @@ except ImportError:
 # credential. A capture keeps everything the board prints, so never send them.
 SECRET_COMMANDS = ("parquet owner-pin", "parquet wifi-profile", "parquet config-hex")
 
+# Serial commands that destroy owner data. Never sent on a cue, whatever follows
+# the command word, since one typo in a long bench run could wipe the archive.
+DESTRUCTIVE_COMMANDS = ("parquet erase-archive",)
+
+INTERRUPTED_EXIT = 130
+
+
+def refusal(command: str) -> str | None:
+    """Why a cue command is refused, or None. Case and spacing do not get past it."""
+    words = " ".join(command.lower().split())
+    for refused in SECRET_COMMANDS:
+        if words == refused or words.startswith(refused + " "):
+            return f"refusing to send {refused!r}, its reply is a secret"
+    for refused in DESTRUCTIVE_COMMANDS:
+        if words == refused or words.startswith(refused + " "):
+            return f"refusing to send {refused!r}, it destroys data"
+    return None
+
 
 Cue = tuple[bytes, str]
 
@@ -60,8 +83,9 @@ class CueSender:
                 raise ValueError("--send-on needs a non-empty pattern")
             if not command.strip() or "\n" in command or "\r" in command:
                 raise ValueError("--send-on needs a single-line command")
-            if command.strip().startswith(SECRET_COMMANDS):
-                raise ValueError(f"refusing to send {command.split()[1]!r}, its reply is a secret")
+            reason = refusal(command)
+            if reason:
+                raise ValueError(reason)
         self.start = 0
 
     def due(self, collected: bytes | bytearray) -> list[Cue]:
@@ -69,7 +93,7 @@ class CueSender:
         fired: list[Cue] = []
         while self.pending:
             pattern = self.pending[0][0]
-            found = bytes(collected).find(pattern, self.start)
+            found = collected.find(pattern, self.start)
             if found < 0:
                 # Keep a tail so a pattern split across two reads still matches.
                 self.start = max(self.start, len(collected) - len(pattern) + 1)
@@ -115,6 +139,7 @@ def main() -> int:
 
     collected = bytearray()
     reconnecting = False
+    interrupted = False
     try:
         if args.reset:
             # Standard esp32 auto-reset pulse. Leaves the chip running the app.
@@ -163,6 +188,7 @@ def main() -> int:
                     break
     except KeyboardInterrupt:
         # A long bench capture stopped by hand still keeps what it read.
+        interrupted = True
         print("\n[capture] interrupted, keeping what was read", file=sys.stderr)
     finally:
         port.close()
@@ -174,6 +200,8 @@ def main() -> int:
         out.write_text(text)
         print(f"\n[capture] {len(collected)} bytes to {out}", file=sys.stderr)
 
+    if interrupted:
+        return INTERRUPTED_EXIT
     if not collected:
         reconnect_note = " after USB re-enumeration" if reconnecting else ""
         print(

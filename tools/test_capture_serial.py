@@ -29,14 +29,17 @@ class FakePort:
 
     opens = 0
 
-    def __init__(self, chunks: list[bytes], fail_writes: int = 0) -> None:
+    def __init__(self, chunks: list[bytes], fail_writes: int = 0, interrupt_when_empty: bool = False) -> None:
         self.chunks = list(chunks)
+        self.interrupt_when_empty = interrupt_when_empty
         self.writes: list[bytes] = []
         self.fail_writes = fail_writes
         self.closed = False
 
     def read(self, size: int) -> bytes:
         require(not self.closed, "read after close")
+        if not self.chunks and self.interrupt_when_empty:
+            raise KeyboardInterrupt
         return self.chunks.pop(0)[:size] if self.chunks else b""
 
     def write(self, data: bytes) -> int:
@@ -99,12 +102,18 @@ def cue_sender_unit() -> None:
 
     for bad in [("", "parquet flush"), ("ROW", ""), ("ROW", "parquet flush\nparquet list"),
                 ("ROW", "parquet owner-pin"), ("ROW", " parquet wifi-profile"),
-                ("ROW", "parquet config-hex 0102")]:
+                ("ROW", "parquet config-hex 0102"), ("ROW", "parquet erase-archive CONFIRM"),
+                ("ROW", "parquet erase-archive"), ("ROW", "PARQUET  Erase-Archive   CONFIRM"),
+                ("ROW", "parquet owner-pin 1234"), ("ROW", "Parquet Wifi-Profile")]:
         try:
             cap.CueSender([bad])
         except ValueError:
             continue
         raise AssertionError(f"{bad!r} must be refused")
+
+    # Only whole command words are refused, so a longer word is a different command.
+    for good in ["parquet flush", "parquet status", "parquet bench-stall 0", "parquet erase-archivex"]:
+        cap.CueSender([("ROW", good)])
 
 
 def capture_sends_on_cue() -> None:
@@ -154,6 +163,27 @@ def capture_refuses_secret() -> None:
     require("refusing" in stderr, "the refusal must be explained")
 
 
+def capture_refuses_destructive() -> None:
+    port = FakePort([b"PARQUET ROW\n"])
+    code, _, stderr = run(["--seconds", "0.5", "--send-on", "PARQUET ROW", "parquet bench-stall 5",
+                           "--send-on", "PARQUET ROW", "parquet erase-archive CONFIRM"], port)
+    require(code == 2 and FakePort.opens == 0, "a destructive command must be refused before the port opens")
+    require("destroys data" in stderr, "the refusal must say why")
+    require(port.writes == [], "nothing is written when any cue is refused")
+
+
+def capture_interrupt_is_not_success() -> None:
+    port = FakePort([b"PARQUET ROW seq=0\n"], interrupt_when_empty=True)
+    with tempfile.TemporaryDirectory(prefix="aq-capture-") as directory:
+        out = Path(directory) / "stall.log"
+        code, _, stderr = run(["--seconds", "2", "--send-on", "PARQUET ROW", "parquet bench-stall 0",
+                               "--out", str(out)], port)
+        require(code == cap.INTERRUPTED_EXIT == 130, f"Ctrl-C after every cue must exit 130, got {code}")
+        require(port.writes == [b"parquet bench-stall 0\n"], "the cue was sent before the interrupt")
+        require("PARQUET BENCH stall_s=0" in out.read_text(), "an interrupted capture still writes --out")
+        require("interrupted" in stderr and port.closed, "the interrupt is reported and the port closed")
+
+
 def capture_without_cue_writes_nothing() -> None:
     port = FakePort([b"PARQUET ROW seq=0\n"])
     code, _, _ = run(["--seconds", "0.5"], port)
@@ -167,9 +197,11 @@ def main() -> None:
     capture_missing_cue()
     capture_retries_failed_write()
     capture_refuses_secret()
+    capture_refuses_destructive()
+    capture_interrupt_is_not_success()
     capture_without_cue_writes_nothing()
     print("Capture serial: send on cue over one open, split patterns, ordered cues, missing cue exit, "
-          "failed write retry, secret command refusal and plain capture passed")
+          "failed write retry, secret and destructive command refusal, Ctrl-C exit 130 and plain capture passed")
 
 
 if __name__ == "__main__":

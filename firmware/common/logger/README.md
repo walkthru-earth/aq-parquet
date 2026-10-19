@@ -372,7 +372,8 @@ pixi run capture --port <checked port> --seconds 900 \
 ```
 
 `--send-on PATTERN COMMAND` waits for PATTERN, sends COMMAND once and can
-repeat in order. Flash a shipped build back after the run, then power cycle
+repeat in order. It refuses secret commands and `parquet erase-archive`, and
+exits 130 when stopped with Ctrl-C. Flash a shipped build back after the run, then power cycle
 once so the RTC stall count returns to `consecutive=0`.
 
 ## Verification
