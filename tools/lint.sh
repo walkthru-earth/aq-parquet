@@ -15,6 +15,15 @@ case "${board_rc}" in
   1) exit 1 ;;
   *) printf '!!! board conditional check failed to run (exit %s)\n' "${board_rc}" >&2; exit 1 ;;
 esac
+# No path under secrets/ and no PEM private key may be tracked by git (#45).
+# The app signing key stays on the owner machine. Same exit code contract.
+secrets_rc=0
+python tools/check_secrets.py || secrets_rc=$?
+case "${secrets_rc}" in
+  0) ;;
+  1) exit 1 ;;
+  *) printf '!!! tracked secrets check failed to run (exit %s)\n' "${secrets_rc}" >&2; exit 1 ;;
+esac
 options=(--language=c++ --enable=warning,style,performance,portability
   --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1
   '--suppress=*:*/vendor/lz4/*')

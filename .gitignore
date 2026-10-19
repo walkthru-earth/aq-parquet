@@ -12,6 +12,10 @@ backup/
 # defensively in case a tool ever writes one here.
 .toolchains/
 
+# Local secrets, the app signing key and its .env. Never commit them.
+# tools/check_secrets.py fails lint if anything here is ever tracked.
+/secrets/
+
 # Host Python bytecode
 __pycache__/
 *.py[cod]
