@@ -7,9 +7,12 @@
 # checkout path and two checkouts of one commit build different images.
 #
 # -ffile-prefix-map covers macros and debug info alike. A path under the repo
-# becomes relative to the repo root, such as ./firmware/common/vendor/lz4/lz4.c,
-# so an ELF backtrace still resolves from there. The flag changes no code, only
-# the path strings the compiler writes.
+# becomes relative to the repo root, such as ./firmware/common/vendor/lz4/lz4.c.
+# Function and line still resolve anywhere. The DWARF file name and its
+# compilation directory are both relative now, so run addr2line, gdb and the
+# core dump tools from the repo root to get a usable source path. addr2line
+# then prints the relative path twice, which still points at the right file.
+# The flag changes no code, only the path strings the compiler writes.
 #
 # Every board and fixture project includes this file before project.cmake, and
 # every component we own calls aq_map_source_paths() right after

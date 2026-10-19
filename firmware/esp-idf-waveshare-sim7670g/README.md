@@ -49,7 +49,9 @@ diagnostic, and the **UART0 console at 115200 through CH343**. USB CDC is not
 the console. Existing custom partition offsets are preserved. Build wrappers
 check vendor/dictionary hashes and generated target configuration; ephemeral
 outputs are in `build/logger/` or `build/diagnostic/`. Retain reviewable
-binaries, ELF files, hashes and captures in ignored `artifacts/`.
+binaries, ELF files, hashes and captures in ignored `artifacts/`. ELF source
+paths are relative to the repo root, so run `addr2line`, `gdb` and the core
+dump tools from there.
 
 Before any write, complete the [exact-board identification and full-backup sequence](../../AGENTS.md#before-any-physical-flash-write)
 for **V2.0**, including a matching **16,777,216-byte** full backup. Flash the

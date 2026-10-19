@@ -62,7 +62,8 @@ belong to each board adapter.
 - Retain the exact BIN/ELF and hashes under ignored `artifacts/` before a
   physical run. `build/bringup/` is rebuildable. Decode native crash addresses
   using the pinned SDK's `xtensa-esp32s3-elf-addr2line -pfiaC -e <retained-native.elf>
-  <addresses>`, or its IDF monitor with the matching build. Never decode a
+  <addresses>`, or its IDF monitor with the matching build. Run them from the
+  repo root, since ELF source paths are relative to it. Never decode a
   historical image with a newly compiled ELF.
 
 ## Historical resource and debugging evidence

@@ -141,6 +141,10 @@ repo C or C++ file misses the map. `pixi run repro-paths-check [board]
 [variant]` builds HEAD twice and compares, see CI below. It needs the SDK and
 the network for managed components, and it leaves uncommitted edits out.
 
+Source paths in the ELF are relative to the repo root. Function and line
+resolve from anywhere, but run `addr2line`, `gdb`, `idf.py monitor` and the
+core dump tools from the repo root so they find the source files.
+
 On 2026-10-17 one `std::format_to_n` call added to the CoreS3 image at `-Og`
 with xtensa GCC 15.2.0 cost about 341 KB of flash image and 5 KB of DIRAM
 against the same build with `snprintf`. Device code keeps `snprintf` until a

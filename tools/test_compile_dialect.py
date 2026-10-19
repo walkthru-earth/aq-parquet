@@ -34,8 +34,9 @@ FIXTURE_ENTRY_POINTS = (
 )
 
 
-# A lone `&` backgrounds the call. `&&` is fine, it only runs on success.
-BACKGROUND = re.compile(r"(?<!&)&(?!&)")
+# A lone `&` backgrounds the call. `&&` is fine, it only runs on success, and
+# so are redirections such as `2>&1`, `>&2` and `&>log`.
+BACKGROUND = re.compile(r"(?<![&<>])&(?![&>])")
 # `!` before the call inverts its exit status.
 INVERTED = re.compile(r"(?:^|[\s;&|(])!\s")
 
@@ -96,6 +97,11 @@ def main() -> None:
     assert not calls_check(good + " ; exit 0", call)
     assert not calls_check(good + " &", call), "a backgrounded call must not count"
     assert not calls_check(good + " & wait", call)
+    assert not calls_check(good + " 2>&1 &", call), "a redirection must not hide a later lone &"
+    assert calls_check(good + " 2>&1", call), "a redirection keeps the exit status"
+    assert calls_check(good + " >&2", call)
+    assert calls_check(good + " &>check.log", call)
+    assert calls_check(good + " 2>&1 && echo done", call)
     assert not calls_check("set +e; " + good, call)
     assert not calls_check("! " + good, call), "an inverted call must not count"
     assert not calls_check("build && ! " + good, call)
