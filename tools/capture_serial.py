@@ -8,9 +8,19 @@ Usage
     pixi run capture --port /dev/cu.usbmodem101 --seconds 25
     pixi run capture --port /dev/cu.usbmodem101 --seconds 25 --out logs/boot.txt
     pixi run capture --port /dev/cu.usbmodem101 --until "DIAGNOSTIC COMPLETE"
+    pixi run capture --port /dev/cu.wchusbserial5B901533371 --seconds 900 \
+        --send-on "PARQUET ROW" "parquet bench-stall 0" --out artifacts/stall.log
 
-Nothing is ever written to the device except an optional reset pulse, so this is
-safe to run against a board you care about.
+Without --send-on nothing is written to the device except an optional reset
+pulse, so this is safe to run against a board you care about.
+
+--send-on PATTERN COMMAND waits on the same open port until PATTERN appears in
+the output and then writes COMMAND and a newline, once. Repeat it to send
+several commands in order, each one waiting for its own pattern after the
+previous send. Opening the Waveshare CH343 console resets the board, so a
+second open to send a command would reboot it. Commands that answer with
+secrets (owner-pin, wifi-profile, config-hex) are refused, since everything
+the board prints lands in the capture.
 """
 
 from __future__ import annotations
@@ -19,12 +29,60 @@ import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Iterable
 
 try:
     import serial
 except ImportError:
     print("pyserial is missing, run this through pixi", file=sys.stderr)
     raise SystemExit(1)
+
+
+# Serial commands whose replies carry the device PIN, a Wi-Fi PSK or a decoded
+# credential. A capture keeps everything the board prints, so never send them.
+SECRET_COMMANDS = ("parquet owner-pin", "parquet wifi-profile", "parquet config-hex")
+
+
+Cue = tuple[bytes, str]
+
+
+class CueSender:
+    """Sends each command once, after its pattern appears in the output.
+
+    Cues run in order. Each pattern must appear after the point where the
+    previous command was sent, so an earlier line never fires a later cue.
+    """
+
+    def __init__(self, cues: Iterable[tuple[str, str]]) -> None:
+        self.pending: list[Cue] = [(pattern.encode(), command) for pattern, command in cues]
+        for pattern, command in self.pending:
+            if not pattern:
+                raise ValueError("--send-on needs a non-empty pattern")
+            if not command.strip() or "\n" in command or "\r" in command:
+                raise ValueError("--send-on needs a single-line command")
+            if command.strip().startswith(SECRET_COMMANDS):
+                raise ValueError(f"refusing to send {command.split()[1]!r}, its reply is a secret")
+        self.start = 0
+
+    def due(self, collected: bytes | bytearray) -> list[Cue]:
+        """The next cue once its pattern is in collected, at most one per call."""
+        fired: list[Cue] = []
+        while self.pending:
+            pattern = self.pending[0][0]
+            found = bytes(collected).find(pattern, self.start)
+            if found < 0:
+                # Keep a tail so a pattern split across two reads still matches.
+                self.start = max(self.start, len(collected) - len(pattern) + 1)
+                break
+            fired.append(self.pending.pop(0))
+            # The next pattern must arrive after this send.
+            self.start = len(collected)
+        return fired
+
+    def requeue(self, unsent: list[Cue], collected: bytes | bytearray) -> None:
+        """Puts cues whose write failed back in front. Each waits for its pattern again."""
+        self.pending[:0] = unsent
+        self.start = len(collected)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,11 +93,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--until", default=None, help="stop early once this text appears")
     parser.add_argument("--out", default=None, help="also write the capture to this file")
     parser.add_argument("--reset", action="store_true", help="pulse DTR/RTS first to reboot the board")
+    parser.add_argument("--send-on", nargs=2, action="append", default=[], metavar=("PATTERN", "COMMAND"),
+                        help="once PATTERN appears, send COMMAND and a newline on the same port. Repeatable, "
+                             "in order")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    try:
+        cues = CueSender(args.send_on)
+    except ValueError as exc:
+        print(f"capture: {exc}", file=sys.stderr)
+        return 2
 
     try:
         port = serial.Serial(args.port, args.baud, timeout=0.2)
@@ -47,6 +113,8 @@ def main() -> int:
         print(f"could not open {args.port}, {exc}", file=sys.stderr)
         return 1
 
+    collected = bytearray()
+    reconnecting = False
     try:
         if args.reset:
             # Standard esp32 auto-reset pulse. Leaves the chip running the app.
@@ -57,9 +125,7 @@ def main() -> int:
             time.sleep(0.2)
         port.reset_input_buffer()
 
-        collected = bytearray()
         deadline = time.monotonic() + args.seconds
-        reconnecting = False
         # The bound is always enforced, so a silent board cannot hang this.
         while time.monotonic() < deadline:
             try:
@@ -81,9 +147,23 @@ def main() -> int:
                 collected += chunk
                 sys.stdout.write(chunk.decode("utf-8", "replace"))
                 sys.stdout.flush()
+                fired = cues.due(collected)
+                for index, (_, command) in enumerate(fired):
+                    try:
+                        port.write(command.encode() + b"\n")
+                        port.flush()
+                    except (OSError, serial.SerialException) as exc:
+                        # The read path reconnects. The cue waits for its pattern again.
+                        cues.requeue(fired[index:], collected)
+                        print(f"\n[capture] could not send {command!r}, {exc}", file=sys.stderr)
+                        break
+                    print(f"\n[capture] sent {command!r}", file=sys.stderr)
                 if args.until and args.until.encode() in collected:
                     print(f"\n[capture] matched {args.until!r}, stopping early", file=sys.stderr)
                     break
+    except KeyboardInterrupt:
+        # A long bench capture stopped by hand still keeps what it read.
+        print("\n[capture] interrupted, keeping what was read", file=sys.stderr)
     finally:
         port.close()
 
@@ -102,6 +182,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
+    if cues.pending:
+        waiting = ", ".join(repr(pattern.decode()) for pattern, _ in cues.pending)
+        print(f"\n[capture] never saw {waiting}, those commands were not sent", file=sys.stderr)
+        return 3
     return 0
 
 

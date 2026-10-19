@@ -12,7 +12,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Telemetry dictionary, units and validity | `telemetry-contract-test --sanitize` |
 | BLE/LAN archive and framing | `archive-sync-test`, `test_ble_sync.py` |
 | Router/local/public NTP order and H3 privacy geometry | `network-time-test`, `location-test`, `config-test`, `control-sync-test` |
-| Checked serial readback, fetch and bounded capture | `parquet_device.py`, `capture_serial.py` |
+| Checked serial readback, fetch and bounded capture, send a command on cue over the one port open | `parquet_device.py`, `capture_serial.py --send-on`, `capture-serial-test` |
 | Footer rebuild for a quarantined `.partial` from its page headers and the board field table, output in a separate directory and checked by PyArrow and DuckDB | `rebuild-partial --board waveshare --out <dir> <files>`, `rebuild-partial-test --sanitize` |
 | Power cut cycles at the write, footer and rename stages, per boot loss account, baseline SHA-256 manifest and compare (owner bench only, tests use a fake port) | `bench-power-cut run|analyze|manifest|compare`, `bench-power-cut-test` |
 | Discharge run curve of `battery_mv`, SOC, CRATE and `battery_health_state` against UTC as SVG, with power-critical closes and reboot loop small files per boot from serial or LOG_TAIL logs, overlapping polls joined, logs oldest first (owner bench, #61 item 1, tests use a generated run) | `analyze-discharge <files> --log <log> --out <dir>`, `analyze-discharge-test` |
@@ -20,6 +20,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Native FAT mount root and archive directory creation | `logger-directory-test` |
 | Per-file C++ dialect of an SDK fixture build, and every fixture entry point calling it | `check_idf_target.py --compile-dialect <build>`, `compile-dialect-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
+| Bench only `parquet bench-stall` image, parser bounds and default-off guard | `AQ_BENCH=stall cores3-build` or `waveshare-build logger`, `logger-bench-stall-test` |
 | Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
 | Battery health states, thresholds, debounce, settling and the boot Low or Critical tie | `battery-health-test` |
 | COREDUMP line once per saved core dump, NVS record and its read or write failures | `coredump-report-test` |

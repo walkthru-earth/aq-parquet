@@ -65,6 +65,7 @@ tasks=(
   "coredump-report-test"
   "logger-work-queue-test"
   "logger-watchdog-test"
+  "logger-bench-stall-test"
   "logger-codec-store-test"
   "logger-status-test"
   "logger-rotation-test"
@@ -79,6 +80,8 @@ tasks=(
   "sd-transfer-buffer-test"
   # Offline backup publication with a fake esptool
   "backup-test"
+  # Serial capture send-on-cue with a fake port
+  "capture-serial-test"
 )
 
 # Every *-test task in pixi.toml runs here unless it needs the ESP-IDF SDK.

@@ -29,6 +29,8 @@ backup-partitions = "python tools/read_partitions.py"
 # Read the board's serial output for a bounded time, then stop. Never writes
 # to flash. Pass --port and --seconds, see the script for the full options.
 capture = "python tools/capture_serial.py"
+# Send on cue over one port open, with a fake port.
+capture-serial-test = "python tools/test_capture_serial.py"
 # Interactive serial terminal. Pass the port and baud, for example
 # pixi run monitor /dev/cu.usbmodem101 115200
 monitor = "python -m serial.tools.miniterm --raw"
@@ -79,6 +81,8 @@ waveshare-contract-test = "python tools/test_waveshare_contract.py"
 logger-build-test = "bash tools/test_logger_build.sh"
 logger-work-queue-test = "python tools/test_logger_work_queue.py"
 logger-watchdog-test = "python tools/test_logger_watchdog.py --sanitize"
+# Bench only parquet bench-stall parser, deadline and default-off guard (#49).
+logger-bench-stall-test = "python tools/test_logger_bench_stall.py --sanitize"
 logger-codec-store-test = "python tools/test_logger_codec_store.py --sanitize"
 debug-log-test = "python tools/test_debug_log.py"
 owner-pin = "python tools/owner_pin.py"
