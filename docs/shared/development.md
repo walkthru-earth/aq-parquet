@@ -281,6 +281,7 @@ job name `CI result` stable. If a merge queue is enabled later, add a
 | Logger queues and lifecycle | `logger-build-test`, `logger-work-queue-test`, `logger-watchdog-test`, `logger-codec-store-test`, `logger-rotation-test`, `logger-directory-test`, `logger-archive-reset-test` |
 | Storage governor, CRC cache or DMA buffer | `storage-governor-test`, `crc-cache-test`, `sd-transfer-buffer-test` |
 | Backup tooling | `backup-test` with offline fake esptool |
+| App signing or the tracked secrets guard | `release-sign-test`, `secrets-check-test` |
 | CMake helpers, compile flags or `sdkconfig` defaults | `repro-paths-check`, `compile-dialect-test` |
 | Diagnostic or PSRAM configuration | `waveshare-build diagnostic`, `waveshare-psram-build` |
 
@@ -342,6 +343,86 @@ native run observed successful network UTC and a short USB file readback;
 router/local/public transitions and location provisioning remain unqualified.
 Finalized owner archives and old schemas were
 not rewritten.
+
+## Local app signing
+
+The app signing key lives only on the owner machine, in `secrets/` at the
+repository root. It is never a GitHub secret and CI never sees it. `secrets/`
+is ignored by git, and `pixi run lint` runs `tools/check_secrets.py`, which
+fails when any path under `secrets/` is tracked or when a tracked file holds a
+PEM private key header. `pixi run secrets-check` runs the same check alone.
+
+Firmware does not check app signatures yet. Turning that on is #40, and it
+waits on an owner-approved bootloader reflash. Until then a signed image boots
+exactly like an unsigned one, so signing only proves the release came from the
+owner key.
+
+ESP32-S3 Secure Boot v2 verifies RSA-3072 signatures only, so that is the one
+scheme the task accepts.
+
+### One-time owner setup
+
+Run these from the repository root.
+
+1. Create the directory, readable only by you.
+
+   ```sh
+   mkdir -m 700 secrets
+   ```
+
+2. Generate the key with the pinned espsecure. It writes the file readable by
+   everyone, so restrict it right away.
+
+   ```sh
+   pixi run espsecure generate-signing-key --version 2 --scheme rsa3072 secrets/app_signing_key.pem
+   chmod 600 secrets/app_signing_key.pem
+   ```
+
+3. Write `secrets/.env`. The key path is relative to `secrets/`.
+
+   ```sh
+   printf 'AQ_APP_SIGNING_KEY=app_signing_key.pem\nAQ_APP_SIGNING_SCHEME=rsa3072\n' > secrets/.env
+   chmod 600 secrets/.env
+   ```
+
+   | Variable | Meaning |
+   | --- | --- |
+   | `AQ_APP_SIGNING_KEY` | Required. File name of the PEM private key inside `secrets/` |
+   | `AQ_APP_SIGNING_SCHEME` | Optional. `rsa3072`, the default and the only accepted value |
+
+   The file takes `NAME=VALUE` lines, an optional `export` prefix, `#`
+   comments and optional quotes. Nothing else is read from it.
+
+4. Back up `secrets/app_signing_key.pem` offline, for example on two encrypted
+   USB drives kept in different places. Once #40 enables signed app checks, a
+   device only takes an OTA image signed by this key. Losing the key then means
+   every deployed device needs a USB reflash to take an update. Never copy the
+   key into the repository, a cloud drive or a chat.
+
+### Sign a release
+
+Build the board images as usual, then sign the app `.bin` files into a
+directory outside `secrets/`.
+
+```sh
+pixi run release-sign --out exports/signed \
+  firmware/esp-idf-waveshare-sim7670g/build/logger/aq_waveshare.bin
+```
+
+For each input it runs `espsecure sign-data --version 2` to
+`<out>/<name>.signed.bin`, then `espsecure verify-signature --version 2` on the
+result. It then writes `<out>/SHA256SUMS` in `sha256sum` format. It refuses to
+run when
+
+- `secrets/.env` is missing or does not set `AQ_APP_SIGNING_KEY`
+- git tracks any path under `secrets/`
+- `secrets/`, `secrets/.env` or the key is open to group or other
+- the key is outside `secrets/`, password protected or not an RSA-3072 key
+- the output directory or an input is inside `secrets/`
+
+It never prints the key, the `.env` values or any file contents. It names the
+key only as `secrets/<name>`. `release-sign-test` and `secrets-check-test`
+use throwaway keys in a temp dir and never touch `secrets/`.
 
 ## Owner maintenance
 

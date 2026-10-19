@@ -26,4 +26,6 @@ The current image is a development/field-trial firmware, not a hardened producti
 
 This repository does **not** claim secure boot, flash encryption, signed OTA, anti-rollback, protected key storage, remote attestation, sensor calibration, SD-card encryption, or power-loss endurance. The partition table has OTA slots, but an authenticated/signed update flow is not implemented. Do not burn eFuses as part of normal development; irreversible provisioning needs a separate production design, recovery plan, and hardware verification.
 
+The owner can already sign app images with a local key that never leaves the owner machine, see [local app signing](development.md#local-app-signing). Devices do not check those signatures until #40 enables it with an owner-approved bootloader reflash.
+
 Before production, define a manufacturing/provisioning ceremony, unique device ownership transfer and reset behavior, debug-port policy, TLS trust lifecycle, update signing/rollback, secret rotation/revocation, and destructive power-cut/full-card/removal tests on the exact board and card SKUs.

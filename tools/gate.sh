@@ -40,6 +40,9 @@ tasks=(
   "repro-paths-test"
   "stack-budget-test"
   "board-conditionals-test"
+  # Local signing key guard and sign task, throwaway keys only
+  "secrets-check-test"
+  "release-sign-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
   # Sensor drivers on fake buses
