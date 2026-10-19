@@ -1,0 +1,5 @@
+# Bench only overlay, never for a shipped image. The board build and flash
+# scripts append it after the board defaults when AQ_BENCH=stall is set, and
+# then use their own build/<variant>-bench-stall directory. It adds the
+# `parquet bench-stall <s>` serial command, see firmware/common/logger/README.md.
+CONFIG_AQ_LOGGER_BENCH_STALL=y

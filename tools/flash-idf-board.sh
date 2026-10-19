@@ -24,7 +24,16 @@ case "${board}/${variant}" in
   *) printf 'invalid board variant\n' >&2; exit 2 ;;
 esac
 build_dir="${trial_dir}/build/${variant}"
-if [[ ! -f "${build_dir}/aq-build-target.txt" ]] || [[ "$(cat "${build_dir}/aq-build-target.txt")" != "${board}/${variant}" ]]; then
+target="${board}/${variant}"
+case "${AQ_BENCH:-}" in
+  "") ;;
+  stall)
+    build_dir="${build_dir}-bench-stall"
+    target="${target} bench=stall"
+    printf 'flashing a BENCH image with parquet bench-stall, restore a shipped build afterwards\n' >&2 ;;
+  *) printf 'unknown AQ_BENCH: %s (expected stall)\n' "${AQ_BENCH}" >&2; exit 2 ;;
+esac
+if [[ ! -f "${build_dir}/aq-build-target.txt" ]] || [[ "$(cat "${build_dir}/aq-build-target.txt")" != "${target}" ]]; then
   printf 'build and verify the selected native firmware first\n' >&2; exit 2
 fi
 python "${repo_root}/tools/check_idf_target.py" "${build_dir}" --board "${board}" --variant "${variant}" --verify-manifest --backup "${backup}"

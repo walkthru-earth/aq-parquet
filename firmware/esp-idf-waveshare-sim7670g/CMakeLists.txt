@@ -16,6 +16,12 @@ list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
 if(AQ_VARIANT STREQUAL "diagnostic")
     list(APPEND SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/diagnostic/sdkconfig.defaults")
 endif()
+# Bench images only. tools/build-idf-board.sh sets it from AQ_BENCH and builds
+# in a separate directory, so a shipped build never picks it up.
+set(AQ_SDKCONFIG_OVERLAY "" CACHE FILEPATH "Bench sdkconfig defaults appended last")
+if(AQ_SDKCONFIG_OVERLAY)
+    list(APPEND SDKCONFIG_DEFAULTS "${AQ_SDKCONFIG_OVERLAY}")
+endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_cxx_standard.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_nimble_patches.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/aq_stack_usage.cmake")

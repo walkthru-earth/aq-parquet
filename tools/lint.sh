@@ -48,3 +48,7 @@ cppcheck "${options[@]}" \
 # Check each sketch in the configuration it is actually compiled with.
 cppcheck "${options[@]}" -DCONFIG_SPIRAM=1 \
   firmware/esp-idf-waveshare-sim7670g/logger/main.cpp
+# The bench only parquet bench-stall branch is off in every shipped image, so
+# check aq_logger.cpp once more with it on (CONFIG_AQ_LOGGER_BENCH_STALL).
+cppcheck "${options[@]}" -DCONFIG_AQ_LOGGER_BENCH_STALL=1 \
+  firmware/common/logger/src/aq_logger.cpp

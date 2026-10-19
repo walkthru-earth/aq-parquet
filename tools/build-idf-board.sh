@@ -21,8 +21,23 @@ if [[ "${variant}" != diagnostic ]]; then
   test "${#digest}" -eq 64
   printf '%s  %s\n' "${digest}" "${trial_dir}/${variant}/telemetry_fields.inc" | shasum -a 256 -c -
 fi
+# AQ_BENCH=stall builds a bench image with tools/idf-bench-stall-sdkconfig.defaults
+# in its own directory, so its sdkconfig never leaks into the shipped build.
 build_dir="${trial_dir}/build/${variant}"
+target="${board}/${variant}"
+idf_args=(-D "AQ_VARIANT=${variant}")
+case "${AQ_BENCH:-}" in
+  "") ;;
+  stall)
+    if [[ "${variant}" == diagnostic ]]; then
+      printf 'AQ_BENCH=stall needs the logger runtime, not the diagnostic variant\n' >&2; exit 2
+    fi
+    build_dir="${build_dir}-bench-stall"
+    target="${target} bench=stall"
+    idf_args+=(-D "AQ_SDKCONFIG_OVERLAY=${repo_root}/tools/idf-bench-stall-sdkconfig.defaults") ;;
+  *) printf 'unknown AQ_BENCH: %s (expected stall)\n' "${AQ_BENCH}" >&2; exit 2 ;;
+esac
 rm -f "${build_dir}/aq-build-target.txt" "${build_dir}/aq-build-sha256.json"
-"${repo_root}/tools/idf.sh" -C "${trial_dir}" -B "${build_dir}" -D "AQ_VARIANT=${variant}" build
+"${repo_root}/tools/idf.sh" -C "${trial_dir}" -B "${build_dir}" "${idf_args[@]}" build
 python "${repo_root}/tools/check_idf_target.py" "${build_dir}" --board "${board}" --variant "${variant}" --write-manifest
-printf '%s/%s\n' "${board}" "${variant}" > "${build_dir}/aq-build-target.txt"
+printf '%s\n' "${target}" > "${build_dir}/aq-build-target.txt"
