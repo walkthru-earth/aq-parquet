@@ -250,6 +250,8 @@ and by hand from the Actions tab (`workflow_dispatch`).
   A skipped job passes only when its id is listed in `ALLOWED_SKIPS` in that
   job, which is empty today because no job has an `if:`. It is the single
   required check.
+- `.github/workflows/release.yml` is a separate workflow for `v*` tags and
+  is not part of `CI result`, see [Cutting a release](#cutting-a-release).
 - Dependabot opens one grouped pull request a week for action pin updates,
   only for releases at least 7 days old (`.github/dependabot.yml`).
 
@@ -425,6 +427,71 @@ run when
 It never prints the key, the `.env` values or any file contents. It names the
 key only as `secrets/<name>`. `release-sign-test` and `secrets-check-test`
 use throwaway keys in a temp dir and never touch `secrets/`.
+
+## Cutting a release
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It builds the
+CoreS3 and Waveshare logger images with the same pinned SDK and build tasks as
+CI, with no cache. It then creates a **draft** release that holds the unsigned
+app images, one SPDX SBOM per image from `esp-idf-sbom`, `SHA256SUMS` and a
+build provenance attestation for every file in `SHA256SUMS`. Assets are named
+`aq_cores3-bringup-<tag>.bin` and `aq_waveshare-logger-<tag>.bin`. CI never
+holds the signing key and never publishes. A manual run from the Actions tab
+on any branch is a dry run. It builds and uploads the same files as the
+`release-files` artifact and creates no release.
+
+Run these from the repository root, with `v1.2.0` standing for the new tag.
+
+1. Check that `CI result` passed on the `main` commit, then tag it and push
+   the tag.
+
+   ```sh
+   git tag -a v1.2.0 -m v1.2.0 <main-commit>
+   git push origin v1.2.0
+   ```
+
+2. Wait for the Release workflow to finish and the draft to appear.
+
+   ```sh
+   gh run watch "$(gh run list --workflow release.yml --branch v1.2.0 --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+
+3. Download the draft and check it against `SHA256SUMS` and the attestation.
+
+   ```sh
+   gh release download v1.2.0 --dir exports/release-v1.2.0/unsigned
+   (cd exports/release-v1.2.0/unsigned && shasum -a 256 -c SHA256SUMS)
+   for f in exports/release-v1.2.0/unsigned/*.bin; do
+     gh attestation verify "$f" --repo walkthru-earth/aq-parquet
+   done
+   ```
+
+4. Sign the app images with the local key, see [Local app signing](#local-app-signing).
+
+   ```sh
+   pixi run release-sign --out exports/release-v1.2.0/signed exports/release-v1.2.0/unsigned/*.bin
+   ```
+
+5. Join both checksum lists into one `SHA256SUMS`, then upload it with the
+   signed images. It replaces the draft `SHA256SUMS`.
+
+   ```sh
+   cat exports/release-v1.2.0/unsigned/SHA256SUMS exports/release-v1.2.0/signed/SHA256SUMS \
+     | LC_ALL=C sort -k 2 > exports/release-v1.2.0/SHA256SUMS
+   gh release upload v1.2.0 --clobber \
+     exports/release-v1.2.0/signed/*.signed.bin exports/release-v1.2.0/SHA256SUMS
+   ```
+
+6. Review the draft on GitHub, then publish it.
+
+   ```sh
+   gh release edit v1.2.0 --draft=false
+   ```
+
+The attestation covers the unsigned images and SBOMs as CI built them. The
+signed images are those bytes plus the owner signature block, and the owner
+key is their proof of origin. Until #40 the firmware does not check that
+signature.
 
 ## Owner maintenance
 

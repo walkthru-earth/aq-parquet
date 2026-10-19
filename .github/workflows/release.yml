@@ -1,0 +1,195 @@
+# Draft release of the unsigned board app images for a pushed v* tag (#45).
+#
+# Each board image is built the same way as the CI board build, through the
+# pinned `pixi run idf-setup` SDK and the board build task. The release holds
+# the unsigned app .bin files, one SPDX SBOM per image from esp-idf-sbom (part
+# of the pinned ESP-IDF install), SHA256SUMS and a build provenance
+# attestation for every file in SHA256SUMS.
+#
+# CI never holds or needs the app signing key. The owner downloads the draft,
+# signs with `pixi run release-sign` on the owner machine, uploads the signed
+# images and publishes, see docs/shared/development.md#cutting-a-release.
+#
+# A manual run (workflow_dispatch) on any branch is always a dry run. It builds
+# and uploads the release files as a workflow artifact, and the release job,
+# which alone gets write permissions, is skipped.
+#
+# No cache is restored or written, so a release image never depends on a
+# cache entry that another run wrote.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    # Uncached SDK setup and one uncached board build.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: cores3
+            task: cores3-build
+            project: firmware/esp-idf-cores3
+            variant: bringup
+            app: aq_cores3
+          - name: waveshare-logger
+            task: waveshare-build logger
+            project: firmware/esp-idf-waveshare-sim7670g
+            variant: logger
+            app: aq_waveshare
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
+        with:
+          pixi-version: v0.82.0
+          locked: true
+          cache: false
+      - name: Install pinned ESP-IDF
+        run: pixi run idf-setup
+      - name: Build
+        env:
+          TASK: ${{ matrix.task }}
+        run: |
+          read -r -a task <<<"${TASK}"
+          pixi run "${task[@]}"
+          # A build that rewrites a committed lock means the lock is stale.
+          git diff --exit-code -- '*dependencies.lock'
+      - name: Check OTA slot share
+        env:
+          NAME: ${{ matrix.name }}
+          PROJECT: ${{ matrix.project }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          pixi run ota-slot-check --label "${NAME} (${VARIANT})" \
+            --partitions "${PROJECT}/${VARIANT}/partitions.csv" \
+            --build "${PROJECT}/build/${VARIANT}" >> "$GITHUB_STEP_SUMMARY"
+      # Asset names carry the board variant and the tag, so files from two
+      # releases never share a name. A dry run uses dev-<commit> instead.
+      - name: Stage release files
+        env:
+          PROJECT: ${{ matrix.project }}
+          VARIANT: ${{ matrix.variant }}
+          APP: ${{ matrix.app }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "${REF_TYPE}" == tag ]]; then
+            # The tag becomes part of every asset name, so keep it plain.
+            if [[ ! "${REF_NAME}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+              echo "::error::tag ${REF_NAME} must match v[0-9A-Za-z._-]+"
+              exit 1
+            fi
+            label="${REF_NAME}"
+          else
+            label="dev-${GITHUB_SHA:0:12}"
+          fi
+          build="${PROJECT}/build/${VARIANT}"
+          stem="${APP}-${VARIANT}-${label}"
+          mkdir -p dist
+          cp "${build}/${APP}.bin" "dist/${stem}.bin"
+          # sbom-create reruns the app target first, which is a no-op here.
+          pixi run idf -C "${PROJECT}" -B "${build}" \
+            sbom-create --format spdx-json --file "${PWD}/dist/${stem}.spdx.json"
+          ls -l dist
+      - name: Upload release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Joins the board files and writes SHA256SUMS. Runs on dry runs too, so the
+  # uploaded release-files artifact is exactly what a tag would publish.
+  assemble:
+    name: Assemble release files
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum -- * | LC_ALL=C sort -k 2 > ../SHA256SUMS
+          mv ../SHA256SUMS SHA256SUMS
+          {
+            echo '### Release files'
+            echo
+            echo '```text'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only a pushed v* tag reaches this job. It attests every file listed in
+  # SHA256SUMS and creates a draft release. It never publishes.
+  release:
+    name: Draft release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: assemble
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # Create the draft release and upload its files.
+      contents: write
+      # Sign the provenance attestation with the workflow OIDC identity.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: dist
+      - name: Check SHA256SUMS
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes="Unsigned app images built from ${TAG} at ${GITHUB_SHA}. "
+          notes+="Signed images are added by the owner before publishing, "
+          notes+="see docs/shared/development.md#cutting-a-release."
+          gh release create "${TAG}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --verify-tag \
+            --title "${TAG}" \
+            --notes "${notes}"
