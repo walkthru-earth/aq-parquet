@@ -92,11 +92,28 @@ def check_findings(root: Path) -> None:
     git(repo, "add", "docs/secrets/a.md")
     assert cs.findings(repo) == []
 
-    # A staged file deleted from the worktree is skipped, and a symlink is
-    # never followed.
+    # The staged blob is what gets committed. A key staged and then deleted or
+    # replaced on disk still fires, and a clean file staged and then given a
+    # key on disk does not.
     (repo / "gone.txt").write_text(HEADERS[0])
     git(repo, "add", "gone.txt")
     (repo / "gone.txt").unlink()
+    assert cs.findings(repo) == ["gone.txt: holds a PEM private key header"]
+    (repo / "gone.txt").write_text("clean now\n")
+    assert cs.findings(repo) == ["gone.txt: holds a PEM private key header"]
+    git(repo, "add", "gone.txt")
+    assert cs.findings(repo) == []
+    (repo / "later.txt").write_text("clean\n")
+    git(repo, "add", "later.txt")
+    (repo / "later.txt").write_text(HEADERS[0])
+    assert cs.findings(repo) == []
+    # An executable file is read too.
+    (repo / "run.sh").write_text(HEADERS[2])
+    (repo / "run.sh").chmod(0o755)
+    git(repo, "add", "run.sh")
+    assert cs.findings(repo) == ["run.sh: holds a PEM private key header"]
+    git(repo, "rm", "-q", "--cached", "run.sh")
+    # A symlink entry is never followed, even to a key.
     outside = root / "outside.pem"
     outside.write_text(HEADERS[0])
     (repo / "link.pem").symlink_to(outside)

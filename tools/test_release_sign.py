@@ -209,6 +209,20 @@ def check_refusals(root: Path) -> None:
     twin.parent.mkdir()
     twin.write_bytes(bins[0].read_bytes())
     refused(repo, out, [bins[0], twin], "would both write aq_app0.signed.bin")
+    # An output that would replace an input, even one listed later, is refused
+    # before anything is written.
+    clash_dir = root / "clash"
+    clash_dir.mkdir()
+    first, second = clash_dir / "app.bin", clash_dir / "app.signed.bin"
+    first.write_bytes(b"\xe9" * 64)
+    second.write_bytes(b"\xe9" * 96)
+    refused(repo, clash_dir, [first, second], "app.signed.bin is also an input")
+    assert first.read_bytes() == b"\xe9" * 64 and second.read_bytes() == b"\xe9" * 96
+    sums_input = clash_dir / rs.SUMS
+    sums_input.write_bytes(b"\xe9" * 32)
+    code, _, stderr = run(["--repo", str(repo), "--out", str(clash_dir), str(sums_input)])
+    assert code == 1 and f"{rs.SUMS} is also an input" in stderr, stderr
+    sums_input.unlink()
     inside = repo / "secrets" / "app.bin"
     inside.write_bytes(b"\xe9" * 64)
     refused(repo, out, [inside], "is inside secrets/")

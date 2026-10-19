@@ -2,14 +2,15 @@
 
 The app signing key lives only in secrets/ on the owner machine, see
 docs/shared/development.md#local-app-signing. That directory is ignored, but an
-ignore rule does not stop `git add -f`. This check reads the git index and
-fails when
+ignore rule does not stop `git add -f`. This check reads the staged blobs in
+the git index, not the working tree, so a key that was staged and then deleted
+or replaced on disk still fails. It fails when
 
 - any tracked path is under secrets/, or
 - a tracked file holds a PEM private key header, for any key type.
 
-It prints the offending path only, never file contents. Symlinks and gitlinks
-are skipped, so the check never reads outside the checkout.
+It prints the offending path only, never file contents. Symlink and gitlink
+entries are skipped by their index mode.
 
 Exit 0 when clean, 1 with one line per finding, 2 when git cannot list the
 files. tools/lint.sh fails on anything but 0.
@@ -33,30 +34,54 @@ SECRETS_DIR = "secrets"
 PRIVATE_KEY_RE = re.compile(b"-----BEGIN (?:[A-Z0-9]+ )*" + b"PRIVATE" + b" KEY-----")
 
 
-def tracked_paths(root: Path) -> list[str]:
-    """Paths in the git index of root. Raises OSError or CalledProcessError."""
-    result = subprocess.run(["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True)
-    return [name for name in result.stdout.decode("utf-8", "surrogateescape").split("\0") if name]
+def index_entries(root: Path) -> list[tuple[str, str, str]]:
+    """(mode, blob id, path) for every entry in the git index of root.
+    Raises OSError or CalledProcessError."""
+    result = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"], capture_output=True, check=True)
+    entries = []
+    for record in result.stdout.decode("utf-8", "surrogateescape").split("\0"):
+        if record:
+            meta, _, name = record.partition("\t")
+            mode, blob, _stage = meta.split(" ")
+            entries.append((mode, blob, name))
+    return entries
+
+
+def read_blobs(root: Path, blobs: list[str]) -> dict[str, bytes]:
+    """Blob contents by id from the object store, in one git process."""
+    if not blobs:
+        return {}
+    request = "".join(f"{blob}\n" for blob in blobs).encode()
+    out = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"], input=request, capture_output=True,
+                         check=True).stdout
+    contents, pos = {}, 0
+    for blob in blobs:
+        end = out.index(b"\n", pos)
+        header = out[pos:end].split(b" ")
+        if len(header) != 3:
+            raise subprocess.CalledProcessError(1, ["git", "cat-file"], stderr=f"blob {blob} missing".encode())
+        size = int(header[2])
+        contents[blob] = out[end + 1:end + 1 + size]
+        pos = end + 1 + size + 1
+    return contents
 
 
 def findings(root: Path) -> list[str]:
     found = []
-    for name in tracked_paths(root):
+    regular = []
+    for mode, blob, name in index_entries(root):
         if name == SECRETS_DIR or name.startswith(SECRETS_DIR + "/"):
             found.append(f"{name}: tracked under {SECRETS_DIR}/")
-            continue
-        path = root / name
-        # A deleted but still staged file, a symlink or a submodule is not read.
-        if path.is_symlink() or not path.is_file():
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError as error:
-            found.append(f"{name}: cannot read ({error.strerror})")
-            continue
-        if PRIVATE_KEY_RE.search(data):
+        # Regular files only. A symlink entry (120000) holds a target path and
+        # a gitlink (160000) is another repository.
+        elif mode in ("100644", "100755"):
+            regular.append((blob, name))
+    contents = read_blobs(root, sorted({blob for blob, _ in regular}))
+    for blob, name in regular:
+        if PRIVATE_KEY_RE.search(contents[blob]):
             found.append(f"{name}: holds a PEM private key header")
-    return found
+    # A conflicted path has one entry per stage. Report it once.
+    return list(dict.fromkeys(found))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -166,6 +166,11 @@ def sign(repo: Path, out: Path, images: list[Path]) -> list[str]:
         if signed in names:
             raise Refused(f"{image} and {names[signed]} would both write {signed}")
         names[signed] = image
+    # No output may replace an input, including one signed later in the run.
+    inputs = {image.resolve() for image in images}
+    for written in [*names, SUMS]:
+        if (out_real / written).resolve() in inputs:
+            raise Refused(f"{out_real / written} is also an input, choose another --out")
     key, label, scheme = load_config(repo)
     out_real.mkdir(parents=True, exist_ok=True)
     print(f"signing {len(images)} image(s) with {label} ({scheme}, Secure Boot v2)")
