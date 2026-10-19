@@ -33,6 +33,13 @@ stack size in source, so a new task or a resized stack cannot pass unnoticed.
 A call it cannot parse, such as a lambda entry or a name in a variable, fails,
 and so does a second creation site for one tracked task name.
 
+The scan does not evaluate the preprocessor. Every branch of every `#if`,
+`#elif` and `#else` is scanned, `#if 0` included, so a call in any branch must
+name a tracked task whose `stack_bytes` matches its stack. Two calls with one
+task name pass the one site rule only when they sit in different branches of
+the same `#if` group, since at most one of them is compiled. Calls in sibling
+files, or in the same branch, still count as two sites.
+
 Usage:
   pixi run stack-budget                         # every image with a build
   pixi run stack-budget --image cores3/bringup --path
@@ -388,14 +395,19 @@ EXTERNAL_STACK_RE = re.compile(r"\b(xTaskCreateWithCaps|xTaskCreatePinnedToCoreW
 TASK_TOKEN_RE = re.compile(r"\bxTaskCreate\w*\s*\(")
 TASK_CREATE_RE = re.compile(r'\bxTaskCreate(?:PinnedToCore)?\s*\(\s*([A-Za-z_]\w*)\s*,\s*"([^"]*)"\s*,\s*([^,]+?)\s*,')
 CONSTANT_RE = re.compile(r"^[0-9\s*+()]+$")
-# Comments and literals in one pass, so neither hides the other. A raw string
-# R"d(...)d" ends only at its own delimiter. A quote after a word character is
-# a digit separator such as 4'096, not a character literal, except after an
-# encoding prefix (u8, u, U, L).
-COMMENT_RE = re.compile(r'(?<!\w)(?:u8|[uUL])?R"([^()\\\s"]{0,16})\(.*?\)\1"'
-                        r'|"(?:\\.|[^"\\\n])*"'
-                        r'|(?<!\w)(?:u8|[uUL])?\'(?:\\.|[^\'\\\n])*\''
-                        r'|//[^\n]*|/\*.*?\*/', re.S)
+# Comments, literals, identifiers and numbers in one pass, so none hides
+# another. A raw string R"d(...)d" ends only at its own delimiter. Identifiers
+# and preprocessing numbers are matched whole and kept, so a quote inside a
+# number such as 4'096 is a digit separator, and a quote right after any word
+# (a keyword as in case'"', or an encoding prefix as in L'"') opens a
+# character literal.
+LEXEME_RE = re.compile(r'(?P<raw>(?<!\w)(?:u8|[uUL])?R"(?P<delim>[^()\\\s"]{0,16})\(.*?\)(?P=delim)")'
+                       r"|(?P<word>\.?\d(?:[eEpP][+-]|'\w|[\w.])*|[A-Za-z_]\w*)"
+                       r'|(?P<string>"(?:\\.|[^"\\\n])*")'
+                       r"|(?P<char>'(?:\\.|[^'\\\n])*')"
+                       r"|(?P<comment>//[^\n]*|/\*.*?\*/)", re.S)
+# A conditional directive opens, continues or closes a group of branches.
+DIRECTIVE_RE = re.compile(r"[ \t]*#[ \t]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b")
 SOURCE_SKIP = {"build", "managed_components", "vendor"}
 
 
@@ -408,6 +420,8 @@ class TaskSite:
     stack: int | None
     stack_text: str
     parsed: bool = True
+    # The (group, branch) pairs of every #if around the call, see conditional_branches.
+    branches: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass
@@ -416,16 +430,12 @@ class SourceScan:
     sites: list[TaskSite] = field(default_factory=list)
 
 
-def is_comment(token: str) -> bool:
-    return token.startswith(("//", "/*"))
-
-
 def strip_comments(text: str) -> str:
     """Blank out comments and keep string literals and line numbers."""
     def blank(match: re.Match) -> str:
         token = match.group(0)
-        return re.sub(r"[^\n]", " ", token) if is_comment(token) else token
-    return COMMENT_RE.sub(blank, text)
+        return re.sub(r"[^\n]", " ", token) if match.group("comment") else token
+    return LEXEME_RE.sub(blank, text)
 
 
 def blank_literals(text: str) -> str:
@@ -434,11 +444,40 @@ def blank_literals(text: str) -> str:
     calls."""
     def blank(match: re.Match) -> str:
         token = match.group(0)
-        if is_comment(token):
+        if not (match.group("raw") or match.group("string") or match.group("char")):
             return token
         start = min(i for i in (token.find('"'), token.find("'")) if i >= 0) + 1
         return token[:start] + re.sub(r"[^\n]", " ", token[start:-1]) + token[-1]
-    return COMMENT_RE.sub(blank, text)
+    return LEXEME_RE.sub(blank, text)
+
+
+def conditional_branches(code: str, path: str) -> list[tuple[tuple[str, int], ...]]:
+    """For each line, the `#if` groups it sits in, outermost first, as (group,
+    branch) pairs. A group is named by the path and line of its `#if`, and
+    each `#elif` or `#else` moves to the next branch. Comments and literals
+    must already be blank, so a directive in a raw string is not one. The
+    conditions are never evaluated, so every branch is scanned."""
+    stack: list[tuple[str, int]] = []
+    lines = []
+    continued = False
+    for number, line in enumerate(code.split("\n"), 1):
+        directive = None if continued else DIRECTIVE_RE.match(line)
+        continued = line.rstrip().endswith("\\")
+        if directive and directive.group(1).startswith("if"):
+            stack.append((f"{path}:{number}", 0))
+        elif directive and directive.group(1) == "endif":
+            stack = stack[:-1]
+        elif directive and stack:
+            stack[-1] = (stack[-1][0], stack[-1][1] + 1)
+        lines.append(tuple(stack))
+    return lines
+
+
+def exclusive(a: TaskSite, b: TaskSite) -> bool:
+    """True when the two sites sit in different branches of one `#if` group,
+    so at most one of them is compiled."""
+    branches = dict(a.branches)
+    return any(group in branches and branches[group] != branch for group, branch in b.branches)
 
 
 def constant(text: str) -> int | None:
@@ -470,16 +509,20 @@ def scan_sources(root: Path) -> SourceScan:
         # Calls are found in code only. The literal text at the same offsets
         # still gives the task name.
         code = blank_literals(text)
+        branches = conditional_branches(code, name)
         for match in EXTERNAL_STACK_RE.finditer(code):
             scan.external.append(f"{name}:{text.count(chr(10), 0, match.start()) + 1}")
         for token in TASK_TOKEN_RE.finditer(code):
-            where = f"{name}:{text.count(chr(10), 0, token.start()) + 1}"
+            line = text.count(chr(10), 0, token.start()) + 1
+            where = f"{name}:{line}"
             if not (match := TASK_CREATE_RE.match(text, token.start())):
                 call = " ".join(text[token.start():token.start() + 80].split(";")[0].split())
-                scan.sites.append(TaskSite(where, name, "", "", None, call, parsed=False))
+                scan.sites.append(TaskSite(where, name, "", "", None, call, parsed=False,
+                                           branches=branches[line - 1]))
                 continue
             entry, task, stack_text = match.groups()
-            scan.sites.append(TaskSite(where, name, entry, task, constant(stack_text), " ".join(stack_text.split())))
+            scan.sites.append(TaskSite(where, name, entry, task, constant(stack_text), " ".join(stack_text.split()),
+                                       branches=branches[line - 1]))
     for site in scan.sites:
         if site.stack is None and (words := re.findall(r"[A-Za-z_]\w*", site.stack_text)):
             member = re.compile(rf"\b{words[-1]}\s*(?:=|\{{)\s*([0-9\s*+()]+?)\s*[;}},]")
@@ -528,13 +571,14 @@ def task_site_findings(graph: Graph, spec: dict, budgets: dict, sites: list[Task
             findings.append(f"{tracked[0]} stack_bytes {copied} does not match the {site.stack} B "
                             f"stack at {site.where}")
     # One creation site per tracked name. A second copy takes its own stack
-    # from the heap, which no budget here counts.
-    # Keys that share a task name report it once.
+    # from the heap, which no budget here counts. Sites in different branches
+    # of one #if group are alternatives, so only a pair that can be compiled
+    # together counts. Keys that share a task name report it once.
     for name in sorted(set(names.values())):
-        copies = [site.where for site in here if site.parsed and site.name == name]
-        if len(copies) > 1:
-            findings.append(f'task "{name}" is created at {len(copies)} sites ({", ".join(copies)}). '
-                            "Keep one creation site per tracked task")
+        copies = [site for site in here if site.parsed and site.name == name]
+        if any(not exclusive(a, b) for i, a in enumerate(copies) for b in copies[i + 1:]):
+            findings.append(f'task "{name}" is created at {len(copies)} sites '
+                            f'({", ".join(site.where for site in copies)}). Keep one creation site per tracked task')
     created = {site.name for site in here}
     for task_name, image_task in spec["tasks"].items():
         if "stack_bytes" in image_task and names[task_name] not in created:

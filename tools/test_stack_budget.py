@@ -274,6 +274,24 @@ def check_cli(root: Path) -> None:
                        [site("tight", 1000), sb.TaskSite("src/a.c:12", "src/a.c", "main_task", "tight", 1000, "1000")])
     assert code == 1 and err.count("is created at 2 sites") == 1, err
     path.write_text(clean)
+    # Sites in different branches of one #if group are alternatives, so one
+    # name in each is a single site. Every branch is still checked against
+    # the budget, and two sites in the same branch are still two.
+    first, second = ("src/a.c:3", 0), ("src/a.c:3", 1)
+    branch_sites = [sb.TaskSite("src/a.c:4", "src/a.c", "main_task", "tight", 1000, "1000", branches=(first,)),
+                    sb.TaskSite("src/a.c:6", "src/a.c", "main_task", "tight", 1000, "1000", branches=(second,))]
+    code, _, err = run(["--budgets", str(path), "--check"], branch_sites)
+    assert code == 0, err
+    code, _, err = run(["--budgets", str(path), "--check"], [*branch_sites, site("tight", 1000)])
+    assert code == 1 and 'task "tight" is created at 3 sites' in err, err
+    code, _, err = run(["--budgets", str(path), "--check"],
+                       [branch_sites[0], sb.TaskSite("src/a.c:6", "src/a.c", "main_task", "tight", 900, "900",
+                                                     branches=(second,))])
+    assert code == 1 and "tight stack_bytes 1000 does not match the 900 B stack at src/a.c:6" in err, err
+    code, _, err = run(["--budgets", str(path), "--check"],
+                       [branch_sites[0], sb.TaskSite("src/a.c:6", "src/a.c", "main_task", "aq-other", 1000, "1000",
+                                                     branches=(second,))])
+    assert code == 1 and 'creates task "aq-other", which no task in this image tracks' in err, err
     # --write-budgets refuses while the stack sizes disagree.
     assert run(["--budgets", str(path), "--write-budgets"], [site("tight", 2000)])[0] == 2
     assert path.read_text() == clean
@@ -351,8 +369,45 @@ def check_internal_stacks(root: Path) -> None:
     # Comment stripping uses the same literal rules, so a // inside a raw
     # string does not hide the rest of its line, and one after 4'096 counts.
     assert sb.strip_comments('R"(//)" x; 4\'0 // c') == 'R"(//)" x; 4\'0     '
+    # A character literal right after a keyword is still a literal, so its
+    # quote cannot open a string that hides the call after it.
+    source.write_text("switch (c) { case'\"': xTaskCreate(t, \"kw\", 4096, nullptr, 1, nullptr); }"
+                      " auto q = \"x\";\nreturn'\"'; xTaskCreate(u, \"ret\", 2048, nullptr, 1, nullptr); \"y\";\n"
+                      # The digit of an encoding prefix does not start a number with a separator.
+                      "auto e = u8'a'; xTaskCreate(v, \"u8\", 1024, nullptr, 1, nullptr); char d = 'z';\n")
+    assert [(item.where, item.name) for item in sb.scan_sources(root).sites] == [
+        ("firmware/common/x.cpp:1", "kw"), ("firmware/common/x.cpp:2", "ret"),
+        ("firmware/common/x.cpp:3", "u8")], sb.scan_sources(root).sites
+    assert sb.blank_literals("case'\"': 0x1'0'0 L'\"' u8\"a\"") == "case' ': 0x1'0'0 L' ' u8\" \""
     # A string right after a macro name, as in "%"PRIu32"\n", is still a string.
     assert sb.blank_literals('f("a"PRIu32"xTaskCreate(");') == 'f(" "PRIu32"            ");'
+
+    # Each #if, #elif and #else starts a new branch of its group, groups nest,
+    # and every branch is scanned. A directive inside a raw string, or on a
+    # line continued from a directive, is not one.
+    source.write_text("#if CONFIG_A\n"                                                # 1
+                      "xTaskCreate(a, \"dup\", 4096, nullptr, 1, nullptr);\n"       # 2
+                      "#elif CONFIG_B\n"                                               # 3
+                      "xTaskCreate(b, \"dup\", 4096, nullptr, 1, nullptr);\n"       # 4
+                      "  #  else\n"                                                    # 5
+                      "auto r = R\"(\n#endif\n)\";\n"                              # 6-8
+                      "xTaskCreate(c, \"dup\", 4096, nullptr, 1, nullptr);\n"       # 9
+                      "#endif\n"                                                       # 10
+                      "#ifdef X \\\n#else\n"                                        # 11-12
+                      "#ifndef Y\n"                                                    # 13
+                      "xTaskCreate(d, \"nest\", 4096, nullptr, 1, nullptr);\n"      # 14
+                      "#endif\n"                                                       # 15
+                      "xTaskCreate(e, \"nest\", 4096, nullptr, 1, nullptr);\n"      # 16
+                      "#endif\n"                                                       # 17
+                      "xTaskCreate(f, \"top\", 4096, nullptr, 1, nullptr);\n")      # 18
+    sites = sb.scan_sources(root).sites
+    name = "firmware/common/x.cpp"
+    assert [(item.entry, item.branches) for item in sites] == [
+        ("a", ((f"{name}:1", 0),)), ("b", ((f"{name}:1", 1),)), ("c", ((f"{name}:1", 2),)),
+        ("d", ((f"{name}:11", 0), (f"{name}:13", 0))), ("e", ((f"{name}:11", 0),)), ("f", ())], sites
+    assert sb.exclusive(sites[0], sites[1]) and sb.exclusive(sites[1], sites[2]) and sb.exclusive(sites[2], sites[0])
+    assert not sb.exclusive(sites[3], sites[4]) and not sb.exclusive(sites[4], sites[3])
+    assert not sb.exclusive(sites[0], sites[5]) and not sb.exclusive(sites[5], sites[0])
 
     assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}

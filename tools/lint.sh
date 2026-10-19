@@ -4,6 +4,19 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 # The C++ standard below must match the firmware helper and the host tests.
 python tools/check_idf_target.py --cxx-dialect
+# Shared code takes board capabilities from hooks, ServiceConfig and sdkconfig
+# defaults, never from a board name (AGENTS.md, code boundaries). Fail on an
+# #if, #ifdef, #ifndef or #elif in firmware/common that names a board, a modem
+# or a chip target anywhere in the condition, also inside a longer macro name
+# such as CONFIG_AQ_BOARD_CORES3 and on a line continued with a backslash.
+# Third-party vendor code is skipped. CONFIG_IDF_TARGET_ARCH_* names a CPU
+# family, not a chip, and stays allowed.
+board_names='CORES3|CORE_S3|M5STACK|M5_?CORE|WAVESHARE|SIM7[0-9]{3}|CONFIG_IDF_TARGET(\b|_ESP)'
+board_pattern="(?im)^[ \\t]*#[ \\t]*(if|ifdef|ifndef|elif|elifdef|elifndef)\\b([^\\n\\\\]|\\\\.|\\\\\\n)*?(${board_names})"
+if rg -U -n -g '*.{c,cc,cpp,h,hpp,inc}' -g '!**/vendor/**' "${board_pattern}" firmware/common; then
+  printf '!!! board-name preprocessor conditional in firmware/common, use hooks or sdkconfig capabilities\n' >&2
+  exit 1
+fi
 options=(--language=c++ --enable=warning,style,performance,portability
   --inline-suppr --error-exitcode=1 --std=c++23 --max-configs=1
   '--suppress=*:*/vendor/lz4/*')
