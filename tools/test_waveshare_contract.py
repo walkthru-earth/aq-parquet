@@ -204,6 +204,8 @@ def main() -> None:
         live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)
         live_key_fixture.check("waveshare", dictionary["sha256"], dictionary["firmware"], live)
         print("PASS Waveshare LIVE keys match the frozen fixture for digest " + dictionary["sha256"][:8], flush=True)
+        live_key_fixture.check_key_meaning("waveshare", dictionary["sha256"], fields)
+        print("PASS each LIVE key maps to one field across all digests and is in the protocol LIVE table", flush=True)
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field name")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")

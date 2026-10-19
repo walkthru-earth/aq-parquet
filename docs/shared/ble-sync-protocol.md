@@ -195,7 +195,7 @@ Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (th
 | `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid |
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |
-| `n03`…`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |
+| `n03`,`n05`,`n1`,`n25`,`n5`,`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |
 | `t` | `ambient_temperature_c`, ambient air temperature only. Waveshare PMS5003T reports it. CoreS3 has no resolved ambient sensor, so `t` stays absent there |
 | `rh` | `relative_humidity_percent`; absent when unavailable |
 | `imu_t` | CoreS3 `imu_temperature_c`, IMU die temperature. Never show it as air temperature |

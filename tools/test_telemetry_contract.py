@@ -173,6 +173,8 @@ def main() -> None:
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==
                 [f["live"] for f in fields if f["live"]], "rendered LIVE keys follow the dictionary")
         print("PASS CoreS3 LIVE keys match the frozen fixture for digest " + dictionary["sha256"][:8], flush=True)
+        live_key_fixture.check_key_meaning("cores3", dictionary["sha256"], fields)
+        print("PASS each LIVE key maps to one field across all digests and is in the protocol LIVE table", flush=True)
         require(len(fields) == len({f["name"] for f in fields}) == 81, "unique dictionary fields")
         require([f["field_id"] for f in fields] == list(range(1, 82)), "append-only 1-based field ids")
         require(len({f["property"] for f in fields}) == 81, "unique property identifiers")
