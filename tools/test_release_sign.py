@@ -10,9 +10,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import tempfile
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 import release_sign as rs
 
@@ -67,7 +71,11 @@ def images(root: Path) -> list[Path]:
 
 
 def assert_no_leak(repo: Path, text: str) -> None:
-    key_text = (repo / "secrets" / KEY_NAME).read_text()
+    key = repo / "secrets" / KEY_NAME
+    mode = key.stat().st_mode
+    key.chmod(0o600)
+    key_text = key.read_text(errors="replace")
+    key.chmod(mode)
     body = "".join(key_text.splitlines()[1:-1])
     assert "PRIVATE" not in text and (len(body) < 40 or body[:40] not in text), text
     # The key path shows only as secrets/<name>, never absolute.
@@ -130,6 +138,56 @@ def check_happy(root: Path) -> None:
     assert result.returncode != 0
 
 
+FAKE_ESPSECURE = """
+import shutil, sys
+args = sys.argv[1:]
+key = args[args.index("--keyfile") + 1]
+mode = sys.argv[0].rsplit("-", 1)[1].removesuffix(".py")
+if args[0] == "sign-data":
+    if mode == "sign":
+        print(f"cannot sign with {key}")
+        sys.exit(3)
+    shutil.copyfile(args[-1], args[args.index("--output") + 1])
+    sys.exit(0)
+if args[0] == "verify-signature":
+    print(f"signature does not match {key}", file=sys.stderr)
+    sys.exit(0 if mode == "pass" else 4)
+sys.exit(9)
+"""
+
+
+def check_fake_espsecure(root: Path) -> None:
+    """A fake espsecure echoes the absolute key path and fails on cue, so the
+    redaction, the verify step and the cleanup inside sign() are each pinned."""
+    repo = make_repo(root, "fake")
+    bins = images(root / "fake-in")
+    real = rs.ESPSECURE
+    try:
+        for mode, failing in (("verify", "verify-signature"), ("sign", "sign-data")):
+            fake = root / f"fake-espsecure-{mode}.py"
+            fake.write_text(FAKE_ESPSECURE)
+            rs.ESPSECURE = [real[0], str(fake)]
+            out = root / f"fake-out-{mode}"
+            code, stdout, stderr = run(["--repo", str(repo), "--out", str(out), *map(str, bins)])
+            assert code == 1 and f"espsecure {failing} failed" in stderr, stderr
+            # The fake printed the absolute key path. Only the label remains.
+            assert f"secrets/{KEY_NAME}" in stderr, stderr
+            assert_no_leak(repo, stdout + stderr)
+            # The failed output is removed and no SHA256SUMS is written.
+            assert sorted(path.name for path in out.iterdir()) == [], list(out.iterdir())
+        # With verify passing the same fake run succeeds, so the refusal above
+        # came from the verify step.
+        fake = root / "fake-espsecure-pass.py"
+        fake.write_text(FAKE_ESPSECURE)
+        rs.ESPSECURE = [real[0], str(fake)]
+        out = root / "fake-out-pass"
+        code, _, stderr = run(["--repo", str(repo), "--out", str(out), *map(str, bins)])
+        assert code == 0, stderr
+        assert (out / rs.SUMS).is_file()
+    finally:
+        rs.ESPSECURE = real
+
+
 def refused(repo: Path, out: Path, bins: list[Path], expect: str) -> None:
     code, stdout, stderr = run(["--repo", str(repo), "--out", str(out), *map(str, bins)])
     assert code == 1 and "release-sign: refused" in stderr and expect in stderr, (expect, stderr)
@@ -161,6 +219,49 @@ def check_refusals(root: Path) -> None:
     repo = make_repo(root, "key-mode")
     (repo / "secrets" / KEY_NAME).chmod(0o640)
     refused(repo, out, bins, f"{secrets_key} is open to group or other (mode 640)")
+
+    # Write or execute bits for group or other count too, not just read bits.
+    repo = make_repo(root, "key-mode-write")
+    (repo / "secrets" / KEY_NAME).chmod(0o620)
+    refused(repo, out, bins, f"{secrets_key} is open to group or other (mode 620)")
+    repo = make_repo(root, "env-mode-write")
+    (repo / "secrets" / ".env").chmod(0o602)
+    refused(repo, out, bins, "secrets/.env is open to group or other (mode 602)")
+
+    # An owner who cannot read the key or .env gets a refusal, not a
+    # traceback with the absolute path. Root reads any mode, so skip there.
+    if os.geteuid() != 0:
+        repo = make_repo(root, "key-unreadable")
+        (repo / "secrets" / KEY_NAME).chmod(0o200)
+        refused(repo, out, bins, f"{secrets_key} cannot be read (Permission denied), run chmod 600 {secrets_key}")
+        repo = make_repo(root, "env-unreadable")
+        (repo / "secrets" / ".env").chmod(0o200)
+        refused(repo, out, bins, "secrets/.env cannot be read (Permission denied)")
+        (repo / "secrets" / ".env").chmod(0o600)
+    repo = make_repo(root, "env-not-utf8")
+    (repo / "secrets" / ".env").write_bytes(f"{rs.KEY_VAR}={KEY_NAME}\n# \xff\xfe\n".encode("latin-1"))
+    refused(repo, out, bins, "secrets/.env is not UTF-8 text")
+
+    # The key size branch, an RSA key of the wrong size.
+    repo = make_repo(root, "rsa2048")
+    small = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    (repo / "secrets" / KEY_NAME).write_bytes(small.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+    refused(repo, out, bins, f"{secrets_key} is not an RSA-3072 private key")
+
+    # A symlinked SHA256SUMS or signed output in --out is refused, and the
+    # file it points at is left alone.
+    repo = make_repo(root, "out-links")
+    for name in (rs.SUMS, f"{bins[0].stem}.signed.bin"):
+        link_out = root / f"links-{len(name)}"
+        link_out.mkdir()
+        victim = root / f"victim-{len(name)}.txt"
+        victim.write_text("keep me\n")
+        (link_out / name).symlink_to(victim)
+        code, stdout, stderr = run(["--repo", str(repo), "--out", str(link_out), *map(str, bins)])
+        assert code == 1 and f"{name} is a symlink" in stderr, stderr
+        assert victim.read_text() == "keep me\n" and (link_out / name).is_symlink()
+        assert_no_leak(repo, stdout + stderr)
 
     repo = make_repo(root, "dir-mode")
     (repo / "secrets").chmod(0o755)
@@ -243,6 +344,7 @@ def main() -> None:
         check_parse_env()
         check_happy(root)
         check_refusals(root)
+        check_fake_espsecure(root)
     print("release_sign tests passed")
 
 

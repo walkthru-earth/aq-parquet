@@ -419,7 +419,8 @@ run when
 - `secrets/`, `secrets/.env` or the key is open to group or other
 - the key is outside `secrets/`, password protected or not an RSA-3072 key
 - the output directory or an input is inside `secrets/`
-- an output would replace one of the inputs
+- an output would replace one of the inputs, or is already a symlink
+- the key or `secrets/.env` cannot be read, or `.env` is not UTF-8
 
 It never prints the key, the `.env` values or any file contents. It names the
 key only as `secrets/<name>`. `release-sign-test` and `secrets-check-test`

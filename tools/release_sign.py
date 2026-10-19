@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import re
 import stat
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY_VAR = "AQ_APP_SIGNING_KEY"
@@ -95,7 +97,11 @@ def check_key(key: Path, label: str, bits: int) -> None:
     from cryptography.hazmat.primitives.asymmetric import rsa
 
     try:
-        loaded = serialization.load_pem_private_key(key.read_bytes(), password=None)
+        data = key.read_bytes()
+    except OSError as error:
+        raise Refused(f"{label} cannot be read ({error.strerror}), run chmod 600 {label}") from None
+    try:
+        loaded = serialization.load_pem_private_key(data, password=None)
     except TypeError:
         raise Refused(f"{label} is password protected, espsecure needs an unencrypted PEM") from None
     except ValueError:
@@ -115,7 +121,13 @@ def load_config(repo: Path) -> tuple[Path, str, str]:
         raise Refused(f"git tracks {len(tracked)} path(s) under secrets/, untrack them and rotate the key")
     private_mode(secrets, "secrets")
     private_mode(env_file, "secrets/.env")
-    values = parse_env(env_file.read_text())
+    try:
+        text = env_file.read_text(encoding="utf-8")
+    except OSError as error:
+        raise Refused(f"secrets/.env cannot be read ({error.strerror}), run chmod 600 secrets/.env") from None
+    except UnicodeDecodeError:
+        raise Refused("secrets/.env is not UTF-8 text") from None
+    values = parse_env(text)
     name = values.get(KEY_VAR, "")
     if not name:
         raise Refused(f"secrets/.env does not set {KEY_VAR}")
@@ -171,6 +183,9 @@ def sign(repo: Path, out: Path, images: list[Path]) -> list[str]:
     for written in [*names, SUMS]:
         if (out_real / written).resolve() in inputs:
             raise Refused(f"{out_real / written} is also an input, choose another --out")
+        # A write through a symlink would land on whatever it points at.
+        if (out_real / written).is_symlink():
+            raise Refused(f"{out_real / written} is a symlink, remove it or choose another --out")
     key, label, scheme = load_config(repo)
     out_real.mkdir(parents=True, exist_ok=True)
     print(f"signing {len(images)} image(s) with {label} ({scheme}, Secure Boot v2)")
@@ -188,7 +203,13 @@ def sign(repo: Path, out: Path, images: list[Path]) -> list[str]:
         lines.append(f"{sha256(target)}  {signed}")
         print(f"signed and verified {target}")
     sums = out_real / SUMS
-    sums.write_text("".join(f"{line}\n" for line in sorted(lines, key=lambda line: line.split("  ", 1)[1])))
+    text = "".join(f"{line}\n" for line in sorted(lines, key=lambda line: line.split("  ", 1)[1]))
+    # Write a fresh file and rename it over SHA256SUMS. The rename replaces a
+    # link that appeared since the check, it never writes through one.
+    with tempfile.NamedTemporaryFile("w", dir=out_real, prefix=f".{SUMS}.", delete=False) as handle:
+        handle.write(text)
+    os.chmod(handle.name, 0o644)
+    os.replace(handle.name, sums)
     print(f"wrote {sums}")
     return lines
 
