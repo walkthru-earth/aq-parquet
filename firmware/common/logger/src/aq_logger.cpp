@@ -2277,7 +2277,18 @@ void storage_worker(void *) {
   // the task create and the signal can fail, and the wait is bounded anyway.
   // The wait is far below the worker watchdog timeout, which ages from the
   // heartbeat begin() seeded, and a blocked task leaves the idle tasks free.
-  ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs));
+  // Only a begin() starved for the whole wait can reach the timeout. The
+  // worker then starts anyway, because a worker that never starts would drop
+  // every sample until the watchdog reset. Its lines may then come before
+  // BEGIN, so it says so first.
+  const bool released =
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs)) != 0;
+  if (!released) {
+    ++errors;
+    aqlog.printf("PARQUET ERROR operation=worker-start-wait waited_ms=%lu "
+                 "order=unordered\n",
+                 static_cast<unsigned long>(kWorkerStartWaitMs));
+  }
   // Startup scans below are covered from the first instruction.
   stamp_heartbeat();
   bool storage_ready;

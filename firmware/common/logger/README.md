@@ -264,7 +264,10 @@ writes nothing looking alive.
   worker line of that boot. No return sits between the task create and that
   notification, and the wait is bounded at 5 s, below the shortest stall
   timeout. A waiting worker is blocked, so idle tasks run and the supervisor
-  keeps feeding its user from the seeded heartbeat.
+  keeps feeding its user from the seeded heartbeat. If the wait ever runs
+  out, the worker starts anyway and first logs `PARQUET ERROR
+  operation=worker-start-wait waited_ms=5000 order=unordered`, since its
+  lines may then precede BEGIN.
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
   watchdog=armed|warn|off`, at most every 30 s.

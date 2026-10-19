@@ -14,14 +14,19 @@ the older shapes it has stored, or the owner clears them.
 `PARQUET BEGIN`, so in `LOG_TAIL` each boot's `PARQUET BEGIN` comes before its
 worker lines, such as `PARQUET RECOVERY`, `PARQUET QUARANTINE`, `PARQUET SCAN`
 and the mount error. Before, a fast card could print those first. The text of
-every line is unchanged, only the order is now guaranteed.
+every existing line is unchanged. One new line, `PARQUET ERROR
+operation=worker-start-wait waited_ms=5000 order=unordered`, appears only if
+the worker waited 5 s without the signal and started anyway. It raises the
+error count, and worker lines of that boot may then come before BEGIN.
 
 **Why.** Tools that split a log into boots at each `PARQUET BEGIN` could file a
 new boot's recovery lines under the boot before it.
 
 **What the app must do.** Nothing. An app that groups `LOG_TAIL` lines by boot
-may now start a boot at its `PARQUET BEGIN`. Lines from older firmware may
-still show the old order.
+may now start a boot at its `PARQUET BEGIN`, while `begin()` lines such as
+`PARQUET CODEC` and the watchdog reset error still come just before it. Lines
+from older firmware may still show the old order. It may show
+`worker-start-wait` as a storage error.
 
 ## Quarantine walk error lines (fix/iterative-dir-walk, issue #37)
 

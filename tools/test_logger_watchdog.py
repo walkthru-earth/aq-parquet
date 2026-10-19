@@ -17,12 +17,19 @@ def check_start_order(source: str) -> None:
     """
     worker = source.find("void storage_worker(void *) {")
     assert worker >= 0, "storage_worker not found"
-    body = source[worker:source.find("\n}\n", worker)]
-    take = body.find("ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs));")
-    first_stamp = body.find("stamp_heartbeat();")
-    first_log = body.find("aqlog.")
-    assert take >= 0, "storage_worker must wait for the start signal"
-    assert take < first_stamp and take < first_log, "the start wait must come before any stamp or log line"
+    body = source[worker + len("void storage_worker(void *) {"):source.find("\n}\n", worker)]
+    # The wait must be the first statement, so no call of any kind, a logging
+    # helper included, can run before it. clang-format may wrap the lines.
+    code = " ".join(re.sub(r"//[^\n]*", "", body).split())
+    first = "const bool released = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs)) != 0;"
+    assert code.startswith(first), "the start wait must be the first statement of storage_worker"
+    # A timeout starts the worker anyway. Its only step before the first
+    # stamp is the worker-start-wait line, which says the order is lost.
+    rest = code.removeprefix(first).lstrip()
+    timeout = re.match(r'if \(!released\) \{ \+\+errors; aqlog\.printf\("PARQUET ERROR '
+                       r'operation=worker-start-wait [^;]*\); \} ', rest)
+    assert timeout, "a start wait timeout must log worker-start-wait before anything else"
+    assert rest[timeout.end():].startswith("stamp_heartbeat();"), "the first stamp must follow the start wait"
     begin = source.find("bool begin(const Config &configuration")
     assert begin >= 0, "begin() not found"
     body = source[begin:source.find("\n}\n", begin)]

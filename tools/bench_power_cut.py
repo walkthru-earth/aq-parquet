@@ -69,7 +69,9 @@ DEFAULT_ARTIFACTS = ROOT / "firmware/esp-idf-waveshare-sim7670g/artifacts"
 PHASES = ("before-flush", "write", "footer-rename", "after-ready", "idle")
 TARGETS = ("write", "footer-rename", "idle")
 
-LINE = re.compile(r"PARQUET (BEGIN|ROW|GROUP|READY|QUARANTINE|RECOVERY|PARTIAL|SCAN|FLUSH|ERROR)\b(.*)")
+LINE = re.compile(r"PARQUET (BEGIN|CODEC|ROW|GROUP|READY|QUARANTINE|RECOVERY|PARTIAL|SCAN|FLUSH|ERROR)\b(.*)")
+# The ESP32-S3 ROM prints this first on every reset, before the application.
+BANNER = re.compile(r"\bESP-ROM:(\S*)")
 PAIR = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)")
 NUMERIC = {"sequence", "rows", "first", "last", "ordinal", "bytes", "quarantined", "retained",
            "quarantine_files", "quarantine_bytes", "files", "retained_partials", "buffered", "dropped",
@@ -81,7 +83,10 @@ NUMERIC = {"sequence", "rows", "first", "last", "ordinal", "bytes", "quarantined
 
 
 def parse_line(line: str) -> dict | None:
-    """Turn one console line into an event, or None when it is not a Parquet event."""
+    """Turn one console line into an event, or None when it is not a Parquet event or a reset."""
+    banner = BANNER.search(line)
+    if banner:
+        return {"kind": "RESET", "rom": banner.group(1)}
     match = LINE.search(line)
     if not match:
         return None
@@ -113,6 +118,9 @@ class Boot:
     scan: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     dropped_max: int = 0
+    opened_by: str = "log"  # RESET, CODEC, BEGIN, or log for lines before any of them
+    named: bool = False  # its BEGIN was seen
+    codec_seen: bool = False
 
 
 def ready_stem(name: str) -> str:
@@ -128,20 +136,41 @@ def partial_stem(source: str) -> str:
 
 
 def collect(events: Iterable[dict]) -> list[Boot]:
-    # Every line belongs to the boot of the last BEGIN. The logger holds its
-    # storage worker until BEGIN is printed (#35), so the RECOVERY, QUARANTINE
-    # and SCAN lines of a boot always follow that boot's BEGIN. Lines before
-    # the first BEGIN of a log, from a capture that started late, go to an
-    # "unknown" boot and never to a named one.
+    # A boot starts at the ROM banner. When the capture missed the banner it
+    # starts at PARQUET CODEC, the first line begin() prints on a boot that
+    # reaches BEGIN, and failing that at BEGIN itself. BEGIN then names the
+    # boot it closes the startup of. So begin()'s own lines before BEGIN, such
+    # as PARQUET ERROR operation=worker-watchdog-reset, land in their own
+    # boot. The logger holds its storage worker until BEGIN is printed (#35),
+    # so RECOVERY, QUARANTINE and SCAN always follow their boot's BEGIN.
+    # Lines before any of those markers, from a capture that started late, go
+    # to an "unknown" boot and never to a named one.
     boots: list[Boot] = []
     current: Boot | None = None
+
+    def start(opened_by: str) -> Boot:
+        boot = Boot("unknown", opened_by=opened_by)
+        boots.append(boot)
+        return boot
+
     for event in events:
         kind = event["kind"]
-        if kind == "BEGIN" or current is None:
-            current = Boot(str(event.get("boot", "unknown")) if kind == "BEGIN" else "unknown")
-            boots.append(current)
-            if kind == "BEGIN":
-                continue
+        if kind == "RESET":
+            current = start("RESET")
+            continue
+        if kind == "CODEC":
+            # A second CODEC without BEGIN is a later boot whose banner was missed.
+            if current is None or current.named or current.codec_seen or current.opened_by == "log":
+                current = start("CODEC")
+            current.codec_seen = True
+            continue
+        if kind == "BEGIN":
+            if current is None or current.named or current.opened_by == "log":
+                current = start("BEGIN")
+            current.boot, current.named = str(event.get("boot", "unknown")), True
+            continue
+        if current is None:
+            current = start("log")
         if kind == "ROW" and isinstance(event.get("sequence"), int):
             current.rows_seen.add(event["sequence"])
             if isinstance(event.get("dropped"), int):
