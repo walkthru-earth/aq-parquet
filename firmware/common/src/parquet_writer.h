@@ -113,6 +113,12 @@ struct Result {
 // buffers and codec state it points to must outlive the file. After any
 // failure the writer is inert; the caller owns close/sync/rename and
 // recovery. This finalizes file contents only.
+//
+// No page index (ColumnIndex/OffsetIndex) and no bloom filters, on purpose
+// (#25 Phase 1, docs/shared/parquet-small-files.md). With one page per chunk
+// and about 90 rows per row group, a page index repeats the chunk statistics
+// and adds 1.6 to 1.7 KB per file, and a bloom filter costs bytes and RAM
+// without pruning anything at this size. Host compaction adds both.
 class Writer {
 public:
   Result begin(Sink sink, void *context, Workspace &workspace,
