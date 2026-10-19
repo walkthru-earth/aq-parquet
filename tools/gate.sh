@@ -37,6 +37,7 @@ tasks=(
   "ota-slot-check-test"
   "compile-dialect-test"
   "stack-budget-test"
+  "board-conditionals-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
   # Sensor drivers on fake buses

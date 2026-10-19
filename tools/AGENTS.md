@@ -26,7 +26,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | POWER STATE lines, one finalize per discharge, the report wake, emergency close outcomes, retry and pass lines | `logger-power-test` |
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
-| Formatting and static diagnostics, no board-name `#if` in `firmware/common` | `fmt-check`, `lint` |
+| Formatting and static diagnostics, no board-name `#if` in `firmware/common` (`check_board_conditionals.py`) | `fmt-check`, `lint`, `board-conditionals-test` |
 | Full host gate, same entry point as CI | `gate` (`tools/gate.sh`, add new host test tasks to its list) |
 | CI image size table from `idf.py size --format json2`, absolute sizes with a warning when the baseline is malformed | `size_report.py`, `size-report-test` |
 | App image share of the smallest app slot in the board `partitions.csv`, fail closed over the budget in the tool | `ota-slot-check --label --partitions --build`, `ota-slot-check-test` |

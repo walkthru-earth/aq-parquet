@@ -408,6 +408,13 @@ def check_internal_stacks(root: Path) -> None:
     assert sb.exclusive(sites[0], sites[1]) and sb.exclusive(sites[1], sites[2]) and sb.exclusive(sites[2], sites[0])
     assert not sb.exclusive(sites[3], sites[4]) and not sb.exclusive(sites[4], sites[3])
     assert not sb.exclusive(sites[0], sites[5]) and not sb.exclusive(sites[5], sites[0])
+    # A line comment ending in a backslash goes on over the next line, so a
+    # #else there is comment text and both calls share one branch.
+    source.write_text("#if A\nxTaskCreate(a, \"c\", 4096, nullptr, 1, nullptr);\n// note \\\n#else\n"
+                      "xTaskCreate(b, \"c\", 4096, nullptr, 1, nullptr);\n#endif\n")
+    sites = sb.scan_sources(root).sites
+    assert [item.branches for item in sites] == [((f"{name}:1", 0),)] * 2, sites
+    assert not sb.exclusive(sites[0], sites[1])
 
     assert sb.constant("(4 + 4) * 1024") == 8192 and sb.constant("1 << 4") is None
     allowed = {sb.EXTERNAL_STACK_CONFIG: "y"}

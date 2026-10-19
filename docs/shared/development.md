@@ -114,13 +114,15 @@ per-file check with `check_idf_target.py --compile-dialect <build>`, and
 `compile-dialect-test` fails if one of them stops calling it. Style rules live at the top of
 [`AGENTS.md`](../../AGENTS.md#c-standard-and-style).
 
-`tools/lint.sh` then fails on any `#if`, `#ifdef`, `#ifndef` or `#elif` in
-`firmware/common` (vendor code skipped) whose condition names a board, a modem
-or a chip target, such as `CORES3`, `WAVESHARE`, `SIM7670` or
-`CONFIG_IDF_TARGET_ESP32S3`, also inside a longer macro name or on a continued
-line. `CONFIG_IDF_TARGET_ARCH_*` names a CPU family and stays allowed. Shared
-code takes board capabilities from hooks, `ServiceConfig` and sdkconfig
-defaults instead.
+`tools/lint.sh` then runs `tools/check_board_conditionals.py`, which fails on
+any `#if`, `#ifdef`, `#ifndef` or `#elif` in `firmware/common` (vendor code
+skipped) whose condition names a board, a modem or a chip target, such as
+`CORES3`, `WAVESHARE`, `SIM7670` or `CONFIG_IDF_TARGET_ESP32S3`, also inside a
+longer macro name, on a continued line or past a block comment. A name in a
+trailing comment does not count. `CONFIG_IDF_TARGET_ARCH_*` names a CPU family
+and stays allowed. Lint passes only on exit 0, so a check that cannot run
+fails it. `board-conditionals-test` covers the rule. Shared code takes board
+capabilities from hooks, `ServiceConfig` and sdkconfig defaults instead.
 
 On 2026-10-17 one `std::format_to_n` call added to the CoreS3 image at `-Og`
 with xtensa GCC 15.2.0 cost about 341 KB of flash image and 5 KB of DIRAM

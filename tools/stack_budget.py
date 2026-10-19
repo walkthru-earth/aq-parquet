@@ -400,12 +400,13 @@ CONSTANT_RE = re.compile(r"^[0-9\s*+()]+$")
 # and preprocessing numbers are matched whole and kept, so a quote inside a
 # number such as 4'096 is a digit separator, and a quote right after any word
 # (a keyword as in case'"', or an encoding prefix as in L'"') opens a
-# character literal.
+# character literal. Line splices come before comments in C, so a line
+# comment ending in a backslash goes on over the next line.
 LEXEME_RE = re.compile(r'(?P<raw>(?<!\w)(?:u8|[uUL])?R"(?P<delim>[^()\\\s"]{0,16})\(.*?\)(?P=delim)")'
                        r"|(?P<word>\.?\d(?:[eEpP][+-]|'\w|[\w.])*|[A-Za-z_]\w*)"
                        r'|(?P<string>"(?:\\.|[^"\\\n])*")'
                        r"|(?P<char>'(?:\\.|[^'\\\n])*')"
-                       r"|(?P<comment>//[^\n]*|/\*.*?\*/)", re.S)
+                       r"|(?P<comment>//(?:\\\r?\n|[^\n])*|/\*.*?\*/)", re.S)
 # A conditional directive opens, continues or closes a group of branches.
 DIRECTIVE_RE = re.compile(r"[ \t]*#[ \t]*(if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b")
 SOURCE_SKIP = {"build", "managed_components", "vendor"}

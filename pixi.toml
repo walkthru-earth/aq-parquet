@@ -55,6 +55,8 @@ ota-slot-check = "python tools/ota_slot_check.py"
 ota-slot-check-test = "python tools/test_ota_slot_check.py"
 stack-budget = "python tools/stack_budget.py"
 stack-budget-test = "python tools/test_stack_budget.py"
+# No board, modem or chip target name in a firmware/common preprocessor conditional (#37).
+board-conditionals-test = "python tools/test_board_conditionals.py"
 pms-frame-test = "clang++ -std=c++23 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_pms_frame.cpp firmware/common/sensors/src/pms_frame.cpp -o /tmp/aq-pms-frame-test && /tmp/aq-pms-frame-test"
 telemetry-contract-test = "python tools/test_telemetry_contract.py"
 
