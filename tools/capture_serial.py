@@ -21,7 +21,9 @@ previous send. Opening the Waveshare CH343 console resets the board, so a
 second open to send a command would reboot it. Commands that answer with
 secrets (owner-pin, wifi-profile, config-hex) are refused, since everything
 the board prints lands in the capture. Commands that destroy data
-(erase-archive) are refused too, so a typo in a cue cannot wipe a card.
+(erase-archive) are refused too, so a typo in a cue cannot wipe a card. A cue
+command must be printable ASCII, since the firmware drops any other byte and
+would run what is left.
 
 Exit codes are 0 for a capture with every cue sent, 1 when the port cannot
 open, 2 for a refused cue or an empty capture, 3 when a cue never fired and
@@ -83,6 +85,11 @@ class CueSender:
                 raise ValueError("--send-on needs a non-empty pattern")
             if not command.strip() or "\n" in command or "\r" in command:
                 raise ValueError("--send-on needs a single-line command")
+            # The firmware console silently drops bytes outside 32 to 126, so
+            # "erase-\tarchive" would reach it as erase-archive. Refuse them first.
+            if not all(32 <= ord(char) <= 126 for char in command):
+                # The text is not echoed, it may carry a credential.
+                raise ValueError("refusing to send the cue command, it must be printable ASCII (32 to 126)")
             reason = refusal(command)
             if reason:
                 raise ValueError(reason)

@@ -104,7 +104,11 @@ def cue_sender_unit() -> None:
                 ("ROW", "parquet owner-pin"), ("ROW", " parquet wifi-profile"),
                 ("ROW", "parquet config-hex 0102"), ("ROW", "parquet erase-archive CONFIRM"),
                 ("ROW", "parquet erase-archive"), ("ROW", "PARQUET  Erase-Archive   CONFIRM"),
-                ("ROW", "parquet owner-pin 1234"), ("ROW", "Parquet Wifi-Profile")]:
+                ("ROW", "parquet owner-pin 1234"), ("ROW", "Parquet Wifi-Profile"),
+                # The firmware drops bytes outside 32 to 126, so these reach the board as the real command.
+                ("ROW", "parquet erase-\tarchive CONFIRM"), ("ROW", "parquet erase\x7f-archive CONFIRM"),
+                ("ROW", "parquet erase-ar\u00e9chive CONFIRM"), ("ROW", "parquet owner-\tpin"),
+                ("ROW", "parquet wifi\u200b-profile")]:
         try:
             cap.CueSender([bad])
         except ValueError:
@@ -112,7 +116,8 @@ def cue_sender_unit() -> None:
         raise AssertionError(f"{bad!r} must be refused")
 
     # Only whole command words are refused, so a longer word is a different command.
-    for good in ["parquet flush", "parquet status", "parquet bench-stall 0", "parquet erase-archivex"]:
+    for good in ["parquet flush", "parquet status", "parquet bench-stall 0", "parquet erase-archivex",
+                 "parquet owner-pinx"]:
         cap.CueSender([("ROW", good)])
 
 
@@ -172,6 +177,14 @@ def capture_refuses_destructive() -> None:
     require(port.writes == [], "nothing is written when any cue is refused")
 
 
+def capture_refuses_non_printable() -> None:
+    port = FakePort([b"PARQUET ROW\n"])
+    code, _, stderr = run(["--seconds", "0.5", "--send-on", "PARQUET ROW", "parquet erase-\tarchive CONFIRM"], port)
+    require(code == 2 and FakePort.opens == 0, "a non-printable cue must be refused before the port opens")
+    require("printable ASCII" in stderr, "the refusal must say why")
+    require(port.writes == [], "nothing is written")
+
+
 def capture_interrupt_is_not_success() -> None:
     port = FakePort([b"PARQUET ROW seq=0\n"], interrupt_when_empty=True)
     with tempfile.TemporaryDirectory(prefix="aq-capture-") as directory:
@@ -198,10 +211,11 @@ def main() -> None:
     capture_retries_failed_write()
     capture_refuses_secret()
     capture_refuses_destructive()
+    capture_refuses_non_printable()
     capture_interrupt_is_not_success()
     capture_without_cue_writes_nothing()
     print("Capture serial: send on cue over one open, split patterns, ordered cues, missing cue exit, "
-          "failed write retry, secret and destructive command refusal, Ctrl-C exit 130 and plain capture passed")
+          "failed write retry, secret, destructive and non-printable command refusal, Ctrl-C exit 130 and plain capture passed")
 
 
 if __name__ == "__main__":
