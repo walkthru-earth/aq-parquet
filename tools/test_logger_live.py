@@ -30,11 +30,13 @@ def main() -> None:
         result = subprocess.run([str(executable)], capture_output=True, text=True, check=True)
     documents = [json.loads(line, object_pairs_hook=list) for line in result.stdout.splitlines()]
     assert len(documents) == 3
-    assert [key for key, _ in documents[0]] == ["seq", "pm25", "t", "pm1"]
-    assert [key for key, _ in documents[1]] == ["seq", "pm25", "t", "pm1", "utc", "rh"]
+    declared = ["seq", "pm25", "t", "pm1", "utc", "rh"]
+    for document in documents:
+        assert [key for key, _ in document] == declared
+    assert dict(documents[0])["utc"] is None and dict(documents[0])["rh"] is None
     assert dict(documents[1])["utc"] == 2**63 - 1
-    assert documents[2] == []
-    print("Shared LIVE formatter: declared keys only, field-table order, nulls and NaN omitted, exact capacity passed")
+    assert all(value is None for _, value in documents[2])
+    print("Shared LIVE formatter: every declared key present in field-table order, no reading and NaN sent as null, exact capacity passed, overflow sends all null and logs once")
 
 
 if __name__ == "__main__":

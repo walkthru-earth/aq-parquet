@@ -178,9 +178,11 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 ### `live` (read, notify)
 
-Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null** (invalid, unavailable or non-finite), never zero. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
+Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order.
 
-Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its reviewed LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
+**LIVE rule.** Every LIVE key the board declares is present in every LIVE object. Its value is a number, or JSON `null` when the sample has no usable reading for it. That covers a value that is invalid or unavailable, a non-finite float (NaN or Inf), a value whose printed text is 32 characters or longer (only a float of magnitude 1e28 or more gets there), and a UTC instant whose nanosecond form overflows INT64. Null is never sent as zero. An absent key means only that the board has no such field. The set of keys a board can send comes from its dictionary, the `live_key` in its `telemetry_fields.inc` (later the template `firmware.live_keys`). Clients parse the object by key name and ignore keys they do not know. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
+
+Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its reviewed LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. The key set of each digest is recorded in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
 
 ```json
 {"seq":15021,"mono":150210000000,"utc":1757990410000000000,"pms":4,
@@ -191,24 +193,26 @@ Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (th
 
 | Key | Dictionary field |
 | --- | --- |
-| `seq`, `mono`, `utc` | `sequence`, `monotonic_us`, `event_time_utc_us` (omitted when unsynchronized). `utc` stays in nanoseconds, the file column `event_time_utc_us` × 1000 |
+| `seq`, `mono`, `utc` | `sequence`, `monotonic_us`, `event_time_utc_us` (null when unsynchronized). `utc` stays in nanoseconds, the file column `event_time_utc_us` × 1000 |
 | `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid |
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |
 | `n03`,`n05`,`n1`,`n25`,`n5`,`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |
-| `t` | `ambient_temperature_c`, ambient air temperature only. Waveshare PMS5003T reports it. CoreS3 has no resolved ambient sensor, so `t` stays absent there |
-| `rh` | `relative_humidity_percent`; absent when unavailable |
+| `t` | `ambient_temperature_c`, ambient air temperature only. Waveshare PMS5003T reports it. CoreS3 has no resolved ambient sensor, so `t` is always null there |
+| `rh` | `relative_humidity_percent`, null when unavailable |
 | `imu_t` | CoreS3 `imu_temperature_c`, IMU die temperature. Never show it as air temperature |
-| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement. Waveshare checks VCELL and SOC on their own, so `bat` can appear without `pct` and the reverse |
+| `bat`,`pct`,`chg`,`vbus` | `battery_mv`, `battery_percent`, `charging_status`, `vbus_mv` when valid. CoreS3 uses raw `M5.Power` reports; with no battery attached it has shown misleading battery values. Waveshare leaves battery fields null without an initialized, valid gauge/battery source; USB-only operation does not imply a battery measurement. Waveshare checks VCELL and SOC on their own, so `bat` can hold a value while `pct` is null and the reverse |
 | `bstate` | Waveshare `battery_health_state` code: 0 unknown, 1 external power likely, 2 ok, 3 low, 4 critical, 5 settling after a gauge reset. Inferred from cell voltage only, thresholds are uncalibrated |
 | `als` | CoreS3 `light_ch0_raw` |
 
-PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
+PM keys hold values only when `pms == 4` and are null otherwise. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
+
+The whole object must fit 480 bytes. The firmware never sends a truncated object. When a row would need more, the device publishes the object with every declared key set to `null` for that sample over BLE and LAN, instead of keeping the previous snapshot. A phone gets that all-null object as its LIVE notification and as the cached value, so it never shows an old sample as current. The next row that fits restores the full object. The device logs `PARQUET LIVE overflow bytes=<n> max=480` to serial and `LOG_TAIL`, where `n` is the exact size the full object needed without the terminating NUL. The line repeats at most once an hour while overflows continue. The host contract tests build each board's widest real row, every declared key at the widest value its producer can write or at `null` where null is wider, with a 19 digit `utc`. Measured 2026-10-26 it is 332 bytes on CoreS3 and 270 bytes on Waveshare, and the all-null object is 265 and 211 bytes. The tests fail if any of them passes 480.
 
 #### LIVE key stability
 
 - A LIVE key never changes meaning once released. Meaning is the quantity, the unit, the source (board or ambient air) and what each existing code value means. Adding a new code value is allowed and counts as a layout change below. Changing what an existing code value means is not allowed. A new meaning gets a new key. A retired key is never reused.
-- Each key in the table above means the same thing on every board. `imu_t` is always the IMU die temperature, never air. `t` is always ambient air temperature. A board that has no valid value for a key leaves the key out.
+- Each key in the table above means the same thing on every board. `imu_t` is always the IMU die temperature, never air. `t` is always ambient air temperature. A board that declares a key and has no valid value for it sends the key as null.
 - Firmware may add or drop keys. Clients read keys by name and ignore keys they do not know, so an app that meets an unknown digest can still show the keys in this table and hide the rest. It never guesses a meaning from a device name, a firmware string or a value.
 - CoreS3 digests `20f85085…` (Arduino, dictionary `cores3-telemetry-v2`) and `f35d7398…` (v6.9 to v6.11), and the e166978 build under `22291d3a…` (v6.12), sent the IMU die temperature as `t`. They predate this rule. Clients handle them by digest, and no later release may do the same. The digest alone cannot tell the two `22291d3a…` builds apart, so for that digest a client reads `imu_t`, and when it is missing reads `t` as board temperature (see the v6.13 entry in [mobile-migration.md](mobile-migration.md)).
 - Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, or a new code value. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry. Apps with the unknown digest fallback (opensensor-space-mobile #153) keep their live readings. Apps without it still show no live readings until they map the new digest.

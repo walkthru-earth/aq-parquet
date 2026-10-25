@@ -1,5 +1,6 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include "live_sample.h"
+#include "live_widest.h"
 #include <lz4_codec.h>
 
 #include <aq_logger_live.h>
@@ -52,22 +53,40 @@ PmsSnapshot parsed_snapshot() {
 }
 // Board-owned identity rules installed into the shared runtime policy hook.
 // Every board LIVE key must be accepted by begin(), and a row with every LIVE
-// field valid at its widest value must still fit one BLE JSON value.
+// key valid at its widest real value must still fit one BLE JSON value.
+// Widest values a real producer writes while each key is valid. INT64
+// counters take INT64_MAX so no uptime horizon is assumed. `utc` is the
+// largest microsecond count whose nanosecond form fits INT64, 19 digits.
+// Status codes are one digit and PMS words are u16.
+constexpr std::int64_t kI64 = std::numeric_limits<std::int64_t>::max();
+constexpr std::int64_t kUtcUs = kI64 / 1000; // 9223372036854775000 ns
+constexpr std::int64_t kU16 = 65535;
+// `t` is the PMS5003T signed int16 deci degree, so -3276.8 prints widest.
+// `rh` is capped at 100.0. `bat` passes the MAX17048 2500..4500 mV check.
+// `bstate` is aq::battery::State (0..5).
+constexpr livewidest::Widest kWidest[] = {
+    {"seq", kI64, 0.0F},  {"mono", kI64, 0.0F}, {"utc", kUtcUs, 0.0F},
+    {"pms", 9, 0.0F},     {"c1", kU16, 0.0F},   {"c25", kU16, 0.0F},
+    {"c10", kU16, 0.0F},  {"pm1", kU16, 0.0F},  {"pm25", kU16, 0.0F},
+    {"pm10", kU16, 0.0F}, {"n03", kU16, 0.0F},  {"n05", kU16, 0.0F},
+    {"n1", kU16, 0.0F},   {"n25", kU16, 0.0F},  {"t", 0, -3276.8F},
+    {"rh", 0, 100.0F},    {"bat", 4500, 0.0F},  {"pct", 100, 0.0F},
+    {"bstate", 5, 0.0F},
+};
+// Measured 2026-10-26 with every declared key present, a one digit code or
+// a 100 percent counted as null since null is wider. The widest object is
+// 270 bytes, 480 - 270 = 210 bytes of headroom. The all-null object sent on
+// overflow is 211 bytes. A change here means a LIVE key or its widest value
+// changed, update the numbers.
+constexpr std::size_t kWidestLiveBytes = 270;
+constexpr std::size_t kAllNullLiveBytes = 211;
 void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
-  assert(aqlogger::valid_live_keys(table, count));
-  aqlogger::Row row{};
-  for (std::size_t i = 0; i < count; ++i) {
-    if (table[i].type == telemetry::PhysicalType::Int64)
-      row.set(i, std::numeric_limits<std::int64_t>::min());
-    else if (table[i].type == telemetry::PhysicalType::Int32)
-      row.set(i, std::numeric_limits<std::int32_t>::min());
-    else
-      row.set(i, -999.9f);
-  }
-  char json[ble::kMaxJson + 1];
-  const auto used =
-      aqlogger::format_live(table, count, row, json, sizeof(json));
-  assert(used > 0 && used <= ble::kMaxJson);
+  const auto bytes = livewidest::measure(table, count, kWidest);
+  const auto nulls = livewidest::all_null(table, count);
+  assert(bytes <= ble::kMaxJson);
+  assert(bytes == kWidestLiveBytes);
+  assert(nulls <= ble::kMaxJson);
+  assert(nulls == kAllNullLiveBytes);
 }
 void assert_identity_rules() {
   using namespace pms5003t;
