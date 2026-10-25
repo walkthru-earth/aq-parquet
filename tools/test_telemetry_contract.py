@@ -181,7 +181,10 @@ def main() -> None:
         for field in fields:
             require(re.fullmatch(r"[a-z][a-z0-9_]*", field["name"]) is not None, "safe field token")
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")
-            require(field["property"] == "urn:walkthru-earth:cores3:property:" + field["name"], "local vocabulary")
+            require(re.fullmatch(r"http://vocab\.nerc\.ac\.uk/(collection/P07/current/[A-Z0-9]+|standard_name/[a-z][a-z0-9_]*)/"
+                                 r"|urn:walkthru-earth:property:[a-z][a-z0-9_]*", field["property"]) is not None
+                    and re.search(r"cores3|waveshare|sim7670|pms|plantower|esp32", field["property"]) is None,
+                    "board neutral property")
         for anchored in (False, True):
             for compressed in (False, True):
                 for located in (False, True):

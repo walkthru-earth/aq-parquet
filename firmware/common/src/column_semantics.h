@@ -49,11 +49,16 @@ struct Column {
   // Decimal text as written in the .inc, empty when no range applies.
   std::string_view plausible_min;
   std::string_view plausible_max;
+  // Seconds after the sensor wakes, not after boot, so a duty cycled sensor
+  // (#39) settles again on every wake.
   std::uint32_t settle_s = 0;
   // "" no gate, "finite" the column itself must be finite, or
-  // "<column> == <integer>" for an equality gate on another column.
+  // "<column> == <integer>" for an equality gate on another column. A row
+  // that passes its gate still counts as settling until settle_s has passed
+  // since the sensor woke.
   std::string_view valid_when;
-  // "" means the board URN urn:walkthru-earth:<board>:property:<name>.
+  // Board neutral property id, the single source of the FIELD property_uri.
+  // See board_neutral_property for the allowed forms.
   std::string_view property;
   std::string_view sensor_vendor;
   std::string_view sensor_model;
@@ -136,9 +141,67 @@ constexpr bool valid_gate(const Fields &fields, const Column &row) {
          is_decimal(value) && value.find('.') == std::string_view::npos;
 }
 
+// [a-z][a-z0-9_]*, the quantity part of a walkthru-earth property URN.
+constexpr bool is_snake_case(std::string_view text) {
+  if (text.empty() || text.front() < 'a' || text.front() > 'z')
+    return false;
+  for (const char c : text)
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+      return false;
+  return true;
+}
+
+// Board and sensor names that belong in opensensor:procedure, never in a
+// property id.
+inline constexpr std::string_view kProcedureWords[] = {
+    "cores3",   "waveshare", "sim7670", "m5stack",  "pms",    "plantower",
+    "bmi270",   "bmm150",    "ltr553",  "axp2101",  "bm8563", "ft6336",
+    "max17048", "esp32",     "sht20",   "sensirion"};
+
+// The stac-opensensor property rule. A NERC P07 term, else the NERC CF
+// standard_name URI for an exact CF match, else
+// urn:walkthru-earth:property:<quantity>. Never a board or sensor name, so
+// the same quantity has the same id on every board.
+constexpr bool board_neutral_property(std::string_view property) {
+  constexpr std::string_view kP07 =
+      "http://vocab.nerc.ac.uk/collection/P07/current/";
+  constexpr std::string_view kStandardName =
+      "http://vocab.nerc.ac.uk/standard_name/";
+  constexpr std::string_view kUrn = "urn:walkthru-earth:property:";
+  for (const auto word : kProcedureWords)
+    if (property.find(word) != std::string_view::npos)
+      return false;
+  if (property.starts_with(kUrn))
+    return is_snake_case(property.substr(kUrn.size()));
+  if (!property.ends_with('/'))
+    return false;
+  if (property.starts_with(kStandardName))
+    return is_snake_case(property.substr(
+        kStandardName.size(), property.size() - kStandardName.size() - 1));
+  if (!property.starts_with(kP07) || property.size() == kP07.size() + 1)
+    return false;
+  for (const char c :
+       property.substr(kP07.size(), property.size() - kP07.size() - 1))
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
+      return false;
+  return true;
+}
+
+// The property of the row called `name`, as a C string for the FIELD table,
+// or nullptr when no row has that name. Every property is a string literal
+// in the .inc, so data() is null terminated.
+constexpr const char *property_of(std::span<const Column> rows,
+                                  std::string_view name) {
+  for (const auto &row : rows)
+    if (row.name == name)
+      return row.property.data();
+  return nullptr;
+}
+
 // Per row rules from the stac-opensensor v0.1.0 profile and issue #84. Every
-// column has a UCUM code. A physical measurement also has a gate. A range is
-// both bounds or none, with min below max.
+// column has a UCUM code and a board neutral property id, unique in the
+// table. A physical measurement also has a gate. A range is both bounds or
+// none, with min below max.
 template <typename Fields>
 constexpr bool well_formed(const Fields &fields, std::span<const Column> rows) {
   for (const auto &row : rows) {
@@ -155,7 +218,13 @@ constexpr bool well_formed(const Fields &fields, std::span<const Column> rows) {
       return false;
     if (row.sensor_vendor.empty() != row.sensor_model.empty())
       return false;
+    if (!board_neutral_property(row.property))
+      return false;
   }
+  for (std::size_t i = 0; i < rows.size(); ++i)
+    for (std::size_t j = i + 1; j < rows.size(); ++j)
+      if (rows[i].property == rows[j].property)
+        return false;
   return true;
 }
 
