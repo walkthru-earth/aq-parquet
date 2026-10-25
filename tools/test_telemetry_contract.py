@@ -183,7 +183,7 @@ def main() -> None:
             require(all(field[key] for key in ("procedure", "unit", "validity")), "complete metadata")
             require(re.fullmatch(r"http://vocab\.nerc\.ac\.uk/(collection/P07/current/[A-Z0-9]+|standard_name/[a-z][a-z0-9_]*)/"
                                  r"|urn:walkthru-earth:property:[a-z][a-z0-9_]*", field["property"]) is not None
-                    and re.search(r"cores3|waveshare|sim7670|pms|plantower|esp32", field["property"]) is None,
+                    and re.search(r"cores3|waveshare|sim76|simcom|m5|esp32|espressif|pms|plantower|bmi|bmm|bosch|ltr|lite_on|liteon|axp|x_powers|xpowers|bm8563|belling|ft6336|focaltech|max1704|maxim|sht|sensirion", field["property"]) is None,
                     "board neutral property")
         for anchored in (False, True):
             for compressed in (False, True):

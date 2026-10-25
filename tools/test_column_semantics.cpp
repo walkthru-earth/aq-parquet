@@ -307,6 +307,25 @@ void check_board(const char *board, const Fields &fields,
     expect(!well_formed(fields, std::span{broken}),
            "sensor name in a property is caught");
   }
+  for (const char *variant :
+       {"http://vocab.nerc.ac.uk/collection/P07/current/",
+        "http://vocab.nerc.ac.uk/collection/P07/current//",
+        "http://vocab.nerc.ac.uk/standard_name/",
+        "http://vocab.nerc.ac.uk/standard_name//"}) {
+    auto broken = copy(rows);
+    broken[12].property = variant;
+    expect(!well_formed(fields, std::span{broken}),
+           "a NERC prefix without a term is caught");
+  }
+  for (const char *variant :
+       {"urn:walkthru-earth:property:m5_bmi_270_temperature",
+        "urn:walkthru-earth:property:ltr_553_light",
+        "urn:walkthru-earth:property:axp_battery"}) {
+    auto broken = copy(rows);
+    broken[12].property = variant;
+    expect(!well_formed(fields, std::span{broken}),
+           "chip or vendor spelling in a property is caught");
+  }
   {
     auto broken = copy(rows);
     broken[12].property = "";

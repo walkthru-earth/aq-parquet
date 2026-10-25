@@ -109,6 +109,8 @@ static_assert(aq::semantics::aligned(kFields, kSemantics),
               "telemetry_semantics.inc must list every FIELD in order");
 static_assert(aq::semantics::well_formed(kFields, kSemantics),
               "telemetry_semantics.inc has a malformed row");
+static_assert(aq::semantics::every_property_set(kFields),
+              "every FIELD needs a property from telemetry_semantics.inc");
 using Sample = aqlogger::Row;
 
 inline LogicalType logical_type(const Definition &field) {

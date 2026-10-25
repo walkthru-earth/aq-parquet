@@ -151,12 +151,17 @@ constexpr bool is_snake_case(std::string_view text) {
   return true;
 }
 
-// Board and sensor names that belong in opensensor:procedure, never in a
-// property id.
+// Board, chip and vendor names that belong in opensensor:procedure, never in
+// a property id. A substring deny list, so it is best effort. Short stems
+// like bmi and ltr also catch spellings like bmi_270. Keep the list in
+// tools/test_telemetry_contract.py and tools/test_waveshare_contract.py the
+// same.
 inline constexpr std::string_view kProcedureWords[] = {
-    "cores3",   "waveshare", "sim7670", "m5stack",  "pms",    "plantower",
-    "bmi270",   "bmm150",    "ltr553",  "axp2101",  "bm8563", "ft6336",
-    "max17048", "esp32",     "sht20",   "sensirion"};
+    "cores3",    "waveshare", "sim76",     "simcom",    "m5",       "esp32",
+    "espressif", "pms",       "plantower", "bmi",       "bmm",      "bosch",
+    "ltr",       "lite_on",   "liteon",    "axp",       "x_powers", "xpowers",
+    "bm8563",    "belling",   "ft6336",    "focaltech", "max1704",  "maxim",
+    "sht",       "sensirion"};
 
 // The stac-opensensor property rule. A NERC P07 term, else the NERC CF
 // standard_name URI for an exact CF match, else
@@ -178,7 +183,7 @@ constexpr bool board_neutral_property(std::string_view property) {
   if (property.starts_with(kStandardName))
     return is_snake_case(property.substr(
         kStandardName.size(), property.size() - kStandardName.size() - 1));
-  if (!property.starts_with(kP07) || property.size() == kP07.size() + 1)
+  if (!property.starts_with(kP07) || property.size() <= kP07.size() + 1)
     return false;
   for (const char c :
        property.substr(kP07.size(), property.size() - kP07.size() - 1))
@@ -196,6 +201,16 @@ constexpr const char *property_of(std::span<const Column> rows,
     if (row.name == name)
       return row.property.data();
   return nullptr;
+}
+
+// True when every FIELD row got a property from property_of, so a lookup miss
+// fails the build instead of leaving a null property_uri.
+template <typename Fields>
+constexpr bool every_property_set(const Fields &fields) {
+  for (const auto &field : fields)
+    if (field.property_uri == nullptr || *field.property_uri == '\0')
+      return false;
+  return true;
 }
 
 // Per row rules from the stac-opensensor v0.1.0 profile and issue #84. Every

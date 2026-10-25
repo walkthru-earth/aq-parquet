@@ -42,7 +42,8 @@
 //   keep passing. tools/test_column_semantics.cpp checks each copied value
 //   against its Metrics.kt line. LiveProfile.kt carries only LIVE keys and
 //   digests, no semantic values. A Kotlin null gate is "finite" here for
-//   measurements, since MetricSpec.valueOf drops a non-finite value. PMS_SETTLE_S = 180 was measured on the
+//   measurements, since MetricSpec.valueOf drops a non-finite value.
+//   PMS_SETTLE_S = 180 was measured on the
 //   bench over 14 boots on 2026-09-17. The PMS5003T datasheet only promises
 //   30 s, and the firmware already nulls those 30 s itself (kPmsWarmupUs).
 //   Mobile gives ambient temperature and humidity no gate and no settle, so
