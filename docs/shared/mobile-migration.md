@@ -388,7 +388,7 @@ needs no app change.
 - Suggested mobile follow up for `22291d3a…` only. Read `imu_t`, and when it is
   missing read `t` as board temperature. Both carry the IMU die temperature on
   CoreS3, because ambient temperature is never valid there.
-- Frozen key sets for every digest since CoreS3 `f35d7398…` (v6.9 to v6.11)
+- Recorded key sets for every digest since CoreS3 `f35d7398…` (v6.9 to v6.11)
   and Waveshare `0a024b85…` (v2.6) are in `tools/fixtures/live_keys/`,
   including the first Waveshare v2.7 build `d0d01294…`. `f35d7398…` sends the
   IMU die temperature as `t`, like the e166978 build, so it matches
