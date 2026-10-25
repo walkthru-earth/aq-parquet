@@ -73,13 +73,20 @@ constexpr livewidest::Widest kWidest[] = {
     {"rh", 0, 100.0F},    {"bat", 4500, 0.0F},  {"pct", 100, 0.0F},
     {"bstate", 5, 0.0F},
 };
-// Measured 2026-10-26, 480 - 263 = 217 bytes of headroom. A change here
-// means a LIVE key or its widest value changed, update both numbers.
-constexpr std::size_t kWidestLiveBytes = 263;
+// Measured 2026-10-26 with every declared key present, a one digit code or
+// a 100 percent counted as null since null is wider. The widest object is
+// 270 bytes, 480 - 270 = 210 bytes of headroom. The all-null object sent on
+// overflow is 211 bytes. A change here means a LIVE key or its widest value
+// changed, update the numbers.
+constexpr std::size_t kWidestLiveBytes = 270;
+constexpr std::size_t kAllNullLiveBytes = 211;
 void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
   const auto bytes = livewidest::measure(table, count, kWidest);
+  const auto nulls = livewidest::all_null(table, count);
   assert(bytes <= ble::kMaxJson);
   assert(bytes == kWidestLiveBytes);
+  assert(nulls <= ble::kMaxJson);
+  assert(nulls == kAllNullLiveBytes);
 }
 void assert_identity_rules() {
   using namespace pms5003t;

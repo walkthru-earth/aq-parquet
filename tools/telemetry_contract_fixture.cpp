@@ -43,13 +43,20 @@ constexpr livewidest::Widest kWidest[] = {
     {"vbus", -32768, 0.0F}, {"bat", -32768, 0.0F}, {"pct", 100, 0.0F},
     {"chg", 2, 0.0F},       {"t", 0, -3276.8F},    {"rh", 0, 100.0F},
 };
-// Measured 2026-10-26, 480 - 325 = 155 bytes of headroom. A change here
-// means a LIVE key or its widest value changed, update both numbers.
-constexpr std::size_t kWidestLiveBytes = 325;
+// Measured 2026-10-26 with every declared key present, a one digit code or
+// a 100 percent counted as null since null is wider. The widest object is
+// 332 bytes, 480 - 332 = 148 bytes of headroom. The all-null object sent on
+// overflow is 265 bytes. A change here means a LIVE key or its widest value
+// changed, update the numbers.
+constexpr std::size_t kWidestLiveBytes = 332;
+constexpr std::size_t kAllNullLiveBytes = 265;
 void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
   const auto bytes = livewidest::measure(table, count, kWidest);
+  const auto nulls = livewidest::all_null(table, count);
   assert(bytes <= ble::kMaxJson);
   assert(bytes == kWidestLiveBytes);
+  assert(nulls <= ble::kMaxJson);
+  assert(nulls == kAllNullLiveBytes);
 }
 struct BoardTable {
   aqlogger::Field fields[field_count];

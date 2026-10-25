@@ -61,11 +61,13 @@ void documents() {
   char json[256];
   const auto length = aqlogger::format_live(fields, 7, row, json, sizeof(json));
   assert(length == std::strlen(json));
+  // Every declared key is present. Unset utc and NaN rh are null, not zero.
   assert(std::strcmp(json, "{\"seq\":42,\"pm25\":-12,\"t\":26.1,"
-                           "\"pm1\":-2147483648}") == 0);
+                           "\"pm1\":-2147483648,\"utc\":null,"
+                           "\"rh\":null}") == 0);
   std::puts(json);
   // Exactly enough room for the NUL succeeds, one byte less is refused.
-  char exact[64];
+  char exact[128];
   assert(aqlogger::format_live(fields, 7, row, exact, length + 1) == length);
   assert(aqlogger::format_live(fields, 7, row, exact, length) == 0);
   assert(exact[0] == '\0');
@@ -74,9 +76,17 @@ void documents() {
   assert(aqlogger::format_live(fields, 7, row, json, sizeof(json)));
   std::puts(json);
   const aqlogger::Row empty{};
-  assert(aqlogger::format_live(fields, 7, empty, json, sizeof(json)) == 2);
-  assert(std::strcmp(json, "{}") == 0);
+  assert(aqlogger::format_live(fields, 7, empty, json, sizeof(json)));
+  assert(std::strcmp(json, "{\"seq\":null,\"pm25\":null,\"t\":null,"
+                           "\"pm1\":null,\"utc\":null,\"rh\":null}") == 0);
   std::puts(json);
+  // Infinity is no reading either.
+  row.set(6, std::numeric_limits<float>::infinity());
+  assert(aqlogger::format_live(fields, 7, row, json, sizeof(json)));
+  assert(std::strstr(json, ",\"rh\":null}"));
+  // A table with no declared keys publishes an empty object.
+  assert(aqlogger::format_live(fields + 1, 1, row, json, sizeof(json)) == 2);
+  assert(std::strcmp(json, "{}") == 0);
   assert(aqlogger::format_live(fields, 7, row, json, 0) == 0);
   assert(aqlogger::format_live(fields, 7, row, nullptr, 8) == 0);
 }
@@ -90,13 +100,17 @@ void utc_scale() {
   char json[64];
   assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)));
   assert(std::strcmp(json, "{\"utc\":1757990410000123000}") == 0);
+  // A UTC whose nanosecond form overflows INT64 is sent as null.
   row.set(0, std::numeric_limits<std::int64_t>::max() / 1000 + 1);
-  assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)) == 2);
+  assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)));
+  assert(std::strcmp(json, "{\"utc\":null}") == 0);
   row.set(0, std::numeric_limits<std::int64_t>::min() / 1000 - 1);
-  assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)) == 2);
+  assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)));
+  assert(std::strcmp(json, "{\"utc\":null}") == 0);
 }
-// An object over the BLE cap logs its real size once and publishes `{}`, so
-// the previous sample is never served as current. Fitting again restores it.
+// An object over the BLE cap logs its real size once and publishes every key
+// as null, so the previous sample is never served as current. Fitting again
+// restores it.
 void overflow() {
   static const char *const names[] = {
       "k00", "k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09",
@@ -117,17 +131,25 @@ void overflow() {
       aqlogger::format_live(fields, count, wide, big, sizeof(big));
   assert(full > kCap);
   assert(aqlogger::live_size(fields, count, wide) == full);
-  assert(aqlogger::live_size(fields, count, small) == 9); // {"k00":7}
+  // {"k00":7} then 19 keys of ,"kNN":null
+  const std::size_t small_size = 1 + 7 + 19 * 11 + 1;
+  assert(aqlogger::live_size(fields, count, small) == small_size);
+  char nulls[kCap + 1];
+  const aqlogger::Row none{};
+  const auto null_size =
+      aqlogger::format_live(fields, count, none, nulls, sizeof(nulls));
+  assert(null_size == 1 + 20 * 11 - 1 + 1);
+  assert(std::strstr(nulls, "{\"k00\":null,\"k01\":null,") == nulls);
 
   aqlogger::LiveOverflow gate;
   char json[kCap + 1];
   auto live = gate.publish(fields, count, small, json, sizeof(json), 0);
-  assert(live.length == 9 && !live.log && live.needed == 0);
-  assert(std::strcmp(json, "{\"k00\":7}") == 0);
+  assert(live.length == small_size && !live.log && live.needed == 0);
+  assert(std::strstr(json, "{\"k00\":7,\"k01\":null,") == json);
 
   live = gate.publish(fields, count, wide, json, sizeof(json), 10000000);
   assert(live.log && live.needed == full);
-  assert(live.length == 2 && std::strcmp(json, "{}") == 0);
+  assert(live.length == null_size && std::strcmp(json, nulls) == 0);
   char line[64];
   const auto written =
       aqlogger::format_live_overflow(line, sizeof(line), live.needed, kCap);
@@ -141,18 +163,18 @@ void overflow() {
 
   // Still overflowing within the hour, cleared again but not logged again.
   live = gate.publish(fields, count, wide, json, sizeof(json), 20000000);
-  assert(!live.log && live.needed == full && live.length == 2);
-  assert(std::strcmp(json, "{}") == 0);
+  assert(!live.log && live.needed == full && live.length == null_size);
+  assert(std::strcmp(json, nulls) == 0);
 
   live = gate.publish(fields, count, small, json, sizeof(json), 30000000);
-  assert(!live.log && live.length == 9);
+  assert(!live.log && live.length == small_size);
 
   // A later overflow logs again once the repeat window has passed.
   const auto later = 10000000 + aqlogger::LiveOverflow::kRepeatUs;
   live = gate.publish(fields, count, wide, json, sizeof(json), later - 1);
-  assert(!live.log && live.length == 2);
+  assert(!live.log && live.length == null_size);
   live = gate.publish(fields, count, wide, json, sizeof(json), later);
-  assert(live.log && live.length == 2);
+  assert(live.log && live.length == null_size);
 
   // No buffer means nothing to publish and nothing to log.
   live = gate.publish(fields, count, wide, nullptr, sizeof(json), later * 2);

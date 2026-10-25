@@ -14,10 +14,12 @@ constexpr std::size_t kMaxLiveKey = 15;
 [[nodiscard]] bool valid_live_keys(const Field *fields, std::size_t count);
 
 // Formats one row as the LIVE JSON object. Emits every field that declares a
-// live_key and holds a valid value, in field-table order. Null values and
-// non-finite floats are omitted, never written as zero. INT32/INT64 print as
-// integers and FLOAT with one decimal. Returns the length without the NUL, or
-// zero when `capacity` is too small. Never reports truncated JSON as valid.
+// live_key, in field-table order, whether or not it holds a reading. A value
+// that is invalid, non-finite, out of range for the wire unit or too long to
+// print is written as JSON null, never omitted and never zero. INT32/INT64
+// print as integers and FLOAT with one decimal. Returns the length without the
+// NUL, or zero when `capacity` is too small. Never reports truncated JSON as
+// valid.
 [[nodiscard]] std::size_t format_live(const Field *fields, std::size_t count,
                                       const Row &row, char *out,
                                       std::size_t capacity);
@@ -46,9 +48,9 @@ struct LivePublish {
 
 // Formats LIVE and handles an object larger than `capacity - 1`. Instead of
 // skipping the publish, which would leave the previous sample cached and
-// served as current, it writes `{}` (every key absent) and asks for a log
-// line at most once per kRepeatUs. Pure and single owner, the logger calls it
-// from the main task only.
+// served as current, it writes the object with every declared key null and
+// asks for a log line at most once per kRepeatUs. Pure and single owner, the
+// logger calls it from the main task only.
 class LiveOverflow {
 public:
   static constexpr std::int64_t kRepeatUs = 3600LL * 1000000LL;

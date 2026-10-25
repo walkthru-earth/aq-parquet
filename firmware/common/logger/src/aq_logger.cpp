@@ -1593,7 +1593,8 @@ LiveOverflow live_overflow;
 
 // Publishes the `live` snapshot of the row that was just queued. The board's
 // field table decides which keys appear, see aq_logger_live.h. An object over
-// ble::kMaxJson publishes `{}` so the previous sample is not served as current.
+// ble::kMaxJson publishes every key as null so the previous sample is not
+// served as current.
 void publish_live(const Sample &row, std::int64_t now) {
   char json[ble::kMaxJson + 1];
   const auto live = live_overflow.publish(config.fields, field_count, row, json,

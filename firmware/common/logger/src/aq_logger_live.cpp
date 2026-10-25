@@ -51,43 +51,49 @@ Rendered render(const Field *fields, std::size_t count, const Row &row,
   bool first = true;
   for (std::size_t i = 0; i < count; ++i) {
     const auto &field = fields[i];
-    if (!field.live_key || !row.valid[i])
+    if (!field.live_key)
       continue;
-    char value[32];
-    int written = -1;
-    switch (field.type) {
-    case telemetry::PhysicalType::Int64: {
-      // UTC instants are stored in microseconds but LIVE keeps the wire unit
-      // of nanoseconds. The stored value is exact, so the scale is lossless.
-      const long long scale =
-          field.unit && std::strcmp(field.unit, "us_since_unix_epoch") == 0
-              ? 1000
-              : 1;
-      const long long stored = static_cast<long long>(row.data[i]);
-      if (stored > LLONG_MAX / scale || stored < LLONG_MIN / scale)
-        break; // out of range for the wire unit, omit like a null
-      written = std::snprintf(value, sizeof(value), "%lld", stored * scale);
-      break;
+    // Every declared key is always sent. A value with no usable reading is
+    // JSON null, never left out and never zero.
+    char value[32] = "null";
+    if (row.valid[i]) {
+      char text[sizeof(value)];
+      int written = -1;
+      switch (field.type) {
+      case telemetry::PhysicalType::Int64: {
+        // UTC instants are stored in microseconds but LIVE keeps the wire
+        // unit of nanoseconds. The stored value is exact, so the scale is
+        // lossless.
+        const long long scale =
+            field.unit && std::strcmp(field.unit, "us_since_unix_epoch") == 0
+                ? 1000
+                : 1;
+        const long long stored = static_cast<long long>(row.data[i]);
+        if (stored > LLONG_MAX / scale || stored < LLONG_MIN / scale)
+          break; // out of range for the wire unit, sent as null
+        written = std::snprintf(text, sizeof(text), "%lld", stored * scale);
+        break;
+      }
+      case telemetry::PhysicalType::Int32: {
+        std::int32_t number;
+        std::memcpy(&number, &row.data[i], sizeof(number));
+        written =
+            std::snprintf(text, sizeof(text), "%ld", static_cast<long>(number));
+        break;
+      }
+      case telemetry::PhysicalType::Float: {
+        float number;
+        std::memcpy(&number, &row.data[i], sizeof(number));
+        if (std::isfinite(number))
+          written = std::snprintf(text, sizeof(text), "%.1f",
+                                  static_cast<double>(number));
+        break;
+      }
+      }
+      // Non-finite floats and values wider than the scratch buffer stay null.
+      if (written >= 0 && std::size_t(written) < sizeof(text))
+        std::memcpy(value, text, std::size_t(written) + 1);
     }
-    case telemetry::PhysicalType::Int32: {
-      std::int32_t number;
-      std::memcpy(&number, &row.data[i], sizeof(number));
-      written =
-          std::snprintf(value, sizeof(value), "%ld", static_cast<long>(number));
-      break;
-    }
-    case telemetry::PhysicalType::Float: {
-      float number;
-      std::memcpy(&number, &row.data[i], sizeof(number));
-      if (std::isfinite(number))
-        written = std::snprintf(value, sizeof(value), "%.1f",
-                                static_cast<double>(number));
-      break;
-    }
-    }
-    // Non-finite floats and values wider than the scratch buffer are omitted.
-    if (written < 0 || std::size_t(written) >= sizeof(value))
-      continue;
     append(first ? "\"" : ",\"");
     append(field.live_key);
     append("\":");
@@ -156,13 +162,13 @@ LivePublish LiveOverflow::publish(const Field *fields, std::size_t count,
   result.length = format_live(fields, count, row, out, capacity);
   if (result.length)
     return result;
-  // The object does not fit. Publish `{}` so no reader keeps the previous
-  // sample as current, and log at most once per kRepeatUs.
+  // The object does not fit. Publish every declared key as null so no reader
+  // keeps the previous sample as current, and log at most once per
+  // kRepeatUs. The all-null object is short and the board contract tests
+  // prove it fits, so length stays zero only for a broken table.
   result.needed = live_size(fields, count, row);
-  if (capacity > 2) {
-    std::memcpy(out, "{}", 3);
-    result.length = 2;
-  }
+  static const Row kNoReading{};
+  result.length = format_live(fields, count, kNoReading, out, capacity);
   if (!logged_ || now_us - last_log_us_ >= kRepeatUs) {
     logged_ = true;
     last_log_us_ = now_us;

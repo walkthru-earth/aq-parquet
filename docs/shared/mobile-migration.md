@@ -8,6 +8,36 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## LIVE sends every declared key, null for no reading (fix/91-live-overflow, issue #91)
+
+**Needs app update.** Bench boards need a matched reflash with the app build
+that reads this rule.
+
+**What changed.** Every LIVE key a board declares in its dictionary is now in
+every LIVE object, over BLE and LAN. A key with no usable reading (invalid,
+unavailable, NaN or Inf, out of range for the wire unit, or text of 32
+characters or more) is sent as JSON `null` instead of being left out. An
+absent key now means only that the board has no such field. A row too large
+for 480 bytes no longer leaves the previous snapshot cached. The board sends
+the object with every declared key `null` for that sample, as both the LIVE
+notification and the cached value, and logs
+`PARQUET LIVE overflow bytes=<n> max=480` at most once an hour. The widest
+real object is 332 bytes on CoreS3 and 270 bytes on Waveshare, so overflow is
+not expected on these boards. LIVE keys, key order, value formats, the
+`info.dict` digests and every other key are unchanged. Per field LIVE
+precision follows in a separate #91 change with new digests.
+
+**Why.** The STAC contract (bridge decision 5) needs the declared key set to
+be visible in every sample, so a phone can tell a missing reading from a
+field the board does not have. Before, an overflowing row was skipped, so
+BLE and LAN kept serving the older sample as if it were current.
+
+**What the app must do.** Treat `null` as no reading, never as zero. Treat a
+declared key that is missing as not on this board. Parse by key name and
+ignore keys you do not know. An object where every key is `null` is a sample
+with no readings, for example after an overflow, so clear the live values
+instead of keeping the last ones.
+
 ## BLE name prefix OS- and board neutral footer values (fix/90-board-neutral-config, issue #90)
 
 **What changed.** CoreS3 and Waveshare now advertise `OS-xxxx` (OpenSensor)

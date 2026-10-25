@@ -2,8 +2,11 @@
 
 // Widest real LIVE row for the board contract tests (#91). Each board lists,
 // for every LIVE key, the widest value its producer can write while the key
-// is valid. The helper fills a row from that list, checks every key is
-// printed (none dropped as out of range) and returns the object size. A new
+// is valid. Every declared key is always sent, as a number or as null, so a
+// key whose widest value is shorter than `null` (a one digit code, or 100)
+// is widest when it has no reading. The helper fills a row from the list,
+// turns each such key to null, checks every key is printed and returns the
+// object size, the largest LIVE object the board can send. A new
 // LIVE key without an entry, or an entry for a key the board does not have,
 // fails the test, so whoever adds a key must state its widest value.
 #include <aq_logger_live.h>
@@ -50,6 +53,16 @@ inline std::size_t measure(const aqlogger::Field *table, std::size_t count,
     }
   }
   assert(keys == widest.size() && "a widest entry names no LIVE key");
+  // Sizes add up per key, so choosing the wider of value and null for each
+  // key on its own gives the widest object.
+  for (std::size_t i = 0; i < count; ++i) {
+    if (!table[i].live_key)
+      continue;
+    const auto as_value = aqlogger::live_size(table, count, row);
+    row.valid[i] = 0;
+    if (aqlogger::live_size(table, count, row) <= as_value)
+      row.valid[i] = 1;
+  }
   char json[ble::kMaxJson + 1];
   const auto used =
       aqlogger::format_live(table, count, row, json, sizeof(json));
@@ -63,5 +76,22 @@ inline std::size_t measure(const aqlogger::Field *table, std::size_t count,
       assert(std::strstr(json, quoted));
     }
   return needed;
+}
+
+// Size of the object with every declared key null, which the logger sends
+// when a row overflows. It must fit, or an overflow would publish nothing.
+inline std::size_t all_null(const aqlogger::Field *table, std::size_t count) {
+  const aqlogger::Row none{};
+  char json[ble::kMaxJson + 1];
+  const auto used =
+      aqlogger::format_live(table, count, none, json, sizeof(json));
+  assert(used > 0 && used == aqlogger::live_size(table, count, none));
+  for (std::size_t i = 0; i < count; ++i)
+    if (table[i].live_key) {
+      char quoted[aqlogger::kMaxLiveKey + 8];
+      std::snprintf(quoted, sizeof(quoted), "\"%s\":null", table[i].live_key);
+      assert(std::strstr(json, quoted));
+    }
+  return used;
 }
 } // namespace livewidest
