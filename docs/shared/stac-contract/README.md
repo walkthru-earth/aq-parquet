@@ -39,6 +39,7 @@ v0.1.0 splits the metadata into three layers, as its [PROFILE.md](https://github
 | Role values (measurement, quality, state and others) | Core `roles` with ACDD values `physicalMeasurement`, `auxiliaryInformation`, `qualityInformation`, `referenceInformation`, `coordinate` |
 | `cube:dimensions`, `cube:variables` | Not used. Cadence is `opensensor:sample_interval_s` |
 | Shared `urn:opensensor:property:<id>` | `opensensor:property` with a shared URI such as NERC P07 where one fits, otherwise a per board URI |
+| Footer `stac:collection_href`, `stac:descriptor_sha256`, `urn:opensensor:collection:` | `opensensor:template_href`, `opensensor:template_sha256`, `urn:opensensor:template:` |
 | `opensensor:field_id`, `opensensor:procedure`, `opensensor:property` | Unchanged |
 
 `opensensor:settle_s` and `opensensor:derived` are new in v0.1.0. Upstream proposals may move some fields later, see stac-extensions/table#16 (`field_id`), table#17 (common metadata in columns), classification#55 (classes in table columns) and cf#11 (CF fields in table columns).
