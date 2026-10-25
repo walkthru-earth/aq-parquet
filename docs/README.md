@@ -12,6 +12,7 @@ The device protocol, telemetry format, and offline-first data flow are shared ac
 | Sampling, nulls, Parquet, Hive partitions, and offline archives | [Telemetry pipeline](shared/telemetry-pipeline.md) |
 | Dictionary, observation semantics, and proposed Iceberg workflow | [Table and observation model](shared/table-and-observation-model.md) |
 | Small file sizes, encodings, compaction and range reads | [Small Parquet files](shared/parquet-small-files.md) |
+| Proposed STAC metadata contract, firmware audit and review (research, not implemented) | [STAC contract research](shared/stac-contract/README.md) |
 | Proto 3 BLE/LAN frames, disconnect evidence, pairing and UART owner provisioning | [Sync protocol](shared/ble-sync-protocol.md) |
 | Router/local NTP, configurable H3 privacy and mobile deployment provisioning | [Time and location](shared/time-and-location.md) |
 | Phone background sync triggers | [Background sync triggers](shared/background-sync-triggers.md) |
