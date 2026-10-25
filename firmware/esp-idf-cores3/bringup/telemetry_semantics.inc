@@ -54,9 +54,9 @@
 //   BMM150 (Bosch Sensortec), LTR-553ALS-WA (Lite-On), AXP2101 (X-Powers),
 //   BM8563 (Belling), FT6336U (FocalTech). LTR-553 ALS is 16 bit and PS is
 //   11 bit. The LCD is 320 by 240, so touch x is 0 to 319 and y 0 to 239.
-//   imu_temperature_c uses -20 to 85, copied from the stac-opensensor
-//   templates/cores3-telemetry-v5.json example. The BMI270 operating range is
-//   -40 to 85, so the lower bound is the profile's choice.
+//   imu_temperature_c uses -40 to 85, the BMI270 operating range from the
+//   Bosch Sensortec BMI270 datasheet. The stac-opensensor
+//   cores3-telemetry-v5.json example says -20 to 85, and the sensor fact wins.
 //   SHT20 range -40 to 125 degC and 0 to 100 %RH from the Sensirion SHT20
 //   datasheet. The columns stay null until the sensor is resolved.
 //   CF names come from the CF standard name table v86. Property ids follow
@@ -72,7 +72,8 @@
 //
 // Estimated, not sourced.
 //   vbus_mv 0 to 5500 and battery_mv 2500 to 4500 are bench estimates for a
-//   5 V USB rail and a single Li-ion cell behind the AXP2101.
+//   5 V USB rail and a single Li-ion cell behind the AXP2101, not datasheet
+//   limits. Their rows carry an "estimate" comment.
 //   Every aggregate is a choice for this table, not a vendor value. Running
 //   counters (frames, errors, dropped rows) use point because the profile
 //   has no counter delta aggregate.
@@ -115,13 +116,15 @@ SEM(gyro_z_dps, "deg/s", auxiliaryInformation, "", mean, , , 0, "finite", "urn:w
 SEM(mag_x_raw, "{raw_count}", auxiliaryInformation, "", mean, , , 0, "finite", "urn:walkthru-earth:property:magnetic_field_x_raw", "Bosch Sensortec", "BMM150")
 SEM(mag_y_raw, "{raw_count}", auxiliaryInformation, "", mean, , , 0, "finite", "urn:walkthru-earth:property:magnetic_field_y_raw", "Bosch Sensortec", "BMM150")
 SEM(mag_z_raw, "{raw_count}", auxiliaryInformation, "", mean, , , 0, "finite", "urn:walkthru-earth:property:magnetic_field_z_raw", "Bosch Sensortec", "BMM150")
-SEM(imu_temperature_c, "Cel", auxiliaryInformation, "", mean, -20, 85, 0, "finite", "urn:walkthru-earth:property:board_temperature", "Bosch Sensortec", "BMI270")
+SEM(imu_temperature_c, "Cel", auxiliaryInformation, "", mean, -40, 85, 0, "finite", "urn:walkthru-earth:property:board_temperature", "Bosch Sensortec", "BMI270")
 SEM(light_ch0_raw, "{raw_count}", physicalMeasurement, "", mean, 0, 65535, 0, "light_status == 3", "urn:walkthru-earth:property:ambient_light_visible_and_infrared_raw", "Lite-On", "LTR-553ALS-WA")
 SEM(light_ch1_raw, "{raw_count}", physicalMeasurement, "", mean, 0, 65535, 0, "light_status == 3", "urn:walkthru-earth:property:ambient_light_infrared_raw", "Lite-On", "LTR-553ALS-WA")
 SEM(proximity_raw, "{raw_count}", physicalMeasurement, "", mean, 0, 2047, 0, "proximity_status == 3", "urn:walkthru-earth:property:proximity_raw", "Lite-On", "LTR-553ALS-WA")
 SEM(light_status, "{code}", qualityInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:ambient_light_status", "Lite-On", "LTR-553ALS-WA")
 SEM(proximity_status, "{code}", qualityInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:proximity_status", "Lite-On", "LTR-553ALS-WA")
+// Estimate, see the header.
 SEM(vbus_mv, "mV", auxiliaryInformation, "", mean, 0, 5500, 0, "", "urn:walkthru-earth:property:usb_bus_voltage", "X-Powers", "AXP2101")
+// Estimate, see the header.
 SEM(battery_mv, "mV", auxiliaryInformation, "", mean, 2500, 4500, 0, "", "urn:walkthru-earth:property:battery_voltage", "X-Powers", "AXP2101")
 SEM(battery_percent, "%", auxiliaryInformation, "", point, 0, 100, 0, "", "urn:walkthru-earth:property:battery_state_of_charge", "X-Powers", "AXP2101")
 SEM(charging_status, "{code}", auxiliaryInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:battery_charging_status", "X-Powers", "AXP2101")

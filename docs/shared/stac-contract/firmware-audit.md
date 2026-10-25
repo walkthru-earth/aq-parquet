@@ -53,7 +53,7 @@ The n16r8 board was never tracked in git and has no PRs or issues. The main chec
 
 - CoreS3 builds `struct Definition {name, type, procedure, unit, validity, property_uri, live_key}` at `telemetry_contract.h:46-54`, fills `kFields` at lines 61-72 and asserts 81 fields at line 73.
 - Waveshare reuses `aqlogger::Field` directly (`telemetry_contract.h:62`), fills `kFields` at lines 69-80 and asserts 62 at line 81.
-- The property URI is built by the macro as `urn:walkthru-earth:cores3:property:<name>` (CoreS3 `.inc` header comment) or `urn:walkthru-earth:waveshare-sim7670g:property:<name>` (Waveshare `.inc:7`).
+- The property URI is built by the macro as `urn:walkthru-earth:cores3:property:<name>` (CoreS3 `.inc` header comment) or `urn:walkthru-earth:waveshare-sim7670g:property:<name>` (Waveshare `.inc:7`). Resolved in #99, the property now comes from each board's `telemetry_semantics.inc` as a board neutral id.
 - `field_id` is the 1-based position (`prepare_columns`, CoreS3 `telemetry_contract.h:88-96`, common `aq_logger.cpp:368-382`). Append-only per Iceberg v3 rules.
 - A unit of `us_since_unix_epoch` switches the logical type to `TimestampMicrosUtc` (CoreS3 `telemetry_contract.h:81-86`).
 

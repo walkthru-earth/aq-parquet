@@ -102,7 +102,8 @@ static_assert(shared_columns_agree());
 
 // stac-opensensor templates/cores3-telemetry-v5.json at a017edf. Every value
 // the template assigns is copied here verbatim, so a drift on either side
-// fails this test.
+// fails this test. One value differs on purpose. imu_temperature_c uses the
+// BMI270 datasheet -40 where the template example says -20.
 struct TemplateColumn {
   std::string_view name, unit, property, valid_when, min, max;
   aq::semantics::Role role;
@@ -131,7 +132,7 @@ constexpr TemplateColumn kTemplate[] = {
     {"particles_gt03_per_01l", "{particles}/dL",
      "urn:walkthru-earth:property:particle_count_gt_0p3um", "pms_status == 4",
      "0", "65535", physicalMeasurement, mean, 180},
-    {"imu_temperature_c", "Cel", "", "finite", "-20", "85",
+    {"imu_temperature_c", "Cel", "", "finite", "-40", "85",
      auxiliaryInformation, mean, 0},
     {"accel_z_g", "[g]", "", "finite", "", "", auxiliaryInformation, mean, 0},
     {"battery_percent", "%", "", "", "0", "100", auxiliaryInformation, point,
