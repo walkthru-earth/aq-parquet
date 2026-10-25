@@ -2,8 +2,9 @@
 
 
 > **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
-> observation/archive semantics. CoreS3 uses its 81-column v4 schema and
-> Waveshare V2 its 62-column PMS5003T v5 schema. Board acquisition and schema
+> observation/archive semantics. CoreS3 uses its 81-column `cores3-telemetry-v5`
+> schema and Waveshare V2 its 62-column PMS5003T `waveshare-sim7670g-telemetry-v5`
+> schema. Board acquisition and schema
 > identities remain distinct. Native build/host gates pass; dated physical
 > evidence below remains scoped to historical Arduino images.
 
@@ -37,8 +38,18 @@ Solid arrows describe the device design; dashed arrows are unimplemented downstr
 
 ## Deployment cell and country (native schemas)
 
-CoreS3 v4 (81 fields, dictionary v3) and Waveshare v3 (56 fields, dictionary v3)
-append four nullable leaves, preserving their former 77/52-field prefixes:
+The four nullable H3 leaves below arrived in CoreS3 schema v4 (dictionary v3)
+and Waveshare schema v3 (dictionary v3), appended after the former 77 and 52
+field prefixes. They sit at positions 78 to 81 on CoreS3 and 53 to 56 on
+Waveshare. Current firmware writes CoreS3 `cores3-telemetry-v5` with 81 fields
+(dictionary `cores3-telemetry-v5`) and Waveshare `waveshare-sim7670g-telemetry-v5`
+with 62 fields (dictionary `waveshare-sim7670g-telemetry-v5`, six battery
+columns at positions 57 to 62 after the H3 leaves). The `static_assert` on
+`field_count` in each board's `telemetry_contract.h` pins these totals.
+Parquet `field_id` exists only from CoreS3 schema v5 and Waveshare schema v4
+(commit `e166978`), so older files carry none. Field counts per released
+dictionary digest are planned to live in the generated board templates under
+`docs/shared/templates` (#85, #86), which do not exist yet.
 
 | Field | Physical type | Meaning |
 | --- | --- | --- |
@@ -135,7 +146,7 @@ pixi run telemetry-contract-test --dictionary-out firmware/esp-idf-cores3/artifa
 pixi run parquet-device command --port <checked-port> 'parquet schema'
 ```
 
-`parquet schema` emits a BEGIN line, 77 FIELD lines and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append station/deployment/instrument identity in the later service mapping.
+`parquet schema` emits a BEGIN line, one FIELD line per leaf (81 on CoreS3 schema v5, 62 on Waveshare schema v5) and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append station/deployment/instrument identity in the later service mapping.
 
 ### Timing and validity dictionary
 
