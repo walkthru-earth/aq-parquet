@@ -39,7 +39,7 @@ The released extension stac-opensensor v0.1.0 settles items 5, 8, 9 and 10 in it
 | Board | Field table | Contract header | Digest header | Board KV metadata |
 |---|---|---|---|---|
 | M5Stack CoreS3 | `firmware/esp-idf-cores3/bringup/telemetry_fields.inc` (81 FIELDs, lines 9 to 91) | `firmware/esp-idf-cores3/bringup/telemetry_contract.h` | `firmware/esp-idf-cores3/bringup/telemetry_dictionary_digest.h:8-9` | `firmware/esp-idf-cores3/bringup/telemetry_logger.cpp:141-149` |
-| Waveshare ESP32-S3-SIM7670G | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc` (62 FIELDs, lines 13 to 74) | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h` | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_dictionary_digest.h:6-7` | `firmware/esp-idf-waveshare-sim7670g/logger/main.cpp:116-146` |
+| Waveshare ESP32-S3-SIM7670G | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc` (62 FIELDs, lines 13 to 74) | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h` | `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_dictionary_digest.h:6-7` | `firmware/esp-idf-waveshare-sim7670g/logger/main.cpp:116-148` |
 | n16r8 | none | none | none | none |
 | common | `firmware/common/logger/src/aq_logger.h:13-23` (`struct Field`) | n/a | n/a | n/a |
 
@@ -72,7 +72,7 @@ The n16r8 board was never tracked in git and has no PRs or issues. The main chec
 | LIVE key | yes (optional) | no | no | yes, as JSON key |
 | min and max per row group | runtime | yes (statistics, `parquet_writer.cpp:233`, `:397`) | no | no |
 | status code meanings | no | no | yes, free text per board | no |
-| sensor make and model | no | no | Waveshare only (`main.cpp:116-146`, `sensor_model`) | Waveshare config page 0 |
+| sensor make and model | no | no | Waveshare only (`main.cpp:116-148`, `sensor_model`) | Waveshare config page 0 |
 | label, description | no | no | no | no |
 | valid range, display scale | no | no | no | no |
 | aggregation method | no | no | no | no |
@@ -179,7 +179,7 @@ Fixed entries (`aq_logger.cpp:851-878`) in order.
 
 Then come 7 location entries (`firmware/common/logger/src/aq_logger_location.h:43-63`), which are `country_iso3166_1_alpha2`, `country_source`, `location_source`, `h3_cell_id`, `h3_resolution`, `h3_max_resolution` and `h3_center_units`. Then `reconciliation_anchor_*` entries and then board metadata (`aq_logger.cpp:881-895`).
 
-Board metadata. CoreS3 (`telemetry_logger.cpp:141-149`) writes `pms_status`, `light_status`, `proximity_status`, `magnetic_units` and `unavailable`. Waveshare (`main.cpp:116-146`) writes `pms_status`, `gauge_status`, `unavailable`, `battery_health_state`, `gauge_status_flags`, `battery_minutes_to_empty`, `battery_presence`, `sensor_model`, `pm25_batch_candidate_formula`, `pm25_batch_candidate_validation`, `pm25_batch_candidate_status`, `hardware_revision` and `storage_bus`. These are free-text code tables, the closest thing to a display vocabulary today.
+Board metadata. CoreS3 (`telemetry_logger.cpp:141-149`) writes `pms_status`, `light_status`, `proximity_status`, `magnetic_units` and `unavailable`. Waveshare (`main.cpp:116-148`) writes `pms_status`, `gauge_status`, `unavailable`, `battery_health_state`, `gauge_status_flags`, `battery_minutes_to_empty`, `battery_presence`, `sensor_model`, `pm25_batch_candidate_formula`, `pm25_batch_candidate_validation`, `pm25_batch_candidate_status`, `hardware_revision` and `storage_bus`. These are free-text code tables, the closest thing to a display vocabulary today.
 
 ### Hive layout
 
