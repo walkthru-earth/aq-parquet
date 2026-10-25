@@ -95,11 +95,75 @@ void utc_scale() {
   row.set(0, std::numeric_limits<std::int64_t>::min() / 1000 - 1);
   assert(aqlogger::format_live(&utc, 1, row, json, sizeof(json)) == 2);
 }
+// An object over the BLE cap logs its real size once and publishes `{}`, so
+// the previous sample is never served as current. Fitting again restores it.
+void overflow() {
+  static const char *const names[] = {
+      "k00", "k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08", "k09",
+      "k10", "k11", "k12", "k13", "k14", "k15", "k16", "k17", "k18", "k19"};
+  constexpr std::size_t count = sizeof(names) / sizeof(names[0]);
+  Field fields[count];
+  for (std::size_t i = 0; i < count; ++i)
+    fields[i] = field("wide", PhysicalType::Int64, names[i]);
+  constexpr std::size_t kCap = ble::kMaxJson;
+  aqlogger::Row wide{};
+  for (std::size_t i = 0; i < count; ++i)
+    wide.set(i, std::numeric_limits<std::int64_t>::max());
+  aqlogger::Row small{};
+  small.set(0, std::int64_t{7});
+
+  char big[1024];
+  const auto full =
+      aqlogger::format_live(fields, count, wide, big, sizeof(big));
+  assert(full > kCap);
+  assert(aqlogger::live_size(fields, count, wide) == full);
+  assert(aqlogger::live_size(fields, count, small) == 9); // {"k00":7}
+
+  aqlogger::LiveOverflow gate;
+  char json[kCap + 1];
+  auto live = gate.publish(fields, count, small, json, sizeof(json), 0);
+  assert(live.length == 9 && !live.log && live.needed == 0);
+  assert(std::strcmp(json, "{\"k00\":7}") == 0);
+
+  live = gate.publish(fields, count, wide, json, sizeof(json), 10000000);
+  assert(live.log && live.needed == full);
+  assert(live.length == 2 && std::strcmp(json, "{}") == 0);
+  char line[64];
+  const auto written =
+      aqlogger::format_live_overflow(line, sizeof(line), live.needed, kCap);
+  assert(written == std::strlen(line));
+  char expected[64];
+  std::snprintf(expected, sizeof(expected),
+                "PARQUET LIVE overflow bytes=%zu max=480\n", full);
+  assert(std::strcmp(line, expected) == 0);
+  assert(aqlogger::format_live_overflow(line, 8, live.needed, kCap) == 0);
+  assert(line[0] == '\0');
+
+  // Still overflowing within the hour, cleared again but not logged again.
+  live = gate.publish(fields, count, wide, json, sizeof(json), 20000000);
+  assert(!live.log && live.needed == full && live.length == 2);
+  assert(std::strcmp(json, "{}") == 0);
+
+  live = gate.publish(fields, count, small, json, sizeof(json), 30000000);
+  assert(!live.log && live.length == 9);
+
+  // A later overflow logs again once the repeat window has passed.
+  const auto later = 10000000 + aqlogger::LiveOverflow::kRepeatUs;
+  live = gate.publish(fields, count, wide, json, sizeof(json), later - 1);
+  assert(!live.log && live.length == 2);
+  live = gate.publish(fields, count, wide, json, sizeof(json), later);
+  assert(live.log && live.length == 2);
+
+  // No buffer means nothing to publish and nothing to log.
+  live = gate.publish(fields, count, wide, nullptr, sizeof(json), later * 2);
+  assert(!live.log && live.length == 0);
+}
 } // namespace
 
 int main() {
   keys();
   documents();
   utc_scale();
+  overflow();
   return 0;
 }

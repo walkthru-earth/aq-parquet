@@ -1588,15 +1588,24 @@ void publish_status() {
   publish_advert();
 }
 
+// Main task only. Rate limits the LIVE overflow line and remembers its state.
+LiveOverflow live_overflow;
+
 // Publishes the `live` snapshot of the row that was just queued. The board's
-// field table decides which keys appear; see aq_logger_live.h.
-void publish_live(const Sample &row) {
+// field table decides which keys appear, see aq_logger_live.h. An object over
+// ble::kMaxJson publishes `{}` so the previous sample is not served as current.
+void publish_live(const Sample &row, std::int64_t now) {
   char json[ble::kMaxJson + 1];
-  const auto used =
-      format_live(config.fields, field_count, row, json, sizeof(json));
-  if (used && used <= ble::kMaxJson) {
-    ble::publish_live(json, used);
-    lan::publish_live(json, used);
+  const auto live = live_overflow.publish(config.fields, field_count, row, json,
+                                          sizeof(json), now);
+  if (live.log) {
+    char line[64];
+    if (format_live_overflow(line, sizeof(line), live.needed, ble::kMaxJson))
+      aqlog.print(line);
+  }
+  if (live.length && live.length <= ble::kMaxJson) {
+    ble::publish_live(json, live.length);
+    lan::publish_live(json, live.length);
   }
 }
 
@@ -2667,7 +2676,7 @@ void collect(std::int64_t now, std::int64_t scheduled) {
       static_cast<std::uint32_t>(uxQueueMessagesWaiting(samples));
   if (depth > queue_peak.load())
     queue_peak = depth;
-  publish_live(row);
+  publish_live(row, now);
   publish_status();
   aqlog.printf("PARQUET ROW sequence=%lld monotonic_us=%lld jitter_us=%lld "
                "buffered=%lu dropped=%lu\n",

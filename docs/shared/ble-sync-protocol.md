@@ -178,7 +178,7 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 ### `live` (read, notify)
 
-Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null** (invalid, unavailable or non-finite), never zero. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
+Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order. Absent keys mean **null**, never zero. A key is absent when its value is invalid or unavailable, and also when it cannot be represented. That is a non-finite float (NaN or Inf), a value whose printed text is 32 characters or longer (only a float of magnitude 1e28 or more gets there), or a UTC instant whose nanosecond form overflows INT64. Parse the object by key name and ignore unknown keys. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
 Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its reviewed LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. Frozen key sets per digest are in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
 
@@ -204,6 +204,8 @@ Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (th
 | `als` | CoreS3 `light_ch0_raw` |
 
 PM keys appear only when `pms == 4`. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
+
+The whole object must fit 480 bytes. The firmware never sends a truncated object. When a row would need more, the device publishes `{}` for that sample over BLE and LAN instead of keeping the previous snapshot, so a client never shows an old sample as current. It reads like a sample in which every key is absent. The next row that fits restores the full object. The device logs `PARQUET LIVE overflow bytes=<n> max=480` to serial and `LOG_TAIL`, where `n` is the exact size the full object needed without the terminating NUL. The line repeats at most once an hour while overflows continue. The host contract tests build each board's widest real row, every LIVE key valid at the widest value its producer can write and a 19 digit `utc`. Measured 2026-10-26 it is 325 bytes on CoreS3 and 263 bytes on Waveshare, and the tests fail if either passes 480. `info.dict` digests and LIVE keys are unchanged by this rule.
 
 #### LIVE key stability
 

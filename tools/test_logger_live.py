@@ -34,7 +34,7 @@ def main() -> None:
     assert [key for key, _ in documents[1]] == ["seq", "pm25", "t", "pm1", "utc", "rh"]
     assert dict(documents[1])["utc"] == 2**63 - 1
     assert documents[2] == []
-    print("Shared LIVE formatter: declared keys only, field-table order, nulls and NaN omitted, exact capacity passed")
+    print("Shared LIVE formatter: declared keys only, field-table order, nulls and NaN omitted, exact capacity passed, overflow clears to {} and logs once")
 
 
 if __name__ == "__main__":
