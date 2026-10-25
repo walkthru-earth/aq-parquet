@@ -121,7 +121,7 @@ This is our proposed mapping, not a normative UML/cardinality diagram. In the V2
 
 Implementation scope for this revision:
 
-- A single field dictionary drives column names/types and records procedure group, project-local property URI, unit and validity rule. These URIs are local vocabulary identifiers, not claims of an OGC-controlled vocabulary or hosted resolver.
+- A single field dictionary drives column names/types and records procedure group, property URI, unit and validity rule. The property URI comes from the board's `telemetry_semantics.inc`, whose header gives the board neutral rule (a NERC term where one matches exactly, else a `urn:walkthru-earth:property:` quantity). The URNs are local vocabulary identifiers, not claims of an OGC-controlled vocabulary or hosted resolver.
 - Files reference the dictionary by version, source URI and SHA-256, and include a versioned acquisition configuration. Descriptions are not repeated in every row or as a large JSON object in every tiny file.
 - Deployment and calibration identifiers remain explicitly unknown. Owner-declared sensor identity and H3 location can now be provisioned; centers are derived from the retained cell. External deployment history and calibration certification remain future work. Hardware presence and physical coordinates are not invented.
 - Append timing columns with a new schema version: snapshot collection completion, most recent valid PMS frame receipt on the device monotonic clock, and the UTC/monotonic anchor used for each row. Unknown anchors and absent PMS frames remain null.

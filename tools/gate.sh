@@ -46,6 +46,7 @@ tasks=(
   "release-workflow-test"
   "telemetry-contract-test --sanitize"
   "waveshare-contract-test --sanitize"
+  "column-semantics-test"
   # Sensor drivers on fake buses
   "pms-frame-test"
   "ltr553-test"

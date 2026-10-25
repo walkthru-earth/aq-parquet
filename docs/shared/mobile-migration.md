@@ -31,6 +31,21 @@ A board with an unknown prefix is otherwise invisible. Read
 rather than assuming 10 s. Existing bench boards must be reflashed together
 with a matching app build and then re-paired, since the bonded name changes.
 
+## Board neutral property ids (fix/84-telemetry-semantics, issue #84)
+
+**What changed.** The `property=` value of each `PARQUET FIELD` line from the
+`parquet schema` console command, and the `property` of each field in the
+host dictionary JSON, is now a board neutral id from the board's
+`telemetry_semantics.inc`. It was `urn:walkthru-earth:<board>:property:<column>`.
+It is now a NERC P07 term, a NERC CF standard_name URI, or
+`urn:walkthru-earth:property:<quantity>`, and a column both boards write has
+the same id on both. The dict digest, the Parquet files, LIVE and every BLE
+reply are unchanged.
+
+**What the app must do.** Nothing today, since the app does not read these
+ids. Any later code that joins on a property id should use the new ids, which
+match the stac-opensensor template.
+
 ## PARQUET BEGIN first in each boot (fix-35-begin-order, issue #35)
 
 **What changed.** The storage worker now waits until the logger has printed

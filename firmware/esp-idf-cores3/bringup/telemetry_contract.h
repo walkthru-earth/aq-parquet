@@ -2,6 +2,7 @@
 
 #include "parquet_writer.h"
 #include "telemetry_dictionary_digest.h"
+#include <column_semantics.h>
 #include <cstdint>
 #include <cstring>
 #include <numeric_sample.h>
@@ -58,6 +59,29 @@ struct Definition {
 constexpr const char *live_or_null(const char *key) {
   return key[0] == '\0' ? nullptr : key;
 }
+// Column semantics for the STAC template (#84). telemetry_semantics.inc stays
+// out of the dict digest. It is the single source of each FIELD property_uri,
+// a board neutral id looked up by name at compile time, so only the property
+// strings reach the image.
+static constexpr aq::semantics::Column kSemantics[] = {
+#define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
+            plausible_max, settle_s, valid_when, property, sensor_vendor,      \
+            sensor_model)                                                      \
+  {#name,                                                                      \
+   ucum,                                                                       \
+   aq::semantics::Role::role,                                                  \
+   cf_standard_name,                                                           \
+   aq::semantics::Aggregate::aggregate,                                        \
+   #plausible_min,                                                             \
+   #plausible_max,                                                             \
+   settle_s,                                                                   \
+   valid_when,                                                                 \
+   property,                                                                   \
+   sensor_vendor,                                                              \
+   sensor_model},
+#include "telemetry_semantics.inc"
+#undef SEM
+};
 constexpr Definition kFields[] = {
 #define FIELD(name, type, procedure, unit, validity, live)                     \
   {#name,                                                                      \
@@ -65,13 +89,20 @@ constexpr Definition kFields[] = {
    #procedure,                                                                 \
    unit,                                                                       \
    #validity,                                                                  \
-   "urn:walkthru-earth:cores3:property:" #name,                                \
+   aq::semantics::property_of(kSemantics, #name),                              \
    live_or_null(live)},
 #include "telemetry_fields.inc"
 #undef FIELD
 };
 static_assert(field_count == 81, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
+
+static_assert(aq::semantics::aligned(kFields, kSemantics),
+              "telemetry_semantics.inc must list every FIELD in order");
+static_assert(aq::semantics::well_formed(kFields, kSemantics),
+              "telemetry_semantics.inc has a malformed row");
+static_assert(aq::semantics::every_property_set(kFields),
+              "every FIELD needs a property from telemetry_semantics.inc");
 
 using Sample = aq::NumericSample<field_count>;
 
