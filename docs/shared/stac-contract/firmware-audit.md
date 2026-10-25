@@ -4,13 +4,31 @@ Read-only audit of branch `yharby/stac-firmware-audit` at commit `2b49114` (2026
 
 The goal is a sensor agnostic mobile app (and later ecosystem) driven by a STAC JSON contract. Released firmware wire contracts (BLE frames, opcodes, UUIDs, JSON keys, Hive paths) stay backward compatible.
 
+## Corrections after review
+
+The findings below are kept as written on 2026-10-25. Later checks against the code at `2b49114` found these errors. Where a line below disagrees with this list, this list wins. Each item cites the matching entry in [firmware-audit-review.md](firmware-audit-review.md).
+
+1. Per-column metadata does leave the device. The `parquet schema` serial command prints procedure, unit, validity and property for every field (`firmware/common/logger/src/aq_logger.cpp:2522-2534`). Synced Parquet gives the app column names, physical types, field ids and every footer entry. The real gap is units, labels and meanings for LIVE over BLE and LAN before any file sync. Review C2 and C15.
+2. The footer reserves 64 entries, it does not use them. Real use is 37 on CoreS3 (22 fixed, 7 location, 3 anchor, 5 board) and 45 on Waveshare (13 board). Review C3.
+3. Raising `kFooterMetadata` (`aq_logger.cpp:98`) alone does not add slots. `Writer::finish` rejects `metadata_count > 64` as a literal (`firmware/common/src/parquet_writer.cpp:593`). Pass new keys inside the board metadata budget or lower `kMaxConfigMetadata`, or change both limits together. Review C4 and P6.
+4. An unknown dictionary digest falls back to a generic LIVE vocabulary in the app. Only a new LIVE key, a retyped key or a new reviewed temperature source needs an app release. Review C14.
+5. `field_id` is a stable join key only for schema v5 files. Commit `e166978` added field ids and changed the unit of position 9 in the same change, so older files carry no field ids and must be mapped by schema name and column name. Review C10.
+6. The fixture binary takes the argument `dictionary` (`tools/telemetry_contract_fixture.cpp:59`). `--dictionary-out` is an option of `tools/test_telemetry_contract.py:119`. Review C11.
+7. A new code value is a LIVE layout change under the LIVE key stability rule (`docs/shared/ble-sync-protocol.md:210-214`). Code tables therefore belong on the `dict` side, not only in `desc`. Review E5.
+8. A shared property URI would merge columns that differ by board. `t`, `imu_t` and `pct` mean different things on CoreS3 and Waveshare. Keep per board property URIs and add a separate comparability link. Review E6.
+9. Streaming a 25 to 40 KB descriptor as `CONFIG_CHUNK` style notifications has no recovery for lost frames. Use a request per chunk read with offset and length, so the app can ask again for a lost range. Review P1 and C12.
+10. CF `units` are UDUNITS-2 and `Cel` is a UCUM code, so one `unit` field cannot hold both. Pick one system per field. Review P3.
+11. LIVE prints every finite float with `%.1f` (`firmware/common/logger/src/aq_logger_live.cpp:89`). A precision other than 1 can only be a display hint, it cannot describe the wire value. Review E3.
+
+The released extension stac-opensensor v0.1.0 settles items 5, 8, 9 and 10 in its own way. See [README.md](README.md) for the name map.
+
 ## Summary
 
 - Each board has one X-macro table, `telemetry_fields.inc`, that is the single source of column truth. It already carries name, physical type, procedure, unit, validity rule, property URI and LIVE key.
-- That table is compiled into `.rodata` and copied into the Parquet schema, but only the column name, type and `field_id` reach the Parquet schema. The rest exists only in the source file and in the host fixture output.
-- The phone receives none of the per-column metadata. It sees a dictionary SHA-256 in `info` and short LIVE keys, then maps them with hand-written per-digest profiles in the app.
+- That table is compiled into `.rodata` and copied into the Parquet schema, but only the column name, type and `field_id` reach the Parquet schema. The rest exists only in the source file and in the host fixture output. (Corrected, see item 1 above.)
+- The phone receives none of the per-column metadata. It sees a dictionary SHA-256 in `info` and short LIVE keys, then maps them with hand-written per-digest profiles in the app. (Corrected, see item 1 above.)
 - Units are project labels, not UCUM. There are no CF names, no labels in any language, no valid ranges, no display scales, no aggregation hints.
-- The Parquet footer key-value array is full (64 of 64 entries in the worst case) and each value is capped at 4096 bytes, so a full STAC document cannot ride in the footer today.
+- The Parquet footer key-value array is full (64 of 64 entries in the worst case) and each value is capped at 4096 bytes, so a full STAC document cannot ride in the footer today. (Corrected, see items 2 and 3 above.)
 - The cheapest robust path is a build-time STAC generator fed by the existing host fixture, a new sibling semantics table with its own digest, a read-only BLE and LAN opcode that streams the descriptor from flash, and a compact href plus SHA-256 in the Parquet footer.
 - The `esp-idf-n16r8` board does not exist in this worktree. See Q1.
 
@@ -131,13 +149,13 @@ Config pages (`ble-sync-protocol.md:289-337`). Page 0 is sensor `{vendor, model,
 
 ### How the app interprets them
 
-`opensensor-space-mobile/core/protocol/.../LiveProfile.kt` keys a hand-written `LiveProfile(temperature, humidity, keys, temperatureKey, reviewed)` by `info.dict` (CoreS3 v5 digest at line 52). `TemperatureSource` is `BOARD("imu_t")` or `AMBIENT("t")`. An unknown digest falls back to a generic vocabulary. Every new board or column needs an app release today.
+`opensensor-space-mobile/core/protocol/.../LiveProfile.kt` keys a hand-written `LiveProfile(temperature, humidity, keys, temperatureKey, reviewed)` by `info.dict` (CoreS3 v5 digest at line 52). `TemperatureSource` is `BOARD("imu_t")` or `AMBIENT("t")`. An unknown digest falls back to a generic vocabulary. Every new board or column needs an app release today. (Corrected, see item 4 above.)
 
 ## Q3. Parquet key-value metadata and Hive layout
 
 ### Footer KV entries
 
-Limits are in `firmware/common/logger/src/aq_logger.cpp:93-102`. There are 22 fixed entries, 7 location entries, 3 anchor entries and up to 32 board entries, against `kFooterMetadata = 64`. The worst case uses every slot. `parquet_writer.cpp:598-599` caps keys at 255 bytes and values at 4096 bytes. `created_by` is capped at 128 bytes (line 595).
+Limits are in `firmware/common/logger/src/aq_logger.cpp:93-102`. There are 22 fixed entries, 7 location entries, 3 anchor entries and up to 32 board entries, against `kFooterMetadata = 64`. The worst case uses every slot. (Corrected, see items 2 and 3 above.) `parquet_writer.cpp:598-599` caps keys at 255 bytes and values at 4096 bytes. `created_by` is capped at 128 bytes (line 595).
 
 Fixed entries (`aq_logger.cpp:851-878`) in order.
 
@@ -200,15 +218,15 @@ STAC is a discovery and catalog layer. It does not replace Iceberg (table format
 | H3 cell | Item geometry and `proj:` or `grid:code` | partition or column | FeatureOfInterest |
 | Time window | Item `start_datetime`, `end_datetime` | partition and metrics | phenomenonTime |
 
-The `field_id` already gives a stable join key between STAC columns, Iceberg fields and Parquet schema elements.
+The `field_id` already gives a stable join key between STAC columns, Iceberg fields and Parquet schema elements. (Corrected, true for schema v5 only, see item 5 above.)
 
 ## Q5. Gap analysis
 
 | Need | Today | Gap | Where to add |
 |---|---|---|---|
-| UCUM units | project labels (`ug/m3`, `degC`, `count/0.1L`) | not machine-parseable | semantics table, map `ug/m3` to `ug/m3`, `degC` to `Cel`, `count/0.1L` to `{count}/dL` |
+| UCUM units | project labels (`ug/m3`, `degC`, `count/0.1L`) | not machine-parseable | semantics table, map `ug/m3` to `ug/m3`, `degC` to `Cel`, `count/0.1L` to `{count}/dL` (see item 10 above) |
 | CF standard names | none | no cross-domain meaning | `cf:standard_name`, for example `mass_concentration_of_pm2p5_ambient_aerosol_particles_in_air`, `air_temperature`, `relative_humidity` |
-| Vocabulary URIs | local URN per board | no shared property across boards | shared `urn:opensensor:property:<id>` plus optional QUDT or CF URI |
+| Vocabulary URIs | local URN per board | no shared property across boards | shared `urn:opensensor:property:<id>` plus optional QUDT or CF URI (corrected, see item 8 above) |
 | English and Arabic labels | none | app hardcodes strings | `title`, `title_ar` in descriptor, or `opensensor:labels {en, ar}` |
 | Aggregation | snapshot only (`kConfiguration` says latest-available-not-average) | not per column | `opensensor:aggregation` (`instant`, `mean`, `counter`, `state`) |
 | Valid range | none | app cannot flag outliers | `opensensor:valid_range [min, max]` |
@@ -217,10 +235,10 @@ The `field_id` already gives a stable join key between STAC columns, Iceberg fie
 | Make and model | Waveshare KV and config page 0, CoreS3 none | not per column | `opensensor:sensor {vendor, model}` per column or per procedure |
 | Calibration | `calibration_id` always `unknown` | none | `opensensor:calibration` with id and date, filled later |
 | Sample interval | hardcoded `"10000"` KV and config JSON | not tied to real cadence | descriptor field and live value from config |
-| LIVE precision | `%.1f` for all floats | g and deg/s lose detail | `opensensor:precision` in descriptor, firmware keeps format |
+| LIVE precision | `%.1f` for all floats | g and deg/s lose detail | `opensensor:precision` in descriptor, firmware keeps format (display only, see item 11 above) |
 | Dictionary URI | GitHub `main` blob | mutable | pin to tag or commit, or serve from device |
 | Per-column metadata on the wire | none | phone needs app release per board | descriptor opcode (Q6) |
-| KV capacity | 64 of 64 used worst case | no free slot | raise `kFooterMetadata` or reduce `kMaxConfigMetadata` |
+| KV capacity | 64 of 64 used worst case (corrected, see item 2 above) | no free slot | raise `kFooterMetadata` or reduce `kMaxConfigMetadata` (see item 3 above) |
 
 ## Q6. Proposal for firmware emitting STAC
 
@@ -240,7 +258,7 @@ SEM(pm25_atm_ug_m3, "ug/m3", "mass_concentration_of_pm2p5_ambient_aerosol_partic
     "PM2.5", "الجسيمات الدقيقة ٢٫٥", "instant", 0, 1000, "aqi_us_pm25")
 ```
 
-`tools/telemetry_contract_fixture.cpp:59-77` already compiles `kFields` on the host and prints dictionary JSON `{schema, schema_version, dictionary, firmware, sha256, fields:[...]}`. `tools/test_telemetry_contract.py:160-200` runs it with `--dictionary-out`. `tools/test_waveshare_contract.cpp` does the same for Waveshare. Extend that path to join `kFields` with the semantics table and emit a STAC Collection. A static assert keeps both tables the same length and order.
+`tools/telemetry_contract_fixture.cpp:59-77` already compiles `kFields` on the host and prints dictionary JSON `{schema, schema_version, dictionary, firmware, sha256, fields:[...]}`. `tools/test_telemetry_contract.py:160-200` runs it with `--dictionary-out`. (Corrected, see item 6 above.) `tools/test_waveshare_contract.cpp` does the same for Waveshare. Extend that path to join `kFields` with the semantics table and emit a STAC Collection. A static assert keeps both tables the same length and order.
 
 Embed the minified Collection as a generated `const char[]` in `.rodata` (CMake `target_add_binary_data` or a generated header). Emit a second digest, `kDescriptorSha256`, over the generated JSON bytes.
 
@@ -251,13 +269,13 @@ Embed the minified Collection as a generated `const char[]` in `.rodata` (CMake 
 | `dict` (existing) | raw `telemetry_fields.inc` | columns or wire keys change | released apps, unchanged |
 | `desc` (new) | generated STAC Collection bytes | labels, ranges, units, scales change | new apps, cache key |
 
-Labels and scales can then evolve without breaking the released `dict` profiles.
+Labels and scales can then evolve without breaking the released `dict` profiles. (Corrected, code tables move `dict`, see item 7 above.)
 
 ### 3. BLE and LAN command
 
 - New read-only opcode `0x11 GET_DESCRIPTOR` (opcodes are `0x01` to `0x10`, `ble_sync.h:43-60`).
 - New frame type `0x4F DESCRIPTOR_CHUNK` (frame types end at `0x4e`, plus `0x7f` error, `ble_sync.h:63-86`). Opcodes and frame types are separate number spaces.
-- Chunk like the existing config pages, `{offset, total, bytes}`, so the same reassembly code works on BLE and LAN (`AQS1` on port 47390).
+- Chunk like the existing config pages, `{offset, total, bytes}`, so the same reassembly code works on BLE and LAN (`AQS1` on port 47390). (Corrected, see item 9 above.)
 - Advertise support by adding `"desc":"<16 hex prefix>"` to `info`. The full 64 hex fits (about 375 of 400 bytes on Waveshare) but leaves only about 25 bytes, so a 16 hex prefix plus full hash inside the descriptor is safer. Old apps ignore unknown keys. Bump `proto` only if an old app would misbehave, which it should not.
 - An app with a cached `desc` skips the download.
 
@@ -270,7 +288,7 @@ Add two keys.
 | `stac:collection_href` | pinned URL or `urn:opensensor:collection:<board>:<desc sha>` | under 200 bytes |
 | `stac:descriptor_sha256` | 64 hex | 64 bytes |
 
-Do not put the full Collection in the footer. It would exceed the 4096-byte value cap for CoreS3 (81 columns at about 150 to 250 bytes each is 12 to 20 KB) and would break the rule in `table-and-observation-model.md:114`. To free slots, raise `kFooterMetadata` from 64 to 66 or lower `kMaxConfigMetadata` from 32 to 30 (`aq_logger.cpp:93-102`). Both boards use far fewer than 32 board entries today (5 and 13).
+Do not put the full Collection in the footer. It would exceed the 4096-byte value cap for CoreS3 (81 columns at about 150 to 250 bytes each is 12 to 20 KB) and would break the rule in `table-and-observation-model.md:114`. To free slots, raise `kFooterMetadata` from 64 to 66 or lower `kMaxConfigMetadata` from 32 to 30 (`aq_logger.cpp:93-102`). Both boards use far fewer than 32 board entries today (5 and 13). (Corrected, raising `kFooterMetadata` alone fails in the writer, see item 3 above.)
 
 Optionally move existing `dictionary_uri` from `main` to a tag or commit URL at the same time.
 
@@ -298,7 +316,7 @@ Serving raw JSON is simpler and avoids a gzip dependency on the phone. Raw is af
 | `FIELD.name` | `table:columns[].name` | |
 | physical type | `table:columns[].type` and STAC 1.1 `data_type` | `int32`, `int64`, `float32` |
 | `field_id` | `table:columns[].opensensor:field_id` | join key to Iceberg |
-| unit | STAC 1.1 `unit` (UCUM) | keep project label as `opensensor:unit_label` |
+| unit | STAC 1.1 `unit` (UCUM) | keep project label as `opensensor:unit_label`. See item 10 above |
 | CF name | `cf:standard_name` (CF extension) | |
 | procedure | `opensensor:procedure` | |
 | validity | `opensensor:validity` | |
@@ -309,7 +327,7 @@ Serving raw JSON is simpler and avoids a gzip dependency on the phone. Raw is af
 | status code tables | `classification:classes` | Classification extension |
 | labels, aggregation, valid range, display scale, precision | `opensensor:display` custom extension | needs a published JSON Schema |
 
-The custom `opensensor:display` extension holds `{labels:{en, ar}, aggregation, valid_range, precision, scale:{id, bands:[{max, label:{en, ar}, color}]}}`.
+The custom `opensensor:display` extension holds `{labels:{en, ar}, aggregation, valid_range, precision, scale:{id, bands:[{max, label:{en, ar}, color}]}}`. Its `precision` is display only, see item 11 above.
 
 ### Rollout
 
