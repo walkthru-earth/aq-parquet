@@ -344,8 +344,8 @@ Step 1 alone removes the hardcoded `LiveProfile` for released firmware.
 | Name | Location |
 |---|---|
 | GATT base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01` | `ble_sync.cpp:39`, `ble_advert.h:11` |
-| BLE device name `AQ-xxxx` (max 11 chars) | `ble_sync.cpp:1053-1058`, `:1120`, `:1185` |
-| mDNS host `aq-xxxx` | `sync_service.cpp:28-34` |
+| BLE device name `AQ-xxxx` (max 11 chars), resolved in #98 as the board constant `OS-` | `ble_sync.cpp:1053-1058`, `:1120`, `:1185` |
+| mDNS host `aq-xxxx`, resolved in #98 as `os-xxxx` | `sync_service.cpp:28-34` |
 | mDNS service `_aqsync._tcp` and TXT `proto`, `station`, `dev`, `fw` | `wifi_link.cpp:541-551` |
 | LAN handshake `AQS1`, port 47390 | `wifi_link.cpp:937`, `device_config.h:19` |
 | `info`, `status`, `live` JSON keys and LIVE keys | `ble_sync.cpp:1059-1066`, `aq_logger_live.cpp`, both `.inc` files |

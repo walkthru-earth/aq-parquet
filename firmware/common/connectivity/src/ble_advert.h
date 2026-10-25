@@ -50,12 +50,15 @@ struct ScanResponse {
   std::uint8_t length = 0;
 };
 
+// Longest name that leaves the legacy scan response room for the complete
+// 128-bit service UUID list (see legacy_scan_response).
+inline constexpr std::size_t kMaxLocalName = 11;
 inline bool legacy_scan_response(const char *name, ScanResponse &result) {
   if (!name)
     return false;
   // Twenty bytes of overhead: two for name AD + eighteen for UUID list AD.
   const auto length = std::strlen(name);
-  if (length > 11)
+  if (length > kMaxLocalName)
     return false;
   result = {};
   result.bytes[0] = static_cast<std::uint8_t>(length + 1);
@@ -69,9 +72,6 @@ inline bool legacy_scan_response(const char *name, ScanResponse &result) {
   return true;
 }
 
-// Longest name that leaves the legacy scan response room for the complete
-// 128-bit service UUID list (see legacy_scan_response).
-inline constexpr std::size_t kMaxLocalName = 11;
 // Device id characters kept after the prefix.
 inline constexpr std::size_t kNameDeviceChars = 4;
 

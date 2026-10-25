@@ -158,6 +158,15 @@ void names() {
   same(name.data(), "ABCDEFG6b40");
   ble::wire::ScanResponse response;
   check(ble::wire::legacy_scan_response(name.data(), response));
+  check(!ble::wire::legacy_scan_response("ABCDEFGH6b40", response));
+  // The prefix validator itself, at and past the seven character limit.
+  static_assert(ble::wire::valid_name_prefix("OS-"));
+  static_assert(ble::wire::valid_name_prefix("ABCDEFG"));
+  static_assert(!ble::wire::valid_name_prefix("ABCDEFGH"));
+  check(ble::wire::valid_name_prefix("ABCDEFG"));
+  check(!ble::wire::valid_name_prefix("ABCDEFGH"));
+  check(!ble::wire::valid_name_prefix(""));
+  check(!ble::wire::valid_name_prefix(nullptr));
   for (const char *bad : std::array<const char *, 6>{"", "ABCDEFGH", "OS_",
                                                      "OS ", "os.", nullptr})
     check(!ble::wire::local_name(name, bad, "0123456789ab") && name[0] == '\0');
