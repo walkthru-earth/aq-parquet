@@ -1,4 +1,4 @@
-"""Exercise the real shared LIVE formatter: declared keys, order, nulls, capacity."""
+"""Exercise the real shared LIVE formatter: declared keys, order, nulls, decimals, capacity."""
 from __future__ import annotations
 
 import argparse
@@ -36,7 +36,9 @@ def main() -> None:
     assert dict(documents[0])["utc"] is None and dict(documents[0])["rh"] is None
     assert dict(documents[1])["utc"] == 2**63 - 1
     assert all(value is None for _, value in documents[2])
-    print("Shared LIVE formatter: every declared key present in field-table order, no reading and NaN sent as null, exact capacity passed, overflow sends all null and logs once")
+    print("Shared LIVE formatter: C++ asserts passed for keys, per field decimals, capacity, UTC scale and "
+          "the all-null overflow. Its three printed documents parse as JSON with every declared key in "
+          "field-table order and null for no reading")
 
 
 if __name__ == "__main__":

@@ -8,18 +8,22 @@ namespace aqlogger {
 // LIVE keys are short JSON names chosen by each board's field table. They are
 // emitted verbatim, so keep them to 1..15 characters of [a-z0-9_].
 constexpr std::size_t kMaxLiveKey = 15;
+// Most digits a Float may print after the point. A value too wide for the
+// 32 byte value buffer is sent as null.
+constexpr std::uint8_t kMaxLiveDecimals = 6;
 
-// True when every non-null live_key is well formed and no two fields share
-// one. A table with no live keys is valid and publishes `{}`.
+// True when every non-null live_key is well formed, no two fields share one
+// and no field asks for more than kMaxLiveDecimals. A table with no live keys
+// is valid and publishes `{}`.
 [[nodiscard]] bool valid_live_keys(const Field *fields, std::size_t count);
 
 // Formats one row as the LIVE JSON object. Emits every field that declares a
 // live_key, in field-table order, whether or not it holds a reading. A value
 // that is invalid, non-finite, out of range for the wire unit or too long to
 // print is written as JSON null, never omitted and never zero. INT32/INT64
-// print as integers and FLOAT with one decimal. Returns the length without the
-// NUL, or zero when `capacity` is too small. Never reports truncated JSON as
-// valid.
+// print as integers and FLOAT with the field's own decimals. Returns the length
+// without the NUL, or zero when `capacity` is too small. Never reports
+// truncated JSON as valid.
 [[nodiscard]] std::size_t format_live(const Field *fields, std::size_t count,
                                       const Row &row, char *out,
                                       std::size_t capacity);

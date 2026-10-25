@@ -74,9 +74,10 @@ constexpr livewidest::Widest kWidest[] = {
     {"bstate", 5, 0.0F},
 };
 // Measured 2026-10-26 with every declared key present, a one digit code or
-// a 100 percent counted as null since null is wider. The widest object is
-// 270 bytes, 480 - 270 = 210 bytes of headroom. The all-null object sent on
-// overflow is 211 bytes. A change here means a LIVE key or its widest value
+// a 100 percent counted as null since null is wider, and each float at its
+// field's decimals (t and rh print one). The widest object is 270 bytes,
+// 480 - 270 = 210 bytes of headroom. The all-null object sent on overflow is
+// 211 bytes. A change here means a LIVE key, its widest value or its decimals
 // changed, update the numbers.
 constexpr std::size_t kWidestLiveBytes = 270;
 constexpr std::size_t kAllNullLiveBytes = 211;
@@ -381,13 +382,13 @@ int main(int argc, char **argv) {
                 kDictionarySha256, kDictionaryUri);
     for (std::size_t i = 0; i < field_count; ++i) {
       const auto &field = kFields[i];
-      std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
-                  "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
-                  "\"field_id\":%zu,\"live\":\"%s\"}",
-                  i ? "," : "", field.name, unsigned(field.type),
-                  field.procedure, field.unit, field.validity,
-                  field.property_uri, i + 1,
-                  field.live_key ? field.live_key : "");
+      std::printf(
+          "%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
+          "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
+          "\"field_id\":%zu,\"live\":\"%s\",\"decimals\":%u}",
+          i ? "," : "", field.name, unsigned(field.type), field.procedure,
+          field.unit, field.validity, field.property_uri, i + 1,
+          field.live_key ? field.live_key : "", unsigned(field.decimals));
     }
     std::puts("]}");
     return 0;

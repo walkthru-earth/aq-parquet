@@ -1,12 +1,48 @@
 # Mobile app migration notes
 
-Companion app builds may break. Released firmware wire contracts stay readable,
-because boards in the field keep speaking them. Each section below records one change
+Companion app builds and firmware wire contracts may both break. There is no
+backward compatibility, each firmware change ships with a matched app build and
+a reflash. Each section below records one change
 the Android and iOS apps (opensensor-space-mobile) can observe, newest first,
 with what changed, why, and what the app must do. The wire contract itself
 lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
-or SD card are never rewritten by the firmware, so the app must keep reading
-the older shapes it has stored, or the owner clears them.
+or SD card are never rewritten by the firmware. After a matched reflash the
+owner wipes them and starts again.
+
+## Per field LIVE precision and new dictionary digests (fix/91-live-precision, issue #91)
+
+**Needs app update.** Bench boards need a matched reflash with the app build
+that knows the new digests.
+
+**What changed.** Each `FIELD` row in `telemetry_fields.inc` now ends with
+`decimals`, the digits a float prints after the point in LIVE, chosen from the
+sensor resolution. Integer fields carry 0. LIVE floats used to print with one
+decimal everywhere. Now CoreS3 prints `t` with two decimals (SHT20 steps 0.01
+degC, still always null there) and `imu_t` and `rh` with one. Waveshare keeps
+one decimal for `t` and `rh` (PMS5003T steps 0.1). Columns outside LIVE carry
+decimals too, for example CoreS3 accelerometer `g` with three and gyro `deg/s`
+with two, and MAX17048 state of charge on Waveshare with two. The value is
+rounded, so `1.00` and `1.0` both mean one. LIVE keys, key order, the null
+rule, the all-null overflow and every other key are unchanged.
+
+The new row argument moves the `info.dict` digest on both boards.
+
+- CoreS3 `b0df83dc7a259448ca90c3d6911dc9ec74ebab371e8fc32329b924684bce128c`,
+  firmware `idf-cores3-parquet-v6.13`.
+- Waveshare `0835ea4a4589983d8ffbd57fd040db24c98885f93c42f01f65c3b9622e38d93f`,
+  firmware `idf-waveshare-parquet-v2.7`.
+
+The widest real LIVE object is 333 bytes on CoreS3 and 270 bytes on Waveshare,
+and the all-null object is 265 and 211 bytes, all under 480.
+
+**Why.** The STAC contract (bridge decision 7) needs each field's precision in
+the dictionary, so the digest says how a value prints. One decimal hid the
+resolution of the finer sensors.
+
+**What the app must do.** Map the two new digests to the CoreS3 and Waveshare
+LIVE profiles. Parse LIVE values as numbers, never by text width, and keep the
+app's own display rounding. Drop the previous digests `e5060fb7…` and
+`67688d0f…` with the reflash.
 
 ## LIVE sends every declared key, null for no reading (fix/91-live-overflow, issue #91)
 

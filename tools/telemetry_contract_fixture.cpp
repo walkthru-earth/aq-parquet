@@ -44,11 +44,12 @@ constexpr livewidest::Widest kWidest[] = {
     {"chg", 2, 0.0F},       {"t", 0, -3276.8F},    {"rh", 0, 100.0F},
 };
 // Measured 2026-10-26 with every declared key present, a one digit code or
-// a 100 percent counted as null since null is wider. The widest object is
-// 332 bytes, 480 - 332 = 148 bytes of headroom. The all-null object sent on
-// overflow is 265 bytes. A change here means a LIVE key or its widest value
-// changed, update the numbers.
-constexpr std::size_t kWidestLiveBytes = 332;
+// a 100 percent counted as null since null is wider, and each float at its
+// field's decimals (t prints two). The widest object is 333 bytes, 480 - 333 =
+// 147 bytes of headroom. The all-null object sent on overflow is 265 bytes. A
+// change here means a LIVE key, its widest value or its decimals changed,
+// update the numbers.
+constexpr std::size_t kWidestLiveBytes = 333;
 constexpr std::size_t kAllNullLiveBytes = 265;
 void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
   const auto bytes = livewidest::measure(table, count, kWidest);
@@ -65,7 +66,7 @@ struct BoardTable {
       fields[i] = {kFields[i].name,      kFields[i].type,
                    kFields[i].procedure, kFields[i].unit,
                    kFields[i].validity,  kFields[i].property_uri,
-                   kFields[i].live_key};
+                   kFields[i].live_key,  kFields[i].decimals};
   }
 };
 } // namespace
@@ -88,10 +89,10 @@ int main(int argc, char **argv) {
       // Dictionary tokens are compile-time literals, validated by the host.
       std::printf("%s{\"name\":\"%s\",\"type\":%u,\"procedure\":\"%s\","
                   "\"unit\":\"%s\",\"validity\":\"%s\",\"property\":\"%s\","
-                  "\"field_id\":%zu,\"live\":\"%s\"}",
+                  "\"field_id\":%zu,\"live\":\"%s\",\"decimals\":%u}",
                   i ? "," : "", f.name, unsigned(f.type), f.procedure, f.unit,
                   f.validity, f.property_uri, i + 1,
-                  f.live_key ? f.live_key : "");
+                  f.live_key ? f.live_key : "", unsigned(f.decimals));
     }
     std::puts("]}");
     return 0;

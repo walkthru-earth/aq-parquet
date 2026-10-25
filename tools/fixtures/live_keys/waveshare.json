@@ -121,6 +121,37 @@
           "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"t\":1.0,\"rh\":1.0,\"bat\":1,\"pct\":1,\"bstate\":1}"
         }
       ]
+    },
+    "0835ea4a4589983d8ffbd57fd040db24c98885f93c42f01f65c3b9622e38d93f": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v5 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as 67688d0f. t and rh keep one decimal.",
+      "builds": [
+        {
+          "firmware": "idf-waveshare-parquet-v2.7",
+          "emitter": "board field table through aqlogger::format_live",
+          "fields": {
+            "seq": "sequence",
+            "mono": "monotonic_us",
+            "utc": "event_time_utc_us",
+            "pms": "pms_status",
+            "c1": "pm1_cf1_ug_m3",
+            "c25": "pm25_cf1_ug_m3",
+            "c10": "pm10_cf1_ug_m3",
+            "pm1": "pm1_atmospheric_ug_m3",
+            "pm25": "pm25_atmospheric_ug_m3",
+            "pm10": "pm10_atmospheric_ug_m3",
+            "n03": "particles_gt03_per_01l",
+            "n05": "particles_gt05_per_01l",
+            "n1": "particles_gt10_per_01l",
+            "n25": "particles_gt25_per_01l",
+            "t": "ambient_temperature_c",
+            "rh": "relative_humidity_percent",
+            "bat": "battery_mv",
+            "pct": "battery_percent",
+            "bstate": "battery_health_state"
+          },
+          "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"t\":1.0,\"rh\":1.0,\"bat\":1,\"pct\":1,\"bstate\":1}"
+        }
+      ]
     }
   }
 }

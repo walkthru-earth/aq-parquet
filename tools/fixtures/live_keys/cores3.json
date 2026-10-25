@@ -175,6 +175,42 @@
           "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"n5\":1,\"n10\":1,\"imu_t\":1.0,\"als\":1,\"vbus\":1,\"bat\":1,\"pct\":1,\"chg\":1,\"t\":1.0,\"rh\":1.0}"
         }
       ]
+    },
+    "b0df83dc7a259448ca90c3d6911dc9ec74ebab371e8fc32329b924684bce128c": {
+      "note": "Dictionary cores3-telemetry-v5 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as e5060fb7. t now prints two decimals, imu_t and rh one.",
+      "builds": [
+        {
+          "firmware": "idf-cores3-parquet-v6.13",
+          "emitter": "board field table through aqlogger::format_live",
+          "fields": {
+            "seq": "sequence",
+            "mono": "monotonic_us",
+            "utc": "event_time_utc_us",
+            "pms": "pms_status",
+            "c1": "pm1_cf1_ug_m3",
+            "c25": "pm25_cf1_ug_m3",
+            "c10": "pm10_cf1_ug_m3",
+            "pm1": "pm1_atmospheric_ug_m3",
+            "pm25": "pm25_atmospheric_ug_m3",
+            "pm10": "pm10_atmospheric_ug_m3",
+            "n03": "particles_gt03_per_01l",
+            "n05": "particles_gt05_per_01l",
+            "n1": "particles_gt10_per_01l",
+            "n25": "particles_gt25_per_01l",
+            "n5": "particles_gt50_per_01l",
+            "n10": "particles_gt100_per_01l",
+            "imu_t": "imu_temperature_c",
+            "als": "light_ch0_raw",
+            "vbus": "vbus_mv",
+            "bat": "battery_mv",
+            "pct": "battery_percent",
+            "chg": "charging_status",
+            "t": "ambient_temperature_c",
+            "rh": "relative_humidity_percent"
+          },
+          "payload": "{\"seq\":1,\"mono\":1,\"utc\":1000,\"pms\":1,\"c1\":1,\"c25\":1,\"c10\":1,\"pm1\":1,\"pm25\":1,\"pm10\":1,\"n03\":1,\"n05\":1,\"n1\":1,\"n25\":1,\"n5\":1,\"n10\":1,\"imu_t\":1.0,\"als\":1,\"vbus\":1,\"bat\":1,\"pct\":1,\"chg\":1,\"t\":1.00,\"rh\":1.0}"
+        }
+      ]
     }
   }
 }

@@ -128,7 +128,8 @@ the complete value and omit notifications exceeding negotiated MTU − 3; client
 use characteristic long reads for complete cached snapshots. The host STATUS
 boundary test retains every key at 476 bytes even with the widest numeric values.
 LIVE keys come from the `live_key` each board sets in its field table. `t` and
-`rh` are ambient only, and CoreS3 IMU temperature is `imu_t`. Absent keys are null. Without an RTC,
+`rh` are ambient only, and CoreS3 IMU temperature is `imu_t`. A declared key with no reading is null.
+Floats print with the decimals each board sets per field. Without an RTC,
 `rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.
 
 AQLocation vendors unmodified official H3 4.5.0 with verified hashes. AQRuntime

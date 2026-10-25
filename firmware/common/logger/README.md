@@ -78,9 +78,10 @@ releases them so the next READ reopens by path. OPEN takes the CRC-32 from a
 64-entry PSRAM cache filled at finalize (path, size and mtime must match) and
 reads the whole file only on a miss. The boot `PARQUET BEGIN` line reports
 `crc32_check=ok` when the ROM CRC routine returns the standard check value.
-LIVE emits the `Field::live_key` of every valid field, in field-table order,
-through `aq_logger_live.h`. `begin()` rejects malformed or duplicate keys.
-Absent, invalid and non-finite measurements are omitted independently.
+LIVE emits the `Field::live_key` of every field that declares one, in
+field-table order, through `aq_logger_live.h`. Absent, invalid and non-finite
+measurements are sent as null. Floats print with `Field::decimals` digits after
+the point. `begin()` rejects malformed or duplicate keys and decimals above 6.
 
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never

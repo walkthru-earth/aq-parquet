@@ -85,8 +85,9 @@ Rendered render(const Field *fields, std::size_t count, const Row &row,
         float number;
         std::memcpy(&number, &row.data[i], sizeof(number));
         if (std::isfinite(number))
-          written = std::snprintf(text, sizeof(text), "%.1f",
-                                  static_cast<double>(number));
+          written =
+              std::snprintf(text, sizeof(text), "%.*f", int(field.decimals),
+                            static_cast<double>(number));
         break;
       }
       }
@@ -109,6 +110,8 @@ bool valid_live_keys(const Field *fields, std::size_t count) {
   if (count && !fields)
     return false;
   for (std::size_t i = 0; i < count; ++i) {
+    if (fields[i].decimals > kMaxLiveDecimals)
+      return false;
     const char *key = fields[i].live_key;
     if (!key)
       continue;
@@ -167,7 +170,7 @@ LivePublish LiveOverflow::publish(const Field *fields, std::size_t count,
   // kRepeatUs. The all-null object is short and the board contract tests
   // prove it fits, so length stays zero only for a broken table.
   result.needed = live_size(fields, count, row);
-  static const Row kNoReading{};
+  static constexpr Row kNoReading{};
   result.length = format_live(fields, count, kNoReading, out, capacity);
   if (!logged_ || now_us - last_log_us_ >= kRepeatUs) {
     logged_ = true;

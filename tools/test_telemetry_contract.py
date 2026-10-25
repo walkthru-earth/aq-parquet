@@ -165,8 +165,11 @@ def main() -> None:
                 == "511b231ecdbf8f93fc3acbca42d5fceef7c3808551af1d035866cc0da4366135",
                 "original 77-column prefix changed")
         inc = (firmware / "telemetry_fields.inc").read_text()
-        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)"\)$', inc, re.M)
-        require(rows == [(f["name"], f["live"]) for f in fields], "dictionary carries every LIVE key")
+        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
+        require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],
+                "dictionary carries every LIVE key and decimals")
+        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
+                "decimals is 0 for integer fields and at most 6 for Float")
         require(dictionary["firmware"] == "idf-cores3-parquet-v6.13", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
