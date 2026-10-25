@@ -5,6 +5,7 @@
 #include <aq_battery_health.h>
 #include <aq_logger.h>
 #include <aq_max17048.h>
+#include <column_semantics.h>
 #include <cstring>
 #include <pms_frame.h>
 #include <utc_clock.h>
@@ -80,6 +81,33 @@ constexpr Definition kFields[] = {
 };
 static_assert(field_count == 62, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
+
+// Column semantics for the STAC template (#84). Only static_assert reads this
+// table, so it adds nothing to the image. telemetry_semantics.inc stays out of
+// the dict digest.
+static constexpr aq::semantics::Column kSemantics[] = {
+#define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
+            plausible_max, settle_s, valid_when, property, sensor_vendor,      \
+            sensor_model)                                                      \
+  {#name,                                                                      \
+   ucum,                                                                       \
+   aq::semantics::Role::role,                                                  \
+   cf_standard_name,                                                           \
+   aq::semantics::Aggregate::aggregate,                                        \
+   #plausible_min,                                                             \
+   #plausible_max,                                                             \
+   settle_s,                                                                   \
+   valid_when,                                                                 \
+   property,                                                                   \
+   sensor_vendor,                                                              \
+   sensor_model},
+#include "telemetry_semantics.inc"
+#undef SEM
+};
+static_assert(aq::semantics::aligned(kFields, kSemantics),
+              "telemetry_semantics.inc must list every FIELD in order");
+static_assert(aq::semantics::well_formed(kFields, kSemantics),
+              "telemetry_semantics.inc has a malformed row");
 using Sample = aqlogger::Row;
 
 inline LogicalType logical_type(const Definition &field) {
