@@ -43,3 +43,13 @@ v0.1.0 splits the metadata into three layers, as its [PROFILE.md](https://github
 | `opensensor:field_id`, `opensensor:procedure`, `opensensor:property` | Unchanged |
 
 `opensensor:settle_s` and `opensensor:derived` are new in v0.1.0. Upstream proposals may move some fields later, see stac-extensions/table#16 (`field_id`), table#17 (common metadata in columns), classification#55 (classes in table columns) and cf#11 (CF fields in table columns).
+
+## Owner decisions after the audit (2026-10-26)
+
+The owner decided these points after both audits were written. They supersede the matching parts of the audits and of the correction list in `firmware-audit.md`. Epic #83 holds the full decision.
+
+- There is no backward compatibility for now. Only legacy dictionary digests are dropped, and #86 publishes current digests only.
+- Property ids become board neutral (#84). Use a shared vocabulary first, such as NERC P07 or CF, and otherwise `urn:walkthru-earth:property:<quantity>`. Board and sensor go in `opensensor:procedure`. This supersedes correction item 8 and the per board URI row in the table above.
+- Every declared LIVE key is always present, with a number or null (#91). Per field precision lands in #91 with a new dictionary digest. Correction item 11 and its "display hint only" reasoning no longer hold.
+- The BLE name prefix becomes `OS-` (#90), and internal and wire AQ names are renamed in #93. The audit's list of AQ names that are wire contract is history.
+- The footer keys are frozen as `opensensor:template_href` and `opensensor:template_sha256`.
