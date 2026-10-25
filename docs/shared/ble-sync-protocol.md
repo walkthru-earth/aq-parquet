@@ -131,14 +131,14 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.13","schema":"cores3-telemetry-v5","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.14","schema":"cores3-telemetry-v5","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema and dictionary
-`waveshare-sim7670g-telemetry-v5` with firmware `idf-waveshare-parquet-v2.7`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+`waveshare-sim7670g-telemetry-v5` with firmware `idf-waveshare-parquet-v2.8`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -182,7 +182,7 @@ Notified once per sample. Each board declares a short `live_key` next to the fie
 
 **LIVE rule.** Every LIVE key the board declares is present in every LIVE object. Its value is a number, or JSON `null` when the sample has no usable reading for it. That covers a value that is invalid or unavailable, a non-finite float (NaN or Inf), a value whose printed text is 32 characters or longer (at the decimals the boards use today, only a float of magnitude 1e27 or more gets there), and a UTC instant whose nanosecond form overflows INT64. Null is never sent as zero. An absent key means only that the board has no such field. The set of keys a board can send comes from its dictionary, the `live_key` in its `telemetry_fields.inc` (later the template `firmware.live_keys`). Clients parse the object by key name and ignore keys they do not know. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
-Each field's `live_key` and `decimals` are part of the board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map and how each float prints. A client picks its reviewed LIVE profile by that digest. The current digests are CoreS3 `b0df83dc…` and Waveshare `0835ea4a…`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
+Each field's `live_key` and `decimals` are part of the board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map and how each float prints. A client picks its reviewed LIVE profile by that digest. The current digests are CoreS3 `4f80c26c…` and Waveshare `6f567b38…`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
 
 **Float precision.** Integers print with no point. A float prints rounded to the `decimals` its field declares, chosen from the sensor resolution, so `1.00` and `1.0` are both possible and both mean the number one. Today CoreS3 prints `t` with two decimals (SHT20 steps 0.01 degC) and `imu_t` and `rh` with one. Waveshare prints `t` and `rh` with one (PMS5003T steps 0.1). Clients parse the value as a number and keep their own display rounding.
 

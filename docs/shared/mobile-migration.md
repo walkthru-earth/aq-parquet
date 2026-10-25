@@ -25,12 +25,14 @@ with two, and MAX17048 state of charge on Waveshare with two. The value is
 rounded, so `1.00` and `1.0` both mean one. LIVE keys, key order, the null
 rule, the all-null overflow and every other key are unchanged.
 
-The new row argument moves the `info.dict` digest on both boards.
+The new row argument moves the `info.dict` digest on both boards, and the
+firmware identity moves with the release image. The dictionary and schema
+strings stay at `-v5`.
 
-- CoreS3 `b0df83dc7a259448ca90c3d6911dc9ec74ebab371e8fc32329b924684bce128c`,
-  firmware `idf-cores3-parquet-v6.13`.
-- Waveshare `0835ea4a4589983d8ffbd57fd040db24c98885f93c42f01f65c3b9622e38d93f`,
-  firmware `idf-waveshare-parquet-v2.7`.
+- CoreS3 `4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94`,
+  firmware `idf-cores3-parquet-v6.14`.
+- Waveshare `6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb`,
+  firmware `idf-waveshare-parquet-v2.8`.
 
 The widest real LIVE object is 333 bytes on CoreS3 and 270 bytes on Waveshare,
 and the all-null object is 265 and 211 bytes, all under 480.

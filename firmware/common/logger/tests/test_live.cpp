@@ -19,6 +19,7 @@ Field field(const char *name, PhysicalType type, const char *live_key) {
   result.validity = "always";
   result.property_uri = "urn:fixture";
   result.live_key = live_key;
+  result.decimals = type == PhysicalType::Float ? 1 : 0;
   return result;
 }
 

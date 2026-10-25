@@ -1,7 +1,7 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.7`**, with **62-column** schema
+**`idf-waveshare-parquet-v2.8`**, with **62-column** schema
 `waveshare-sim7670g-telemetry-v5` and dictionary `waveshare-sim7670g-telemetry-v5`.
 The original 52 columns retain their order and types, with four nullable H3
 location fields and, since v2.7, six battery health columns appended (raw SOC,

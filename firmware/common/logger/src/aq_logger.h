@@ -23,8 +23,8 @@ struct Field {
   const char *live_key = nullptr;
   // Digits after the point when a Float prints in LIVE, 0..kMaxLiveDecimals.
   // Each board sets it per field from the sensor resolution. Integer fields
-  // ignore it.
-  std::uint8_t decimals = 1;
+  // keep 0 and ignore it.
+  std::uint8_t decimals = 0;
 };
 // All pointed-to descriptors and strings must outlive the runtime. The schema
 // must include INT64 sequence, monotonic_us, event_time_utc_us and INT32

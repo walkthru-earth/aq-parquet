@@ -3,6 +3,7 @@
 #include "parquet_writer.h"
 #include "telemetry_dictionary_digest.h"
 #include <algorithm>
+#include <aq_logger_live.h>
 #include <column_semantics.h>
 #include <cstdint>
 #include <cstring>
@@ -21,7 +22,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v5";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.13";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.14";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -63,10 +64,12 @@ constexpr const char *live_or_null(const char *key) {
   return key[0] == '\0' ? nullptr : key;
 }
 // LIVE digits after the point, in the dictionary so the digest covers them.
-// Integer fields carry 0, a Float carries 0..6 from its sensor resolution.
+// Integer fields carry 0, a Float carries 0..kMaxLiveDecimals from its
+// sensor resolution.
 template <std::size_t N> constexpr bool decimals_fit(const Definition (&f)[N]) {
   return std::all_of(std::begin(f), std::end(f), [](const Definition &field) {
-    return field.decimals <= (field.type == PhysicalType::Float ? 6 : 0);
+    return field.decimals <=
+           (field.type == PhysicalType::Float ? aqlogger::kMaxLiveDecimals : 0);
   });
 }
 // Column semantics for the STAC template (#84). telemetry_semantics.inc stays
@@ -107,8 +110,9 @@ constexpr Definition kFields[] = {
 };
 static_assert(field_count == 81, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
-static_assert(decimals_fit(kFields),
-              "decimals is 0 for integer fields and at most 6 for Float");
+static_assert(
+    decimals_fit(kFields),
+    "decimals is 0 for integer fields and at most kMaxLiveDecimals for Float");
 
 static_assert(aq::semantics::aligned(kFields, kSemantics),
               "telemetry_semantics.inc must list every FIELD in order");

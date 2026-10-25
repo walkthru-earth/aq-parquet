@@ -8,9 +8,10 @@
 // The property id of each field comes from telemetry_semantics.inc, board
 // neutral, looked up by name (#99).
 // Procedure identifiers describe code paths, not instrument serial numbers.
-// Float decimals. BMI270 accel steps 1/4096 g at 8 g, so 3. Gyro steps
-// 0.061 deg/s at 2000 deg/s, so 2. The IMU die temperature is not ambient air,
-// so 1. SHT20 temperature steps 0.01 degC, so 2, and humidity 0.04 percent, so 1.
+// Float decimals. BMI270 accel steps about 1/4096 g at 8 g, 3 is enough. Gyro
+// steps about 0.061 deg/s at 2000 deg/s, 2 is enough. The IMU die temperature is
+// not ambient air, so 1. SHT20 temperature steps 0.01 degC, so 2, and humidity
+// about 0.04 percent, 1 is enough.
 FIELD(schema_version, Int32, logger, "1", always, "", 0)
 FIELD(device_id, Int64, identity, "1", always, "", 0)
 FIELD(boot_id_hi, Int64, identity, "1", always, "", 0)

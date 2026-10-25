@@ -170,7 +170,7 @@ def main() -> None:
                 "dictionary carries every LIVE key and decimals")
         require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
                 "decimals is 0 for integer fields and at most 6 for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.13", "firmware identity")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.14", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==

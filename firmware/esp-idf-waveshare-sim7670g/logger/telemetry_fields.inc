@@ -8,8 +8,8 @@
 // The property id of each field comes from telemetry_semantics.inc, board
 // neutral, looked up by name (#99).
 // Float decimals. PMS5003T temperature and humidity step 0.1, so 1. MAX17048
-// state of charge steps 1/256 percent, so 2, and charge rate 0.208 percent per
-// hour, so 1. The batch PM2.5 candidate keeps 1.
+// state of charge steps about 1/256 percent, 2 is enough, and charge rate
+// 0.208 percent per hour, 1 is enough. The batch PM2.5 candidate keeps 1.
 // PMS5003T has FOUR count bins; bytes 24/26 carry temperature and humidity.
 FIELD(schema_version, Int32, logger, "1", always, "", 0)
 FIELD(device_id, Int64, identity, "1", always, "", 0)

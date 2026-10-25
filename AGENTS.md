@@ -116,16 +116,19 @@ file in `docs/README.md` after this one.
 
 ## Compatibility, licensing and reviews
 
-- Phone side code may break freely. Never change what a released wire contract
-  means, because boards in the field keep sending it and the phone must still
-  read it. Any change to LIVE keys, columns or field order ships under a new
-  dictionary digest, and a digest is never reused for a different key set. Keep
-  every `live_key` in the board `telemetry_fields.inc` so the digest covers it.
+- No backward compatibility for now (owner decision 14, 2026-10-26). The phone
+  does not keep reading older wire contracts. Each firmware change ships with a
+  matched app build and every board is reflashed with it. The contract tests and
+  digest gates stay. Any change to LIVE keys, decimals, columns or field order
+  ships under a new dictionary digest, and a digest is never reused for a
+  different key set. Keep every `live_key` and `decimals` in the board
+  `telemetry_fields.inc` so the digest covers them.
 - Every change the phone can observe (columns, units, field ids, LIVE keys, log
   lines, versions, digests) gets a newest-first entry in
   `docs/shared/mobile-migration.md` saying what changed, why, and what the app
-  must do. Bump only the identity strings the change touches. The dictionary
-  string and digest move when `telemetry_fields.inc` changes. The schema string
+  must do. Bump only the identity strings the change touches. The digest moves
+  whenever `telemetry_fields.inc` changes. The dictionary string stays at `-v5`
+  for now because the STAC templates are keyed on it. The schema string
   moves when columns, types or annotations change. The firmware identity moves
   with each release image.
 - Parquet columns keep stable `field_id` values (1-based position in the board
