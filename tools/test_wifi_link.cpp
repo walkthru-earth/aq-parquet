@@ -276,7 +276,7 @@ namespace config {
 Settings get() { return fixture_settings; }
 } // namespace config
 namespace ble {
-const char *local_name() { return "AQ-fixture"; }
+const char *local_name() { return "OS-fixture"; }
 const char *info_json() { return "{\"station\":\"fixture\"}"; }
 bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint32_t generation) {
@@ -304,21 +304,21 @@ int main() {
   const ble::Identity identity{"fixture", "device", "boot", "schema",
                                0,         "",       "test"};
   fake_init_result = ESP_FAIL;
-  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::begin("os-fixture", identity, enqueue));
   assert(!lan::station_netif && !lan::wifi_initialized);
   assert(!lan::request_scan(ble::Link::Ble, 1));
   fake_init_result = ESP_OK;
   fake_pm_create_result = ESP_ERR_NOT_SUPPORTED;
   fake_task_result = 0;
-  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::begin("os-fixture", identity, enqueue));
   assert(!lan::station_netif && !lan::wifi_initialized &&
          !fake_station_events && !fake_ip_events && fake_wifi_deinits == 1);
   assert(!lan::request_scan(ble::Link::Ble, 1));
   fake_task_result = pdPASS;
-  assert(lan::begin("aq-fixture", identity, enqueue));
+  assert(lan::begin("os-fixture", identity, enqueue));
   // An image without PM_ENABLE still starts; only power save follows peers.
   assert(!lan::active_lock);
-  assert(!lan::begin("aq-fixture", identity, enqueue));
+  assert(!lan::begin("os-fixture", identity, enqueue));
   // Shared defaults: the LAN task outranks the storage worker (3).
   assert(fake_task_priority == 4 && fake_task_stack == 8192);
   fake_pm_create_result = ESP_OK;
@@ -333,8 +333,8 @@ int main() {
     std::fprintf(stderr, "LAN fixture listener failed: errno=%d (%s)\n", errno,
                  std::strerror(errno));
   assert(lan::listen_fd >= 0);
-  assert(fake_mdns_started && fake_mdns_host == "aq-fixture" &&
-         fake_mdns_instance == "AQ-fixture" && fake_mdns_service == "_aqsync" &&
+  assert(fake_mdns_started && fake_mdns_host == "os-fixture" &&
+         fake_mdns_instance == "OS-fixture" && fake_mdns_service == "_aqsync" &&
          fake_mdns_transport == "_tcp" && fake_mdns_port == config::kLanPort);
   assert(fake_mdns_txt ==
          (std::map<std::string, std::string>{{"proto", "3"},

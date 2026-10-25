@@ -6,7 +6,7 @@ the device except for the explicitly named write operations (`time`, `flush`,
 `set`, `reboot`).
 
   pixi run ble-sync scan [--seconds 8]
-  pixi run ble-sync info  [--name AQ-6b40]
+  pixi run ble-sync info  [--name OS-6b40]
   pixi run ble-sync status
   pixi run ble-sync live  [--seconds 35]
   pixi run ble-sync list
@@ -25,7 +25,7 @@ the device except for the explicitly named write operations (`time`, `flush`,
 
 Every command also runs over the LAN transport once a token is held:
 
-  pixi run ble-sync --lan aq-6b40.local --token-file artifacts/lan-token.txt list
+  pixi run ble-sync --lan os-6b40.local --token-file artifacts/lan-token.txt list
 
 macOS pairs through a system passkey dialog on first encrypted access; type the
 six digits shown on the CoreS3 screen (or the fixed PIN on a screenless
@@ -989,7 +989,7 @@ async def cmd_reboot(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--name", help="advertised local name, e.g. AQ-6b40")
+    parser.add_argument("--name", help="advertised local name, e.g. OS-6b40")
     parser.add_argument("--address", help="skip scanning and connect to this address/UUID")
     parser.add_argument("--timeout", type=device.positive_seconds, default=20.0,
                         help="seconds per discovery, connection and characteristic read; "

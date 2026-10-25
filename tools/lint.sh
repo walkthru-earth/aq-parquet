@@ -15,6 +15,15 @@ case "${board_rc}" in
   1) exit 1 ;;
   *) printf '!!! board conditional check failed to run (exit %s)\n' "${board_rc}" >&2; exit 1 ;;
 esac
+# The BLE name prefix is a board constant (#90). Shared code, host tools and
+# their tests carry no product prefix literal. Same exit code contract.
+prefix_rc=0
+python tools/check_name_prefix.py || prefix_rc=$?
+case "${prefix_rc}" in
+  0) ;;
+  1) exit 1 ;;
+  *) printf '!!! name prefix check failed to run (exit %s)\n' "${prefix_rc}" >&2; exit 1 ;;
+esac
 # No path under secrets/ and no PEM private key may be tracked by git (#45).
 # The app signing key stays on the owner machine. Same exit code contract.
 secrets_rc=0

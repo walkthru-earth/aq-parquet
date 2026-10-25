@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstring>
+#include <span>
 
 namespace ble::wire {
 constexpr std::array<std::uint8_t, 16> uuid(std::uint16_t selector) {
@@ -49,12 +50,15 @@ struct ScanResponse {
   std::uint8_t length = 0;
 };
 
+// Longest name that leaves the legacy scan response room for the complete
+// 128-bit service UUID list (see legacy_scan_response).
+inline constexpr std::size_t kMaxLocalName = 11;
 inline bool legacy_scan_response(const char *name, ScanResponse &result) {
   if (!name)
     return false;
   // Twenty bytes of overhead: two for name AD + eighteen for UUID list AD.
   const auto length = std::strlen(name);
-  if (length > 11)
+  if (length > kMaxLocalName)
     return false;
   result = {};
   result.bytes[0] = static_cast<std::uint8_t>(length + 1);
@@ -65,6 +69,64 @@ inline bool legacy_scan_response(const char *name, ScanResponse &result) {
   const auto service = uuid(1);
   std::memcpy(result.bytes.data() + length + 4, service.data(), service.size());
   result.length = static_cast<std::uint8_t>(length + 20);
+  return true;
+}
+
+// Device id characters kept after the prefix.
+inline constexpr std::size_t kNameDeviceChars = 4;
+
+// A prefix is 1 to 7 characters of [A-Za-z0-9-], so the name stays within
+// kMaxLocalName and its lower case form is a valid mDNS host label.
+[[nodiscard]] constexpr bool valid_name_prefix(const char *prefix) {
+  if (!prefix || !*prefix)
+    return false;
+  std::size_t length = 0;
+  for (; prefix[length]; ++length) {
+    const char c = prefix[length];
+    if (length >= kMaxLocalName - kNameDeviceChars ||
+        !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '-'))
+      return false;
+  }
+  return true;
+}
+
+// BLE local name, the board prefix plus the last four device id characters
+// (OS- and 0123456789ab give OS-89ab). False with an empty `out` when the
+// prefix is invalid or the result does not fit `out` or kMaxLocalName.
+[[nodiscard]] inline bool local_name(std::span<char> out, const char *prefix,
+                                     const char *device) {
+  if (out.empty())
+    return false;
+  out[0] = '\0';
+  if (!device || !valid_name_prefix(prefix))
+    return false;
+  const auto device_length = std::strlen(device);
+  const char *suffix = device_length >= kNameDeviceChars
+                           ? device + device_length - kNameDeviceChars
+                           : device;
+  const auto length = std::strlen(prefix) + std::strlen(suffix);
+  if (length > kMaxLocalName || length >= out.size())
+    return false;
+  std::memcpy(out.data(), prefix, std::strlen(prefix));
+  std::memcpy(out.data() + std::strlen(prefix), suffix, std::strlen(suffix));
+  out[length] = '\0';
+  return true;
+}
+
+// mDNS host label mirrors the BLE name in lower case (OS-6b40 to os-6b40).
+[[nodiscard]] inline bool mdns_host(std::span<char> out, const char *name) {
+  if (out.empty() || !name)
+    return false;
+  const auto length = std::strlen(name);
+  if (length == 0 || length >= out.size()) {
+    out[0] = '\0';
+    return false;
+  }
+  for (std::size_t i = 0; i <= length; ++i) {
+    const char c = name[i];
+    out[i] = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+  }
   return true;
 }
 

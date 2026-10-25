@@ -161,13 +161,17 @@ struct ControlRequest {
 using RequestHandler = bool (*)(const ControlRequest &request);
 
 struct Identity {
-  const char *station;
-  const char *device;
-  const char *boot;
-  const char *schema;
-  unsigned columns;
-  const char *dictionary_sha256;
-  const char *firmware;
+  const char *station = nullptr;
+  const char *device = nullptr;
+  const char *boot = nullptr;
+  const char *schema = nullptr;
+  unsigned columns = 0;
+  const char *dictionary_sha256 = nullptr;
+  const char *firmware = nullptr;
+  // Board constant that starts the BLE name. The name is the prefix plus the
+  // last four device id characters (OS-6b40 on CoreS3), and the mDNS host is
+  // the same text in lower case. Required, see wire::valid_name_prefix().
+  const char *name_prefix = nullptr;
 };
 
 struct PairingState {

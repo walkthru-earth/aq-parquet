@@ -3,6 +3,7 @@
 #include "aq_logger_codec_store.h"
 #include "aq_logger_directory.h"
 #include "aq_logger_emergency_close.h"
+#include "aq_logger_footer.h"
 #include "aq_logger_list_job.h"
 #include "aq_logger_list_since.h"
 #include "aq_logger_live.h"
@@ -25,6 +26,7 @@
 #include <abort_signal.h>
 #include <archive_files.h>
 #include <archive_sync.h>
+#include <ble_advert.h>
 #include <control_sync.h>
 #include <sync_codec.h>
 #include <sync_service.h>
@@ -85,12 +87,13 @@ using aq::sync::put_i64;
 using aq::sync::put_u16;
 using aq::sync::put_u32;
 using aq::utc::days_from_civil;
-constexpr std::size_t kMaxRows = 90;
-constexpr std::int64_t kSampleUs = 10000000;
+constexpr std::size_t kMaxRows = cadence::kMaxBatchRows;
+// Config::sample_interval_ms in microseconds, set once by begin().
+std::int64_t sample_us = std::int64_t{cadence::kDefaultSampleIntervalMs} * 1000;
 const char *kDirectory = "/sd/output";
 const char *kBenchDirectory = "/sd/bench";
 // Footer key/value budget. finalize_file fills a fixed array in this order.
-constexpr std::size_t kFixedMetadata = 22;
+constexpr std::size_t kFixedMetadata = footer::kFixedEntries;
 constexpr std::size_t kLocationMetadata =
     std::tuple_size<decltype(LocationMetadata::entries)>::value;
 constexpr std::size_t kAnchorMetadata = 3;
@@ -444,12 +447,11 @@ bool make_directories(const char *path) {
   }
 }
 
-// Rows per row group for the current rotation window.
-// 600 s -> 60-row groups, one per file; 900 s -> 90 x 1; 1800 s -> 90 x 2;
-// 3600 s -> 90 x 4. The RAM batch (loss window) never exceeds kMaxRows.
+// Rows per row group for the current rotation window and sample period, see
+// cadence::rows_per_group. The RAM batch (loss window) never exceeds kMaxRows.
 std::size_t rows_per_group() {
-  const std::size_t rows = rotation_seconds.load() / 10;
-  return rows < kMaxRows ? rows : kMaxRows;
+  return cadence::rows_per_group(rotation_seconds.load(),
+                                 config.sample_interval_ms);
 }
 
 // Dated rows rotate on UTC, unsynced rows on monotonic time of this boot.
@@ -828,7 +830,6 @@ bool append_group(OutputFile &target, std::size_t count) {
 // Writes the footer, syncs, closes, checks the structure and renames to
 // `<stem>-<last>-<attempt>.parquet`.
 bool finalize_file(OutputFile &target) {
-  char interval_text[12], groups_text[12];
   char anchor_mono_text[24], anchor_utc_text[24], anchor_source_text[12];
   std::int64_t footer_anchor_mono, footer_anchor_utc;
   std::int32_t footer_anchor_source;
@@ -843,39 +844,17 @@ bool finalize_file(OutputFile &target) {
                 static_cast<long long>(footer_anchor_utc));
   std::snprintf(anchor_source_text, sizeof(anchor_source_text), "%ld",
                 static_cast<long>(footer_anchor_source));
-  std::snprintf(interval_text, sizeof(interval_text), "%lu",
-                static_cast<unsigned long>(rotation_seconds.load()));
-  std::snprintf(groups_text, sizeof(groups_text), "%u",
-                unsigned(target.writer.row_groups()));
   const LocationMetadata location_metadata(target.location);
-  KeyValue metadata[kFooterMetadata] = {
-      {"schema_version", config.schema_name},
-      {"device_id", device_text},
-      {"station_id", station_text},
-      {"boot_id", boot_text},
-      {"firmware", config.firmware},
-      {"dictionary_version", config.dictionary_version},
-      {"dictionary_uri", config.dictionary_uri},
-      {"dictionary_sha256", config.dictionary_sha256},
-      {"acquisition_config_id", config.configuration_id},
-      {"acquisition_config", config.configuration},
-      {"deployment_id", "unknown"},
-      {"calibration_id", "unknown"},
-      {"time_semantics", config.time_semantics},
-      {"rotation_interval_s", interval_text},
-      {"row_groups", groups_text},
-      {"row_group_rows_max", "90"},
-      {"compression", codec_name(target.codec)},
-      {"purpose",
-       target.benchmark ? "codec-comparison-duplicate-rows" : "telemetry"},
-      {"board", config.board},
-      {"sample_interval_ms", "10000"},
-      {"clock", "0=unsynchronized/null,1=host estimate,2=restored from RTC "
-                "(earlier external estimate, whole seconds),3=network SNTP; "
-                "partitions UTC"},
-      {"durability",
-       "RAM batch; unfinished rows lost on reset; each row group "
-       "fsynced; footer at finalization; completed files retained"}};
+  footer::Text footer_text;
+  KeyValue metadata[kFooterMetadata]{};
+  footer::fill(
+      std::span<KeyValue, kFixedMetadata>(metadata, kFixedMetadata), config,
+      {.device = device_text, .station = station_text, .boot = boot_text},
+      {.rotation_seconds = rotation_seconds.load(),
+       .row_groups = target.writer.row_groups(),
+       .compression = codec_name(target.codec),
+       .benchmark = target.benchmark},
+      footer_text);
   std::size_t metadata_count = kFixedMetadata;
   static_assert(sizeof(metadata) / sizeof(metadata[0]) == kFooterMetadata);
   for (const auto &entry : location_metadata.entries)
@@ -2946,8 +2925,13 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !config.benchmark_directory || config.benchmark_directory[0] != '/' ||
       std::strlen(config.benchmark_directory) > 31 ||
       path_within(config.benchmark_directory, config.output_directory) ||
-      path_within(config.output_directory, config.benchmark_directory))
+      path_within(config.output_directory, config.benchmark_directory) ||
+      !cadence::valid_sample_interval(config.sample_interval_ms) ||
+      !config.deployment_id || !config.deployment_id[0] ||
+      !config.calibration_id || !config.calibration_id[0] ||
+      !ble::wire::valid_name_prefix(config.ble_name_prefix))
     return false;
+  sample_us = std::int64_t{config.sample_interval_ms} * 1000;
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = config.fields[i];
     if (!field.name || !field.unit || !field.procedure || !field.validity ||
@@ -3035,7 +3019,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   // Before the worker starts, so the first row of the boot is already dated
   // when the RTC holds an earlier host sync.
   seed_clock_from_rtc();
-  next_sample_us = esp_timer_get_time() + kSampleUs;
+  next_sample_us = esp_timer_get_time() + sample_us;
   // Seed the heartbeat so a worker that blocks before its first stamp ages
   // out like any other stall, for the worker-stall warning and the watchdog.
   worker_heartbeat_us = esp_timer_get_time();
@@ -3133,12 +3117,12 @@ void poll() {
 #endif
   report_runtime(now);
   if (now >= next_sample_us) {
-    const auto skipped = (now - next_sample_us) / kSampleUs;
+    const auto skipped = (now - next_sample_us) / sample_us;
     missed_deadlines += skipped;
     sample_sequence += skipped;
-    next_sample_us += skipped * kSampleUs;
+    next_sample_us += skipped * sample_us;
     collect(now, next_sample_us);
-    next_sample_us += kSampleUs;
+    next_sample_us += sample_us;
   }
   service_rtc_write(esp_timer_get_time());
   static Command input{};
@@ -3173,10 +3157,15 @@ void poll() {
 bool start_links(bool display_detected) {
   if (!accepting)
     return false;
-  static const ble::Identity identity{
-      station_text,       device_text,           boot_text,
-      config.schema_name, unsigned(field_count), config.dictionary_sha256,
-      config.firmware};
+  static const ble::Identity identity{.station = station_text,
+                                      .device = device_text,
+                                      .boot = boot_text,
+                                      .schema = config.schema_name,
+                                      .columns = unsigned(field_count),
+                                      .dictionary_sha256 =
+                                          config.dictionary_sha256,
+                                      .firmware = config.firmware,
+                                      .name_prefix = config.ble_name_prefix};
   return aqsync::begin(identity, enqueue_request, display_detected, sync_config)
       .ble_started;
 }
