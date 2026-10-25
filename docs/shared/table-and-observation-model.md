@@ -3,7 +3,7 @@
 
 > **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
 > observation/archive semantics. CoreS3 uses its 81-column `cores3-telemetry-v5`
-> schema and Waveshare V2 its 62-column PMS5003T `waveshare-sim7670g-telemetry-v5`
+> schema and Waveshare V2 uses its 62-column PMS5003T `waveshare-sim7670g-telemetry-v5`
 > schema. Board acquisition and schema
 > identities remain distinct. Native build/host gates pass; dated physical
 > evidence below remains scoped to historical Arduino images.
