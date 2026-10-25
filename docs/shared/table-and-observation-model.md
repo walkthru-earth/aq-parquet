@@ -2,9 +2,9 @@
 
 
 > **Board scope:** Both native ESP-IDF 6.1 logger adapters consume these shared
-> observation/archive semantics. CoreS3 uses its 81-column `cores3-telemetry-v5`
-> schema and Waveshare V2 uses its 62-column PMS5003T `waveshare-sim7670g-telemetry-v5`
-> schema. Board acquisition and schema
+> observation/archive semantics. CoreS3 and the Waveshare V2 PMS5003T logger each
+> write their own schema, named by `kSchemaName` in the board's
+> `telemetry_contract.h`. Board acquisition and schema
 > identities remain distinct. Native build/host gates pass; dated physical
 > evidence below remains scoped to historical Arduino images.
 
@@ -40,12 +40,12 @@ Solid arrows describe the device design; dashed arrows are unimplemented downstr
 
 The four nullable H3 leaves below arrived in CoreS3 schema v4 (dictionary v3)
 and Waveshare schema v3 (dictionary v3), appended after the former 77 and 52
-field prefixes. They sit at positions 78 to 81 on CoreS3 and 53 to 56 on
-Waveshare. Current firmware writes CoreS3 `cores3-telemetry-v5` with 81 fields
-(dictionary `cores3-telemetry-v5`) and Waveshare `waveshare-sim7670g-telemetry-v5`
-with 62 fields (dictionary `waveshare-sim7670g-telemetry-v5`, six battery
-columns at positions 57 to 62 after the H3 leaves). The `static_assert` on
-`field_count` in each board's `telemetry_contract.h` pins these totals.
+field prefixes. The current schema name, dictionary version and total field
+count of each board are not repeated here, because they move with every dictionary bump. Read
+`kSchemaName`, `kDictionaryVersion` and the `static_assert` on `field_count` in
+`firmware/esp-idf-cores3/bringup/telemetry_contract.h` and
+`firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h`, with the
+field order in each board's `telemetry_fields.inc`.
 Parquet `field_id` exists only from CoreS3 schema v5 and Waveshare schema v4
 (commit `e166978`), so older files carry none. Field counts per released
 dictionary digest are planned to live in the generated board templates under
@@ -134,7 +134,7 @@ Validate the exact dictionary/schema with host fixtures in both codecs and both 
 
 Firmware `arduino-cores3-parquet-v3` through `-v5` identify themselves as schema `cores3-telemetry-v2` (numeric row value 2), with **77 columns**; the first 73 names/types/order are retained and four nullable INT64 columns are appended. Firmware `-v6` (2026-09-17) writes schema `cores3-telemetry-v3` (row value 3) with the **same 77 leaves and the same dictionary** (`dictionary_version` stays `cores3-telemetry-v2`): the change is file-level — TIMESTAMP annotations on `event_time_utc_ns`/`clock_anchor_utc_ns`, per-chunk statistics, several row groups per file, `created_by` with the build. The schema is not SensorThings version 2: these are independent version namespaces. No existing SD file is rewritten.
 
-The single-source [field dictionary](../../firmware/esp-idf-cores3/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h). The SHA-256 of its exact source bytes lives in [telemetry_dictionary_digest.h](../../firmware/esp-idf-cores3/bringup/telemetry_dictionary_digest.h), `e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b` for `idf-cores3-parquet-v6.13`, and both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior. Since v6.13 each `FIELD` row also carries its LIVE key, so the digest covers the LIVE key map too. The hash is over raw bytes, so any edit to the file, comments, whitespace and line endings included, moves it. `.gitattributes` pins the file to LF.
+The single-source [field dictionary](../../firmware/esp-idf-cores3/bringup/telemetry_fields.inc) drives the enum and physical column descriptors in [the contract](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h). The SHA-256 of its exact source bytes lives in [telemetry_dictionary_digest.h](../../firmware/esp-idf-cores3/bringup/telemetry_dictionary_digest.h), and both the build and host test reject a stale digest. The source URI contains `main`, which is mutable: retain the matching source revision or dictionary export and verify the digest, rather than trusting the URL alone. The digest covers the `.inc` dictionary, not the entire firmware or all driver behavior. Since v6.13 each `FIELD` row also carries its LIVE key, so the digest covers the LIVE key map too. The hash is over raw bytes, so any edit to the file, comments, whitespace and line endings included, moves it. `.gitattributes` pins the file to LF.
 
 Each new file carries `dictionary_version`, `dictionary_uri`, `dictionary_sha256`, `acquisition_config_id`, `acquisition_config`, `deployment_id`, `calibration_id`, `time_semantics` and `rotation_interval_s`, alongside existing identity/codec metadata. The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
@@ -146,7 +146,7 @@ pixi run telemetry-contract-test --dictionary-out firmware/esp-idf-cores3/artifa
 pixi run parquet-device command --port <checked-port> 'parquet schema'
 ```
 
-`parquet schema` emits a BEGIN line, one FIELD line per leaf (81 on CoreS3 schema v5, 62 on Waveshare schema v5) and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append station/deployment/instrument identity in the later service mapping.
+`parquet schema` emits a BEGIN line, one FIELD line per leaf of the running schema and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append station/deployment/instrument identity in the later service mapping.
 
 ### Timing and validity dictionary
 
@@ -195,6 +195,6 @@ The `unit` strings are project labels, not a claim of universal UCUM validity. I
 
 ### Validation status
 
-The current 90-row/81-column CoreS3 and 62-column Waveshare synthetic contract fixtures pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the retained TIMESTAMP types and current `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, explicit unknown context, nullable/coarsened H3 centers and country metadata. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
+The current 90-row CoreS3 and Waveshare synthetic contract fixtures, one column per `telemetry_fields.inc` row, pass PyArrow and DuckDB in both UNCOMPRESSED and LZ4_RAW, with anchored and unsynchronized clocks, under ASan/UBSan. Tests cover the compiled dictionary digest, numeric types/order, the retained TIMESTAMP types and current `created_by`, `sequence`/UTC/all-null statistics and the `sequence` sort declaration, missing measurements, anchor values, completion/receipt timestamps, immutable earlier rows across a clock correction, explicit unknown context, nullable/coarsened H3 centers and country metadata. These tests exercise the shared contract/writer, not real sensor collection or storage-worker scheduling. The generic writer suite remains separate.
 
 The revision was then flashed with hash verification on **2026-09-08**. Real SD readbacks passed for three unsynchronized UNCOMPRESSED rows and four host-anchored LZ4 rows. Column/dictionary metadata, null anchors before synchronization, exact UTC mapping after synchronization, receipt/start/completion order and zero stored health errors were checked. `parquet schema` completed on the board. The logger was left at 15-minute rotation with LZ4 and host UTC restored. These are smoke tests, not full-window endurance, calibrated time accuracy or SensorThings/Iceberg compliance. [Artifact identities, timings and measured scope](../boards/m5stack-cores3/bench-verified.md#board-1-schema-v2-provenance-and-timing)
