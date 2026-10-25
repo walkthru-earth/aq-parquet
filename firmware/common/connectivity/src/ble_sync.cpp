@@ -1049,12 +1049,8 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   request_handler = handler;
   mode = pairing_mode;
   fixed_passkey = fixed_pin % 1000000U;
-  const auto device_length = std::strlen(identity.device);
-  std::snprintf(name_text, sizeof(name_text), "AQ-%s",
-                device_length >= 4 ? identity.device + device_length - 4
-                                   : identity.device);
   // Leave enough legacy scan-response space for the complete service UUID.
-  if (std::strlen(name_text) > 11)
+  if (!wire::local_name(name_text, identity.name_prefix, identity.device))
     return false;
   const int info_length = std::snprintf(
       info_text, sizeof(info_text),

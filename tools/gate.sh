@@ -74,6 +74,7 @@ tasks=(
   "logger-codec-store-test"
   "logger-status-test"
   "logger-rotation-test"
+  "logger-footer-test"
   "logger-directory-test"
   "logger-list-since-test"
   "logger-archive-reset-test"

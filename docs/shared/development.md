@@ -280,7 +280,7 @@ job name `CI result` stable. If a merge queue is enabled later, add a
 | Disconnects, LAN rings or BLE policy | `disconnect-test`, `frame-ring-test`, `ble-policy-test`, `ble-advert-test`, `ble-sync-test`, `lan-concurrency-bench` |
 | Settings, time or location | `config-test`, `network-time-test`, `location-test`, `logger-provision-test` |
 | Logs and persistence | `debug-log-test`, `disconnect-test` |
-| Logger queues and lifecycle | `logger-build-test`, `logger-work-queue-test`, `logger-watchdog-test`, `logger-codec-store-test`, `logger-rotation-test`, `logger-directory-test`, `logger-archive-reset-test` |
+| Logger queues and lifecycle | `logger-build-test`, `logger-work-queue-test`, `logger-watchdog-test`, `logger-codec-store-test`, `logger-rotation-test`, `logger-footer-test`, `logger-directory-test`, `logger-archive-reset-test` |
 | Storage governor, CRC cache or DMA buffer | `storage-governor-test`, `crc-cache-test`, `sd-transfer-buffer-test` |
 | Backup tooling | `backup-test` with offline fake esptool |
 | App signing or the tracked secrets guard | `release-sign-test`, `secrets-check-test` |

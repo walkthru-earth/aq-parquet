@@ -8,6 +8,29 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware, so the app must keep reading
 the older shapes it has stored, or the owner clears them.
 
+## BLE name prefix OS- and board neutral footer values (fix/90-board-neutral-config, issue #90)
+
+**What changed.** CoreS3 and Waveshare now advertise `OS-xxxx` (OpenSensor)
+instead of `AQ-xxxx`, and the mDNS host is `os-xxxx.local` instead of
+`aq-xxxx.local`. The prefix is a board constant passed through
+`ble::Identity`, so a future board may use another one. The service UUIDs,
+`_aqsync._tcp`, `AQS1`, opcodes and every `info`, status and live key are
+unchanged. The footer keys `sample_interval_ms`, `row_group_rows_max`,
+`deployment_id` and `calibration_id` keep their names, units and decimal text
+format, and their default values (`10000`, `90`, `unknown`). They now come
+from the logger config, and `sample_interval_ms` is the live sampling period
+of the board that wrote the file.
+
+**Why.** The shared logger must not carry one product name, so a new board
+can ship with its own cadence, ids and prefix.
+
+**What the app must do.** Stop filtering the scan with `AqGatt.NAME_PREFIX =
+"AQ-"`. Scan by the GATT service UUID, or accept `OS-` (and later prefixes).
+A board with an unknown prefix is otherwise invisible. Read
+`sample_interval_ms` from each file footer as the truth (mobile #186 and #190)
+rather than assuming 10 s. Existing bench boards must be reflashed together
+with a matching app build and then re-paired, since the bonded name changes.
+
 ## PARQUET BEGIN first in each boot (fix-35-begin-order, issue #35)
 
 **What changed.** The storage worker now waits until the logger has printed

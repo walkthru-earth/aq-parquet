@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aq_logger_cadence.h"
 #include <aq_battery_health.h>
 #include <ble_sync.h>
 #include <cstddef>
@@ -56,6 +57,17 @@ struct Config {
   // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
   unsigned worker_priority = 3;
   std::size_t worker_stack_bytes = 24576;
+  // Sample period, also written as footer sample_interval_ms. It must pass
+  // cadence::valid_sample_interval(). Row groups hold the rows of one
+  // rotation window, at most cadence::kMaxBatchRows.
+  std::uint32_t sample_interval_ms = cadence::kDefaultSampleIntervalMs;
+  // Footer deployment_id and calibration_id. Non empty text, "unknown" until
+  // a board or deployment knows better.
+  const char *deployment_id = "unknown";
+  const char *calibration_id = "unknown";
+  // Required board constant for ble::Identity::name_prefix. The mDNS host is
+  // the BLE name in lower case. CoreS3 and Waveshare pass "OS-".
+  const char *ble_name_prefix = nullptr;
 };
 // Shared default for each board's sampling and UI task: above the idle
 // housekeeping, below the storage worker (3), the LAN task (4) and the BLE

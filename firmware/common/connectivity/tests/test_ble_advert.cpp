@@ -28,7 +28,7 @@ int main() {
     const auto advert = ble::wire::legacy_advert(0, counter, 0xffff);
     hex(advert.data(), advert.size());
   }
-  for (const char *name : {"AQ-6b40", "12345678901"}) {
+  for (const char *name : {"OS-6b40", "12345678901"}) {
     ble::wire::ScanResponse response;
     assert(ble::wire::legacy_scan_response(name, response));
     hex(response.bytes.data(), response.length);

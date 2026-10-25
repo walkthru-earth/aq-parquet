@@ -65,7 +65,7 @@ struct Status {
 };
 
 // Starts the LAN task; the radio itself only comes up when the stored settings
-// say `wifi.on` with an SSID. `host` is the mDNS label (`aq-xxxx`).
+// say `wifi.on` with an SSID. `host` is the mDNS label (`os-xxxx`).
 // The identity strings and handler must outlive the LAN task. The handler
 // enqueues/copies requests and may be invoked concurrently with BLE.
 bool begin(const char *host, const ble::Identity &identity,

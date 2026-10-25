@@ -1,8 +1,7 @@
 #include "sync_service.h"
+#include "ble_advert.h"
 #include "device_config.h"
 #include "wifi_link.h"
-
-#include <cstdio>
 
 namespace aqsync {
 namespace {
@@ -25,12 +24,10 @@ StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
   const config::Settings settings = config::get();
   result.ble_started = ble::begin(identity, settings.pair, settings.pin,
                                   dispatch_request, config.ble);
-  // mDNS host label mirrors the BLE name: AQ-6b40 -> aq-6b40.
-  char host[24];
-  std::snprintf(host, sizeof(host), "%s", ble::local_name());
-  for (char *p = host; *p; ++p)
-    if (*p >= 'A' && *p <= 'Z')
-      *p = static_cast<char>(*p - 'A' + 'a');
+  // mDNS host label mirrors the BLE name in lower case (OS-6b40, os-6b40).
+  // An empty host when BLE did not start keeps the earlier behavior.
+  char host[24]{};
+  (void)ble::wire::mdns_host(host, ble::local_name());
   result.lan_started = lan::begin(host, identity, dispatch_request, config.lan);
   return result;
 }

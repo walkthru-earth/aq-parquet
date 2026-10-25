@@ -66,7 +66,7 @@ Legacy advertising has 31 bytes. Before 2.1 the ADV PDU carried flags (3) + comp
 | PDU | Contents | Bytes |
 | --- | --- | --- |
 | ADV | flags · service data (`0x21`, UUID = service UUID `c0a5e9f0-0001-…`, payload ≤ 10) | 3 + 18 + ≤ 10 ≤ 31 |
-| SCAN_RSP | complete local name `AQ-xxxx` · complete 128-bit service UUID list | 9 + 18 = 27 |
+| SCAN_RSP | complete local name `OS-xxxx` · complete 128-bit service UUID list | 9 + 18 = 27 |
 
 Payload, little-endian, all fields present from byte 0 so a mask can address them:
 

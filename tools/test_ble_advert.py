@@ -80,7 +80,7 @@ def main() -> None:
         # A platform receiving ADV without SCAN_RSP can still discover AQ.
         assert client.advertises_sync_service(SimpleNamespace(
             service_uuids=[], service_data={service: payload}))
-    for packet, name in zip(packets[14:], ["AQ-6b40", "12345678901"]):
+    for packet, name in zip(packets[14:], ["OS-6b40", "12345678901"]):
         assert len(packet) <= 31
         fields = ad_fields(packet)
         assert set(fields) == {0x09, 0x07}

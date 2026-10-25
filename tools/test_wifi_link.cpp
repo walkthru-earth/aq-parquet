@@ -276,7 +276,7 @@ namespace config {
 Settings get() { return fixture_settings; }
 } // namespace config
 namespace ble {
-const char *local_name() { return "AQ-fixture"; }
+const char *local_name() { return "OS-fixture"; }
 const char *info_json() { return "{\"station\":\"fixture\"}"; }
 bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint32_t generation) {
@@ -334,7 +334,7 @@ int main() {
                  std::strerror(errno));
   assert(lan::listen_fd >= 0);
   assert(fake_mdns_started && fake_mdns_host == "aq-fixture" &&
-         fake_mdns_instance == "AQ-fixture" && fake_mdns_service == "_aqsync" &&
+         fake_mdns_instance == "OS-fixture" && fake_mdns_service == "_aqsync" &&
          fake_mdns_transport == "_tcp" && fake_mdns_port == config::kLanPort);
   assert(fake_mdns_txt ==
          (std::map<std::string, std::string>{{"proto", "3"},

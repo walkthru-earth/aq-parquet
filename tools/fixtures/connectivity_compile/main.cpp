@@ -9,7 +9,7 @@ namespace {
 bool enqueue(const ble::ControlRequest &) { return false; }
 constexpr ble::Identity identity{
     "compile-fixture", "000000000000", "00000000", "compile-only", 0,
-    "compile-only",    "compile-only"};
+    "compile-only",    "compile-only", "OS-"};
 } // namespace
 
 extern "C" void app_main() {

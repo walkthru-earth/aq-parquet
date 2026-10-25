@@ -2,7 +2,7 @@
 
 Read-only: never configures, flushes, deletes or rewrites the sensor archive.
 Keep the token in an ignored private file; only nonsecret results are printed.
-Run through pixi with --host aq-xxxx.local --token-file <private-path> --out <artifacts-path>.
+Run through pixi with --host os-xxxx.local --token-file <private-path> --out <artifacts-path>.
 This qualifies host TCP clients, not Android/iOS radio or background behavior.
 --throttle-seconds stops reading on the first collector after the concurrency
 check, pipelines READs to it so its device ring fills, and requires that the

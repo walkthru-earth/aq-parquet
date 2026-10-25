@@ -21,7 +21,7 @@ NAME = "station=abc/unsynced/boot=def/data_unsynced_def_0-1-0.parquet"
 FILE = b"PAR1" + bytes(range(256)) * 3 + struct.pack("<I", 40) + b"PAR1"
 CONFIG = (b'{"ble":{"pair":"random","pin_set":1,"pin_default":0,"bonds":1,"display":1},'
           b'"wifi":{"on":0,"ssid":"","psk_set":0,"state":"off","ip":"","rssi":0,"mac":"aa"},'
-          b'"lan":{"on":1,"port":47390,"host":"aq-6b40","clients":0}}')
+          b'"lan":{"on":1,"port":47390,"host":"os-6b40","clients":0}}')
 TOKEN = bytes(range(32))
 LOG = b"PARQUET BEGIN x\n" + b"BLE CONNECT peer=y\n" * 20
 INFO = b'{"proto":3,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
@@ -400,10 +400,10 @@ async def run_discovery():
     """Connect discovery accepts ADV service data without the SCAN_RSP UUIDs."""
     candidate = SimpleNamespace(name=None, address="test-device")
     unrelated = SimpleNamespace(service_uuids=[], service_data={"other": b"x"},
-                                local_name="AQ-6b40")
+                                local_name="OS-6b40")
     adv_only = SimpleNamespace(service_uuids=[],
                                service_data={ble.SERVICE.upper(): b"\x01\x04"},
-                               local_name="AQ-6b40")
+                               local_name="OS-6b40")
     legacy = SimpleNamespace(service_uuids=[ble.SERVICE.upper()],
                              service_data={}, local_name=None)
     assert not ble.advertises_sync_service(unrelated)
@@ -415,16 +415,16 @@ async def run_discovery():
         async def find_device_by_filter(predicate, timeout):
             assert timeout == 5
             assert not predicate(candidate, unrelated)
-            assert not predicate(SimpleNamespace(name="AQ-other"),
+            assert not predicate(SimpleNamespace(name="OS-other"),
                                  SimpleNamespace(service_uuids=[ble.SERVICE],
-                                                 service_data={}, local_name="AQ-other"))
-            assert predicate(SimpleNamespace(name="AQ-6b40"), legacy)
+                                                 service_data={}, local_name="OS-other"))
+            assert predicate(SimpleNamespace(name="OS-6b40"), legacy)
             return candidate if predicate(candidate, adv_only) else None
 
     original = ble.BleakScanner
     ble.BleakScanner = Scanner
     try:
-        assert await ble.find(SimpleNamespace(name="AQ-6b40", timeout=5)) is candidate
+        assert await ble.find(SimpleNamespace(name="OS-6b40", timeout=5)) is candidate
         assert await ble.find(SimpleNamespace(address="known-device")) == "known-device"
     finally:
         ble.BleakScanner = original

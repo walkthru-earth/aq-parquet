@@ -147,6 +147,8 @@ const KeyValue metadata[] = {
     {"unavailable", "SHT20 address collision; battery current unsupported; "
                     "camera/audio not sampled"},
 };
+// OpenSensor BLE name prefix, so the board advertises OS-xxxx.
+constexpr char kBleNamePrefix[] = "OS-";
 aqlogger::Config logger_config;
 std::uint64_t cached_total_bytes = 0;
 std::uint64_t cached_used_bytes = 0;
@@ -189,6 +191,7 @@ void begin_logger(bool sd_mounted) {
       .legacy_directory = "/sd/parquet",
       .metadata = metadata,
       .metadata_count = sizeof(metadata) / sizeof(metadata[0]),
+      .ble_name_prefix = kBleNamePrefix,
   };
   const aqlogger::Hooks hooks{
       .collect = collect,

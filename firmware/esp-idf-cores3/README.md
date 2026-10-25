@@ -350,7 +350,7 @@ The contract and later cloud design remain in [the telemetry pipeline](../../doc
 
 ## Bluetooth LE sync
 
-The board advertises as `AQ-xxxx` (last four hex digits of the Wi-Fi MAC-derived `device_id`) with the 128-bit service UUID from [the contract](../../docs/shared/ble-sync-protocol.md). Everything is encrypted and authenticated: the first connection from a new phone or laptop shows a random six-digit passkey full-screen on the LCD (also printed as `BLE PAIR passkey=…` on serial, deliberately, for bench logs). Only a person who can read the screen can pair. The link is one connection at a time; advertising resumes on disconnect. `kEnableBle` in `bringup.ino` switches the radio off at compile time.
+The board advertises as `OS-xxxx` (last four hex digits of the Wi-Fi MAC-derived `device_id`) with the 128-bit service UUID from [the contract](../../docs/shared/ble-sync-protocol.md). Everything is encrypted and authenticated: the first connection from a new phone or laptop shows a random six-digit passkey full-screen on the LCD (also printed as `BLE PAIR passkey=…` on serial, deliberately, for bench logs). Only a person who can read the screen can pair. The link is one connection at a time; advertising resumes on disconnect. `kEnableBle` in `bringup.ino` switches the radio off at compile time.
 
 Implementation notes: `Command` now carries a source tag and, for BLE, a ≤ 512-byte raw request, so the struct grew to about 1 KB and the queue depth went 4 → 6 (≈ 6 KB heap). `list_directory` takes an emitter callback so LIST and the serial `PARQUET FILE` lines share one walk; `set_clock()` is shared by `parquet time` and `SET_TIME`. Worker state the phone needs (`failed`, storage readiness, retained partials, missed deadlines) is mirrored into atomics so the `status` document can be built from any task. `kFirmware` is `arduino-cores3-parquet-v4`; the dictionary and schema are unchanged.
 
@@ -360,12 +360,12 @@ Host client for bench and recovery without a phone (bleak, PyPI dependency in `p
 
 ```sh
 pixi run ble-sync scan
-pixi run ble-sync --name AQ-6b40 info
-pixi run ble-sync --name AQ-6b40 live --seconds 35
-pixi run ble-sync --name AQ-6b40 list
-pixi run ble-sync --name AQ-6b40 sync --out firmware/esp-idf-cores3/artifacts/ble-<date>
-pixi run ble-sync --name AQ-6b40 time    # explicit UTC write, same rules as `parquet time`
-pixi run ble-sync --name AQ-6b40 flush   # explicit, finalizes the RAM batch
+pixi run ble-sync --name OS-6b40 info
+pixi run ble-sync --name OS-6b40 live --seconds 35
+pixi run ble-sync --name OS-6b40 list
+pixi run ble-sync --name OS-6b40 sync --out firmware/esp-idf-cores3/artifacts/ble-<date>
+pixi run ble-sync --name OS-6b40 time    # explicit UTC write, same rules as `parquet time`
+pixi run ble-sync --name OS-6b40 flush   # explicit, finalizes the RAM batch
 ```
 
 On macOS run these from Terminal.app: CoreBluetooth aborts clients launched from a process without a Bluetooth usage entitlement (measured). `sync` writes the same verified layout and `manifest.json` as `tools/export_parquet.py`, so BLE and USB exports are byte-comparable. `python tools/test_ble_sync.py` checks the host frame codec offline.

@@ -146,6 +146,8 @@ const telemetry::KeyValue kMetadata[] = {
     {"hardware_revision", "Waveshare ESP32-S3-SIM7670G-4G V2.0"},
     {"storage_bus", "SDMMC one-bit CLK5 CMD4 D0=6; no automatic format"},
 };
+// OpenSensor BLE name prefix, so the board advertises OS-xxxx.
+constexpr char kBleNamePrefix[] = "OS-";
 const aqlogger::Config kLoggerConfig{
     .fields = kFields,
     .column_count = field_count,
@@ -163,6 +165,7 @@ const aqlogger::Config kLoggerConfig{
     .output_directory = "/sd/output",
     .metadata = kMetadata,
     .metadata_count = sizeof(kMetadata) / sizeof(kMetadata[0]),
+    .ble_name_prefix = kBleNamePrefix,
 };
 const aqlogger::Hooks kHooks{
     .collect = collect,

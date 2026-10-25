@@ -26,6 +26,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Battery health states, thresholds, debounce, settling and the boot Low or Critical tie | `battery-health-test` |
 | COREDUMP line once per saved core dump, NVS record and its read or write failures | `coredump-report-test` |
 | Board-declared LIVE keys and JSON formatting | `logger-live-test` |
+| Board neutral footer keys and values, sample period, row group cap, deployment and calibration ids, BLE name prefix and mDNS host, and a non AQ fixture board (no PMS, 30 s, `SL-`) read by PyArrow and DuckDB | `logger-footer-test` |
 | POWER STATE lines, one finalize per discharge, the report wake, emergency close outcomes, retry and pass lines | `logger-power-test` |
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
