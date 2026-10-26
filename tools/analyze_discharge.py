@@ -56,10 +56,12 @@ repeat each other. A boot from a later log joins an earlier one when the
 of one hold the other or overlap by at least two lines, and only the new
 lines count. A later boot that names its id joins an earlier one without an
 id only when it holds all of it, so a loop boot whose first lines repeat the
-tail of the boot before stays apart. Boots within one log are never joined. The logs carry no wall
-time, so the time from Critical to cutoff comes from the Parquet rows. It
-runs from the first critical row to the last row of the same boot before a
-gap over `--gap-s`, so a later recharge boot does not stretch it.
+tail of the boot before stays apart. Boots within one log are never joined.
+The logs carry no wall time, so the time from Critical to cutoff comes from
+the Parquet rows. It runs from the first critical row to the last row of
+the same boot before a gap over `--gap-s`, so a later recharge boot does not
+stretch it. A later boot that holds several earlier polls without an id
+takes in all of them.
 
 A small file has fewer than `--small-rows` rows (default 30, five minutes at
 10 s). The first file of every boot is short because startup lands mid
@@ -390,9 +392,10 @@ def merge_boots(chunks: list[dict]) -> list[dict]:
     scroll out. A piece joins an earlier boot from another log when the boot
     ids match, or, when either id is unknown, when one holds the other or the
     earlier one's tail overlaps the piece's head by at least two events. A
-    piece with a known id joins a boot without one only when it holds it.
-    Only the new events are added. Boots within one log are never joined, its own
-    split stands.
+    piece with a known id joins a boot without one only when it holds all of
+    its events, two or more. A piece that holds several such boots takes in
+    all of them. Only the new events are added. Boots within one log are
+    never joined, its own split stands.
     """
     merged: list[dict] = []
     for chunk in chunks:
@@ -419,6 +422,14 @@ def merge_boots(chunks: list[dict]) -> list[dict]:
         old = target["events"]
         if contains(new, old) or not old:
             target["events"] = list(new)
+            # Polls without an id that share no line stay apart until a piece
+            # holds them all, so it takes in every one of them, not only the
+            # newest, or an older poll's lines would count twice.
+            for boot in [b for b in merged if b is not target and b["boot"] is None
+                         and chunk["sources"][0] not in b["sources"]
+                         and len(b["events"]) >= 2 and contains(new, b["events"])]:
+                merged.remove(boot)
+                target["sources"] = [*boot["sources"], *target["sources"]]
         elif not contains(old, new):
             target["events"] = old + new[overlap(old, new):]
         target["boot"] = target["boot"] or chunk["boot"]

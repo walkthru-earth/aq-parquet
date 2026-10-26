@@ -10,7 +10,8 @@ pre schema v5 file without the new battery columns, a quarantine file, a
 torn file and board logs with several boots. It also covers a clean single
 boot run with a recharge boot after it, which must have no findings, the
 loop boot rules, Critical to cutoff under 182 s, overlapping LOG_TAIL polls
-of one boot, the one line overlap and named loop boot merge limits, the
+of one boot, the one line overlap, one line piece, two named ids and named
+loop boot merge limits, a named capture holding several polls, the
 first critical boot never being a loop boot, a nothing-open answer to a
 finalize, and the finalize findings. Each of those checks was confirmed
 to fail against the code before the verify-77 review, or against a mutant.
@@ -312,6 +313,47 @@ def test_overlapping_polls(work: Path) -> None:
     boots = ad.parse_logs(card_out)
     require([x["boot"] for x in boots] == [None, g], f"a named loop boot stays apart, {boots}")
     require([x["closed"] for x in boots] == [1, 1], f"both closes count, {boots}")
+
+    # Two named boots never join, even when one holds the other.
+    h = "b" * 32
+    boots = ad.parse_logs([("a.log", f"PARQUET BEGIN boot={g}\n" + close),
+                           ("b.log", f"PARQUET BEGIN boot={h}\n" + close
+                            + "PARQUET READY name=x rows=2 row_groups=1 first=1 last=2\n")])
+    require([x["boot"] for x in boots] == [g, h], f"different ids stay apart, {boots}")
+
+    # A one line piece without an id is too little to join, even when held.
+    boots = ad.parse_logs([("ble-log-1.txt", "POWER STATE state=critical mv=3290 action=finalize\n"),
+                           ("capture.log", f"PARQUET BEGIN boot={e}\nPOWER STATE state=low mv=3480\n" + close)])
+    require([x["boot"] for x in boots] == [None, e], f"a held one line piece stays apart, {boots}")
+
+    # A poll without an id taken from the middle of an earlier named capture.
+    ok_low = "POWER STATE state=ok mv=3600\nPOWER STATE state=low mv=3480\n"
+    boots = ad.parse_logs([("capture.log", f"PARQUET BEGIN boot={e}\nPARQUET SCAN files=3\n" + ok_low + close),
+                           ("ble-log-1.txt", ok_low)])
+    require([x["boot"] for x in boots] == [e] and boots[0]["closed"] == 1, f"a held poll joins, {boots}")
+
+    # Two polls without an id that share no line, then the named capture that
+    # holds both. Every poll joins it, so no READY counts twice.
+    ready = "PARQUET READY name=y rows=90 row_groups=1 first=1 last=90\n"
+    boots = ad.parse_logs([("ble-log-1.txt", ok_low + ready),
+                           ("ble-log-2.txt", close),
+                           ("capture.log", f"PARQUET BEGIN boot={e}\n" + ok_low + ready + close)])
+    require([x["boot"] for x in boots] == [e], f"the capture takes in both polls, {boots}")
+    require(boots[0]["ready_rows"] == [90] and boots[0]["closed"] == 1, f"{boots[0]}")
+    # It takes in only polls without an id that it holds. A named boot whose
+    # lines it repeats and a poll of another boot stay apart.
+    boots = ad.parse_logs([("a.log", f"PARQUET BEGIN boot={g}\n" + close),
+                           ("ble-log-1.txt", "POWER STATE state=external_power_likely mv=4250\n"
+                                             "PARQUET READY name=z rows=9 row_groups=1 first=1 last=9\n"),
+                           ("ble-log-2.txt", ok_low),
+                           ("capture.log", f"PARQUET BEGIN boot={e}\n" + ok_low + close)])
+    require([x["boot"] for x in boots] == [g, None, e], f"only held polls without an id join, {boots}")
+    require([x["closed"] for x in boots] == [1, 0, 1], f"{boots}")
+    # The two event minimum holds there too.
+    boots = ad.parse_logs([("ble-log-1.txt", "POWER STATE state=ok mv=3600\n"),
+                           ("ble-log-2.txt", "POWER STATE state=low mv=3480\n" + close),
+                           ("capture.log", f"PARQUET BEGIN boot={e}\n" + ok_low + close)])
+    require([x["boot"] for x in boots] == [None, e], f"a held one line poll stays apart, {boots}")
 
 
 def test_clean_single_boot(work: Path) -> None:
