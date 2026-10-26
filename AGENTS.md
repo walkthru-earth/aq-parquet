@@ -2,11 +2,10 @@
 
 General OpenSensor firmware for ESP32-S3 Things. Boards plug in sensors through
 logger hooks and a field dictionary, and air quality is the first sensor set.
-CoreS3 and Waveshare V2 each have one active,
-self-contained native ESP-IDF application. Do not add Arduino APIs or an
-Arduino component. Shared code lives in `firmware/common/`. Device
-protocol and telemetry contracts live in `docs/shared/`. Open only the relevant
-file in `docs/README.md` after this one.
+CoreS3 and Waveshare V2 each have one active, self-contained native ESP-IDF
+application. Do not add Arduino APIs or an Arduino component. Shared code lives
+in `firmware/common/`. Device protocol and telemetry contracts live in
+`docs/shared/`. Open only the relevant file in `docs/README.md` after this one.
 
 ## C++ standard and style
 

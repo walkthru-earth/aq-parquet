@@ -67,7 +67,7 @@ binary you distribute.
 **If you use any of this work, you must credit us visibly**, for example in
 your README, documentation, about screen or paper. A buried source comment does
 not count. State what you changed. Attribution does not imply we endorse your
-project. Minimum credit.
+project. Use at least the credit line below.
 
 > Based on [walkthru-earth/opensensor-space-firmware](https://github.com/walkthru-earth/opensensor-space-firmware)
 > by Walkthru.Earth, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

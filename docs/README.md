@@ -17,7 +17,8 @@ together.
   declares it in its field dictionary, `telemetry_fields.inc`, which fixes the
   Parquet columns, units and LIVE keys, and fills each row in `Hooks::collect`.
   Air quality is sensor set 1, with a Plantower particle sensor on both
-  current boards.
+  current boards. On CoreS3 it is the optional M134 add-on, on Waveshare V2 a
+  wired PMS5003T.
 - The **shared components** in [`firmware/common`](../firmware/common/README.md)
   are board and sensor neutral. They sample, write Parquet, keep settings and
   sync over BLE and LAN for any sensor set.
