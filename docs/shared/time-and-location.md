@@ -120,10 +120,9 @@ preserving all earlier fields:
 Unset or invalid location produces four nulls. Each sample captures its
 location settings before entering the worker queue. A cell, precision cap or
 country change splits the batch/open file, so a later setting never relabels
-buffered readings. Footer metadata contains `country_iso3166_1_alpha2`,
-`country_source=owner-declared`, `location_source=owner-provisioned-h3-grid-center`,
-the retained cell, actual and maximum resolutions, and center units. Missing
-country or cell metadata says `unknown`. Existing archives are immutable.
+buffered readings. The footer carries no location since #88. The rows hold
+the cell, resolution and center, and the country is not written to the file.
+Existing archives are immutable.
 
 Host tests and native builds verify contracts and compilation. Router option
 42, phone permissions/fixes, RTC writes, radio coexistence and physical card

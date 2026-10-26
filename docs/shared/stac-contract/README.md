@@ -39,7 +39,7 @@ v0.1.0 splits the metadata into three layers, as its [PROFILE.md](https://github
 | Role values (measurement, quality, state and others) | Core `roles` with ACDD values `physicalMeasurement`, `auxiliaryInformation`, `qualityInformation`, `referenceInformation`, `coordinate`, and `modelResult` for derived columns |
 | `cube:dimensions`, `cube:variables` | Not used. Cadence is `opensensor:sample_interval_s` |
 | Shared `urn:opensensor:property:<id>` | `opensensor:property` with a shared URI such as NERC P07 where one fits, otherwise a per board URI |
-| Footer `stac:collection_href`, `stac:descriptor_sha256`, `urn:opensensor:collection:` | `opensensor:template_href`, `opensensor:template_sha256`, `urn:opensensor:template:`. Not in v0.1.0, set by the owner decision below and #88 |
+| Footer `stac:collection_href`, `stac:descriptor_sha256`, `urn:opensensor:collection:` | One `opensensor` footer key whose `template` group holds `href` and `sha256`, per stac-opensensor `footer.json` v0.1.0 (a56dfb0, #88) |
 | `opensensor:field_id`, `opensensor:procedure`, `opensensor:property` | Unchanged |
 
 `opensensor:settle_s` and `opensensor:derived` are new in v0.1.0. Upstream proposals may move some fields later, see stac-extensions/table#16 (`field_id`), table#17 (common metadata in columns), classification#55 (classes in table columns) and cf#11 (CF fields in table columns).
@@ -52,4 +52,4 @@ The owner decided these points after both audits were written. They supersede th
 - Property ids become board neutral (#84). Use a shared vocabulary first, such as NERC P07 or CF, and otherwise `urn:walkthru-earth:property:<quantity>`. Board and sensor go in `opensensor:procedure`. This supersedes correction item 8 and the per board URI row in the table above.
 - Every declared LIVE key is always present, with a number or null (#91). Per field precision lands in #91 with a new dictionary digest. An absent key means the board has no such field. Correction item 11 and its "display hint only" reasoning no longer hold. So do "omits invalid values" in the LIVE paragraph of `firmware-audit.md` Q2 and review E2 in `firmware-audit-review.md` ("absent means invalid or unrepresentable").
 - The BLE name prefix becomes `OS-` and the mDNS host becomes `os-xxxx` (#90). Other internal and wire AQ names are renamed in #93. The audit's list of AQ names that are wire contract is history.
-- The footer keys are frozen as `opensensor:template_href` and `opensensor:template_sha256` (#88). They come from this decision, not from v0.1.0.
+- The footer keys were frozen as `opensensor:template_href` and `opensensor:template_sha256` (#88). The owner then superseded this with stac-opensensor a56dfb0. Each file the firmware finalizes now has one `opensensor` key holding versioned JSON, and the template link and digest sit in its `template` group. A partial file rebuilt by `tools/rebuild_partial.py` has no `opensensor` key (see the #88 entry in `../mobile-migration.md`).

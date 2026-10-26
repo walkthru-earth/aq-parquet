@@ -57,18 +57,19 @@ own PR with the reason and both board builds green.
 | `kMaxColumns = 96` | `src/parquet_writer.h` | Columns per file, including the four required runtime fields. Sizes the PSRAM writer workspace (`kMaxRowGroups` x 96 chunk records) and the `Row` type | `begin()` refuses a dictionary over 96 fields. Count every column, including runtime counters, and leave room for appended fields, since positions are never reused |
 | `cadence::kMaxBatchRows = 90` | `logger/src/aq_logger_cadence.h` | Rows in one RAM batch, which is one row group and the loss window on reset. Footer `row_group_rows_max` | Rows per group are the rotation window divided by `Config::sample_interval_ms`, at most 90. A file holds at most `kMaxRowGroups = 8` groups (720 rows), so a fast period with a long window closes several files per window. The period must pass `cadence::valid_sample_interval()`, 1 s to 300 s and a divisor of 300 s |
 | 480 byte STATUS and LIVE JSON | `ble::kMaxJson` in `connectivity/src/ble_sync.h` | Each snapshot, so one BLE frame (512) and MTU 483 carry it | Add up every `live_key` of the board at its widest value. A LIVE document that does not fit is not published at all, never truncated. Prove the worst case with a host test like `logger-live-test` |
-| `kMaxConfigMetadata = 32` | `logger/src/aq_logger.cpp` | Board footer entries in `Config::metadata` | `begin()` refuses more than 32. The footer holds 64 entries, 22 fixed, 7 location, 3 clock anchor and these 32 |
+| `footer::kMaxJsonBytes = 4096` | `logger/src/aq_logger_footer.h` | The one `opensensor` footer value, compact JSON per stac-opensensor `footer.json` v0.1.0 | The board strings (`acquisition.config` above all) must keep the JSON under 4096 bytes. A footer that does not fit fails the file closed with `footer-overflow`, never truncated. CoreS3 writes 1663 bytes and Waveshare 2287. The contract tests print the length |
 | BLE name at most 11 characters | `ble::wire::kMaxLocalName` in `connectivity/src/ble_advert.h` | Prefix plus four device id characters, so the full service UUID fits the legacy scan response | `Config::ble_name_prefix` is 1 to 7 characters of `[A-Za-z0-9-]`. Required, with no default in `firmware/common`. The mDNS host is the name in lower case. CoreS3 and Waveshare pass `OS-` (`OS-xxxx`, `os-xxxx`). The current app filters its scan with `AQ-`, so it must scan by the GATT service UUID or learn each new prefix, see [mobile-migration.md](../../docs/shared/mobile-migration.md) |
 
-Both boards keep the default values. Footer `sample_interval_ms` comes from
-the live `Config::sample_interval_ms` (default `10000`), the same value that
-sets the sampling deadline, so it is the truth for each file.
-`row_group_rows_max` comes from `cadence::kMaxBatchRows` (`90`), and
-`deployment_id` and `calibration_id` from `Config` (default `unknown`). The
-key names, the ms unit and the decimal text format are what the phone reads
-per file. A build time value such as `opensensor:sample_interval_s` in the
-planned STAC board template (#85) is only the default. Readers trust the
-footer. `pixi run logger-footer-test` pins the default bytes and writes a non
+Both boards keep the default values. Footer `acquisition.sample_interval_ms`
+comes from the live `Config::sample_interval_ms` (default `10000`), the same
+value that sets the sampling deadline, so it is the truth for each file.
+`file.row_group_rows_max` comes from `cadence::kMaxBatchRows` (`90`), and
+`station.deployment_id` and `acquisition.calibration_id` from `Config`
+(default `unknown`). `acquisition.sample_interval_ms` and
+`file.row_group_rows_max` are JSON numbers, and `station.deployment_id` and
+`acquisition.calibration_id` are JSON strings, `"unknown"` included, all inside
+the one `opensensor` footer value. The build time `opensensor:sample_interval_s` in
+the board template is only the default. Readers trust the footer. `pixi run logger-footer-test` pins the default bytes and writes a non
 air quality fixture board with no PMS, a 30 s period and an `SL-` prefix.
 
 ## Consumption

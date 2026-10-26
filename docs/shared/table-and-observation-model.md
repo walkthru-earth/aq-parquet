@@ -59,15 +59,14 @@ dictionary digest are planned to live in the generated board templates under
 | `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
 
 All four remain null while the deployment cell is unset. Firmware derives the
-center from the published cell; no raw GPS is stored. File metadata includes
-`country_iso3166_1_alpha2` (assigned owner-declared code or `unknown`),
-`country_source`, `location_source`, `h3_cell_id`, `h3_resolution`,
-`h3_max_resolution` and `h3_center_units`. Country is not inferred from H3.
+center from the published cell; no raw GPS is stored. The footer carries no
+location (#88). The rows hold the cell, the resolution and the center, and the
+country is no longer written to the file. Country is not inferred from H3.
 
 Acquisition snapshots cell, maximum precision and country into each queued row.
 The worker splits the RAM batch and open file before appending a different
-snapshot, including country-only/cap-only changes. The footer uses the file's
-captured snapshot. Old finalized files retain their original content and
+snapshot, including country-only/cap-only changes, so each file holds one
+location snapshot. Old finalized files retain their original content and
 identity. Changing location does not rewrite earlier samples or archives.
 The mobile app requests an OS location fix only on an explicit action, computes
 H3 locally at selected precision, previews its derived center and sends only
@@ -138,7 +137,7 @@ Each board has a single-source field dictionary that drives the enum and physica
 
 Each board also embeds one stac-opensensor v0.1.0 board template, a minified JSON built on the host from the field dictionary, `telemetry_semantics.inc`, `telemetry_classes.inc` and the title and keywords in `telemetry_contract.h`. It sits in `.rodata` as `kTemplateJson` in `telemetry_template.h`, and `desc` in `telemetry_descriptor_digest.h` is the SHA-256 of exactly those bytes. The contract tests fail when either header is stale and validate the template against the pinned schemas. `tools/build-idf-board.sh` checks `desc` before the build and checks the app image holds the same bytes after it. The template's `describedby` link is `kDictionaryUri`, the raw `telemetry_fields.inc` at a full 40 hex commit on `main`, with `file:checksum` `1220` plus the dict digest. The footer `dictionary_uri` is the same string. `kTemplateHref` names the published template, the raw `docs/shared/templates/<board>/<dict>.json` at a full commit whose bytes hash to `desc` (#89). The footer carries it once #88 lands. Commit URLs never move, so the bytes at each link always hash to its digest. `pixi run pinned-uris-test` fails on a `main` or branch URL, on a commit that is not on `main` and on a commit whose bytes miss the digest. Files written before #89 carry a `dictionary_uri` on `main`, which may have moved since. Readers trust `dictionary_sha256` and the template digest, never that URL, and fetch the dictionary by its digest.
 
-Each new file carries `dictionary_version`, `dictionary_uri`, `dictionary_sha256`, `acquisition_config_id`, `acquisition_config`, `deployment_id`, `calibration_id`, `time_semantics` and `rotation_interval_s`, alongside existing identity/codec metadata. The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
+Each new file carries exactly one Parquet key-value entry, `opensensor`, whose value is compact JSON per stac-opensensor `footer.json` v0.1.0 (pinned in `tools/stac_opensensor/`). Its groups are `station`, `firmware`, `dictionary` (`sha256` is `dict`), `template` (`href` and `sha256`, which is `desc`), `acquisition` (sample period, time semantics, config id, config and calibration id) and `file` (rotation, row groups, rows per group, compression and purpose). The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
 ```sh
 pixi run telemetry-contract-test --sanitize

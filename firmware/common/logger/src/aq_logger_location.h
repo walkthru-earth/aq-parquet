@@ -2,16 +2,14 @@
 
 #include <aq_location.h>
 #include <device_config.h>
-#include <parquet_writer.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
 namespace oslogger {
 // Captured at acquisition, copied with the queue and RAM batch. Later settings
-// changes cannot relabel buffered samples or the footer of an open file.
+// changes cannot relabel buffered samples of an open file.
 template <typename Row> struct LocationSample : Row {
   config::LocationSettings location{};
 };
@@ -37,32 +35,4 @@ bool apply_location(Row &row, const config::LocationSettings &snapshot,
   row.counter(fields[3], lon);
   return true;
 }
-struct LocationMetadata {
-  char cell[opensensor::location::kCellTextBytes] = "unknown";
-  char resolution[12] = "unknown";
-  char maximum[12]{};
-  std::array<telemetry::KeyValue, 7> entries{};
-
-  explicit LocationMetadata(const config::LocationSettings &snapshot) {
-    opensensor::location::Cell published = 0;
-    if (opensensor::location::coarsen(snapshot.cell, snapshot.resolution,
-                                      published) &&
-        published == snapshot.cell &&
-        opensensor::location::format_cell(published, cell, sizeof(cell)))
-      std::snprintf(resolution, sizeof(resolution), "%d",
-                    opensensor::location::resolution(published));
-    std::snprintf(maximum, sizeof(maximum), "%u",
-                  unsigned(snapshot.resolution));
-    entries = {{{"country_iso3166_1_alpha2",
-                 opensensor::location::valid_country(snapshot.country)
-                     ? snapshot.country
-                     : "unknown"},
-                {"country_source", "owner-declared"},
-                {"location_source", "owner-provisioned-h3-grid-center"},
-                {"h3_cell_id", cell},
-                {"h3_resolution", resolution},
-                {"h3_max_resolution", maximum},
-                {"h3_center_units", "1e-7 degrees"}}};
-  }
-};
 } // namespace oslogger

@@ -1,9 +1,11 @@
 """Board neutral footer, cadence and BLE name checks (#90).
 
 Compiles firmware/common/logger/tests/test_footer.cpp with the shared writer.
-The C++ part pins the default footer bytes (10000, 90, unknown) the phone
-reads per file, and the OS- BLE name and mDNS host. It then writes a file for
-a non air quality fixture board (no PMS, 30 s period, SL- prefix), which PyArrow and DuckDB read here.
+The C++ part pins the default `opensensor` footer JSON (10000, 90, unknown,
+#88), its escaping and its fail closed errors, and the OS- BLE name and mDNS
+host. It then writes a file for a non air quality fixture board (no PMS, 30 s
+period, SL- prefix). PyArrow and DuckDB read it here and its one footer key
+validates against the pinned stac-opensensor footer.json.
 """
 from __future__ import annotations
 
@@ -17,17 +19,12 @@ import duckdb
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import parquet_footer as footer  # noqa: E402
+import footer_contract  # noqa: E402
 from host_cxx import CXX_STD  # noqa: E402
 
-FIXED_KEYS = [
-    "schema_version", "device_id", "station_id", "boot_id", "firmware",
-    "dictionary_version", "dictionary_uri", "dictionary_sha256",
-    "acquisition_config_id", "acquisition_config", "deployment_id",
-    "calibration_id", "time_semantics", "rotation_interval_s", "row_groups",
-    "row_group_rows_max", "compression", "purpose", "board",
-    "sample_interval_ms", "clock", "durability",
-]
+# kDictSha and kDescSha of test_footer.cpp.
+DICT_SHA = "0" * 63 + "1"
+DESC_SHA = "0" * 63 + "2"
 
 
 def main() -> None:
@@ -54,25 +51,20 @@ def main() -> None:
         assert result.stdout.split() == ["SL-89ab", "sl-89ab"], result.stdout
 
         parquet = pq.ParquetFile(output)
-        metadata = {k.decode(): v.decode()
-                    for k, v in parquet.metadata.metadata.items()}
-        raw = footer.read_footer(output)
-        ordered = [entry[1].decode() for entry in raw[footer.FILE_KV]]
-        assert ordered[:len(FIXED_KEYS)] == FIXED_KEYS, ordered
-        assert ordered[len(FIXED_KEYS):] == ["hardware_revision"], ordered
-        assert metadata["sample_interval_ms"] == "30000"
-        assert metadata["row_group_rows_max"] == "90"
-        assert metadata["rotation_interval_s"] == "3600"
-        assert metadata["row_groups"] == "2"
-        assert metadata["deployment_id"] == "fixture-plot-7"
-        assert metadata["calibration_id"] == "soil-cal-2026-10"
-        assert metadata["schema_version"] == "soil-fixture-v1"
-        assert metadata["board"] == "fixture soil board"
+        footer = footer_contract.check_file(output, dict_sha=DICT_SHA, desc=DESC_SHA)
+        acquisition, file = footer["acquisition"], footer["file"]
+        assert acquisition["sample_interval_ms"] == 30000
+        assert file == {"rotation_interval_s": 3600, "row_groups": 2, "row_group_rows_max": 90,
+                        "compression": "UNCOMPRESSED", "purpose": "telemetry"}, file
+        assert footer["station"]["deployment_id"] == "fixture-plot-7"
+        assert acquisition["calibration_id"] == "soil-cal-2026-10"
+        assert footer["firmware"]["schema"] == "soil-fixture-v1"
+        assert footer["station"]["board"] == "fixture soil board"
 
         groups = [parquet.metadata.row_group(i).num_rows
                   for i in range(parquet.metadata.num_row_groups)]
         assert groups == [90, 30], groups
-        assert max(groups) <= int(metadata["row_group_rows_max"])
+        assert max(groups) <= file["row_group_rows_max"]
         names = parquet.schema_arrow.names
         assert not any(name.startswith("pm") for name in names), names
         assert names[-2:] == ["soil_moisture_pct", "soil_temperature_c"]
@@ -80,7 +72,7 @@ def main() -> None:
         table = parquet.read()
         mono = table.column("monotonic_us").to_pylist()
         steps = {b - a for a, b in zip(mono, mono[1:])}
-        assert steps == {int(metadata["sample_interval_ms"]) * 1000}, steps
+        assert steps == {acquisition["sample_interval_ms"] * 1000}, steps
         assert len(mono) == 120
 
         connection = duckdb.connect()
@@ -89,13 +81,13 @@ def main() -> None:
             "count(*) - count(soil_moisture_pct) FROM read_parquet(?)",
             [str(output)]).fetchone()
         assert rows == 120 and step == 119 * 30_000_000 and nulls == 24
-        duck_meta = dict(connection.execute(
-            "SELECT decode(key), decode(value) FROM parquet_kv_metadata(?)",
-            [str(output)]).fetchall())
-        assert duck_meta["sample_interval_ms"] == "30000"
-    print("Default footer bytes pinned, OS- BLE name and os- mDNS host. "
+        keys, interval = connection.execute(
+            "SELECT list(decode(key)), any_value(decode(value)::JSON->>'$.acquisition.sample_interval_ms') "
+            "FROM parquet_kv_metadata(?)", [str(output)]).fetchone()
+        assert keys == ["opensensor"] and interval == "30000", (keys, interval)
+    print("Default opensensor footer JSON pinned, OS- BLE name and os- mDNS host. "
           "SL- soil fixture at 30 s wrote 90 + 30 rows with matching "
-          "sample_interval_ms, read by PyArrow and DuckDB")
+          "sample_interval_ms in one valid opensensor key, read by PyArrow and DuckDB")
 
 
 if __name__ == "__main__":

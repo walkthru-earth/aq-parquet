@@ -23,12 +23,14 @@ from unittest.mock import patch
 
 import duckdb
 import board_template
+import footer_contract
 import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
 import parquet_device
 from host_cxx import CXX_STD
 
+FIRMWARE = Path(__file__).resolve().parents[1] / "firmware/esp-idf-cores3/bringup"
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -49,18 +51,14 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
         require(field.type == expected and field.nullable, f"schema: {field.name}")
         require(field.metadata[b"PARQUET:field_id"] == str(definition["field_id"]).encode(),
                 f"Iceberg field_id: {field.name}")
-    metadata = parquet.metadata.metadata
-    require(metadata[b"country_iso3166_1_alpha2"] == (b"US" if located else b"unknown"), "declared country")
-    require(metadata[b"country_source"] == b"owner-declared", "country provenance")
-    require(metadata[b"location_source"] == b"owner-provisioned-h3-grid-center", "center provenance")
-    require(metadata[b"h3_cell_id"] == (b"85283473fffffff" if located else b"unknown"), "published cell metadata")
-    require(metadata[b"h3_resolution"] == (b"5" if located else b"unknown") and
-            metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
-    require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
-    require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v5", "schema version")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v6",
+    # The one `opensensor` key, valid against the pinned footer.json (#88).
+    dict_sha, desc = footer_contract.board_digests(FIRMWARE)
+    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc)
+    footer_contract.check_document(footer, dictionary, "m5stack-cores3", compressed=compressed,
+                                   rotation=900, row_groups=1)
+    require(dictionary["schema"] == "cores3-telemetry-v5", "schema version")
+    require(dictionary["dictionary"] == "cores3-telemetry-v6",
             "dictionary version tracks the field table bytes, now with LIVE keys")
-    require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
             "firmware identity in created_by")
     group = parquet.metadata.row_group(0)
@@ -82,9 +80,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     # Cast the annotated instants back to their INT64 microseconds for value checks.
     table = pa.table({name: column.cast(pa.int64()) if name in utc_fields else column
                       for name, column in zip(table.column_names, table.columns)})
-    require(metadata[b"deployment_id"] == metadata[b"calibration_id"] == b"unknown",
-            "no fabricated deployment/calibration")
-    config = json.loads(metadata[b"acquisition_config"])
+    config = json.loads(footer["acquisition"]["config"])
     require(config["sample_interval_ms"] == 10000 and config["pms_stale_after_ms"] == 5000,
             "configuration contract")
     for i in range(len(fields)):
@@ -177,7 +173,8 @@ def main() -> None:
         require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= live_key_fixture.MAX_LIVE_DECIMALS
                     for f in fields),
                 f"decimals is 0 for integer fields and at most {live_key_fixture.MAX_LIVE_DECIMALS} for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.19", "firmware identity")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.20", "firmware identity")
+        footer_contract.check_board(executable, firmware, dictionary, "m5stack-cores3")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==

@@ -155,6 +155,8 @@ Config pages (`ble-sync-protocol.md:289-337`). Page 0 is sensor `{vendor, model,
 
 ### Footer KV entries
 
+Superseded by #88. Files now carry one `opensensor` key with versioned JSON, see `mobile-migration.md`. The text below describes the old layout.
+
 Limits are in `firmware/common/logger/src/aq_logger.cpp:93-102`. There are 22 fixed entries, 7 location entries, 3 anchor entries and up to 32 board entries, against `kFooterMetadata = 64`. The worst case uses every slot. (Corrected, see items 2 and 3 above.) `parquet_writer.cpp:598-599` caps keys at 255 bytes and values at 4096 bytes. `created_by` is capped at 128 bytes (line 595).
 
 Fixed entries (`aq_logger.cpp:851-878`) in order.

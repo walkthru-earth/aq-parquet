@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/footer.json#",
+  "title": "OpenSensor Parquet footer",
+  "description": "Value of the single `opensensor` key in a Parquet file's key-value metadata, as compact UTF-8 JSON. Modelled on the GeoParquet `geo` key. Not a STAC document.",
+  "type": "object",
+  "required": ["version", "station", "firmware", "dictionary", "template", "acquisition", "file"],
+  "properties": {
+    "version": {
+      "const": "0.1.0"
+    },
+    "station": {
+      "type": "object",
+      "required": ["id", "device_id", "board"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "device_id": { "type": "string", "minLength": 1 },
+        "board": { "type": "string", "minLength": 1 },
+        "deployment_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "firmware": {
+      "type": "object",
+      "required": ["version", "schema", "boot_id"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "schema": { "type": "string", "minLength": 1 },
+        "boot_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dictionary": {
+      "type": "object",
+      "required": ["sha256"],
+      "properties": {
+        "sha256": { "$ref": "#/definitions/sha256" },
+        "version": { "type": "string" },
+        "uri": { "type": "string", "format": "uri" }
+      }
+    },
+    "template": {
+      "type": "object",
+      "required": ["href", "sha256"],
+      "properties": {
+        "href": { "type": "string", "format": "uri" },
+        "sha256": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "acquisition": {
+      "type": "object",
+      "required": ["sample_interval_ms", "time_semantics"],
+      "properties": {
+        "sample_interval_ms": { "type": "integer", "minimum": 1 },
+        "time_semantics": { "type": "string", "minLength": 1 },
+        "config_id": { "type": "string" },
+        "config": { "type": "string" },
+        "calibration_id": { "type": "string" }
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["rotation_interval_s", "row_groups", "row_group_rows_max", "compression", "purpose"],
+      "properties": {
+        "rotation_interval_s": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "row_groups": { "type": "integer", "minimum": 1 },
+        "row_group_rows_max": { "type": "integer", "minimum": 1 },
+        "compression": { "type": "string", "minLength": 1 },
+        "purpose": { "enum": ["telemetry", "codec-comparison-duplicate-rows"] }
+      }
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "version": "0.1.0",
+  "station": {
+    "id": "station-3f2b9c1e",
+    "device_id": "441bf6e26b40",
+    "board": "m5stack-cores3",
+    "deployment_id": "unknown"
+  },
+  "firmware": {
+    "version": "6.14.0",
+    "schema": "cores3-telemetry-v5",
+    "boot_id": "0f3a"
+  },
+  "dictionary": {
+    "sha256": "e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b",
+    "version": "cores3-telemetry-v6"
+  },
+  "template": {
+    "href": "https://raw.githubusercontent.com/walkthru-earth/stac-opensensor/main/templates/cores3-telemetry-v5.json",
+    "sha256": "fb4230b3eb6e8eac881c719f900c8bd9c7e4bbd6ad247520a27368ec9d9a7218"
+  },
+  "acquisition": {
+    "sample_interval_ms": 10000,
+    "time_semantics": "sample instant, UTC",
+    "config_id": "default",
+    "calibration_id": "unknown"
+  },
+  "file": {
+    "rotation_interval_s": 3600,
+    "row_groups": 4,
+    "row_group_rows_max": 90,
+    "compression": "zstd",
+    "purpose": "telemetry"
+  }
+}

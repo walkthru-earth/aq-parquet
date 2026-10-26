@@ -104,6 +104,8 @@ def survey(path: Path) -> dict:
     footer = struct.unpack("<I", data[-8:-4])[0]
     metadata = pq.ParquetFile(path).metadata
     kv = {k.decode(): v.decode() for k, v in (metadata.metadata or {}).items()}
+    # The one `opensensor` footer key (#88).
+    opensensor = json.loads(kv.get("opensensor", "{}"))
     pages, encodings, codecs = set(), set(), set()
     column_index, offset_index, bloom = set(), set(), set()
     exact = True
@@ -141,9 +143,9 @@ def survey(path: Path) -> dict:
         "column_index": sorted(column_index),
         "offset_index": sorted(offset_index),
         "bloom": sorted(bloom),
-        "firmware": kv.get("firmware"),
-        "schema_version": kv.get("schema_version"),
-        "rotation": kv.get("rotation_interval_s"),
+        "firmware": opensensor.get("firmware", {}).get("version"),
+        "schema": opensensor.get("firmware", {}).get("schema"),
+        "rotation": opensensor.get("file", {}).get("rotation_interval_s"),
         "created_by": metadata.created_by,
     }
 

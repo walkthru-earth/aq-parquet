@@ -93,17 +93,6 @@ constexpr std::size_t kMaxRows = cadence::kMaxBatchRows;
 std::int64_t sample_us = cadence::period_us(cadence::kDefaultSampleIntervalMs);
 const char *kDirectory = "/sd/output";
 const char *kBenchDirectory = "/sd/bench";
-// Footer key/value budget. finalize_file fills a fixed array in this order.
-constexpr std::size_t kFixedMetadata = footer::kFixedEntries;
-constexpr std::size_t kLocationMetadata =
-    std::tuple_size<decltype(LocationMetadata::entries)>::value;
-constexpr std::size_t kAnchorMetadata = 3;
-constexpr std::size_t kMaxConfigMetadata = 32;
-constexpr std::size_t kFooterMetadata = 64;
-static_assert(kFixedMetadata + kLocationMetadata + kAnchorMetadata +
-                      kMaxConfigMetadata <=
-                  kFooterMetadata,
-              "footer metadata array is too small");
 // One Parquet file in progress: created as `.partial`, grown by one row group
 // per completed RAM batch (each fsynced), finalized with the footer at the
 // window boundary, at kMaxRowGroups, or on an explicit flush. Rows already in
@@ -148,6 +137,9 @@ struct WriterState {
   std::uint8_t crc_scratch[kCrcScratchBytes]{};
   char read_buffers[ossync::ArchiveSession::kReadHandles]
                    [ossync::ArchiveSession::kReadBufferBytes]{};
+  // The `opensensor` footer JSON (#88), built by finalize_file. Worker only,
+  // here so it costs no worker stack.
+  char footer_json[footer::kMaxJsonBytes + 1]{};
 };
 // Telemetry stdio staging stays in internal RAM, distinct from the PSRAM row
 // buffer. codec-test staging is PSRAM, allocated only while the test runs.
@@ -832,50 +824,20 @@ bool append_group(OutputFile &target, std::size_t count) {
 // Writes the footer, syncs, closes, checks the structure and renames to
 // `<stem>-<last>-<attempt>.parquet`.
 bool finalize_file(OutputFile &target) {
-  char anchor_mono_text[24], anchor_utc_text[24], anchor_source_text[12];
-  std::int64_t footer_anchor_mono, footer_anchor_utc;
-  std::int32_t footer_anchor_source;
-  portENTER_CRITICAL(&clock_mutex);
-  footer_anchor_mono = anchor_mono_us;
-  footer_anchor_utc = anchor_utc_ns;
-  footer_anchor_source = clock_source;
-  portEXIT_CRITICAL(&clock_mutex);
-  std::snprintf(anchor_mono_text, sizeof(anchor_mono_text), "%lld",
-                static_cast<long long>(footer_anchor_mono));
-  std::snprintf(anchor_utc_text, sizeof(anchor_utc_text), "%lld",
-                static_cast<long long>(footer_anchor_utc));
-  std::snprintf(anchor_source_text, sizeof(anchor_source_text), "%ld",
-                static_cast<long>(footer_anchor_source));
-  const LocationMetadata location_metadata(target.location);
-  footer::Text footer_text;
-  KeyValue metadata[kFooterMetadata]{};
-  footer::fill(
-      std::span<KeyValue, kFixedMetadata>(metadata, kFixedMetadata), config,
+  const auto json = footer::build(
+      writer_state->footer_json, config,
       {.device = device_text, .station = station_text, .boot = boot_text},
       {.rotation_seconds = rotation_seconds.load(),
        .row_groups = target.writer.row_groups(),
        .compression = codec_name(target.codec),
-       .benchmark = target.benchmark},
-      footer_text);
-  std::size_t metadata_count = kFixedMetadata;
-  static_assert(sizeof(metadata) / sizeof(metadata[0]) == kFooterMetadata);
-  for (const auto &entry : location_metadata.entries)
-    metadata[metadata_count++] = entry;
-  // Evidence belongs to this file's boot, regardless of the rows' original
-  // clock status. Hosts may derive corrected partitions without editing raw
-  // UTC or treating a later reboot's clock as an anchor for this boot.
-  if (footer_anchor_source != kClockNone) {
-    metadata[metadata_count++] = {"reconciliation_anchor_mono_us",
-                                  anchor_mono_text};
-    metadata[metadata_count++] = {"reconciliation_anchor_utc_ns",
-                                  anchor_utc_text};
-    metadata[metadata_count++] = {"reconciliation_anchor_source",
-                                  anchor_source_text};
+       .benchmark = target.benchmark});
+  if (!json) {
+    close_failed(target, "footer", footer::error_name(json.error()));
+    return false;
   }
-  for (std::size_t i = 0; i < config.metadata_count; ++i)
-    metadata[metadata_count++] = config.metadata[i];
+  const KeyValue metadata[] = {{footer::kKey, writer_state->footer_json}};
   const auto started = esp_timer_get_time();
-  const auto result = target.writer.finish(metadata, metadata_count,
+  const auto result = target.writer.finish(metadata, std::size(metadata),
                                            config.firmware, config.created_by);
   target.writer_us += esp_timer_get_time() - started;
   if (!result.ok) {
@@ -2937,8 +2899,6 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   if (writer_state || accepting || !configuration.fields ||
       configuration.column_count == 0 ||
       configuration.column_count > telemetry::kMaxColumns ||
-      configuration.metadata_count > kMaxConfigMetadata ||
-      (configuration.metadata_count && !configuration.metadata) ||
       bool(board_hooks.lock_bus) != bool(board_hooks.unlock_bus) ||
       ((sd_mounted || board_hooks.storage_remount) &&
        (!board_hooks.storage_total_bytes || !board_hooks.storage_used_bytes ||
@@ -2963,8 +2923,15 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !ble::wire::valid_name_prefix(config.ble_name_prefix) ||
       !config.descriptor || config.descriptor_bytes == 0 ||
       std::strlen(config.descriptor) != config.descriptor_bytes ||
-      !sha256_hex(config.descriptor_sha256))
+      !sha256_hex(config.descriptor_sha256) || !config.template_href ||
+      !config.template_href[0])
     return false;
+  if (const auto footer_config = footer::check_config(config); !footer_config) {
+    oslog.printf("PARQUET ERROR operation=footer-config reason=%s "
+                 "logging=false\n",
+                 footer::error_name(footer_config.error()));
+    return false;
+  }
   control_replies.descriptor = {config.descriptor, config.descriptor_bytes};
   sample_us = cadence::period_us(config.sample_interval_ms);
   for (std::size_t i = 0; i < field_count; ++i) {

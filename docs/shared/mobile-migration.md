@@ -9,6 +9,136 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. One versioned opensensor footer key (fix/88-opensensor-footer, issue #88)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that reads the new footer. An app that reads the old flat keys finds none of
+them in a new file.
+
+**What changed.** Every telemetry Parquet file now has exactly one key value
+entry, `opensensor`. Its value is compact UTF-8 JSON that follows
+stac-opensensor `json-schema/footer.json` v0.1.0 (commit a56dfb0, pinned in
+`tools/stac_opensensor/`). The members come in the schema's property order,
+and every number is a JSON number, not text. Every old flat key is gone, with
+no `opensensor:template_*` keys either. `file.rotation_interval_s` is at most
+3600. The firmware identity moves to `idf-cores3-parquet-v6.20` and
+`idf-waveshare-parquet-v2.14`. Both `dict` and both `desc` digests are
+unchanged, and so are the columns, the LIVE keys and the wire.
+
+**Why.** The owner's stac-opensensor footer schema replaces about 40 flat text
+keys with one versioned document that a host validates in one step and that
+links each file to its board template by URL and digest.
+
+**What the app must do.** Read `opensensor`, parse it as JSON, check
+`version` is `0.1.0`, and take values by path from the table below. Use
+`template.href` and `template.sha256` to fetch and verify the board template,
+which carries the column units and code meanings. Mobile #205 reads only this
+key. It finds the template by `template.sha256` first, then by
+`dictionary.sha256`, and moves from `station_id` and `purpose` to `station.id`
+and `file.purpose`. This PR and mobile #205 merge as one pair. A file without
+the key is an old archive, and the owner wipes those after the reflash.
+
+| Old key | New JSON path |
+| --- | --- |
+| `schema_version` | `firmware.schema` |
+| `device_id` | `station.device_id` |
+| `station_id` | `station.id` |
+| `boot_id` | `firmware.boot_id` |
+| `firmware` | `firmware.version` |
+| `dictionary_version` | `dictionary.version` |
+| `dictionary_uri` | `dictionary.uri` |
+| `dictionary_sha256` | `dictionary.sha256` (the `dict` digest) |
+| `acquisition_config_id` | `acquisition.config_id` |
+| `acquisition_config` | `acquisition.config` (JSON text, as before) |
+| `deployment_id` | `station.deployment_id` |
+| `calibration_id` | `acquisition.calibration_id` |
+| `time_semantics` | `acquisition.time_semantics` |
+| `rotation_interval_s` | `file.rotation_interval_s` (number) |
+| `row_groups` | `file.row_groups` (number) |
+| `row_group_rows_max` | `file.row_group_rows_max` (number) |
+| `compression` | `file.compression` |
+| `purpose` | `file.purpose` |
+| `board` | `station.board` |
+| `sample_interval_ms` | `acquisition.sample_interval_ms` (number) |
+| none | `version` (`0.1.0`) |
+| none | `template.href` (raw URL of the board template for this `dict` at a pinned commit, #89) |
+| none | `template.sha256` (the `desc` digest) |
+
+**Dropped, no slot in the spec.** Each key below is dropped with no alias and
+no dual write. `footer.json` v0.1.0 has no member for it, and the reason
+column says where a reader finds the information now.
+
+| Old key | New JSON path | Reason |
+| --- | --- | --- |
+| `h3_cell_id` | dropped | Already in every row, column `h3_cell_id` |
+| `h3_resolution` | dropped | Already in every row, column `h3_resolution` |
+| `h3_center_units` | dropped | Rows carry `h3_center_lat_e7` and `h3_center_lon_e7`, units are in the board template |
+| `h3_max_resolution` | dropped | Lost from the file, rows keep the actual resolution |
+| `location_source` | dropped | Lost from the file, the location source is fixed by firmware |
+| `country_iso3166_1_alpha2` | dropped | Lost from the file, no country slot in the spec |
+| `country_source` | dropped | Lost from the file, no country slot in the spec |
+| `reconciliation_anchor_mono_us` | dropped | Rows carry `clock_anchor_mono_us`. The old footer anchor also covered earlier rows in the same file. A host takes it from a later row with the same `boot_id`, except when the file was that boot's last |
+| `reconciliation_anchor_utc_ns` | dropped | Rows carry `clock_anchor_utc_us`. The old footer anchor also covered earlier rows in the same file. A host takes it from a later row with the same `boot_id`, except when the file was that boot's last |
+| `reconciliation_anchor_source` | dropped | Rows carry `clock_status`. The old footer anchor also covered earlier rows in the same file. A host takes it from a later row with the same `boot_id`, except when the file was that boot's last |
+| `clock` | dropped | `clock_status` classes in the board template |
+| `durability` | dropped | Lost, it was a fixed text note |
+| `pms_status` | dropped | `pms_status` classes in the board template |
+| `light_status` (CoreS3) | dropped | `light_status` classes in the board template |
+| `proximity_status` (CoreS3) | dropped | `proximity_status` classes in the board template |
+| `gauge_status` (Waveshare) | dropped | `gauge_status` classes in the board template |
+| `battery_health_state` (Waveshare) | dropped | `battery_health_state` classes in the board template |
+| `pm25_batch_candidate_status` (Waveshare) | dropped | `pm25_batch_candidate_status` classes in the board template |
+| `battery_presence` (Waveshare) | dropped | Still in `acquisition.config` as `battery_presence` |
+| `sensor_model` (Waveshare) | dropped | Lost as a key, `acquisition.config` keeps `pms_model` |
+| `magnetic_units` (CoreS3) | dropped | Lost, it was a board text note |
+| `unavailable` | dropped | Lost, it was a board text note |
+| `gauge_status_flags` (Waveshare) | dropped | Lost, it was a board text note on the bit layout |
+| `battery_minutes_to_empty` (Waveshare) | dropped | Lost, it was a board text note |
+| `pm25_batch_candidate_formula` (Waveshare) | dropped | Lost, it was a board text note |
+| `pm25_batch_candidate_validation` (Waveshare) | dropped | Lost, it was a board text note |
+| `hardware_revision` (Waveshare) | dropped | Lost as a key, `station.board` names the revision |
+| `storage_bus` (Waveshare) | dropped | Lost, it was a board text note |
+
+**Gap, rebuilt partial files.** `tools/rebuild_partial.py` writes no
+`opensensor` key. Its source is a `.partial` file cut before the footer, so
+there is no `opensensor` footer to carry over. Every row holds `device_id`,
+`boot_id_hi` and `boot_id_lo`, but the partial bytes do not hold
+`station.id`, `acquisition.sample_interval_ms` or `acquisition.time_semantics`,
+and `file.purpose` has no value for a rebuilt file. The tool keeps its host side
+`rebuild_*` provenance keys, so mobile #205 sees a rebuilt file as an old
+archive with no `opensensor` key. A source that still has its footer is copied
+byte for byte and keeps its `opensensor` key. Closing this gap needs a spec
+change, for example a rebuilt `file.purpose` value, and is raised with the
+owner.
+
+**Example footers.** The ids are placeholders. CoreS3 writes 1663 bytes and
+Waveshare 2287 for a one hour LZ4 file with four row groups.
+
+```json
+{"version":"0.1.0","station":{"id":"00000000-0000-4000-8000-000000000000","device_id":"0123456789ab","board":"CoreS3 ESP32-S3 rev0.2","deployment_id":"unknown"},"firmware":{"version":"idf-cores3-parquet-v6.20","schema":"cores3-telemetry-v5","boot_id":"0123456789abcdef0123456789abcdef"},"dictionary":{"sha256":"4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94","version":"cores3-telemetry-v6","uri":"https://raw.githubusercontent.com/walkthru-earth/aq-parquet/ada95144af0cf5191e95a35d0f80768fe58ac73b/firmware/esp-idf-cores3/bringup/telemetry_fields.inc"},"template":{"href":"https://raw.githubusercontent.com/walkthru-earth/aq-parquet/1f37edf350ae5efab0caa59ab4ceedd07d0028e5/docs/shared/templates/m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json","sha256":"bb0ab0a3eaafb05e45bbbf5216194ab808110df92e6ee277c8ef2af6f2f314b0"},"acquisition":{"sample_interval_ms":10000,"time_semantics":"event_time_utc_us estimates snapshot start; collection_completed_mono_us bounds sequential reads; pms_received_mono_us is last checksum-valid UART frame receipt, not sensor phenomenon time; result/ingestion time and clock uncertainty unknown; no retroactive UTC assignment","config_id":"cores3-acquisition-v3","config":"{\"sample_interval_ms\":10000,\"pms_warmup_us\":30000000,\"pms_stale_after_ms\":5000,\"pms_uart_rx\":18,\"pms_uart_tx\":17,\"pms_baud\":9600,\"m5unified\":\"0.2.26\",\"esp_idf\":\"6.1\",\"ltr553\":\"raw-v1\",\"snapshot\":\"latest-available-not-average\"}","calibration_id":"unknown"},"file":{"rotation_interval_s":3600,"row_groups":4,"row_group_rows_max":90,"compression":"LZ4_RAW","purpose":"telemetry"}}
+```
+
+```json
+{"version":"0.1.0","station":{"id":"00000000-0000-4000-8000-000000000000","device_id":"0123456789ab","board":"Waveshare ESP32-S3-SIM7670G-4G V2.0 ESP32-S3 rev0.2","deployment_id":"unknown"},"firmware":{"version":"idf-waveshare-parquet-v2.14","schema":"waveshare-sim7670g-telemetry-v5","boot_id":"0123456789abcdef0123456789abcdef"},"dictionary":{"sha256":"6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb","version":"waveshare-sim7670g-telemetry-v6","uri":"https://raw.githubusercontent.com/walkthru-earth/aq-parquet/ada95144af0cf5191e95a35d0f80768fe58ac73b/firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc"},"template":{"href":"https://raw.githubusercontent.com/walkthru-earth/aq-parquet/1f37edf350ae5efab0caa59ab4ceedd07d0028e5/docs/shared/templates/waveshare-esp32-s3-sim7670g/6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json","sha256":"7f2bbf5314ce8d6f4d0e5ee518991a9c3d43ab7b66d973e8a5921e811059872a"},"acquisition":{"sample_interval_ms":10000,"time_semantics":"event_time_utc_us estimates snapshot start; collection_completed_mono_us bounds sequential reads; pms_received_mono_us is last checksum-valid UART frame receipt, not sensor phenomenon time; result/ingestion time and clock uncertainty unknown; no RTC anchor and no retroactive UTC assignment","config_id":"waveshare-sim7670g-acquisition-v3","config":"{\"sample_interval_ms\":10000,\"pms_warmup_us\":30000000,\"pms_stale_after_ms\":5000,\"pms_uart_rx\":1,\"pms_uart_tx\":2,\"pms_baud\":9600,\"pms_model\":\"PMS5003T\",\"battery_presence\":\"explicit-owner-configuration\",\"battery_percent\":\"integer-percent-truncated-capped-at-100\",\"snapshot\":\"latest-available-not-average\",\"sensor_identity\":\"owner-provisioned-nvs-and-per-row\",\"batch_candidate\":\"off-by-default-not-cairo-validated\",\"battery_health\":{\"source\":\"max17048-vcell\",\"external_power_mv\":4240,\"external_power_hysteresis_mv\":20,\"low_enter_mv\":3500,\"critical_enter_mv\":3350,\"hysteresis_mv\":75,\"debounce_samples\":3,\"settling_minutes\":60,\"calibration\":\"uncalibrated-defaults\",\"critical_action\":\"finalize-open-file-once\"}}","calibration_id":"unknown"},"file":{"rotation_interval_s":3600,"row_groups":4,"row_group_rows_max":90,"compression":"LZ4_RAW","purpose":"telemetry"}}
+```
+
+**Query.** DuckDB reads one value per file like this.
+
+```sql
+SELECT file_name,
+       decode(value)::JSON ->> '$.firmware.version' AS firmware,
+       (decode(value)::JSON ->> '$.acquisition.sample_interval_ms')::INTEGER AS period_ms
+FROM parquet_kv_metadata('station=*/**/*.parquet')
+WHERE decode(key) = 'opensensor';
+```
+
+**Proof.** `telemetry-contract-test` and `waveshare-contract-test` build the
+footer through `footer::build`, validate it against the pinned `footer.json`
+with format checks, match its key order to the example, write a real file and
+read back exactly one key. Six mutations must fail, a stray key, a number as
+text, a wrong `desc`, a missing field, rotation over 3600 and an extra
+member. `logger-footer-test` pins the exact bytes and the escaping.
+
 ## BREAKING. Dictionary and template URLs pinned to commits (fix/89-pin-uris, issue #89)
 
 **Needs app update.** Every board needs a matched reflash with the app build

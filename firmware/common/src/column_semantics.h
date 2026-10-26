@@ -341,7 +341,7 @@ constexpr bool classes_complete(std::span<const Column> rows,
   return true;
 }
 
-// A footer legend such as "0=missing,1=warming; free text". The entries
+// A status legend such as "0=missing,1=warming; free text". The entries
 // before the first ';' must equal the classes of `column`, in table order,
 // value for value and name for name.
 constexpr bool matches_legend(std::span<const Class> classes,
@@ -379,7 +379,7 @@ constexpr bool matches_legend(std::span<const Class> classes,
 }
 
 // The classes of `column` are exactly `values`, in order, and each is named
-// name_of(value). For a code with no footer legend, so the rows equal the
+// name_of(value). For a code with no status legend, so the rows equal the
 // values the board can write, such as the clock sources its enum lists.
 template <class NameOf>
 constexpr bool

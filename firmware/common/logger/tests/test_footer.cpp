@@ -1,7 +1,7 @@
 // Board neutral footer, cadence and BLE name checks. A non air quality
 // fixture board (no PMS, 30 s period, SL- prefix) writes a real Parquet file
 // through the shared writer, and tools/test_logger_footer.py reads it with
-// PyArrow and DuckDB. The default footer bytes the phone reads are pinned.
+// PyArrow and DuckDB. The default `opensensor` footer JSON is pinned (#88).
 #include "aq_logger_footer.h"
 #include <ble_advert.h>
 
@@ -12,6 +12,7 @@
 #include <cstring>
 #include <source_location>
 #include <span>
+#include <string_view>
 
 namespace {
 using oslogger::Field;
@@ -43,6 +44,11 @@ constexpr Field kRuntimeFields[] = {
      "urn:epoch"},
 };
 
+constexpr const char *kDictSha =
+    "0000000000000000000000000000000000000000000000000000000000000001";
+constexpr const char *kDescSha =
+    "0000000000000000000000000000000000000000000000000000000000000002";
+
 oslogger::Config base_config() {
   return {
       .fields = kRuntimeFields,
@@ -51,76 +57,150 @@ oslogger::Config base_config() {
       .schema_name = "schema",
       .firmware = "firmware",
       .dictionary_version = "dictionary",
-      .dictionary_uri = "uri",
-      .dictionary_sha256 = "sha",
+      .dictionary_uri = "https://example.org/dictionary.json",
+      .dictionary_sha256 = kDictSha,
       .configuration_id = "config-id",
       .configuration = "{}",
       .time_semantics = "time",
       .board = "board",
+      .descriptor_sha256 = kDescSha,
+      .template_href = "https://example.org/template.json",
   };
 }
 
-// Boards that set none of the new fields keep the exact keys, order and
-// default values (10000, 90, unknown) that the phone reads per file.
-void released_defaults() {
-  const auto config = base_config();
+constexpr oslogger::footer::Ids kIds{
+    .device = "d", .station = "s", .boot = "b"};
+constexpr oslogger::footer::File kFile{.rotation_seconds = 900,
+                                       .row_groups = 1,
+                                       .compression = "LZ4_RAW",
+                                       .benchmark = false};
+
+// The `opensensor` JSON for a board that sets no optional field keeps the
+// defaults (10000, 90, unknown) in schema order, byte for byte (#88).
+void footer_bytes() {
+  auto config = base_config();
   check(config.sample_interval_ms == 10000);
   check(config.ble_name_prefix == nullptr); // required board constant
   // The board template is required too, begin() rejects a missing one.
-  check(config.descriptor == nullptr && config.descriptor_bytes == 0 &&
-        config.descriptor_sha256 == nullptr);
-  std::array<KeyValue, footer::kFixedEntries> out{};
-  footer::Text text;
-  footer::fill(out, config, {.device = "d", .station = "s", .boot = "b"},
-               {.rotation_seconds = 900,
-                .row_groups = 1,
-                .compression = "LZ4_RAW",
-                .benchmark = false},
-               text);
-  constexpr std::array<std::array<const char *, 2>, footer::kFixedEntries>
-      kFrozen = {{
-          {"schema_version", "schema"},
-          {"device_id", "d"},
-          {"station_id", "s"},
-          {"boot_id", "b"},
-          {"firmware", "firmware"},
-          {"dictionary_version", "dictionary"},
-          {"dictionary_uri", "uri"},
-          {"dictionary_sha256", "sha"},
-          {"acquisition_config_id", "config-id"},
-          {"acquisition_config", "{}"},
-          {"deployment_id", "unknown"},
-          {"calibration_id", "unknown"},
-          {"time_semantics", "time"},
-          {"rotation_interval_s", "900"},
-          {"row_groups", "1"},
-          {"row_group_rows_max", "90"},
-          {"compression", "LZ4_RAW"},
-          {"purpose", "telemetry"},
-          {"board", "board"},
-          {"sample_interval_ms", "10000"},
-          {"clock",
-           "0=unsynchronized/null,1=host estimate,2=restored from RTC "
-           "(earlier external estimate, whole seconds),3=network SNTP; "
-           "partitions UTC"},
-          {"durability",
-           "RAM batch; unfinished rows lost on reset; each row group "
-           "fsynced; footer at finalization; completed files retained"},
-      }};
-  for (std::size_t i = 0; i < kFrozen.size(); ++i) {
-    same(out[i].key, kFrozen[i][0]);
-    same(out[i].value, kFrozen[i][1]);
+  check(config.descriptor == nullptr && config.descriptor_bytes == 0);
+  static char json[footer::kMaxJsonBytes + 1];
+  const auto length = footer::build(json, config, kIds, kFile);
+  check(length.has_value());
+  constexpr std::string_view kFrozen =
+      R"({"version":"0.1.0",)"
+      R"("station":{"id":"s","device_id":"d","board":"board","deployment_id":"unknown"},)"
+      R"("firmware":{"version":"firmware","schema":"schema","boot_id":"b"},)"
+      R"("dictionary":{"sha256":"0000000000000000000000000000000000000000000000000000000000000001",)"
+      R"("version":"dictionary","uri":"https://example.org/dictionary.json"},)"
+      R"("template":{"href":"https://example.org/template.json",)"
+      R"("sha256":"0000000000000000000000000000000000000000000000000000000000000002"},)"
+      R"("acquisition":{"sample_interval_ms":10000,"time_semantics":"time",)"
+      R"("config_id":"config-id","config":"{}","calibration_id":"unknown"},)"
+      R"("file":{"rotation_interval_s":900,"row_groups":1,"row_group_rows_max":90,)"
+      R"("compression":"LZ4_RAW","purpose":"telemetry"}})";
+  check(length.has_value() && *length == kFrozen.size());
+  check(std::string_view(json) == kFrozen);
+
+  // A codec comparison file at the one hour cap.
+  check(footer::build(json, config, kIds,
+                      {.rotation_seconds = footer::kMaxRotationSeconds,
+                       .row_groups = 4,
+                       .compression = "UNCOMPRESSED",
+                       .benchmark = true})
+            .has_value());
+  const std::string_view benchmark(json);
+  check(benchmark.ends_with(
+      R"("file":{"rotation_interval_s":3600,"row_groups":4,)"
+      R"("row_group_rows_max":90,"compression":"UNCOMPRESSED",)"
+      R"("purpose":"codec-comparison-duplicate-rows"}})"));
+
+  // Quotes, backslashes and control bytes are escaped, UTF-8 passes through.
+  config.board = "a\"b\\c\n\x01 \xc3\xa9";
+  check(footer::build(json, config, kIds, kFile).has_value());
+  check(std::string_view(json).find(R"("board":"a\"b\\c\n\u0001 )"
+                                    "\xc3\xa9\"") != std::string_view::npos);
+  config = base_config();
+
+  // Fails closed, never a partial footer.
+  const auto fails = [&](const oslogger::Config &bad, const footer::File &file,
+                         footer::Error error) {
+    const auto result = footer::build(json, bad, kIds, file);
+    check(!result.has_value() && result.error() == error);
+  };
+  // A bad board constant also fails check_config(), so begin() refuses to
+  // start instead of quarantining every file.
+  check(footer::check_config(config).has_value());
+  const auto config_fails = [&](const oslogger::Config &bad,
+                                footer::Error error) {
+    fails(bad, kFile, error);
+    const auto checked = footer::check_config(bad);
+    check(!checked.has_value() && checked.error() == error);
+  };
+  for (const char *oslogger::Config::*member :
+       {&oslogger::Config::board, &oslogger::Config::firmware,
+        &oslogger::Config::schema_name, &oslogger::Config::dictionary_sha256,
+        &oslogger::Config::dictionary_uri, &oslogger::Config::template_href,
+        &oslogger::Config::descriptor_sha256, &oslogger::Config::time_semantics,
+        &oslogger::Config::deployment_id}) {
+    auto bad = base_config();
+    bad.*member = "";
+    config_fails(bad, footer::Error::Missing);
+    bad.*member = nullptr;
+    config_fails(bad, footer::Error::Missing);
   }
-  footer::fill(out, config, {.device = "d", .station = "s", .boot = "b"},
-               {.rotation_seconds = 3600,
-                .row_groups = 4,
-                .compression = "UNCOMPRESSED",
-                .benchmark = true},
-               text);
-  same(out[13].value, "3600");
-  same(out[14].value, "4");
-  same(out[16].value, "UNCOMPRESSED");
-  same(out[17].value, "codec-comparison-duplicate-rows");
+  for (const char *oslogger::Config::*member :
+       {&oslogger::Config::dictionary_version,
+        &oslogger::Config::configuration_id, &oslogger::Config::configuration,
+        &oslogger::Config::calibration_id}) {
+    auto empty = base_config();
+    empty.*member = "";
+    check(footer::build(json, empty, kIds, kFile).has_value());
+    check(footer::check_config(empty).has_value());
+    empty.*member = nullptr;
+    config_fails(empty, footer::Error::Missing);
+  }
+  check(!footer::build(json, config,
+                       {.device = "d", .station = "", .boot = "b"}, kFile)
+             .has_value());
+  fails(config, {.rotation_seconds = 900, .row_groups = 1, .compression = ""},
+        footer::Error::Missing);
+  fails(config, {.rotation_seconds = 0, .row_groups = 1, .compression = "x"},
+        footer::Error::Range);
+  fails(config,
+        {.rotation_seconds = footer::kMaxRotationSeconds + 1,
+         .row_groups = 1,
+         .compression = "x"},
+        footer::Error::Range);
+  fails(config, {.rotation_seconds = 900, .row_groups = 0, .compression = "x"},
+        footer::Error::Range);
+  // Both digests must match ^[0-9a-f]{64}$.
+  for (const char *oslogger::Config::*member :
+       {&oslogger::Config::dictionary_sha256,
+        &oslogger::Config::descriptor_sha256}) {
+    for (const char *digest :
+         {"000000000000000000000000000000000000000000000000000000000000001",
+          "00000000000000000000000000000000000000000000000000000000000000001",
+          "000000000000000000000000000000000000000000000000000000000000000A",
+          "000000000000000000000000000000000000000000000000000000000000000g"}) {
+      auto bad = base_config();
+      bad.*member = digest;
+      config_fails(bad, footer::Error::Digest);
+    }
+  }
+  static_assert(footer::error_name(footer::Error::Digest) ==
+                std::string_view("footer-bad-sha256"));
+  auto zero = base_config();
+  zero.sample_interval_ms = 0;
+  config_fails(zero, footer::Error::Range);
+  // The JSON needs its length plus a NUL.
+  static char exact[kFrozen.size() + 1];
+  check(footer::build(exact, config, kIds, kFile).has_value());
+  const auto overflow = footer::build(std::span<char>(exact, kFrozen.size()),
+                                      config, kIds, kFile);
+  check(!overflow.has_value() && overflow.error() == footer::Error::Overflow);
+  static_assert(footer::error_name(footer::Error::Overflow) ==
+                std::string_view("footer-overflow"));
+
   // The old rule was rotation / 10, capped at 90 rows.
   for (const std::uint32_t rotation : {600U, 900U, 1800U, 3600U}) {
     const std::size_t old_rows = rotation / 10 < 90 ? rotation / 10 : 90;
@@ -235,9 +315,6 @@ constexpr Field kSoilFields[] = {
     {"soil_temperature_c", PhysicalType::Float, "fixture thermistor",
      "degree_celsius", "null when the probe is absent", "urn:soil-t"},
 };
-constexpr KeyValue kSoilMetadata[] = {
-    {"hardware_revision", "fixture soil board r1"},
-};
 
 struct SoilRow {
   std::int64_t sequence = 0, monotonic_us = 0, utc_us = 0;
@@ -256,8 +333,6 @@ void soil_board(const char *path) {
   config.column_count = std::size(kSoilFields);
   config.schema_name = "soil-fixture-v1";
   config.board = "fixture soil board";
-  config.metadata = kSoilMetadata;
-  config.metadata_count = std::size(kSoilMetadata);
   config.sample_interval_ms = 30000;
   config.deployment_id = "fixture-plot-7";
   config.calibration_id = "soil-cal-2026-10";
@@ -323,23 +398,20 @@ void soil_board(const char *path) {
     check(writer.row_group(count, 1).ok);
     written += count;
   }
-  constexpr std::size_t kCount = footer::kFixedEntries + 1;
-  std::array<KeyValue, kCount> metadata{};
-  footer::Text text;
-  footer::fill(std::span<KeyValue, footer::kFixedEntries>(
-                   metadata.data(), footer::kFixedEntries),
-               config,
-               {.device = "0123456789ab",
-                .station = "fixture-station",
-                .boot = "0000beef"},
-               {.rotation_seconds = kRotation,
-                .row_groups = writer.row_groups(),
-                .compression = "UNCOMPRESSED",
-                .benchmark = false},
-               text);
-  metadata[footer::kFixedEntries] = config.metadata[0];
+  // The one footer key, as oslogger::finalize_file writes it.
+  static char json[footer::kMaxJsonBytes + 1];
+  check(footer::build(json, config,
+                      {.device = "0123456789ab",
+                       .station = "00000000-0000-4000-8000-000000000000",
+                       .boot = "0000beef"},
+                      {.rotation_seconds = kRotation,
+                       .row_groups = writer.row_groups(),
+                       .compression = "UNCOMPRESSED",
+                       .benchmark = false})
+            .has_value());
+  const KeyValue metadata[] = {{footer::kKey, json}};
   check(writer
-            .finish(metadata.data(), metadata.size(), config.firmware,
+            .finish(metadata, std::size(metadata), config.firmware,
                     "fixture-soil-board")
             .ok);
   check(std::fclose(file) == 0);
@@ -353,7 +425,7 @@ void soil_board(const char *path) {
 
 int main(int argc, char **argv) {
   check(argc == 2);
-  released_defaults();
+  footer_bytes();
   cadence_bounds();
   cadence_deadline();
   names();

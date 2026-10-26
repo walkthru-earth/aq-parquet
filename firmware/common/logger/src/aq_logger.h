@@ -52,8 +52,6 @@ struct Config {
   const char *legacy_directory = nullptr;
   // codec-test copies live here, outside the listed and synced archive.
   const char *benchmark_directory = "/sd/bench";
-  const telemetry::KeyValue *metadata = nullptr;
-  std::size_t metadata_count = 0;
   // Sync service tuning; nullptr keeps the shared defaults.
   const ossync::ServiceConfig *sync = nullptr;
   // Storage worker task. Its stack stays in internal RAM: the worker commits
@@ -61,12 +59,12 @@ struct Config {
   // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
   unsigned worker_priority = 3;
   std::size_t worker_stack_bytes = 24576;
-  // Sample period, also written as footer sample_interval_ms. It must pass
-  // cadence::valid_sample_interval(). Row groups hold the rows of one
-  // rotation window, at most cadence::kMaxBatchRows.
+  // Sample period, also written as footer acquisition.sample_interval_ms. It
+  // must pass cadence::valid_sample_interval(). Row groups hold the rows of
+  // one rotation window, at most cadence::kMaxBatchRows.
   std::uint32_t sample_interval_ms = cadence::kDefaultSampleIntervalMs;
-  // Footer deployment_id and calibration_id. Non empty text, "unknown" until
-  // a board or deployment knows better.
+  // Footer station.deployment_id and acquisition.calibration_id. Non empty
+  // text, "unknown" until a board or deployment knows better.
   const char *deployment_id = "unknown";
   const char *calibration_id = "unknown";
   // Required board constant for ble::Identity::name_prefix. The mDNS host is
@@ -78,6 +76,9 @@ struct Config {
   const char *descriptor = nullptr;
   std::size_t descriptor_bytes = 0;
   const char *descriptor_sha256 = nullptr;
+  // Required footer template.href (#88), where the template whose SHA-256 is
+  // descriptor_sha256 is published. One board constant, kTemplateHref.
+  const char *template_href = nullptr;
 };
 // Shared default for each board's sampling and UI task: above the idle
 // housekeeping, below the storage worker (3), the LAN task (4) and the BLE
