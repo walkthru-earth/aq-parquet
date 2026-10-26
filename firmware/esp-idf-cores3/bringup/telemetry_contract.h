@@ -264,6 +264,22 @@ constexpr const char *kTemplateTitle =
     "and Lite-On LTR-553ALS-WA";
 static constexpr std::string_view kTemplateKeywords[] = {
     "air quality", "particulate matter", "PM2.5", "low-cost sensor"};
+// Footer template href (#88, #89). The published template of this dict at
+// the commit that last wrote it, whose bytes hash to kDescriptorSha256. It is
+// outside the template, so pinning it never moves desc. Written by
+// `pixi run pin-uris` after the template commit, checked by pinned-uris-test.
+// A PR that moves dict or desc lands with a merge commit so that commit stays
+// on main. Every other PR squashes.
+constexpr const char *kTemplateHref =
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "1f37edf350ae5efab0caa59ab4ceedd07d0028e5/"
+    "docs/shared/templates/m5stack-cores3/"
+    "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json";
+static_assert(opensensor::pinned::names_template(kTemplateHref,
+                                                 "m5stack-cores3",
+                                                 kDictionarySha256),
+              "kTemplateHref is the published template of this dict at a "
+              "full commit");
 
 // Inputs are a single coherent anchor snapshot taken under the clock mutex.
 // Caller provides a fresh zero-initialized row. Unknown UTC stays null.

@@ -137,6 +137,10 @@ column-semantics-test = "python tools/test_column_semantics.py --sanitize"
 board-template-check-test = "python tools/test_check_board_template.py"
 # Published board templates in docs/shared/templates, byte exact, desc named, indexed (#86).
 published-templates-test = "python tools/test_published_templates.py"
+# Pinned dictionary and template URIs, raw at a commit on main whose bytes hash to dict and desc (#89).
+pinned-uris-test = "python tools/test_pinned_uris.py"
+# Pin kDictionaryUri and kTemplateHref to the commits that last wrote their bytes (#89).
+pin-uris = "python tools/pinned_uris.py --write"
 max17048-test = "python tools/test_max17048.py --sanitize"
 battery-health-test = "python tools/test_battery_health.py --sanitize"
 coredump-report-test = "python tools/test_coredump_report.py --sanitize"

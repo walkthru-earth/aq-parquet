@@ -439,5 +439,21 @@ constexpr const char *kTemplateTitle =
 static constexpr std::string_view kTemplateKeywords[] = {
     "air quality",     "particulate matter", "PM2.5",
     "air temperature", "relative humidity",  "low-cost sensor"};
+// Footer template href (#88, #89). The published template of this dict at
+// the commit that last wrote it, whose bytes hash to kDescriptorSha256. It is
+// outside the template, so pinning it never moves desc. Written by
+// `pixi run pin-uris` after the template commit, checked by pinned-uris-test.
+// A PR that moves dict or desc lands with a merge commit so that commit stays
+// on main. Every other PR squashes.
+constexpr const char *kTemplateHref =
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "1f37edf350ae5efab0caa59ab4ceedd07d0028e5/"
+    "docs/shared/templates/waveshare-esp32-s3-sim7670g/"
+    "6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json";
+static_assert(opensensor::pinned::names_template(kTemplateHref,
+                                                 "waveshare-esp32-s3-sim7670g",
+                                                 kDictionarySha256),
+              "kTemplateHref is the published template of this dict at a "
+              "full commit");
 } // namespace contract
 } // namespace telemetry
