@@ -135,6 +135,8 @@ ltr553-test = "python tools/test_ltr553.py --sanitize"
 column-semantics-test = "python tools/test_column_semantics.py --sanitize"
 # Pre and post build desc gate of the embedded board template (#85).
 board-template-check-test = "python tools/test_check_board_template.py"
+# Published board templates in docs/shared/templates, byte exact, desc named, indexed (#86).
+published-templates-test = "python tools/test_published_templates.py"
 max17048-test = "python tools/test_max17048.py --sanitize"
 battery-health-test = "python tools/test_battery_health.py --sanitize"
 coredump-report-test = "python tools/test_coredump_report.py --sanitize"

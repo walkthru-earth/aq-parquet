@@ -49,6 +49,7 @@ tasks=(
   "waveshare-contract-test --sanitize"
   "column-semantics-test"
   "board-template-check-test"
+  "published-templates-test"
   # Sensor drivers on fake buses
   "pms-frame-test"
   "ltr553-test"

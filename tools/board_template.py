@@ -3,7 +3,8 @@
 The host fixture prints the template that tools/board_template.h builds from
 the board tables, and the bytes the firmware embeds from telemetry_template.h.
 check() fails when the checked-in headers are stale, and write() regenerates
-them. desc is the SHA-256 of the exact embedded bytes, never a re-serialized
+them. run() also writes or checks the published copy in docs/shared/templates
+(#86). desc is the SHA-256 of the exact embedded bytes, never a re-serialized
 copy. validate() runs the pinned stac-opensensor v0.1.0 schemas and the
 profile rules a schema cannot express.
 """
@@ -182,6 +183,8 @@ def run(executable: Path, firmware: Path, dictionary: dict, board_sources: list[
     """Regenerate with write_out, else check and validate. Return desc."""
     import subprocess
 
+    import published_templates
+
     # sample_interval_s is the oslogger::Config default. A board that sets its
     # own interval must pass it to the generator first.
     for sample, overrides in SAMPLE_INTERVAL_CASES:
@@ -192,11 +195,17 @@ def run(executable: Path, firmware: Path, dictionary: dict, board_sources: list[
     generated = subprocess.check_output([str(executable), "template"])
     if write_out:
         write(firmware, generated, regenerate)
+        published_templates.write()
         print(f"WROTE {firmware.name} board template, {len(generated)} bytes, rerun without --write-template",
               flush=True)
         return None
     embedded = subprocess.check_output([str(executable), "embedded"])
     desc = check(firmware, generated, embedded, dictionary["descriptor_sha256"], regenerate)
     validate(json.loads(embedded), dictionary, dictionary["uri"])
+    # The published copy (#86) is the same bytes, so it passes the same checks.
+    published = published_templates.published_path(firmware, dictionary["sha256"])
+    require(published.is_file() and published.read_bytes() == embedded,
+            f"stale {published.relative_to(published_templates.ROOT)}, run {regenerate}")
+    validate(json.loads(published.read_bytes()), dictionary, dictionary["uri"])
     print(f"PASS board template {len(embedded)} bytes, valid v0.1.0, desc {desc}", flush=True)
     return desc

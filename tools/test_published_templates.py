@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Gate and mutation tests of the published board templates (#86).
+
+The checked-in docs/shared/templates must pass tools/published_templates.py
+check(). Each check is then proved on a scratch copy of the repository files
+it reads. The targeted check must reject its mutation with its own message,
+and the full check must reject it too.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+import board_template
+import live_key_fixture
+import published_templates as gate
+
+ROOT = gate.ROOT
+
+
+def rejects(action, expected: str, mutation: str) -> None:
+    try:
+        action()
+    except AssertionError as error:
+        if expected not in str(error):
+            raise AssertionError(f"{mutation} failed for another reason, {error}") from error
+        return
+    raise AssertionError(f"{mutation} passed the gate")
+
+
+def scratch_copy(scratch: Path) -> Path:
+    copy = scratch / "repo"
+    shutil.copytree(ROOT / gate.TEMPLATES, copy / gate.TEMPLATES)
+    for board in gate.BOARDS:
+        for name in ("telemetry_template.h", "telemetry_descriptor_digest.h", "telemetry_dictionary_digest.h",
+                     "telemetry_contract.h", "telemetry_fields.inc"):
+            target = copy / board.firmware / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(ROOT / board.firmware / name, target)
+    return copy
+
+
+def mutate(scratch: Path, edit, check, expected: str, mutation: str) -> None:
+    """Apply edit to a fresh copy, then require check to reject it with expected, and the full gate to reject it."""
+    copy = scratch_copy(scratch)
+    try:
+        edit(copy)
+        rejects(lambda: check(copy), expected, mutation)
+        # The full gate stops at its first failing check, which may be an earlier one.
+        rejects(lambda: gate.check(copy), "", mutation + " (full gate)")
+    finally:
+        shutil.rmtree(copy)
+    print(f"PASS rejects {mutation}", flush=True)
+
+
+def main() -> None:
+    found = gate.check()
+    for s in found:
+        print(f"PASS {gate.TEMPLATES / s.href}, {len(s.raw)} bytes, desc {s.desc}", flush=True)
+    attributes = subprocess.run(["git", "check-attr", "text", "--", *(str(gate.TEMPLATES / s.href) for s in found),
+                                 str(gate.TEMPLATES / gate.INDEX)], cwd=ROOT, check=True, capture_output=True,
+                                text=True).stdout.splitlines()
+    gate.require(len(attributes) == len(found) + 1 and all(line.endswith(": text: unset") for line in attributes),
+                 "published templates are -text in .gitattributes")
+    print("PASS .gitattributes leaves the published bytes untouched", flush=True)
+
+    with tempfile.TemporaryDirectory(prefix="published-templates-") as temporary:
+        scratch = Path(temporary)
+        # The scratch copy itself passes, so each rejection below comes from its mutation.
+        copy = scratch_copy(scratch)
+        gate.check(copy)
+        shutil.rmtree(copy)
+        directory = gate.TEMPLATES
+        for s in found:
+            path = directory / s.href
+
+            def published(copy: Path, s=s) -> bytes:
+                return (copy / directory / s.href).read_bytes()
+
+            def flip(copy: Path, path=path) -> None:
+                raw = bytearray((copy / path).read_bytes())
+                raw[len(raw) // 2] ^= 0x01
+                (copy / path).write_bytes(bytes(raw))
+
+            mutate(scratch, flip, lambda copy, s=s: gate.check_bytes(published(copy), s),
+                   "bytes differ from kTemplateJson", f"{s.board.name} byte flip")
+            mutate(scratch, flip, lambda copy, s=s: gate.check_desc(published(copy), s),
+                   "SHA-256 is not desc", f"{s.board.name} byte flip against desc")
+            mutate(scratch, lambda copy, path=path: (copy / path).write_bytes((copy / path).read_bytes() + b"\n"),
+                   lambda copy, s=s: gate.check_no_newline(published(copy), s),
+                   "ends with a newline", f"{s.board.name} trailing newline")
+            mutate(scratch, lambda copy, path=path: (copy / path).unlink(),
+                   lambda copy, s=s: gate.check_present(copy / directory, s),
+                   "no published template for the current", f"{s.board.name} deleted template")
+
+            def stray(copy: Path, s=s) -> None:
+                (copy / directory / s.board.name / f"{'0' * 64}.json").write_bytes(s.raw)
+
+            mutate(scratch, stray, lambda copy: gate.check_no_stale(copy / directory, gate.sources(copy)),
+                   "stale files", f"{s.board.name} stray template")
+
+            def reorder(copy: Path, s=s) -> None:
+                # Swap the first two LIVE keys in the template header and both
+                # digests, so only the live_keys check can see it.
+                template = json.loads(s.raw)
+                keys = list(template["firmware"]["live_keys"].items())
+                keys[0], keys[1] = keys[1], keys[0]
+                template["firmware"]["live_keys"] = dict(keys)
+                raw = json.dumps(template, separators=(",", ":")).encode()
+                firmware = copy / s.board.firmware
+                header = firmware / "telemetry_template.h"
+                text = header.read_text()
+                gate.require(board_template.c_literal(s.raw) in text, "header literal found")
+                header.write_text(text.replace(board_template.c_literal(s.raw), board_template.c_literal(raw)))
+                desc = hashlib.sha256(raw).hexdigest()
+                digest = firmware / "telemetry_descriptor_digest.h"
+                digest.write_text(digest.read_text().replace(s.desc, desc))
+                gate.write(copy)
+
+            def live(copy: Path, s=s) -> None:
+                current = gate.source(copy, s.board)
+                gate.check_live_keys((copy / directory / current.href).read_bytes(), current,
+                                     gate.live_key_order(copy, current), live_key_fixture.load(s.board.fixture))
+
+            mutate(scratch, reorder, live, "live_keys differ from the", f"{s.board.name} reordered live_keys")
+
+            def wrong_desc(copy: Path, s=s) -> None:
+                index = copy / directory / gate.INDEX
+                index.write_text(index.read_text().replace(s.desc, s.desc[::-1]))
+
+            mutate(scratch, wrong_desc, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+                   f"{gate.INDEX} entry for {s.dict}", f"{s.board.name} wrong desc in {gate.INDEX}")
+
+        def dropped(copy: Path) -> None:
+            index = copy / directory / gate.INDEX
+            entries = json.loads(index.read_text())
+            entries["templates"].pop(found[0].dict)
+            index.write_text(json.dumps(entries))
+
+        mutate(scratch, dropped, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+               "lists exactly the current dict", f"entry missing from {gate.INDEX}")
+
+        def minified(copy: Path) -> None:
+            index = copy / directory / gate.INDEX
+            index.write_text(json.dumps(json.loads(index.read_text()), sort_keys=True))
+
+        mutate(scratch, minified, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+               "not the deterministic output", f"{gate.INDEX} reformatted")
+    print("PASS published templates are byte exact, complete, indexed, and each check rejects its mutation")
+
+
+if __name__ == "__main__":
+    main()

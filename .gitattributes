@@ -2,3 +2,6 @@
 pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff
 # The dictionary digest is the SHA-256 of these exact bytes, so keep LF on every checkout
 firmware/**/telemetry_fields.inc text eol=lf
+# Published board templates (#86). desc is the SHA-256 of these exact bytes,
+# so git never converts line endings or adds a final newline
+docs/shared/templates/**/*.json -text
