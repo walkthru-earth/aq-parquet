@@ -37,7 +37,7 @@ before. Only host files are new.
 | Gate | [`tools/plugin_contract.py`](../../../tools/plugin_contract.py), `pixi run plugin-contract`, proved by mutation in `pixi run plugin-contract-test`, part of `pixi run gate` |
 | Changes | [CHANGELOG](CHANGELOG.md) |
 
-Three details differ from the proposal text below, and the schemas win.
+Four details differ from the proposal text below, and the schemas win.
 
 - `status` names the status column only. Its codes are that column's
   `classification:classes`, so the CLASS rows and the template have one
@@ -47,6 +47,9 @@ Three details differ from the proposal text below, and the schemas win.
   `network` from the logger's four.
 - `battery_health` is a shared module under `firmware/common/sensors/modules/`,
   because the derivation lives in common code.
+- Section 11 plans one PR per step. Steps 1 to 3 landed together in #121,
+  since step 1 alone would gate examples only and step 2 alone could not
+  prove its locks against manifests.
 
 ## 1. Where the firmware stands
 
@@ -275,7 +278,10 @@ The gate enforces four rules.
 - Releases are append only. The gate also reads the base branch lock
   (`git show origin/main:<path>/shipped.lock`, or the PR base in CI) and
   requires every earlier entry to be byte identical, so only new entries may
-  be appended.
+  be appended. A lock path absent at the base is treated as new, and the gate
+  prints a notice naming it, so a moved board directory shows in the log. On
+  a push to main the base is main itself, so this check is vacuous there by
+  design. It bites on pull requests.
 
 Two existing checks already catch an inconsistent `dict` move today.
 `tools/build-idf-board.sh` lines 20 to 23 fails when the digest header and the
@@ -554,18 +560,24 @@ flowchart LR
   W --> PQ["Immutable Parquet, footer names dict and template"]
 ```
 
-## Owner decisions, 2026-10-27
+## Decisions and defaults, 2026-10-27
 
-1. Option A. Board files stay frozen and gated, never generated at build
-   time.
-2. Raise `circular_mean` and `delta` in stac-opensensor upstream, under bridge
-   question 17, with those names.
-3. Running counters stay on `point` for now. Moving them is a later, separate
-   decision, since it moves `desc` on both boards.
-4. The plugin contract stays in this repo.
-5. The schema `$id` uses GitHub Pages for this repo. The gate never fetches
-   it.
-6. Two identical sensors on one Thing are deferred. Each segment appears at
-   most once per board, and the gate enforces it.
-7. No NVS identity changes. The single sensor slot stays as it is.
-8. A board lists every module it may carry, with absent ones null.
+Items 1, 4, 7 and 8 are owner decisions dated 2026-10-27. Items 2, 3, 5 and 6
+are the proposal defaults, adopted pending owner review.
+
+1. Owner decision. Option A. Board files stay frozen and gated, never
+   generated at build time.
+2. (proposal default) Raise `circular_mean` and `delta` in stac-opensensor
+   upstream, under bridge question 17, with those names.
+3. (proposal default) Running counters stay on `point` for now. Moving them
+   is a later, separate decision, since it moves `desc` on both boards.
+4. Owner decision. The plugin contract stays in this repo.
+5. (proposal default) The schema `$id` uses GitHub Pages for this repo. The
+   gate never fetches it.
+6. (default pending owner review) Two identical sensors on one Thing are
+   deferred. Until the owner decides, each segment appears at most once per
+   board, and the gate enforces it.
+7. Owner decision. No NVS identity changes. The single sensor slot stays as
+   it is.
+8. Owner decision. A board lists every module it may carry, with absent ones
+   null.

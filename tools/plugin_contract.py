@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Callable
 
 from jsonschema import Draft7Validator, FormatChecker
@@ -380,7 +381,13 @@ def lock_segments(columns: list[Column], rows: list[str]) -> list[dict]:
 
 
 def git_base_lock(root: Path) -> BaseLock:
-    """Read <path> at origin/<PR base or main>. Fail closed when the ref is missing."""
+    """Read <path> at origin/<PR base or main>. Fail closed when the ref is missing.
+
+    On a push to main GITHUB_BASE_REF is empty, so the base is the pushed
+    commit and this compares the lock to itself. That is by design. Branch
+    protection forces a pull request, where the base check is real, and the
+    other lock rules still run on push.
+    """
     ref = os.environ.get("PLUGIN_CONTRACT_BASE") or f"origin/{os.environ.get('GITHUB_BASE_REF') or 'main'}"
 
     def load(path: Path) -> dict | None:
@@ -393,7 +400,10 @@ def git_base_lock(root: Path) -> BaseLock:
             listed = subprocess.run(["git", "ls-tree", "--name-only", ref, "--", relative], cwd=root,
                                     capture_output=True, text=True)
             require(listed.returncode == 0 and not listed.stdout.strip(), f"cannot read {relative} at {ref}")
-            return None  # the lock is new on this branch
+            # The lock is new on this branch, or its board directory moved. Say so,
+            # so a move never passes unseen.
+            print(f"NOTICE {relative} is not on {ref}, treating it as a new lock", file=sys.stderr, flush=True)
+            return None
         return json.loads(shown.stdout)
 
     return load

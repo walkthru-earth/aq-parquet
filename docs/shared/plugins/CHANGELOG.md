@@ -13,6 +13,7 @@ Newest first. Versions follow section 7 of the [README](README.md).
 - Manifests for the logger segments, six shared sensor modules, five board
   local modules and both boards. They reproduce today's CoreS3 and Waveshare
   board files byte for byte, so `dict` and `desc` do not move.
-- `shipped.lock` per board at today's `dict`.
+- `shipped.lock` per board at today's `dict`. A lock absent at the base
+  branch prints a notice instead of passing silently.
 - `tools/plugin_contract.py` and `pixi run plugin-contract-test` in
   `pixi run gate`.

@@ -10,11 +10,14 @@ must accept a clean lock history.
 
 from __future__ import annotations
 
+import contextlib
 import copy
+import io
 import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 
 import plugin_contract as gate
@@ -254,6 +257,22 @@ def main() -> None:
         finally:
             del os.environ["PLUGIN_CONTRACT_BASE"]
         print("PASS rejects a missing base ref", flush=True)
+
+        # A lock absent at the base, as after a board directory move, is new
+        # and the loader names it in a notice rather than skipping silently.
+        first = subprocess.run(["git", "rev-list", "--max-parents=0", "HEAD"], cwd=ROOT, capture_output=True,
+                               text=True, check=True).stdout.split()[0]
+        os.environ["PLUGIN_CONTRACT_BASE"] = first
+        notice = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(notice):
+                found = gate.git_base_lock(ROOT)(ROOT / lock)
+        finally:
+            del os.environ["PLUGIN_CONTRACT_BASE"]
+        gate.require(found is None, "a lock absent at the base reads as new")
+        gate.require(f"NOTICE {lock.as_posix()} is not on {first}" in notice.getvalue(),
+                     f"no notice for a lock absent at the base, {notice.getvalue()!r}")
+        print("PASS notices a lock absent at the base", flush=True)
 
 
 if __name__ == "__main__":
