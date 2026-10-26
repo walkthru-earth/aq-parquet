@@ -451,6 +451,15 @@ void check_classes_and_derived() {
     expect(!classes_complete(rows, broken, kMiniClassless),
            "boolean value outside 0 and 1 is caught");
   }
+  expect(
+      !classes_complete(rows, std::span{kMiniClasses}.first(3), kMiniClassless),
+      "boolean column with only its 0 row is caught");
+  {
+    const aq::semantics::Class one_flag[] = {kMiniClasses[0], kMiniClasses[1],
+                                             kMiniClasses[3]};
+    expect(!classes_complete(rows, one_flag, kMiniClassless),
+           "boolean column with only its 1 row is caught");
+  }
   {
     auto broken = classes();
     broken[2].column = "count";
@@ -483,6 +492,37 @@ void check_classes_and_derived() {
          "missing legend entry is caught");
   expect(!matches_legend(kMiniClasses, "mask", "0=none"),
          "legend for a column without classes is caught");
+  expect(!matches_legend(std::span{kMiniClasses}.first(1), "status",
+                         "0=missing,1=valid"),
+         "class row missing from a legend column is caught");
+  {
+    using aq::semantics::matches_codes;
+    const auto name_of = [](std::int64_t code) {
+      return code == 0 ? "missing" : code == 1 ? "valid" : "other";
+    };
+    static constexpr std::int64_t codes[] = {0, 1};
+    static constexpr std::int64_t more[] = {0, 1, 2};
+    static constexpr std::int64_t fewer[] = {0};
+    static constexpr std::int64_t skipped[] = {0, 2};
+    expect(matches_codes(kMiniClasses, "status", codes, name_of),
+           "codes match");
+    expect(!matches_codes(kMiniClasses, "status", more, name_of),
+           "code with no class row is caught");
+    expect(!matches_codes(kMiniClasses, "status", fewer, name_of),
+           "class row for a code never written is caught");
+    expect(!matches_codes(kMiniClasses, "status", skipped, name_of),
+           "class row with another value is caught");
+    expect(!matches_codes(kMiniClasses, "status", skipped,
+                          [](std::int64_t code) {
+                            return code == 0 ? "missing" : "valid";
+                          }),
+           "class row with another value and the same name is caught");
+    expect(!matches_codes(kMiniClasses, "status", codes,
+                          [](std::int64_t) { return "valid"; }),
+           "class name other than name_of is caught");
+    expect(!matches_codes(kMiniClasses, "mask", fewer, name_of),
+           "codes for a column without classes are caught");
+  }
 
   expect(derived_complete(kMiniFields, rows, kMiniDerived),
          "real derived complete");

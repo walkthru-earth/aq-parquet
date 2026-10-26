@@ -5,11 +5,13 @@
 // with it. nodata marks the value that means no reading.
 // This file is NOT part of the dict digest, which hashes telemetry_fields.inc
 // only. The static_asserts in telemetry_contract.h fail the build when a code
-// or boolean column has no classes, when a row names an unknown column, and
-// when a status legend in the Parquet footer lists other pairs.
+// or boolean column has no classes, when a boolean lacks its 0 or 1 row, when
+// a row names an unknown column, and when a status legend or the board's
+// clock sources list other pairs.
 //
 // Sources.
-//   clock_status names are aq::utc::source_name, checked by static_assert.
+//   clock_status rows are exactly kClockSources in telemetry_contract.h, the
+//   sources this board writes, named by aq::utc::source_name.
 //   pms_status, pm25_batch_candidate_status, gauge_status and
 //   battery_health_state names are the footer legends in
 //   telemetry_contract.h, which apply_pms, apply_gauge and

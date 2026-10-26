@@ -291,9 +291,9 @@ constexpr const Column *find_column(std::span<const Column> rows,
 
 // Every class names a labelled column and has a valid name. The rows of one
 // column are contiguous, values strictly ascending, names unique, and at most
-// one is nodata. A {boolean} column uses only 0 and 1. Every labelled column
-// has classes unless it is in `classless`, and a listed column must exist, be
-// labelled and have none, so the list cannot go stale.
+// one is nodata. A {boolean} column has exactly the rows 0 and 1. Every
+// labelled column has classes unless it is in `classless`, and a listed
+// column must exist, be labelled and have none, so the list cannot go stale.
 constexpr bool classes_complete(std::span<const Column> rows,
                                 std::span<const Class> classes,
                                 std::span<const std::string_view> classless) {
@@ -323,8 +323,14 @@ constexpr bool classes_complete(std::span<const Column> rows,
   }
   for (const auto &row : rows) {
     bool has = false;
-    for (const auto &entry : classes)
+    std::size_t count = 0;
+    for (const auto &entry : classes) {
       has = has || entry.column == row.name;
+      count += entry.column == row.name ? 1 : 0;
+    }
+    // Values are 0 or 1 and strictly ascending, so two rows are both.
+    if (row.ucum == "{boolean}" && has && count != 2)
+      return false;
     if (listed(classless, row.name) ? (!labelled(row) || has)
                                     : (labelled(row) && !has))
       return false;
@@ -370,6 +376,25 @@ constexpr bool matches_legend(std::span<const Class> classes,
     any = true;
   }
   return any && at == legend.size() + 1;
+}
+
+// The classes of `column` are exactly `values`, in order, and each is named
+// name_of(value). For a code with no footer legend, so the rows equal the
+// values the board can write, such as the clock sources its enum lists.
+template <class NameOf>
+constexpr bool
+matches_codes(std::span<const Class> classes, std::string_view column,
+              std::span<const std::int64_t> values, NameOf name_of) {
+  std::size_t at = 0;
+  for (const auto &entry : classes) {
+    if (entry.column != column)
+      continue;
+    if (at == values.size() || entry.value != values[at] ||
+        entry.name != std::string_view{name_of(values[at])})
+      return false;
+    ++at;
+  }
+  return at > 0 && at == values.size();
 }
 
 // The opensensor:derived object of a modelResult column (#85). Like the

@@ -27,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.8";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.9";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -395,15 +395,18 @@ static_assert(
         aq::semantics::matches_legend(kClasses, "pm25_batch_candidate_status",
                                       kBatchCandidateStatusLegend),
     "telemetry_classes.inc and the footer status legends differ");
-constexpr bool clock_classes_match_source_names() {
-  return std::ranges::none_of(kClasses, [](const aq::semantics::Class &entry) {
-    return entry.column == "clock_status" &&
-           entry.name !=
-               aq::utc::source_name(static_cast<std::int32_t>(entry.value));
-  });
-}
-static_assert(clock_classes_match_source_names(),
-              "clock_status classes must use aq::utc::source_name");
+// The clock sources this board writes, in code order. clock_status rows
+// must be exactly these, each named by aq::utc::source_name.
+static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
+                                                 kClockNetwork};
+static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
+                                           kClockSources,
+                                           [](std::int64_t code) {
+                                             return aq::utc::source_name(
+                                                 static_cast<std::int32_t>(
+                                                     code));
+                                           }),
+              "clock_status classes must be the board's clock sources");
 
 // opensensor:derived of the modelResult columns (#85). apply_pms writes the
 // batch candidate as 0.003964 times the 0.3 um count.

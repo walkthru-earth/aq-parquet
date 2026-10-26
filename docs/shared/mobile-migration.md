@@ -20,8 +20,10 @@ template, a minified JSON built on the host from `telemetry_fields.inc`,
 column classes, such as `pms_status` 0 `missing` with `nodata`) and the board
 title and keywords. `desc` is the SHA-256 of exactly the embedded bytes. The
 `parquet schema` console command now ends its BEGIN line with `desc=<sha256>
-desc_bytes=<n>`. The dict digests, the Parquet files, LIVE and every BLE reply
-are unchanged.
+desc_bytes=<n>`. The dict digests, the Parquet files, LIVE keys and every BLE
+reply other than the firmware identity are unchanged. The firmware identity
+moves to `idf-cores3-parquet-v6.15` and `idf-waveshare-parquet-v2.9`, the
+first builds that carry `desc`.
 
 - CoreS3 `desc` `1b7d969abb670579cd1f34f0bd7e224f66b120ed178fbb2fcf024e14a46c3f08`,
   29,244 bytes, dict `4f80c26c...`.

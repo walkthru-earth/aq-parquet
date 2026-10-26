@@ -126,7 +126,7 @@
       "note": "Dictionary waveshare-sim7670g-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as 67688d0f. t and rh keep one decimal.",
       "builds": [
         {
-          "firmware": "idf-waveshare-parquet-v2.8",
+          "firmware": "idf-waveshare-parquet-v2.9",
           "emitter": "board field table through aqlogger::format_live",
           "fields": {
             "seq": "sequence",

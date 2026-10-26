@@ -5,16 +5,19 @@
 // with it. nodata marks the value that means no reading.
 // This file is NOT part of the dict digest, which hashes telemetry_fields.inc
 // only. The static_asserts in telemetry_contract.h fail the build when a code
-// or boolean column has no classes, when a row names an unknown column, and
-// when a status legend in the Parquet footer lists other pairs.
+// or boolean column has no classes, when a boolean lacks its 0 or 1 row, when
+// a row names an unknown column, and when a status legend or the board's
+// clock sources list other pairs.
 //
 // Sources.
-//   clock_status names are aq::utc::source_name, checked by static_assert.
+//   clock_status rows are exactly kClockSources in telemetry_contract.h, the
+//   sources this board writes, named by aq::utc::source_name.
 //   pms_status, light_status and proximity_status names are the footer
 //   legends in telemetry_contract.h, which collect() writes through the
 //   enums named here.
 //   charging_status is M5Unified Power_Class::is_charging_t, tied to these
-//   values by a static_assert in telemetry_logger.cpp.
+//   values by a static_assert in telemetry_logger.cpp, and its rows must
+//   equal kChargingStatusLegend.
 //   external_5v_enabled, usb_output_enabled and rtc_read_ok are the bools
 //   collect() writes.
 // No classes.

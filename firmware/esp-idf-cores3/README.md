@@ -1,7 +1,7 @@
 # CoreS3 native ESP-IDF logger
 
 The current source is a pure **ESP-IDF 6.1** application, firmware identity
-**`idf-cores3-parquet-v6.14`**, with an **81-column** CoreS3 schema
+**`idf-cores3-parquet-v6.15`**, with an **81-column** CoreS3 schema
 `cores3-telemetry-v5` and dictionary `cores3-telemetry-v6`. The original 77
 columns retain their order and types; four nullable H3 location fields are
 appended. Since v6.12 the two UTC instants are `event_time_utc_us` and

@@ -60,6 +60,7 @@
 #include <fcntl.h>
 #include <new>
 #include <numeric>
+#include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
 // After the ESP-IDF headers, which bring in sdkconfig.h.
@@ -2783,6 +2784,14 @@ bool path_within(const char *path, const char *root) {
          (path[length] == '\0' || path[length] == '/');
 }
 
+// True for a SHA-256 digest as 64 lowercase hex characters.
+bool sha256_hex(const char *text) {
+  return text && std::strlen(text) == 64 &&
+         std::ranges::all_of(std::string_view{text}, [](char c) {
+           return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+         });
+}
+
 #if CONFIG_AQ_LOGGER_WORKER_WDT
 // Watchdog state shared by begin(), poll() and the supervisor timer. The
 // supervisor state belongs to start_worker_watchdog() until the timer starts
@@ -2944,7 +2953,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !ble::wire::valid_name_prefix(config.ble_name_prefix) ||
       !config.descriptor || config.descriptor_bytes == 0 ||
       std::strlen(config.descriptor) != config.descriptor_bytes ||
-      !config.descriptor_sha256 || std::strlen(config.descriptor_sha256) != 64)
+      !sha256_hex(config.descriptor_sha256))
     return false;
   sample_us = std::int64_t{config.sample_interval_ms} * 1000;
   for (std::size_t i = 0; i < field_count; ++i) {

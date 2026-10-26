@@ -27,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.14";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.15";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -195,6 +195,9 @@ enum ChargingStatus : std::int32_t {
   kChargingCharging = 1,
   kChargingUnknown = 2,
 };
+// The charging_status codes collect() writes, checked against the classes.
+constexpr const char *kChargingStatusLegend =
+    "0=discharging,1=charging,2=unknown";
 constexpr const char *kPmsStatusLegend =
     "0=missing,1=warming,2=stale,3=sensor-error,4=valid";
 constexpr const char *kLightStatusLegend =
@@ -222,17 +225,22 @@ static_assert(aq::semantics::matches_legend(kClasses, "pms_status",
                   aq::semantics::matches_legend(kClasses, "light_status",
                                                 kLightStatusLegend) &&
                   aq::semantics::matches_legend(kClasses, "proximity_status",
-                                                kProximityStatusLegend),
-              "telemetry_classes.inc and the footer status legends differ");
-constexpr bool clock_classes_match_source_names() {
-  return std::ranges::none_of(kClasses, [](const aq::semantics::Class &entry) {
-    return entry.column == "clock_status" &&
-           entry.name !=
-               aq::utc::source_name(static_cast<std::int32_t>(entry.value));
-  });
-}
-static_assert(clock_classes_match_source_names(),
-              "clock_status classes must use aq::utc::source_name");
+                                                kProximityStatusLegend) &&
+                  aq::semantics::matches_legend(kClasses, "charging_status",
+                                                kChargingStatusLegend),
+              "telemetry_classes.inc and the status legends differ");
+// The clock sources this board writes, in code order. clock_status rows
+// must be exactly these, each named by aq::utc::source_name.
+static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
+                                                 kClockRtc, kClockNetwork};
+static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
+                                           kClockSources,
+                                           [](std::int64_t code) {
+                                             return aq::utc::source_name(
+                                                 static_cast<std::int32_t>(
+                                                     code));
+                                           }),
+              "clock_status classes must be the board's clock sources");
 
 // No CoreS3 column is a modelResult, so no column needs opensensor:derived.
 static constexpr std::span<const aq::semantics::Derived> kDerived{};
