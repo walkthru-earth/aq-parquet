@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <span>
 
-namespace aqsync {
+namespace ossync {
 // Receives one finalized file of a listing. Returning false stops the walk at
 // once, for a refused frame or a pending ABORT.
 using FileEmitter = bool (*)(void *context, const char *name,
@@ -328,4 +328,4 @@ private:
             std::uint32_t length);
   void close(std::uint16_t file_handle);
 };
-} // namespace aqsync
+} // namespace ossync

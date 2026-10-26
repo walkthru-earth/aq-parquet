@@ -4,7 +4,7 @@
 
 #include <cstddef>
 
-namespace aq::storage {
+namespace opensensor::storage {
 
 // Reserve before starting radios. ESP-IDF borrows this heap-owned buffer from
 // sdmmc_host_t and queries its allocated size; a static array is not suitable.
@@ -38,4 +38,4 @@ private:
   void *data_ = nullptr;
 };
 
-} // namespace aq::storage
+} // namespace opensensor::storage

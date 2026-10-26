@@ -106,7 +106,7 @@ int main() {
   std::vector<std::uint32_t> block(DebugLog::persistent_bytes(kTestLayout) / 4 +
                                    1);
   assert(ble::disconnect_stats().count == 0);
-  aqlog.attach(block.data(), block.size() * 4, kTestLayout, true);
+  oslog.attach(block.data(), block.size() * 4, kTestLayout, true);
   const auto recorded =
       ble::record_disconnect(ble::DisconnectReason::SlowPeer, 3, 42, 11, 0,
                              std::int64_t(5) * 1000000 + 999999);
@@ -116,11 +116,11 @@ int main() {
                          43, 0x13, 0, 6000000);
   const auto stats = ble::disconnect_stats();
   assert(stats.count == 2 && stats.last == ble::DisconnectReason::PeerClosed);
-  assert(aqlog.counter(5) == 1 && aqlog.counter(12) == 1);
+  assert(oslog.counter(5) == 1 && oslog.counter(12) == 1);
   const auto snapshot = ble::encode_diag_snapshot(diag, 512);
   assert(snapshot == 38 + 32 && diag[37] == 2);
-  assert(aq::sync::get_u16(diag + 1) == 1);
-  assert(aq::sync::get_u16(diag + 3 + 2 * 5) == 1);
+  assert(opensensor::sync::get_u16(diag + 1) == 1);
+  assert(opensensor::sync::get_u16(diag + 3 + 2 * 5) == 1);
   assert(ble::decode_event(diag + 38).generation == 42);
   assert(ble::decode_event(diag + 54).err == 0x13);
   assert(ble::encode_diag_snapshot(diag, 37) == 0);

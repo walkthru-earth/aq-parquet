@@ -155,7 +155,7 @@ def check_hci_timeout_wiring(source: str) -> None:
     assert "conn_fail_log.reset()" in case_body(source, "BLE_GAP_EVENT_CONNECT")
     assert "conn_fail_log.reset()" in gate_body(source, "on_reset")
     body = gate_body(source, "log_hci_fail")
-    assert "aqlog.printf(" in body and "record_only" not in body, body
+    assert "oslog.printf(" in body and "record_only" not in body, body
     assert "BLE_HS_ETIMEOUT_HCI" in body, body
 
 

@@ -13,10 +13,10 @@
 namespace board {
 namespace {
 sdmmc_card_t *card = nullptr;
-aq::storage::SdTransferBuffer sd_transfer_buffer;
+opensensor::storage::SdTransferBuffer sd_transfer_buffer;
 i2c_master_bus_handle_t gauge_bus = nullptr;
 i2c_master_dev_handle_t gauge = nullptr;
-constexpr std::uint8_t kGaugeAddress = aq::Max17048::kAddress;
+constexpr std::uint8_t kGaugeAddress = opensensor::Max17048::kAddress;
 esp_err_t gauge_error = ESP_OK;
 led_strip_handle_t led = nullptr;
 bool sensor_ready = false;
@@ -70,7 +70,7 @@ bool mount(bool keep_buffer) {
     return false;
   host.dma_aligned_buffer = sd_transfer_buffer.data();
   host.unaligned_multi_block_rw_max_chunk_size =
-      aq::storage::SdTransferBuffer::kSectors;
+      opensensor::storage::SdTransferBuffer::kSectors;
   sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
   slot.width = 1;
   slot.clk = GPIO_NUM_5;
@@ -78,7 +78,7 @@ bool mount(bool keep_buffer) {
   slot.d0 = GPIO_NUM_6;
   slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
   const esp_vfs_fat_sdmmc_mount_config_t config =
-      aq::storage::archive_mount_config();
+      opensensor::storage::archive_mount_config();
   sdmmc_card_t *mounted = nullptr;
   const esp_err_t result =
       esp_vfs_fat_sdmmc_mount("/sd", &host, &slot, &config, &mounted);
@@ -99,10 +99,14 @@ bool remount_card() {
   card = nullptr;
   return mount(true);
 }
-std::uint32_t cluster_bytes() { return aq::storage::fat_cluster_bytes(card); }
-std::uint32_t volume_serial() { return aq::storage::fat_volume_serial(card); }
+std::uint32_t cluster_bytes() {
+  return opensensor::storage::fat_cluster_bytes(card);
+}
+std::uint32_t volume_serial() {
+  return opensensor::storage::fat_volume_serial(card);
+}
 bool storage_free_bytes(std::uint64_t &free_bytes) {
-  return card && aq::storage::fat_free_bytes("/sd", free_bytes);
+  return card && opensensor::storage::fat_free_bytes("/sd", free_bytes);
 }
 std::uint64_t card_bytes() {
   return card ? static_cast<std::uint64_t>(card->csd.capacity) *

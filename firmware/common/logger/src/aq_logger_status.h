@@ -5,7 +5,7 @@
 #include <parquet_writer.h>
 #include <storage_governor.h>
 
-namespace aqlogger {
+namespace oslogger {
 // Pure snapshot/formatter shared by the runtime and host boundary tests.
 struct StatusSnapshot {
   std::uint32_t uptime_seconds = 0;
@@ -48,4 +48,4 @@ struct StatusSnapshot {
 };
 // Returns zero on insufficient capacity, never reports truncated JSON as valid.
 std::size_t format_status(const StatusSnapshot &, char *, std::size_t capacity);
-} // namespace aqlogger
+} // namespace oslogger

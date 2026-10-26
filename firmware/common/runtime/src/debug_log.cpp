@@ -47,10 +47,10 @@ struct DebugLog::Header {
 static_assert(sizeof(DebugLog::Header) == DebugLog::kHeaderBytes,
               "persistent log header layout");
 
-DebugLog aqlog;
+DebugLog oslog;
 DebugLog::DebugLog()
     : output_([](void *, const std::uint8_t *data, std::size_t size) {
-        return aq::console::write(data, size);
+        return opensensor::console::write(data, size);
       }) {}
 
 std::size_t LogOutput::print(const char *text) {

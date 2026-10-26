@@ -53,7 +53,7 @@ constexpr livewidest::Widest kWidest[] = {
 // update the numbers.
 constexpr std::size_t kWidestLiveBytes = 333;
 constexpr std::size_t kAllNullLiveBytes = 265;
-void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
+void assert_live_keys(const oslogger::Field *table, std::size_t count) {
   const auto bytes = livewidest::measure(table, count, kWidest);
   const auto nulls = livewidest::all_null(table, count);
   assert(bytes <= ble::kMaxJson);
@@ -62,7 +62,7 @@ void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
   assert(nulls == kAllNullLiveBytes);
 }
 struct BoardTable {
-  aqlogger::Field fields[field_count];
+  oslogger::Field fields[field_count];
   BoardTable() {
     for (std::size_t i = 0; i < field_count; ++i)
       fields[i] = {kFields[i].name,      kFields[i].type,
@@ -84,7 +84,7 @@ std::string board_template() {
       .keywords = kTemplateKeywords,
       .dictionary_href = kTemplateDictionaryHref,
       .dict = kDictionarySha256,
-      .sample_interval_ms = aqlogger::cadence::kDefaultSampleIntervalMs,
+      .sample_interval_ms = oslogger::cadence::kDefaultSampleIntervalMs,
       .proto_min = ble::kProtocolVersion,
   };
   return boardtemplate::build(board, kFields, kSemantics, kClasses, kDerived);
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
   const bool located = argc == 5 && std::strcmp(argv[4], "located") == 0;
   const bool compressed = std::strcmp(argv[2], "lz4") == 0;
   const bool anchored = std::strcmp(argv[3], "anchored") == 0;
-  aqlogger::LocationSample<Sample> rows[90]{};
+  oslogger::LocationSample<Sample> rows[90]{};
   const config::LocationSettings location =
       located ? config::LocationSettings{0x85283473fffffffULL, 5, "US"}
               : config::LocationSettings{};
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
   for (std::size_t i = 0; i < 90; ++i) {
     auto &row = rows[i];
     row.location = location;
-    aqlogger::apply_location(
+    oslogger::apply_location(
         row, row.location,
         {h3_cell_id, h3_resolution, h3_center_lat_e7, h3_center_lon_e7});
     const auto now = std::int64_t(20000000 + i * 10000000);
@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
   assert(unanchored.data[clock_status] == kClockNone);
   assert(!unanchored.valid[event_time_utc_us]);
   prepare_columns(columns, rows);
-  const aqlogger::LocationMetadata location_metadata(location);
+  const oslogger::LocationMetadata location_metadata(location);
   KeyValue metadata[18] = {{"schema_version", kSchemaName},
                            {"firmware", kFirmware},
                            {"dictionary_version", kDictionaryVersion},

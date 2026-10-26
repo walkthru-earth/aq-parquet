@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace ntp = aq::network_time;
+namespace ntp = opensensor::network_time;
 namespace {
 void reset(const ntp::Policy &policy) {
   ntp::Policy disabled;

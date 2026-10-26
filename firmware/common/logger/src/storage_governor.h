@@ -7,7 +7,7 @@
 // retries; the storage worker owns every file operation. No state here ever
 // deletes, renames or rewrites archive data. A full card raises an alarm and
 // logging resumes once the owner frees space.
-namespace aqlogger::storage {
+namespace oslogger::storage {
 enum class State : std::uint8_t {
   Ready = 0,
   Degraded = 1,
@@ -199,4 +199,4 @@ private:
   std::int64_t checked_ = 0;
   std::int64_t next_probe_ = 0;
 };
-} // namespace aqlogger::storage
+} // namespace oslogger::storage

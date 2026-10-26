@@ -9,8 +9,8 @@
 #include <parquet_writer.h>
 #include <sync_service.h>
 
-namespace aqlogger {
-using Row = aq::NumericSample<telemetry::kMaxColumns>;
+namespace oslogger {
+using Row = opensensor::NumericSample<telemetry::kMaxColumns>;
 struct Field {
   const char *name = nullptr;
   telemetry::PhysicalType type = telemetry::PhysicalType::Int32;
@@ -55,7 +55,7 @@ struct Config {
   const telemetry::KeyValue *metadata = nullptr;
   std::size_t metadata_count = 0;
   // Sync service tuning; nullptr keeps the shared defaults.
-  const aqsync::ServiceConfig *sync = nullptr;
+  const ossync::ServiceConfig *sync = nullptr;
   // Storage worker task. Its stack stays in internal RAM: the worker commits
   // NVS (SET_CONFIG, station id), and a flash write disables the cache that a
   // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
@@ -114,7 +114,7 @@ struct Hooks {
   // through report_battery(), after the POWER STATE line. The default is no
   // action. A board may switch off loads here. It must not block, reset or
   // sleep; the runtime already finalizes the open file on a critical entry.
-  void (*power_shed)(aq::battery::State, void *) = nullptr;
+  void (*power_shed)(opensensor::battery::State, void *) = nullptr;
 };
 // One singleton per firmware image; call once after hardware/storage setup.
 bool begin(const Config &, const Hooks &, bool sd_mounted);
@@ -123,7 +123,7 @@ void poll();
 // line per change and, once per critical entry, raises the emergency close
 // intent and wakes the storage worker, which closes the open file. Never
 // touches the card, resets or sleeps.
-void report_battery(aq::battery::State state, std::int32_t millivolts);
+void report_battery(opensensor::battery::State state, std::int32_t millivolts);
 bool start_links(bool display_detected);
 bool enqueue_request(const ble::ControlRequest &);
 void lock_bus();
@@ -143,4 +143,4 @@ struct ClockView {
   const char *source_name = "none";
 };
 ClockView clock_view();
-} // namespace aqlogger
+} // namespace oslogger

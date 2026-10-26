@@ -174,9 +174,10 @@ def main() -> None:
         rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
         require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],
                 "dictionary carries every LIVE key and decimals")
-        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
-                "decimals is 0 for integer fields and at most 6 for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.15", "firmware identity")
+        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= live_key_fixture.MAX_LIVE_DECIMALS
+                    for f in fields),
+                f"decimals is 0 for integer fields and at most {live_key_fixture.MAX_LIVE_DECIMALS} for Float")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.16", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==

@@ -15,11 +15,11 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
 - CoreS3 has 16 MB flash and **Quad** PSRAM. Do not copy Waveshare GPIO,
   PSRAM or SDMMC setup. Use `M5.Power` rather than raw expander writes.
 - This adapter owns M5Unified peripherals, sensor acquisition, display and
-  board callbacks. Shared `AQLogger`, `AQConnectivity`, `AQRuntime` and
-  `AQCommon` own their services; never add a second owner for a bus/radio.
+  board callbacks. Shared `OSLogger`, `OSConnectivity`, `OSRuntime` and
+  `OSCommon` own their services; never add a second owner for a bus/radio.
 - M134/PMSA003 is optional. Preserve missing sensor values as null, and keep
   RTC writes on the main task rather than the storage worker.
-- Current firmware is `idf-cores3-parquet-v6.15`, schema v5/dictionary v6 with
+- Current firmware is `idf-cores3-parquet-v6.16`, schema v5/dictionary v6 with
   81 fields. Each `FIELD` row ends with its LIVE key and decimals, so changing
   either changes the digest and needs a new entry in `tools/fixtures/live_keys/cores3.json`.
   Preserve the original 77-field order. Field ids are the 1-based

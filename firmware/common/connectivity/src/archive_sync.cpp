@@ -6,9 +6,9 @@
 #include <cstdio>
 #include <cstring>
 
-namespace aqsync {
+namespace ossync {
 namespace {
-using namespace aq::sync;
+using namespace opensensor::sync;
 class ArchiveLock {
 public:
   explicit ArchiveLock(const ArchiveHooks &hooks) : hooks_(hooks) {
@@ -728,4 +728,4 @@ bool ArchiveSession::handle(const ble::ControlRequest &request,
   request_ = nullptr;
   return true;
 }
-} // namespace aqsync
+} // namespace ossync

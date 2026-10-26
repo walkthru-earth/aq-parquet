@@ -31,7 +31,7 @@ void heap_caps_free(void *data) {
 }
 
 int main() {
-  using Buffer = aq::storage::SdTransferBuffer;
+  using Buffer = opensensor::storage::SdTransferBuffer;
   static_assert(!std::is_copy_constructible_v<Buffer>);
   static_assert(!std::is_copy_assignable_v<Buffer>);
   static_assert(Buffer::kBytes == Buffer::kSectors * 512);

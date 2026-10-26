@@ -3,7 +3,7 @@
 #include "sync_codec.h"
 #include "utc_clock.h"
 
-namespace aq {
+namespace opensensor {
 namespace sync {
 struct TimeRequest {
   std::int64_t seconds = 0;
@@ -37,4 +37,4 @@ inline std::size_t encode_time_ack(std::uint8_t *body,
   return request.precision ? 20 : 16;
 }
 } // namespace sync
-} // namespace aq
+} // namespace opensensor

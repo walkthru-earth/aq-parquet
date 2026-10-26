@@ -14,7 +14,7 @@
 #include <cstring>
 #include <iterator>
 
-namespace aq::network_time {
+namespace opensensor::network_time {
 namespace {
 constexpr std::int64_t kDnsTimeoutUs = 30000000;
 constexpr std::int64_t kResponseTimeoutUs = 15000000;
@@ -460,4 +460,4 @@ Status status() {
     result.state = "stale";
   return result;
 }
-} // namespace aq::network_time
+} // namespace opensensor::network_time

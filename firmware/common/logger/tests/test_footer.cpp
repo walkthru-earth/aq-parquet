@@ -14,11 +14,11 @@
 #include <span>
 
 namespace {
-using aqlogger::Field;
+using oslogger::Field;
 using telemetry::KeyValue;
 using telemetry::PhysicalType;
-namespace cadence = aqlogger::cadence;
-namespace footer = aqlogger::footer;
+namespace cadence = oslogger::cadence;
+namespace footer = oslogger::footer;
 
 // Side effects stay in the condition, so this never compiles out.
 void check(bool condition,
@@ -43,7 +43,7 @@ constexpr Field kRuntimeFields[] = {
      "urn:epoch"},
 };
 
-aqlogger::Config base_config() {
+oslogger::Config base_config() {
   return {
       .fields = kRuntimeFields,
       .column_count = std::size(kRuntimeFields),
@@ -139,6 +139,49 @@ void cadence_bounds() {
   check(cadence::rows_per_group(3600, 30000) == 90);
   check(cadence::rows_per_group(0, 10000) == 1);
   check(cadence::rows_per_group(900, 0) == 1);
+}
+
+// The deadline step poll() runs, driven with a 30 s period as a non 10 s
+// board would configure it (#98 M8).
+void cadence_deadline() {
+  constexpr auto period = cadence::period_us(30000);
+  static_assert(period == 30000000);
+  static_assert(cadence::period_us(cadence::kDefaultSampleIntervalMs) ==
+                10000000);
+  constexpr std::int64_t start = 5000000;
+  // Not due before the deadline.
+  constexpr auto early = cadence::advance(start - 1, start, period);
+  static_assert(!early.due && early.skipped == 0 && early.next_us == start);
+  // Due at the deadline, stamped with it, next one period later.
+  constexpr auto on_time = cadence::advance(start, start, period);
+  static_assert(on_time.due && on_time.skipped == 0 &&
+                on_time.deadline_us == start &&
+                on_time.next_us == start + period);
+  // Late within the period, still no skip.
+  constexpr auto late = cadence::advance(start + period - 1, start, period);
+  static_assert(late.due && late.skipped == 0 && late.deadline_us == start &&
+                late.next_us == start + period);
+  // Two whole periods missed, the sample takes the latest deadline.
+  constexpr auto stalled =
+      cadence::advance(start + 2 * period + 7, start, period);
+  static_assert(stalled.due && stalled.skipped == 2 &&
+                stalled.deadline_us == start + 2 * period &&
+                stalled.next_us == start + 3 * period);
+  // A period of 0 is never due, so a bad config cannot spin the loop.
+  static_assert(!cadence::advance(start + period, start, 0).due);
+  // Walk ten minutes of polls every 100 ms. Each deadline is sampled once.
+  std::int64_t next = start;
+  std::int64_t samples = 0, skipped = 0;
+  for (std::int64_t now = 0; now <= start + 20 * period; now += 100000) {
+    const auto step = cadence::advance(now, next, period);
+    if (!step.due)
+      continue;
+    check(step.deadline_us == start + samples * period);
+    skipped += step.skipped;
+    ++samples;
+    next = step.next_us;
+  }
+  check(samples == 21 && skipped == 0 && next == start + 21 * period);
 }
 
 void names() {
@@ -312,6 +355,7 @@ int main(int argc, char **argv) {
   check(argc == 2);
   released_defaults();
   cadence_bounds();
+  cadence_deadline();
   names();
   soil_board(argv[1]);
 }

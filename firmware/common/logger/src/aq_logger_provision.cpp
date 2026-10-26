@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace aqlogger {
+namespace oslogger {
 namespace {
 int nibble(char value) {
   if (value >= '0' && value <= '9')
@@ -65,7 +65,7 @@ std::size_t format_wifi_profile(const config::Settings &settings, char *out,
   hex(settings.ssid, ssid, config::kSsidMax);
   hex(settings.psk, psk, config::kPskMax);
   const int written = std::snprintf(
-      out, capacity, "AQ WIFI_PROFILE ssid=%s psk=%s wifi_on=%u lan_on=%u\n",
+      out, capacity, "OS WIFI_PROFILE ssid=%s psk=%s wifi_on=%u lan_on=%u\n",
       ssid, psk, settings.wifi_on ? 1U : 0U, settings.lan_on ? 1U : 0U);
   return written > 0 && std::size_t(written) < capacity ? std::size_t(written)
                                                         : 0;
@@ -88,7 +88,7 @@ ProvisionResult apply_config_hex(const char *hex) {
     }
     request.bytes[1 + i / 2] = static_cast<std::uint8_t>((high << 4) | low);
   }
-  const aqsync::ControlReplies replies{
+  const ossync::ControlReplies replies{
       &result, [](void *, ble::Link) { return ble::kMaxFrame; },
       [](void *context, ble::Link, const std::uint8_t *frame,
          std::size_t size) {
@@ -103,7 +103,7 @@ ProvisionResult apply_config_hex(const char *hex) {
         safe_error(*static_cast<ProvisionResult *>(context), detail);
         return true;
       }};
-  aqsync::handle_common_control(request, replies);
+  ossync::handle_common_control(request, replies);
   return result;
 }
-} // namespace aqlogger
+} // namespace oslogger

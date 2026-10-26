@@ -14,16 +14,16 @@ Descriptors, identity strings and callback contexts must outlive the services.
 
 | Interface | Board supplies | Ownership and limits |
 | --- | --- | --- |
-| `aqlogger::Config` | Static field dictionary, schema/dictionary identities, digest, firmware, `created_by`, acquisition metadata and archive roots. Optional sample period (`sample_interval_ms`, 10 s default), `deployment_id` and `calibration_id` (`unknown` default) and a required BLE name prefix (`OS-` on both boards) | Required runtime fields and types are in the [adapter contract](../../firmware/common/logger/README.md#adapter-contract). Measurements remain null when unavailable. Benchmark output stays outside synced archives. Check the [shared caps](../../firmware/common/README.md#shared-caps-a-new-board-must-check). The phone finds boards by the GATT service UUID or a prefix it knows |
+| `oslogger::Config` | Static field dictionary, schema/dictionary identities, digest, firmware, `created_by`, acquisition metadata and archive roots. Optional sample period (`sample_interval_ms`, 10 s default), `deployment_id` and `calibration_id` (`unknown` default) and a required BLE name prefix (`OS-` on both boards) | Required runtime fields and types are in the [adapter contract](../../firmware/common/logger/README.md#adapter-contract). Measurements remain null when unavailable. Benchmark output stays outside synced archives. Check the [shared caps](../../firmware/common/README.md#shared-caps-a-new-board-must-check). The phone finds boards by the GATT service UUID or a prefix it knows |
 | `Hooks::collect` | Sensor acquisition into a zero-initialized row | Main loop only. The runtime supplies clock, identity and standard counters |
 | Storage hooks | `storage_total_bytes`, `storage_used_bytes`, `storage_free_bytes`, `storage_cluster_bytes` | Worker only with bus lock held. Free-space failure returns false and unknown cluster size returns zero |
 | `Hooks::storage_remount` | Optional unmount/remount of the board-owned card | Worker only with bus lock held and no file open. Never format. Without this hook automatic remount recovery is unavailable |
-| `Hooks::lock_bus`, `unlock_bus` | Both callbacks or neither | Borrow an existing bus mutex or let AQLogger create one. Complete display DMA before releasing a shared bus |
+| `Hooks::lock_bus`, `unlock_bus` | Both callbacks or neither | Borrow an existing bus mutex or let OSLogger create one. Complete display DMA before releasing a shared bus |
 | `Hooks::rtc_read`, `rtc_write` | Optional UTC-second read/write with validation and verified write readback | Main loop only. Reject unset, invalid or voltage-low RTC data. Without RTC, UTC stays null until a real host/network anchor |
-| `report_battery(state, mv)` | Optional battery state from `aq::battery::Monitor` in `firmware/common/power` | Main loop only, normally from `collect`. Prints one `POWER STATE` line per change and raises one emergency close of the open file per discharge, run only by the storage worker with bounded retries. Only ok or external power re-arms it. Never resets or sleeps |
+| `report_battery(state, mv)` | Optional battery state from `opensensor::battery::Monitor` in `firmware/common/power` | Main loop only, normally from `collect`. Prints one `POWER STATE` line per change and raises one emergency close of the open file per discharge, run only by the storage worker with bounded retries. Only ok or external power re-arms it. Never resets or sleeps |
 | `Hooks::power_shed` | Optional load shedding on a battery state change | Main loop only, after the `POWER STATE` line. Default is no action. Must not block, reset or sleep |
 | `start_links(display_detected)` | Actual display capability | Selects the first-boot pairing default. No display requires physical owner access to the per-device PIN |
-| `Config::sync` | Optional `aqsync::ServiceConfig` containing BLE/LAN options and command/sample queue depths | Shared defaults own ring/credit sizes, timeouts, link parameters and advertising policy. No board-name conditionals |
+| `Config::sync` | Optional `ossync::ServiceConfig` containing BLE/LAN options and command/sample queue depths | Shared defaults own ring/credit sizes, timeouts, link parameters and advertising policy. No board-name conditionals |
 | Board sdkconfig defaults | Flash size, PSRAM mode, console, DFS and hardware-specific deltas | Use the shared SDK/connectivity defaults and pinned target checker. CoreS3 Quad PSRAM and Waveshare OPI PSRAM are different capabilities |
 
 Mount storage before `begin(config, hooks, sd_mounted)`. Use the shared
@@ -32,7 +32,7 @@ Mount storage before `begin(config, hooks, sd_mounted)`. Use the shared
 including four persistent archive readers. Reserve the 4 KiB internal DMA SD
 transfer buffer before radios and keep it alive while mounted. Then call
 `start_links(display_detected)` once and `poll()` on every main-loop pass.
-AQLogger alone accesses files after startup. AQConnectivity alone initializes
+OSLogger alone accesses files after startup. OSConnectivity alone initializes
 radios, the LAN task writes sockets, and the NimBLE host sends BLE responses.
 
 ## Porting sequence

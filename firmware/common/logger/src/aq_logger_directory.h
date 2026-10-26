@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 #include <utility>
 
-namespace aq::logger::detail {
+namespace opensensor::logger::detail {
 
 using DirectoryStat = int (*)(const char *, struct stat *);
 using DirectoryMkdir = int (*)(const char *, mode_t);
@@ -454,4 +454,4 @@ bool quarantine_partial(IO &io, const char *root, const char *relative,
   return io.rename(source, destination) == 0;
 }
 
-} // namespace aq::logger::detail
+} // namespace opensensor::logger::detail

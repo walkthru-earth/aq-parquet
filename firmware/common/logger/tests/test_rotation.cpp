@@ -7,7 +7,7 @@
 #include <initializer_list>
 
 int main() {
-  using namespace aqlogger;
+  using namespace oslogger;
   assert(same_rotation_window(2, true, 1, 2, true, 1));
   assert(!same_rotation_window(3, true, 1, 2, true, 1));
   assert(!same_rotation_window(2, true, 2, 2, true, 1));
@@ -32,8 +32,9 @@ int main() {
          mono_seconds += 10) {
       const auto correction = mono_seconds >= interval / 2 ? -2 : 0;
       if (mono_seconds == interval / 2 || mono_seconds % 60 == 0)
-        epoch += aq::utc::starts_new_epoch(aq::utc::Host, aq::utc::Host,
-                                           correction * 1000000000LL);
+        epoch += opensensor::utc::starts_new_epoch(opensensor::utc::Host,
+                                                   opensensor::utc::Host,
+                                                   correction * 1000000000LL);
       const auto window = (mono_seconds + correction) / interval;
       assert(same_rotation_window(epoch, true, window, 1, true, 0));
       if (++buffered == group_rows) {

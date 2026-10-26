@@ -3,7 +3,7 @@
 #include "device_config.h"
 #include "wifi_link.h"
 
-namespace aqsync {
+namespace ossync {
 namespace {
 ble::RequestHandler worker_handler = nullptr;
 bool dispatch_request(const ble::ControlRequest &request) {
@@ -31,4 +31,4 @@ StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
   result.lan_started = lan::begin(host, identity, dispatch_request, config.lan);
   return result;
 }
-} // namespace aqsync
+} // namespace ossync

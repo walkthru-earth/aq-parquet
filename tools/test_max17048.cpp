@@ -17,12 +17,12 @@ struct FakeBus {
   bool ignore_write = false; // the device ACKs but keeps the old value
   int fail_read_after_write = -1;
 
-  aq::Max17048Io callbacks() { return {this, read}; }
-  aq::Max17048Io read_write() { return {this, read, write}; }
+  opensensor::Max17048Io callbacks() { return {this, read}; }
+  opensensor::Max17048Io read_write() { return {this, read, write}; }
   static bool read(void *context, std::uint8_t address, std::uint8_t reg,
                    std::uint8_t *data, std::size_t size) {
     auto &bus = *static_cast<FakeBus *>(context);
-    assert(address == aq::Max17048::kAddress);
+    assert(address == opensensor::Max17048::kAddress);
     assert(size == 2 && reg < bus.registers.size());
     bus.reads.push_back(reg);
     if (reg == bus.fail_reg || (bus.fail_mask & (1u << reg)) != 0)
@@ -36,7 +36,7 @@ struct FakeBus {
   static bool write(void *context, std::uint8_t address, std::uint8_t reg,
                     const std::uint8_t *data, std::size_t size) {
     auto &bus = *static_cast<FakeBus *>(context);
-    assert(address == aq::Max17048::kAddress);
+    assert(address == opensensor::Max17048::kAddress);
     assert(size == 2 && reg < bus.registers.size());
     const auto value = static_cast<std::uint16_t>((data[0] << 8) | data[1]);
     bus.writes.emplace_back(reg, value);
@@ -49,17 +49,17 @@ struct FakeBus {
 };
 
 // Decoding is usable at compile time.
-static_assert(aq::Max17048::decode(0xd200, 0x6400).millivolts == 4200);
-static_assert(aq::Max17048::decode(0xd200, 0x6400).percent == 100);
-static_assert(aq::Max17048::decode(0xd200, 0x6400).valid());
-static_assert(!aq::Max17048::decode(0, 0x5000).valid());
-static_assert(!aq::Max17048::decode(0, 0x5000).vcell_valid());
-static_assert(aq::Max17048::decode(0, 0x5000).soc_valid());
-static_assert(aq::Max17048::decode(0xd200, 0xffff).vcell_valid());
-static_assert(!aq::Max17048::decode(0xd200, 0xffff).soc_valid());
+static_assert(opensensor::Max17048::decode(0xd200, 0x6400).millivolts == 4200);
+static_assert(opensensor::Max17048::decode(0xd200, 0x6400).percent == 100);
+static_assert(opensensor::Max17048::decode(0xd200, 0x6400).valid());
+static_assert(!opensensor::Max17048::decode(0, 0x5000).valid());
+static_assert(!opensensor::Max17048::decode(0, 0x5000).vcell_valid());
+static_assert(opensensor::Max17048::decode(0, 0x5000).soc_valid());
+static_assert(opensensor::Max17048::decode(0xd200, 0xffff).vcell_valid());
+static_assert(!opensensor::Max17048::decode(0xd200, 0xffff).soc_valid());
 
 void decode_bounds() {
-  using aq::Max17048;
+  using opensensor::Max17048;
   const auto nominal = Max17048::decode(0xc800, 0x4b80);
   assert(nominal.valid() && nominal.millivolts == 4000 &&
          nominal.percent == 75 && nominal.raw_vcell == 0xc800 &&
@@ -93,10 +93,10 @@ void decode_bounds() {
 
 void bus_reads() {
   FakeBus bus;
-  bus.registers[aq::Max17048::kRegVcell] = 0xd200;
-  bus.registers[aq::Max17048::kRegSoc] = 0x3280;
-  bus.registers[aq::Max17048::kRegVersion] = 0x0012;
-  const aq::Max17048 gauge{bus.callbacks()};
+  bus.registers[opensensor::Max17048::kRegVcell] = 0xd200;
+  bus.registers[opensensor::Max17048::kRegSoc] = 0x3280;
+  bus.registers[opensensor::Max17048::kRegVersion] = 0x0012;
+  const opensensor::Max17048 gauge{bus.callbacks()};
   const auto reading = gauge.read();
   assert(reading.valid() && reading.millivolts == 4200 &&
          reading.percent == 50);
@@ -107,51 +107,51 @@ void bus_reads() {
   // Each basic register fails on its own. SOC is still read after a failed
   // VCELL, and a failed SOC keeps the decoded VCELL.
   bus.reads.clear();
-  bus.fail_reg = aq::Max17048::kRegVcell;
+  bus.fail_reg = opensensor::Max17048::kRegVcell;
   const auto no_vcell = gauge.read();
   assert(!no_vcell.vcell_ok && !no_vcell.vcell_valid() && !no_vcell.valid());
   assert(no_vcell.raw_vcell == 0 && no_vcell.millivolts == 0);
   assert(no_vcell.soc_valid() && no_vcell.raw_soc == 0x3280 &&
          no_vcell.percent == 50);
   assert((bus.reads == std::vector<std::uint8_t>{0x02, 0x04}));
-  bus.fail_reg = aq::Max17048::kRegSoc;
+  bus.fail_reg = opensensor::Max17048::kRegSoc;
   const auto no_soc = gauge.read();
   assert(no_soc.vcell_valid() && no_soc.raw_vcell == 0xd200 &&
          no_soc.millivolts == 4200);
   assert(!no_soc.soc_ok && !no_soc.soc_valid() && !no_soc.valid() &&
          no_soc.raw_soc == 0 && no_soc.percent == 0);
   bus.fail_reg = -1;
-  bus.fail_mask =
-      (1u << aq::Max17048::kRegVcell) | (1u << aq::Max17048::kRegSoc);
+  bus.fail_mask = (1u << opensensor::Max17048::kRegVcell) |
+                  (1u << opensensor::Max17048::kRegSoc);
   const auto neither = gauge.read();
   assert(!neither.vcell_ok && !neither.soc_ok && !neither.valid());
   bus.fail_mask = 0;
   // SOC 0xFFFF reads fine but is implausible. VCELL stays valid.
-  bus.registers[aq::Max17048::kRegSoc] = 0xffff;
+  bus.registers[opensensor::Max17048::kRegSoc] = 0xffff;
   const auto wild_soc = gauge.read();
   assert(wild_soc.vcell_valid() && wild_soc.millivolts == 4200 &&
          wild_soc.soc_ok && !wild_soc.soc_valid() &&
          wild_soc.raw_soc == 0xffff);
-  bus.registers[aq::Max17048::kRegSoc] = 0x3280;
+  bus.registers[opensensor::Max17048::kRegSoc] = 0x3280;
   // A VCELL word outside the range keeps a good SOC.
-  bus.registers[aq::Max17048::kRegVcell] = 0xffff;
+  bus.registers[opensensor::Max17048::kRegVcell] = 0xffff;
   const auto wild_vcell = gauge.read();
   assert(wild_vcell.vcell_ok && !wild_vcell.vcell_valid() &&
          wild_vcell.soc_valid() && wild_vcell.percent == 50);
-  bus.registers[aq::Max17048::kRegVcell] = 0xd200;
-  bus.fail_reg = aq::Max17048::kRegVersion;
+  bus.registers[opensensor::Max17048::kRegVcell] = 0xd200;
+  bus.fail_reg = opensensor::Max17048::kRegVersion;
   version = 0x7777;
   assert(!gauge.read_version(version) && version == 0x7777);
 
   // Unset IO never dereferences a null callback.
-  const aq::Max17048 unwired{aq::Max17048Io{}};
+  const opensensor::Max17048 unwired{opensensor::Max17048Io{}};
   const auto none = unwired.read();
   assert(!none.vcell_ok && !none.soc_ok && !none.valid());
   assert(!unwired.read_version(version));
 }
 void extended_reads() {
-  using aq::Max17048;
-  using Ext = aq::Max17048Extended;
+  using opensensor::Max17048;
+  using Ext = opensensor::Max17048Extended;
   FakeBus bus;
   bus.registers[Max17048::kRegMode] = 0x1000;
   bus.registers[Max17048::kRegVersion] = 0x0012;
@@ -211,7 +211,7 @@ void extended_reads() {
     bus.fail_mask = 1u << reg;
     const auto partial = gauge.read_extended();
     assert(bus.reads.size() == 7);
-    const aq::Max17048Word *words[] = {
+    const opensensor::Max17048Word *words[] = {
         &partial.mode,  &partial.version, &partial.hibrt, &partial.config,
         &partial.valrt, &partial.crate,   &partial.status};
     for (std::size_t i = 0; i < 7; ++i)
@@ -231,14 +231,14 @@ void extended_reads() {
   (void)gauge.read();
   assert((bus.reads == std::vector<std::uint8_t>{0x02, 0x04}));
 
-  const aq::Max17048 unwired{aq::Max17048Io{}};
+  const opensensor::Max17048 unwired{opensensor::Max17048Io{}};
   const auto none = unwired.read_extended();
   assert(!none.mode.ok && !none.status.ok && !none.crate.ok);
 }
 
 void reset_indicator_clear() {
-  using aq::Max17048;
-  using Result = aq::Max17048ClearResult;
+  using opensensor::Max17048;
+  using Result = opensensor::Max17048ClearResult;
   {
     // RI is cleared and every other bit survives.
     FakeBus bus;
@@ -296,14 +296,14 @@ void reset_indicator_clear() {
   }
 }
 
-static_assert(aq::clear_result_name(aq::Max17048ClearResult::Cleared)[0] ==
-              'c');
-static_assert(aq::clear_result_name(aq::Max17048ClearResult::VerifyFailed)[0] ==
-              'v');
+static_assert(opensensor::clear_result_name(
+                  opensensor::Max17048ClearResult::Cleared)[0] == 'c');
+static_assert(opensensor::clear_result_name(
+                  opensensor::Max17048ClearResult::VerifyFailed)[0] == 'v');
 
 // The calibration entry point carries the default model only.
-static_assert(aq::Max17048ModelCalibration{}.rcomp0 == 0x97);
-static_assert(!aq::Max17048ModelCalibration{}.loaded);
+static_assert(opensensor::Max17048ModelCalibration{}.rcomp0 == 0x97);
+static_assert(!opensensor::Max17048ModelCalibration{}.loaded);
 } // namespace
 
 int main() {

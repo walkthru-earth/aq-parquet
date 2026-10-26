@@ -20,7 +20,7 @@ SCRIPT = ROOT / "tools/repro_paths.py"
 WRAPPER = ROOT / "tools/check_repro_paths.sh"
 MANIFEST = {
     "board": "waveshare", "variant": "logger", "sdk_commit": "a" * 40,
-    "files": {"aq_waveshare.bin": "1" * 64, "bootloader/bootloader.bin": "2" * 64,
+    "files": {"opensensor_waveshare.bin": "1" * 64, "bootloader/bootloader.bin": "2" * 64,
               "sdkconfig": "3" * 64, "compile_commands.json": "4" * 64,
               "project_description.json": "5" * 64},
 }
@@ -43,7 +43,7 @@ def run(root: Path, first: dict, second: dict, images: tuple[bytes, bytes] | Non
         build.mkdir(parents=True)
         (build / "aq-build-sha256.json").write_text(json.dumps(manifest))
         if images:
-            (build / "aq_waveshare.bin").write_bytes(images[index])
+            (build / "opensensor_waveshare.bin").write_bytes(images[index])
         builds.append(build)
     return subprocess.run([sys.executable, str(SCRIPT), str(root / "checkout-0"), str(builds[0]),
                            str(root / "checkout-1"), str(builds[1])],
@@ -55,8 +55,8 @@ def main() -> None:
     # The compiler database and project description hold absolute paths by design.
     assert repro_paths.compare(MANIFEST, changed(files={"compile_commands.json": "6" * 64,
                                                         "project_description.json": "7" * 64})) == []
-    assert repro_paths.compare(MANIFEST, changed(files={"aq_waveshare.bin": "8" * 64})) == \
-        ["aq_waveshare.bin differs"]
+    assert repro_paths.compare(MANIFEST, changed(files={"opensensor_waveshare.bin": "8" * 64})) == \
+        ["opensensor_waveshare.bin differs"]
     assert repro_paths.compare(MANIFEST, changed(files={"sdkconfig": "9" * 64})) == ["sdkconfig differs"]
     assert any("board" in problem for problem in repro_paths.compare(MANIFEST, changed(board="cores3")))
     assert any("sdk_commit" in problem for problem in repro_paths.compare(MANIFEST, changed(sdk_commit="b")))
@@ -72,15 +72,15 @@ def main() -> None:
         root = Path(raw)
         result = run(root / "same", MANIFEST, changed(files={"compile_commands.json": "6" * 64}))
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "waveshare/logger" in result.stdout and "aq_waveshare.bin" in result.stdout
+        assert "waveshare/logger" in result.stdout and "opensensor_waveshare.bin" in result.stdout
 
         # A leaked checkout path is named, with the count of differing bytes.
         leaked = root / "leak"
         image_a = b"\xe9" * 64 + str(leaked / "checkout-0").encode()
         image_b = b"\xe9" * 64 + str(leaked / "checkout-1").encode()
-        result = run(leaked, MANIFEST, changed(files={"aq_waveshare.bin": "8" * 64}), (image_a, image_b))
+        result = run(leaked, MANIFEST, changed(files={"opensensor_waveshare.bin": "8" * 64}), (image_a, image_b))
         assert result.returncode == 1, result.stdout
-        assert "aq_waveshare.bin differs" in result.stdout, result.stdout
+        assert "opensensor_waveshare.bin differs" in result.stdout, result.stdout
         assert "checkout 1 path in build 1" in result.stdout, result.stdout
         assert "first at offset 0x" in result.stdout, result.stdout
 

@@ -2,7 +2,7 @@
 
 #include "ble_sync.h"
 
-namespace aqsync {
+namespace ossync {
 // Synchronous worker-side replies; may wrap the same BLE/LAN response adapters
 // used by ArchiveSession. A reply can block on transport back-pressure, so this
 // service must never execute on a radio callback task.
@@ -20,4 +20,4 @@ struct ControlReplies {
 // owns this service and config writes; returns false for a runtime operation.
 bool handle_common_control(const ble::ControlRequest &request,
                            const ControlReplies &replies);
-} // namespace aqsync
+} // namespace ossync

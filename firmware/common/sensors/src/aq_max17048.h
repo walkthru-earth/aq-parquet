@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aq {
+namespace opensensor {
 
 // One MAX17048 VCELL/SOC snapshot. Raw words are kept for diagnostics.
 // VCELL and SOC each carry their own read and range flags, so a failed or
@@ -260,4 +260,4 @@ private:
   Max17048Io io_;
 };
 
-} // namespace aq
+} // namespace opensensor

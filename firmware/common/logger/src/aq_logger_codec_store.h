@@ -15,7 +15,7 @@
 // 7 LZ4_RAW), so a reader of the raw key and a reader of a file agree.
 // Nothing is written until the owner selects a codec, and nothing here ever
 // erases a key or the namespace. The storage worker is the only writer.
-namespace aqlogger::codec_store {
+namespace oslogger::codec_store {
 inline constexpr char kNamespace[] = "parquet";
 inline constexpr char kKey[] = "codec";
 // Used when nothing is stored or the stored value cannot be read. LZ4_RAW
@@ -130,4 +130,4 @@ select(std::atomic<telemetry::Codec> &selected, telemetry::Codec codec) {
   selected = codec;
   return store(codec);
 }
-} // namespace aqlogger::codec_store
+} // namespace oslogger::codec_store

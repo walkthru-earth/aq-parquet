@@ -31,15 +31,15 @@ struct Failure {
 };
 // abort::sequences and abort::stopped are process-wide; reset between cases.
 void reset_abort() {
-  for (auto &sequence : aqsync::abort::sequences)
+  for (auto &sequence : ossync::abort::sequences)
     sequence.store(0);
-  for (auto &entry : aqsync::abort::stopped)
-    entry = aqsync::abort::Stopped{};
+  for (auto &entry : ossync::abort::stopped)
+    entry = ossync::abort::Stopped{};
 }
 // What a transport task does with a request the queue accepted.
 ble::ControlRequest stamped(ble::ControlRequest request) {
-  aqsync::abort::stamp(request);
-  aqsync::abort::commit(request);
+  ossync::abort::stamp(request);
+  ossync::abort::commit(request);
   return request;
 }
 struct Peer {
@@ -52,7 +52,7 @@ struct Peer {
   std::vector<Reply> successful;
   std::vector<Failure> errors;
 
-  aqsync::ControlReplies callbacks() {
+  ossync::ControlReplies callbacks() {
     return {this, payload_max, respond, error};
   }
   static std::uint16_t payload_max(void *context, ble::Link) {
@@ -66,8 +66,8 @@ struct Peer {
       marker.link = peer.abort_link;
       marker.bytes[0] = ble::kOpAbort;
       marker.length = 1;
-      aqsync::abort::stamp(marker);
-      aqsync::abort::commit(marker);
+      ossync::abort::stamp(marker);
+      ossync::abort::commit(marker);
     }
     if (peer.attempts == peer.fail_attempt)
       return false;
@@ -92,7 +92,7 @@ ble::ControlRequest request(ble::Op op, ble::Link link = ble::Link::Ble,
   return request;
 }
 void handle(const ble::ControlRequest &request, Peer &peer) {
-  assert(aqsync::handle_common_control(request, peer.callbacks()));
+  assert(ossync::handle_common_control(request, peer.callbacks()));
 }
 
 void paged_configuration() {
@@ -206,8 +206,8 @@ void config_chunks() {
     assert(reply.link == ble::Link::Ble && bytes[0] == ble::kFrameConfigChunk &&
            bytes.size() <= 244);
     assert(bytes[1] == large.successful[0].bytes[1] &&
-           aq::sync::get_u16(bytes.data() + 2) == expected.size() &&
-           aq::sync::get_u16(bytes.data() + 4) == actual.size());
+           opensensor::sync::get_u16(bytes.data() + 2) == expected.size() &&
+           opensensor::sync::get_u16(bytes.data() + 4) == actual.size());
     actual.append(bytes.begin() + 6, bytes.end());
   }
   assert(actual == expected);
@@ -237,7 +237,7 @@ void token_guard() {
   const auto &frame = peer.successful[0];
   assert(frame.link == ble::Link::Ble && frame.bytes[0] == ble::kFrameToken);
   assert(frame.bytes.size() == 3 + config::kTokenBytes);
-  assert(aq::sync::get_u16(frame.bytes.data() + 1) == config::kLanPort);
+  assert(opensensor::sync::get_u16(frame.bytes.data() + 1) == config::kLanPort);
   assert(std::memcmp(frame.bytes.data() + 3, config::get().token,
                      config::kTokenBytes) == 0);
 }
@@ -246,13 +246,14 @@ void logs() {
   // Attach a persistent block, as a PSRAM board does, so the ring is 64 KiB.
   static std::vector<std::uint32_t> block(
       DebugLog::persistent_bytes(kTestLayout) / 4 + 1);
-  assert(!aqlog.attach(block.data(), block.size() * 4, kTestLayout, true));
-  assert(aqlog.ring_bytes() == 65536);
+  assert(!oslog.attach(block.data(), block.size() * 4, kTestLayout, true));
+  assert(oslog.ring_bytes() == 65536);
   const std::string contents(DebugLog::kFallbackRingBytes, 'L');
-  assert(aqlog.write(reinterpret_cast<const std::uint8_t *>(contents.data()),
+  assert(oslog.write(reinterpret_cast<const std::uint8_t *>(contents.data()),
                      contents.size()) == contents.size());
   std::string length(2, '\0');
-  aq::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()), 1500);
+  opensensor::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()),
+                            1500);
   for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
     Peer peer;
     peer.payload = 2000; // cap BLE at 512, LAN at 1024
@@ -270,16 +271,18 @@ void logs() {
     }
     const auto &end = peer.successful.back().bytes;
     assert(end.size() == 7 && end[0] == ble::kFrameLogEnd);
-    assert(aq::sync::get_u16(end.data() + 5) == count && count == 1500);
-    assert(aq::sync::get_u32(end.data() + 1) >= DebugLog::kFallbackRingBytes);
+    assert(opensensor::sync::get_u16(end.data() + 5) == count && count == 1500);
+    assert(opensensor::sync::get_u32(end.data() + 1) >=
+           DebugLog::kFallbackRingBytes);
   }
   // A full 65535-byte tail streams from the 64 KiB ring in slices, in order.
   std::string sequence(70000, '\0');
   for (std::size_t i = 0; i < sequence.size(); ++i)
     sequence[i] = static_cast<char>('A' + (i * 13) % 26);
-  assert(aqlog.write(reinterpret_cast<const std::uint8_t *>(sequence.data()),
+  assert(oslog.write(reinterpret_cast<const std::uint8_t *>(sequence.data()),
                      sequence.size()) == sequence.size());
-  aq::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()), 65535);
+  opensensor::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()),
+                            65535);
   for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
     Peer peer;
     peer.payload = 2000;
@@ -294,7 +297,8 @@ void logs() {
     assert(peer.successful.size() - 1 == (65535 + cap - 2) / (cap - 1));
     assert(streamed == sequence.substr(sequence.size() - 65535));
     const auto &end = peer.successful.back().bytes;
-    assert(end.size() == 7 && aq::sync::get_u16(end.data() + 5) == 65535);
+    assert(end.size() == 7 &&
+           opensensor::sync::get_u16(end.data() + 5) == 65535);
   }
   Peer failed;
   failed.fail_attempt = 2;
@@ -303,7 +307,7 @@ void logs() {
          2); // first slice + LOG_END, no further data
   const auto &end = failed.successful.back().bytes;
   assert(end[0] == ble::kFrameLogEnd);
-  assert(aq::sync::get_u16(end.data() + 5) == 511);
+  assert(opensensor::sync::get_u16(end.data() + 5) == 511);
   Peer malformed;
   handle(request(ble::kOpLogTail, ble::Link::Lan, "x"), malformed);
   assert(malformed.successful.empty() && malformed.errors.size() == 1);
@@ -325,8 +329,8 @@ void diagnostics() {
     const std::size_t n = link == ble::Link::Ble ? 29 : 61;
     assert(frame[0] == ble::kFrameDiag && frame[37] == n);
     assert(frame.size() == 38 + 16 * n);
-    assert(aq::sync::get_u16(frame.data() + 1) == aqlog.boot_seq());
-    assert(aq::sync::get_u16(frame.data() + 3 + 2 * 1) == 70);
+    assert(opensensor::sync::get_u16(frame.data() + 1) == oslog.boot_seq());
+    assert(opensensor::sync::get_u16(frame.data() + 3 + 2 * 1) == 70);
     const auto last = ble::decode_event(frame.data() + 38 + 16 * (n - 1));
     const auto first = ble::decode_event(frame.data() + 38);
     assert(last.generation == 69 && first.generation == 70 - n);
@@ -364,7 +368,8 @@ bool aborted_reply(const Peer &peer, std::uint8_t op) {
 // queued ABORT marker answers ABORTED naming it exactly once.
 void aborts() {
   std::string length(2, '\0');
-  aq::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()), 65535);
+  opensensor::sync::put_u16(reinterpret_cast<std::uint8_t *>(length.data()),
+                            65535);
 
   // LOG_TAIL aborted mid stream, after a delivered slice and on a refused
   // one: ERROR aborted, no LOG_END, then ABORTED names LOG_TAIL.
@@ -403,7 +408,7 @@ void aborts() {
   Peer refused;
   const auto kept = stamped(request(ble::kOpLogTail, ble::Link::Ble, length));
   auto lost = request(ble::kOpAbort, ble::Link::Ble);
-  aqsync::abort::stamp(lost);
+  ossync::abort::stamp(lost);
   handle(kept, refused);
   assert(refused.errors.empty() &&
          refused.successful.back().bytes[0] == ble::kFrameLogEnd);
@@ -445,13 +450,13 @@ void aborts() {
   // aborted only, then the marker answers ABORTED LIST, then ABORTED 0.
   reset_abort();
   Peer lan;
-  aqsync::ArchiveHooks hooks{};
-  hooks.list = [](void *, bool, unsigned, aqsync::FileEmitter, void *,
+  ossync::ArchiveHooks hooks{};
+  hooks.list = [](void *, bool, unsigned, ossync::FileEmitter, void *,
                   unsigned &) {
     assert(false && "an aborted LIST must not walk the archive");
-    return aqsync::ListStatus::Failed;
+    return ossync::ListStatus::Failed;
   };
-  aqsync::ArchiveTransport transport{};
+  ossync::ArchiveTransport transport{};
   transport.context = &lan;
   transport.generation = [](void *, ble::Link, std::uint8_t) {
     return std::uint32_t(3);
@@ -467,7 +472,7 @@ void aborts() {
                        ble::Op op, ble::Error code, const char *detail) {
     return Peer::error(ctx, link, op, code, detail);
   };
-  aqsync::ArchiveSession session(hooks, transport);
+  ossync::ArchiveSession session(hooks, transport);
   auto list = request(ble::kOpList, ble::Link::Lan);
   list.peer = 1;
   list.link_generation = 3;
@@ -495,17 +500,17 @@ void aborts() {
   static unsigned walk_reads;
   walk_reads = 0;
   lan = Peer{};
-  hooks.list = [](void *, bool, unsigned budget, aqsync::FileEmitter emit,
+  hooks.list = [](void *, bool, unsigned budget, ossync::FileEmitter emit,
                   void *out, unsigned &) {
     // An endless directory, so only ABORT can end this walk.
     for (unsigned read = 0; read < budget; ++read) {
       ++walk_reads;
       if (!emit(out, "a.parquet", 1))
-        return aqsync::ListStatus::Stopped;
+        return ossync::ListStatus::Stopped;
     }
-    return aqsync::ListStatus::More;
+    return ossync::ListStatus::More;
   };
-  aqsync::ArchiveSession walking(hooks, transport);
+  ossync::ArchiveSession walking(hooks, transport);
   auto long_list = request(ble::kOpList, ble::Link::Lan);
   long_list.peer = 1;
   long_list.link_generation = 3;
@@ -513,9 +518,9 @@ void aborts() {
   assert(walking.handle(long_list, true) && walking.listing());
   walking.step(true);
   walking.step(true);
-  assert(walk_reads == 2 * aqsync::ArchiveSession::kListStepEntries);
+  assert(walk_reads == 2 * ossync::ArchiveSession::kListStepEntries);
   assert(lan.errors.empty() &&
-         lan.successful.size() == 2 * aqsync::ArchiveSession::kListStepEntries);
+         lan.successful.size() == 2 * ossync::ArchiveSession::kListStepEntries);
   auto mid_abort = request(ble::kOpAbort, ble::Link::Lan);
   mid_abort.peer = 1;
   mid_abort.link_generation = 3;
@@ -536,11 +541,11 @@ void aborts() {
 void dispatch() {
   Peer peer;
   const auto callbacks = peer.callbacks();
-  assert(!aqsync::handle_common_control(request(ble::kOpSetTime), callbacks));
-  assert(!aqsync::handle_common_control(request(ble::kOpOpen), callbacks));
+  assert(!ossync::handle_common_control(request(ble::kOpSetTime), callbacks));
+  assert(!ossync::handle_common_control(request(ble::kOpOpen), callbacks));
   ble::ControlRequest empty;
-  assert(!aqsync::handle_common_control(empty, callbacks));
-  assert(!aqsync::handle_common_control(request(ble::kOpGetConfig), {}));
+  assert(!ossync::handle_common_control(empty, callbacks));
+  assert(!ossync::handle_common_control(request(ble::kOpGetConfig), {}));
   handle(request(ble::kOpWifiScan, ble::Link::Lan), peer);
   assert(peer.errors.size() == 1 && peer.errors[0].code == ble::kErrBusy);
   assert(peer.errors[0].link == ble::Link::Lan);
@@ -585,6 +590,6 @@ int main() {
   dispatch();
 }
 
-namespace aq::network_time {
+namespace opensensor::network_time {
 Status status() { return Status{}; }
-} // namespace aq::network_time
+} // namespace opensensor::network_time

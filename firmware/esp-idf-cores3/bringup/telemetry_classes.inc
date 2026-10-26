@@ -11,7 +11,7 @@
 //
 // Sources.
 //   clock_status rows are exactly kClockSources in telemetry_contract.h, the
-//   sources this board writes, named by aq::utc::source_name.
+//   sources this board writes, named by opensensor::utc::source_name.
 //   pms_status, light_status and proximity_status names are the footer
 //   legends in telemetry_contract.h, which collect() writes through the
 //   enums named here.

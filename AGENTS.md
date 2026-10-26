@@ -74,7 +74,7 @@ file in `docs/README.md` after this one.
 - Board trials own pins, peripheral initialization, measurement schema and
   acquisition. Do not borrow sibling trial settings or start competing trials
   without a measured reason. Shared ESP-IDF components remain board-neutral and opt-in.
-  Add capabilities through `aqlogger::Hooks`, `aqsync::ServiceConfig` and board
+  Add capabilities through `oslogger::Hooks`, `ossync::ServiceConfig` and board
   sdkconfig defaults, never board-name conditionals in `firmware/common`.
 - One owner per peripheral and controller. Do not guess GPIO from another
   board. CoreS3 uses Quad PSRAM. Waveshare V2 uses OPI PSRAM. Inspect each

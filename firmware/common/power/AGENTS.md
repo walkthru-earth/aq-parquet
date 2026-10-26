@@ -1,7 +1,7 @@
 # Shared power policy
 
 - `aq_battery_health` is pure C++ with no IO, clocks, heap or board names.
-  The board reads the gauge, builds one `aq::battery::Sample` per tick with
+  The board reads the gauge, builds one `opensensor::battery::Sample` per tick with
   monotonic time and owns every hardware decision.
 - `State` codes are stored in telemetry. Never renumber them. Add new
   states at the end and update every board metadata table and the mobile

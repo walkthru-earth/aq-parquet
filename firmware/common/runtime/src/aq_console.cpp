@@ -14,7 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace aq::console {
+namespace opensensor::console {
 namespace {
 bool ready = false;
 #if !CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -114,4 +114,4 @@ int printf(const char *format, ...) {
     std::free(text);
   return static_cast<int>(written);
 }
-} // namespace aq::console
+} // namespace opensensor::console

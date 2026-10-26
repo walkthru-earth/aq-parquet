@@ -11,7 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aqsync {
+namespace ossync {
 enum class EnqueueResult : std::uint8_t {
   Ok,       // the whole frame is queued
   Full,     // not enough free space now, retry after the writer drains
@@ -72,4 +72,4 @@ private:
   std::uint64_t pushed_total_ = 0, consumed_total_ = 0;
   bool closed_ = false;
 };
-} // namespace aqsync
+} // namespace ossync

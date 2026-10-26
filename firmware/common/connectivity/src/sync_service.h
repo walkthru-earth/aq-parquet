@@ -5,7 +5,7 @@
 
 #include <cstddef>
 
-namespace aqsync {
+namespace ossync {
 struct StartResult {
   bool settings_loaded = false;
   bool ble_started = false;
@@ -13,7 +13,8 @@ struct StartResult {
 };
 
 // Sync service tuning with shared defaults. A board passes its own values
-// through aq::logger::Config::sync; queue depths size the logger's queues.
+// through opensensor::logger::Config::sync; queue depths size the logger's
+// queues.
 struct ServiceConfig {
   ble::Options ble{};
   lan::Options lan{};
@@ -27,4 +28,4 @@ struct ServiceConfig {
 // Wi-Fi remains off until the stored configuration enables it.
 StartResult begin(const ble::Identity &identity, ble::RequestHandler handler,
                   bool display_detected, const ServiceConfig &config = {});
-} // namespace aqsync
+} // namespace ossync

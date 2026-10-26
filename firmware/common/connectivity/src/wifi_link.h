@@ -46,7 +46,7 @@ struct Options {
   int keepalive_count = 3;
 };
 
-using TimeAnchor = aq::network_time::Anchor;
+using TimeAnchor = opensensor::network_time::Anchor;
 // One bounded pending SNTP result, consumed by the logger main loop. No IO.
 bool take_time_anchor(TimeAnchor &anchor);
 
@@ -90,11 +90,11 @@ void drop_session(
 // is gone, closing, or replaced, or the frame can never fit its ring (the peer
 // is then closed with tx-overflow). Rejected is final for the frame only: it
 // is empty or over kPayloadMax, and the peer stays connected.
-aqsync::EnqueueResult enqueue_response(const std::uint8_t *frame,
+ossync::EnqueueResult enqueue_response(const std::uint8_t *frame,
                                        std::size_t length,
                                        std::uint8_t peer = 0,
                                        std::uint32_t expected_generation = 0);
-aqsync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
+ossync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
                                     const char *detail, std::uint8_t peer = 0,
                                     std::uint32_t expected_generation = 0);
 // Builds an ERROR frame into kErrorFrameBytes and returns its length.

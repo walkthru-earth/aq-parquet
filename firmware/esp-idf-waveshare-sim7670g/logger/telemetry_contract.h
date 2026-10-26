@@ -27,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.9";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.10";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -35,7 +35,7 @@ constexpr const char *kDictionaryUri =
 constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v3";
 // Uncalibrated starting point. Change only with a dated discharge run and a
 // new configuration id; kConfiguration embeds the same numbers.
-constexpr aq::battery::Thresholds kBatteryThresholds{};
+constexpr opensensor::battery::Thresholds kBatteryThresholds{};
 constexpr std::int64_t kPmsWarmupUs = 30000000;
 constexpr std::uint32_t kPmsStaleAfterMs = 5000;
 constexpr const char *kConfiguration =
@@ -67,7 +67,7 @@ enum Field : std::size_t {
 #undef FIELD
   field_count
 };
-using Definition = aqlogger::Field;
+using Definition = oslogger::Field;
 // The dictionary carries each LIVE key, so the digest covers it. "" keeps a
 // field out of the LIVE snapshot. The shared logger emits keys in
 // field-table order.
@@ -80,22 +80,22 @@ constexpr const char *live_or_null(const char *key) {
 template <std::size_t N> constexpr bool decimals_fit(const Definition (&f)[N]) {
   return std::all_of(std::begin(f), std::end(f), [](const Definition &field) {
     return field.decimals <=
-           (field.type == PhysicalType::Float ? aqlogger::kMaxLiveDecimals : 0);
+           (field.type == PhysicalType::Float ? oslogger::kMaxLiveDecimals : 0);
   });
 }
 // Column semantics for the STAC template (#84). telemetry_semantics.inc stays
 // out of the dict digest. It is the single source of each FIELD property_uri,
 // a board neutral id looked up by name at compile time, so only the property
 // strings reach the image.
-static constexpr aq::semantics::Column kSemantics[] = {
+static constexpr opensensor::semantics::Column kSemantics[] = {
 #define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
             plausible_max, settle_s, valid_when, property, sensor_vendor,      \
             sensor_model)                                                      \
   {#name,                                                                      \
    ucum,                                                                       \
-   aq::semantics::Role::role,                                                  \
+   opensensor::semantics::Role::role,                                          \
    cf_standard_name,                                                           \
-   aq::semantics::Aggregate::aggregate,                                        \
+   opensensor::semantics::Aggregate::aggregate,                                \
    #plausible_min,                                                             \
    #plausible_max,                                                             \
    settle_s,                                                                   \
@@ -113,7 +113,7 @@ constexpr Definition kFields[] = {
    #procedure,                                                                 \
    unit,                                                                       \
    #validity,                                                                  \
-   aq::semantics::property_of(kSemantics, #name),                              \
+   opensensor::semantics::property_of(kSemantics, #name),                      \
    live_or_null(live),                                                         \
    decimals},
 #include "telemetry_fields.inc"
@@ -125,13 +125,13 @@ static_assert(
     decimals_fit(kFields),
     "decimals is 0 for integer fields and at most kMaxLiveDecimals for Float");
 
-static_assert(aq::semantics::aligned(kFields, kSemantics),
+static_assert(opensensor::semantics::aligned(kFields, kSemantics),
               "telemetry_semantics.inc must list every FIELD in order");
-static_assert(aq::semantics::well_formed(kFields, kSemantics),
+static_assert(opensensor::semantics::well_formed(kFields, kSemantics),
               "telemetry_semantics.inc has a malformed row");
-static_assert(aq::semantics::every_property_set(kFields),
+static_assert(opensensor::semantics::every_property_set(kFields),
               "every FIELD needs a property from telemetry_semantics.inc");
-using Sample = aqlogger::Row;
+using Sample = oslogger::Row;
 
 inline LogicalType logical_type(const Definition &field) {
   return field.type == PhysicalType::Int64 &&
@@ -150,9 +150,9 @@ inline void prepare_columns(Column *columns, Row *rows) {
 }
 
 enum ClockSource : std::int32_t {
-  kClockNone = aq::utc::None,
-  kClockHost = aq::utc::Host,
-  kClockNetwork = aq::utc::Network,
+  kClockNone = opensensor::utc::None,
+  kClockHost = opensensor::utc::Host,
+  kClockNetwork = opensensor::utc::Network,
 };
 // No RTC is available in this board contract. Caller supplies a coherent
 // host or SNTP anchor; each captured row keeps its original epoch permanently.
@@ -163,9 +163,9 @@ inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
   row.integer(clock_epoch, generation);
   if (generation) {
     row.counter(event_time_utc_us,
-                aq::utc::estimate_us(now, mono_anchor, utc_anchor));
+                opensensor::utc::estimate_us(now, mono_anchor, utc_anchor));
     row.counter(clock_anchor_mono_us, mono_anchor);
-    row.counter(clock_anchor_utc_us, aq::utc::ns_to_us(utc_anchor));
+    row.counter(clock_anchor_utc_us, opensensor::utc::ns_to_us(utc_anchor));
   }
 }
 
@@ -271,9 +271,10 @@ struct GaugeSnapshot {
   std::int32_t millivolts = 0;
   std::int32_t percent = 0; // whole percent, truncated and capped at 100
 };
-// Decoding and range checks live in the shared aq::Max17048 driver. This
-// board only adds the explicit battery-installed configuration.
-inline GaugeSnapshot gauge_snapshot(const aq::Max17048Reading &reading) {
+// Decoding and range checks live in the shared opensensor::Max17048 driver.
+// This board only adds the explicit battery-installed configuration.
+inline GaugeSnapshot
+gauge_snapshot(const opensensor::Max17048Reading &reading) {
   return {true, reading.vcell_valid(), reading.soc_valid(), reading.millivolts,
           reading.percent};
 }
@@ -309,10 +310,10 @@ static_assert(kBatteryThresholds.external_power_mv == 4240 &&
 // One classifier input from the basic and extended gauge reads. VCELL and
 // SOC are each trusted only when their own read and range check passed, so
 // a bad SOC never hides a low cell voltage.
-inline aq::battery::Sample battery_sample(std::int64_t now_ms,
-                                          const aq::Max17048Reading &reading,
-                                          const aq::Max17048Extended &ext) {
-  aq::battery::Sample sample;
+inline opensensor::battery::Sample
+battery_sample(std::int64_t now_ms, const opensensor::Max17048Reading &reading,
+               const opensensor::Max17048Extended &ext) {
+  opensensor::battery::Sample sample;
   sample.now_ms = now_ms;
   sample.vcell_ok = reading.vcell_valid();
   sample.millivolts = reading.millivolts;
@@ -321,15 +322,16 @@ inline aq::battery::Sample battery_sample(std::int64_t now_ms,
   sample.crate_ok = ext.crate.ok;
   sample.crate_milli_percent_per_hour = ext.crate_milli_percent_per_hour();
   sample.status_ok = ext.status.ok;
-  sample.reset_indicator = ext.status_bit(aq::Max17048Extended::kStatusRi);
+  sample.reset_indicator =
+      ext.status_bit(opensensor::Max17048Extended::kStatusRi);
   return sample;
 }
 
 struct BatteryHealth {
   bool battery_installed = false; // explicit owner configuration only
-  aq::Max17048Reading reading{};
-  aq::Max17048Extended extended{};
-  aq::battery::Assessment assessment{};
+  opensensor::Max17048Reading reading{};
+  opensensor::Max17048Extended extended{};
+  opensensor::battery::Assessment assessment{};
 };
 // Fields 57..62. Every column stays null when its own register failed.
 // Raw SOC and minutes to empty need a valid SOC. The health state comes from
@@ -340,8 +342,8 @@ inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
   const auto &ext = health.extended;
   if (health.reading.soc_valid())
     row.number(battery_soc_raw_percent,
-               static_cast<float>(
-                   aq::Max17048::raw_soc_percent(health.reading.raw_soc)));
+               static_cast<float>(opensensor::Max17048::raw_soc_percent(
+                   health.reading.raw_soc)));
   if (ext.crate.ok)
     row.number(battery_charge_rate_percent_per_h,
                static_cast<float>(ext.crate_milli_percent_per_hour()) /
@@ -373,7 +375,7 @@ constexpr const char *kBatchCandidateStatusLegend =
 
 // classification:classes for the board template (#85), out of the dict
 // digest like kSemantics.
-static constexpr aq::semantics::Class kClasses[] = {
+static constexpr opensensor::semantics::Class kClasses[] = {
 #define CLASS(column, value, name, nodata)                                     \
   {#column, static_cast<std::int64_t>(value), name, nodata},
 #include "telemetry_classes.inc"
@@ -383,39 +385,41 @@ static constexpr aq::semantics::Class kClasses[] = {
 // frame bytes with no published code list, gauge_status_flags is a bitmask.
 static constexpr std::string_view kClasslessColumns[] = {
     "pms_firmware", "pms_error", "gauge_status_flags"};
-static_assert(aq::semantics::classes_complete(kSemantics, kClasses,
-                                              kClasslessColumns),
+static_assert(opensensor::semantics::classes_complete(kSemantics, kClasses,
+                                                      kClasslessColumns),
               "every code or boolean column needs telemetry_classes.inc rows");
 static_assert(
-    aq::semantics::matches_legend(kClasses, "pms_status", kPmsStatusLegend) &&
-        aq::semantics::matches_legend(kClasses, "gauge_status",
-                                      kGaugeStatusLegend) &&
-        aq::semantics::matches_legend(kClasses, "battery_health_state",
-                                      kBatteryHealthStateLegend) &&
-        aq::semantics::matches_legend(kClasses, "pm25_batch_candidate_status",
-                                      kBatchCandidateStatusLegend),
+    opensensor::semantics::matches_legend(kClasses, "pms_status",
+                                          kPmsStatusLegend) &&
+        opensensor::semantics::matches_legend(kClasses, "gauge_status",
+                                              kGaugeStatusLegend) &&
+        opensensor::semantics::matches_legend(kClasses, "battery_health_state",
+                                              kBatteryHealthStateLegend) &&
+        opensensor::semantics::matches_legend(kClasses,
+                                              "pm25_batch_candidate_status",
+                                              kBatchCandidateStatusLegend),
     "telemetry_classes.inc and the footer status legends differ");
 // The clock sources this board writes, in code order. clock_status rows
-// must be exactly these, each named by aq::utc::source_name.
+// must be exactly these, each named by opensensor::utc::source_name.
 static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
                                                  kClockNetwork};
-static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
-                                           kClockSources,
-                                           [](std::int64_t code) {
-                                             return aq::utc::source_name(
-                                                 static_cast<std::int32_t>(
-                                                     code));
-                                           }),
+static_assert(opensensor::semantics::matches_codes(
+                  kClasses, "clock_status", kClockSources,
+                  [](std::int64_t code) {
+                    return opensensor::utc::source_name(
+                        static_cast<std::int32_t>(code));
+                  }),
               "clock_status classes must be the board's clock sources");
 
 // opensensor:derived of the modelResult columns (#85). apply_pms writes the
 // batch candidate as 0.003964 times the 0.3 um count.
 static constexpr std::string_view kBatchCandidateSources[] = {
     "particles_gt03_per_01l"};
-static constexpr aq::semantics::Derived kDerived[] = {
+static constexpr opensensor::semantics::Derived kDerived[] = {
     {"pm25_batch_candidate_ug_m3", kBatchCandidateSources,
      "urn:walkthru-earth:method:airgradient_20260408_count_candidate_v1"}};
-static_assert(aq::semantics::derived_complete(kFields, kSemantics, kDerived),
+static_assert(opensensor::semantics::derived_complete(kFields, kSemantics,
+                                                      kDerived),
               "every modelResult column needs one kDerived entry");
 
 // Board template title and keywords (#85). The title names the board and its

@@ -43,8 +43,9 @@ PmsSnapshot latest;
 bool logging = false;
 bool storage_mounted = false;
 bool gauge_bus_ready = false;
-const aq::Max17048 gauge{{nullptr, board::gauge_read, board::gauge_write}};
-aq::battery::Monitor battery_monitor{kBatteryThresholds};
+const opensensor::Max17048 gauge{
+    {nullptr, board::gauge_read, board::gauge_write}};
+opensensor::battery::Monitor battery_monitor{kBatteryThresholds};
 
 // Main loop only. Reads VCELL/SOC, then the diagnostic registers, feeds the
 // shared classifier and reports the state to the logger runtime.
@@ -64,8 +65,8 @@ BatteryHealth read_gauge(std::int64_t now) {
       battery_sample(now / 1000, health.reading, health.extended));
   static unsigned diagnostics = 0;
   if (gauge_bus_ready && diagnostics++ < 6)
-    aqlog.printf(
-        "AQ GAUGE read vcell_ok=%u soc_ok=%u error=%d vcell_raw=%u "
+    oslog.printf(
+        "OS GAUGE read vcell_ok=%u soc_ok=%u error=%d vcell_raw=%u "
         "soc_raw=%u vcell_plausible=%u soc_plausible=%u crate_raw=%d "
         "status=0x%04x mode=0x%04x\n",
         health.reading.vcell_ok, health.reading.soc_ok,
@@ -74,7 +75,7 @@ BatteryHealth read_gauge(std::int64_t now) {
         health.reading.soc_plausible,
         static_cast<int>(static_cast<std::int16_t>(health.extended.crate.raw)),
         health.extended.status.raw, health.extended.mode.raw);
-  aqlogger::report_battery(
+  oslogger::report_battery(
       health.assessment.state,
       health.reading.vcell_valid() ? health.reading.millivolts : -1);
   return health;
@@ -85,8 +86,8 @@ BatteryHealth read_gauge(std::int64_t now) {
 // so a later reset is visible again.
 void check_gauge_reset() {
   const auto ext = gauge.read_extended();
-  const bool ri = ext.status_bit(aq::Max17048Extended::kStatusRi);
-  aqlog.printf("AQ GAUGE status=0x%04x status_ok=%u ri=%u version=0x%04x "
+  const bool ri = ext.status_bit(opensensor::Max17048Extended::kStatusRi);
+  oslog.printf("OS GAUGE status=0x%04x status_ok=%u ri=%u version=0x%04x "
                "hibrt=0x%04x config=0x%04x\n",
                ext.status.raw, ext.status.ok, ri, ext.version.raw,
                ext.hibrt.raw, ext.config.raw);
@@ -94,11 +95,12 @@ void check_gauge_reset() {
     return;
   battery_monitor.note_gauge_reset(esp_timer_get_time() / 1000);
   const auto result = gauge.clear_reset_indicator();
-  aqlog.printf("AQ GAUGE ri_clear=%s error=%d\n", aq::clear_result_name(result),
+  oslog.printf("OS GAUGE ri_clear=%s error=%d\n",
+               opensensor::clear_result_name(result),
                board::gauge_last_error());
 }
 
-void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
+void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
   PmsSnapshot snapshot = latest;
   if (snapshot.present)
     snapshot.age_ms =
@@ -141,7 +143,7 @@ const telemetry::KeyValue kMetadata[] = {
 };
 // OpenSensor BLE name prefix, so the board advertises OS-xxxx.
 constexpr char kBleNamePrefix[] = "OS-";
-const aqlogger::Config kLoggerConfig{
+const oslogger::Config kLoggerConfig{
     .fields = kFields,
     .column_count = field_count,
     .schema_version = kSchemaVersion,
@@ -163,7 +165,7 @@ const aqlogger::Config kLoggerConfig{
     .descriptor_bytes = sizeof(kTemplateJson) - 1,
     .descriptor_sha256 = kDescriptorSha256,
 };
-const aqlogger::Hooks kHooks{
+const oslogger::Hooks kHooks{
     .collect = collect,
     .storage_total_bytes = [](void *) { return board::storage_total_bytes(); },
     .storage_used_bytes = [](void *) { return board::storage_used_bytes(); },
@@ -180,54 +182,55 @@ const aqlogger::Hooks kHooks{
 bool init_board() {
   const auto nvs_result = nvs_flash_init();
   if (nvs_result != ESP_OK) {
-    aqlog.printf("AQ ERROR operation=nvs-init error=%d logging=false\n",
+    oslog.printf("OS ERROR operation=nvs-init error=%d logging=false\n",
                  nvs_result);
     return false;
   }
-  aq::log::report_coredump();
+  opensensor::log::report_coredump();
   board::start_indicator();
   vTaskDelay(pdMS_TO_TICKS(500));
   board::indicator(0, 0, 8);
-  aqlog.printf("AQ BOARD waveshare-sim7670g-v2 firmware=%s sensor=PMS5003T "
+  oslog.printf("OS BOARD waveshare-sim7670g-v2 firmware=%s sensor=PMS5003T "
                "battery=%s display=absent rtc=absent\n",
                kFirmware, kBatteryInstalled ? "installed" : "absent");
   const bool psram_ok =
       esp_psram_is_initialized() && esp_psram_get_size() == 8 * 1024 * 1024;
   std::uint32_t flash_bytes = 0;
   const esp_err_t flash_result = esp_flash_get_size(nullptr, &flash_bytes);
-  aqlog.printf(
-      "AQ MEMORY flash_bytes=%lu flash_error=%d psram_physical_bytes=%lu "
+  oslog.printf(
+      "OS MEMORY flash_bytes=%lu flash_error=%d psram_physical_bytes=%lu "
       "psram_heap_bytes=%lu psram_ok=%u\n",
       static_cast<unsigned long>(flash_bytes), flash_result,
       static_cast<unsigned long>(esp_psram_get_size()),
       static_cast<unsigned long>(heap_caps_get_total_size(MALLOC_CAP_SPIRAM)),
       psram_ok);
   if (!psram_ok) {
-    aqlog.println("AQ ERROR operation=psram logging=false");
+    oslog.println("OS ERROR operation=psram logging=false");
     board::indicator(8, 0, 0);
     return false;
   }
   if (kBatteryInstalled) {
     gauge_bus_ready = board::start_gauge();
-    aqlog.printf("AQ GAUGE bus_ready=%u sda=%d scl=%d addr=0x%02x\n",
-                 gauge_bus_ready, kGaugeSda, kGaugeScl, aq::Max17048::kAddress);
+    oslog.printf("OS GAUGE bus_ready=%u sda=%d scl=%d addr=0x%02x\n",
+                 gauge_bus_ready, kGaugeSda, kGaugeScl,
+                 opensensor::Max17048::kAddress);
     if (gauge_bus_ready)
       check_gauge_reset();
     if (!battery_monitor.configured())
-      aqlog.println("AQ ERROR operation=battery-thresholds reason=invalid");
+      oslog.println("OS ERROR operation=battery-thresholds reason=invalid");
   }
   const bool sensor_ready = board::start_sensor();
   const bool mounted = board::mount_card();
   storage_mounted = mounted;
-  aqlog.printf("AQ TF mounted=%u size_bytes=%llu sensor_ready=%u "
+  oslog.printf("OS TF mounted=%u size_bytes=%llu sensor_ready=%u "
                "clk=%d cmd=%d d0=%d width=1 format_attempted=false\n",
                mounted, static_cast<unsigned long long>(board::card_bytes()),
                sensor_ready, kSdClk, kSdCmd, kSdData0);
-  logging = aqlogger::begin(kLoggerConfig, kHooks, mounted);
+  logging = oslogger::begin(kLoggerConfig, kHooks, mounted);
   config::set_sensor_policy(kSensorPolicy);
-  if (logging && !aqlogger::start_links(false))
-    aqlog.println("AQ ERROR operation=sync-start");
-  aqlog.printf("AQ READY logging=%u mounted=%u sample_ms=10000 "
+  if (logging && !oslogger::start_links(false))
+    oslog.println("OS ERROR operation=sync-start");
+  oslog.printf("OS READY logging=%u mounted=%u sample_ms=10000 "
                "pms_rx=%d pms_tx=%d\n",
                logging, mounted, kSensorRx, kSensorTx);
   return true;
@@ -250,7 +253,7 @@ void poll_board() {
   latest.checksum_errors = parser.checksum_failures();
   latest.length_errors = parser.length_failures();
   if (logging)
-    aqlogger::poll();
+    oslogger::poll();
   // Board-local indicator only: startup/card state and latest sensor validity.
   // It does not promise that a file was finalized or copied to another device.
   const auto now = esp_timer_get_time();
@@ -281,11 +284,12 @@ void board_task(void *) {
 } // namespace
 
 extern "C" void app_main() {
-  if (!aq::console::begin())
+  if (!opensensor::console::begin())
     return;
-  aq::log::attach_persistent(); // PSRAM log; the internal ring otherwise
-  aq::power::configure_dfs();
-  if (xTaskCreate(board_task, "aq-board", 12288, nullptr,
-                  aqlogger::kBoardTaskPriority, nullptr) != pdPASS)
-    aqlog.println("AQ ERROR operation=board-task-create logging=false");
+  opensensor::log::attach_persistent(); // PSRAM log; the internal ring
+                                        // otherwise
+  opensensor::power::configure_dfs();
+  if (xTaskCreate(board_task, "os-board", 12288, nullptr,
+                  oslogger::kBoardTaskPriority, nullptr) != pdPASS)
+    oslog.println("OS ERROR operation=board-task-create logging=false");
 }

@@ -9,7 +9,7 @@
 #include <string_view>
 
 namespace {
-namespace cd = aq::coredump;
+namespace cd = opensensor::coredump;
 
 struct FakeFlash {
   std::expected<cd::Identity, cd::SourceError> identity =

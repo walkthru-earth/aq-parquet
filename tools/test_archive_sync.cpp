@@ -19,17 +19,17 @@
 #include <vector>
 
 namespace {
-using namespace aq::sync;
+using namespace opensensor::sync;
 std::size_t slot(ble::Link link, std::uint8_t peer = 0) {
   return link == ble::Link::Ble ? 0 : 1 + peer;
 }
 // abort::sequences and abort::stopped are process-wide; every ABORT case
 // starts from a clean slate so earlier cases cannot leak a pending abort.
 void reset_abort() {
-  for (auto &sequence : aqsync::abort::sequences)
+  for (auto &sequence : ossync::abort::sequences)
     sequence.store(0);
-  for (auto &entry : aqsync::abort::stopped)
-    entry = aqsync::abort::Stopped{};
+  for (auto &entry : ossync::abort::stopped)
+    entry = ossync::abort::Stopped{};
 }
 // What a transport task does when an ABORT arrives on (link, peer).
 ble::ControlRequest stamp_abort(ble::Link link, std::uint8_t peer,
@@ -40,8 +40,8 @@ ble::ControlRequest stamp_abort(ble::Link link, std::uint8_t peer,
   marker.link_generation = generation;
   marker.bytes[0] = ble::kOpAbort;
   marker.length = 1;
-  aqsync::abort::stamp(marker);
-  aqsync::abort::commit(marker);
+  ossync::abort::stamp(marker);
+  ossync::abort::commit(marker);
   return marker;
 }
 unsigned descriptor_count() {
@@ -103,8 +103,8 @@ struct Fixture {
   unsigned listed = 0, progress = 0, locks = 0, lock_depth = 0;
   unsigned checks = 0, buffer_requests = 0;
   std::int64_t clock_us = 0;
-  std::array<std::array<char, aqsync::ArchiveSession::kReadBufferBytes>,
-             aqsync::ArchiveSession::kReadHandles>
+  std::array<std::array<char, ossync::ArchiveSession::kReadBufferBytes>,
+             ossync::ArchiveSession::kReadHandles>
       buffers{};
   bool complete = true;
   bool cache_hit = false;
@@ -130,13 +130,13 @@ struct Fixture {
   std::uint8_t abort_peer = 0;
   std::vector<std::string> logs;
   // LIST_SINCE hook. Records the cursor and answers since_result.
-  aqsync::ListCursor since_cursor{};
-  aqsync::ListSinceResult since_result{};
+  ossync::ListCursor since_cursor{};
+  ossync::ListSinceResult since_result{};
   unsigned since_begins = 0;
   // The logger's battery close gate, run in front of the transport as the
   // firmware deliver hook does. The intent is raised once raise_close_after
   // frames were delivered, so 0 raises it before the first frame.
-  aqlogger::power::EmergencyClose *close = nullptr;
+  oslogger::power::EmergencyClose *close = nullptr;
   std::size_t raise_close_after = 0;
 
   explicit Fixture(const char *path) : directory(path), bytes(20000) {
@@ -161,8 +161,8 @@ struct Fixture {
     logs.clear();
   }
   // The fake walk behind both LIST and LIST_SINCE.
-  static aqsync::ListStatus walk(void *ctx, bool begin, unsigned budget,
-                                 aqsync::FileEmitter emit, void *out,
+  static ossync::ListStatus walk(void *ctx, bool begin, unsigned budget,
+                                 ossync::FileEmitter emit, void *out,
                                  unsigned &partials) {
     auto &f = *static_cast<Fixture *>(ctx);
     assert(budget > 0);
@@ -179,20 +179,20 @@ struct Fixture {
       if (f.list_cursor == total) {
         f.list_open = false;
         if (!f.listing_complete)
-          return aqsync::ListStatus::Failed;
+          return ossync::ListStatus::Failed;
         partials += f.partials;
-        return aqsync::ListStatus::Complete;
+        return ossync::ListStatus::Complete;
       }
       ++f.list_reads;
       const auto &name = f.names[f.list_cursor++ % f.names.size()];
       if (!emit(out, name.c_str(), f.bytes.size())) {
         f.list_open = false;
-        return aqsync::ListStatus::Stopped;
+        return ossync::ListStatus::Stopped;
       }
     }
-    return aqsync::ListStatus::More;
+    return ossync::ListStatus::More;
   }
-  aqsync::ArchiveHooks archive() {
+  ossync::ArchiveHooks archive() {
     return {
         this, &Fixture::walk,
         [](void *ctx, const char *name, char *path, std::size_t size) {
@@ -205,7 +205,7 @@ struct Fixture {
         },
         // Reads the stream OPEN handed over, as the device owner does on a
         // cache miss. The session must rewind it before READ.
-        [](void *ctx, const char *, FILE *file, aqsync::FileCheck &check) {
+        [](void *ctx, const char *, FILE *file, ossync::FileCheck &check) {
           auto &f = *static_cast<Fixture *>(ctx);
           assert(f.lock_depth == 0 && file);
           ++f.checks;
@@ -257,9 +257,9 @@ struct Fixture {
                  (f.preempt_frame && f.frames.size() >= f.preempt_frame) ||
                  (f.close && f.close->preempt(0));
         },
-        [](void *ctx, bool begin, const aqsync::ListCursor &cursor,
-           aqsync::ListSinceResult &result, unsigned budget,
-           aqsync::FileEmitter emit, void *out, unsigned &partials) {
+        [](void *ctx, bool begin, const ossync::ListCursor &cursor,
+           ossync::ListSinceResult &result, unsigned budget,
+           ossync::FileEmitter emit, void *out, unsigned &partials) {
           auto &f = *static_cast<Fixture *>(ctx);
           if (begin) {
             ++f.since_begins;
@@ -269,7 +269,7 @@ struct Fixture {
           return walk(ctx, begin, budget, emit, out, partials);
         }};
   }
-  aqsync::ArchiveTransport transport() {
+  ossync::ArchiveTransport transport() {
     return {this,
             [](void *ctx, ble::Link link, std::uint8_t peer) {
               return static_cast<Fixture *>(ctx)->generation[slot(link, peer)];
@@ -284,7 +284,7 @@ struct Fixture {
               if (f.close && f.frames.size() == f.raise_close_after)
                 f.close->request();
               if (f.close &&
-                  aqlogger::power::refuses_frame(*f.close, data, size, 0))
+                  oslogger::power::refuses_frame(*f.close, data, size, 0))
                 return false;
               if (generation != f.generation[slot(link, peer)])
                 return false;
@@ -312,7 +312,7 @@ struct Fixture {
 };
 // Handles a request as the storage worker does, then runs a LIST job it
 // started to its end, one bounded step per worker pass.
-bool serve(aqsync::ArchiveSession &session, const ble::ControlRequest &r,
+bool serve(ossync::ArchiveSession &session, const ble::ControlRequest &r,
            bool storage_ready, Fixture *f = nullptr) {
   const bool handled = session.handle(r, storage_ready);
   while (session.listing()) {
@@ -333,7 +333,7 @@ ble::ControlRequest request(Fixture &f, ble::Op op,
   r.length = 1;
   return r;
 }
-std::uint16_t open(Fixture &f, aqsync::ArchiveSession &session,
+std::uint16_t open(Fixture &f, ossync::ArchiveSession &session,
                    ble::Link link = ble::Link::Ble,
                    const char *name = "sample.parquet", std::uint8_t peer = 0) {
   f.clear();
@@ -395,8 +395,8 @@ void verify_read(Fixture &f, std::uint16_t handle, std::uint32_t offset,
 
 // ABORT (abort_signal.h): transports stamp each request, an ABORT advances the
 // link's sequence, and the worker stops what the ABORT overtook.
-void abort_cases(Fixture &f, aqsync::ArchiveSession &session) {
-  namespace abort = aqsync::abort;
+void abort_cases(Fixture &f, ossync::ArchiveSession &session) {
+  namespace abort = ossync::abort;
   const auto stamped = [&](ble::ControlRequest r) {
     abort::stamp(r);
     abort::commit(r);
@@ -537,7 +537,7 @@ void abort_cases(Fixture &f, aqsync::ArchiveSession &session) {
 }
 // READ windows reuse the descriptor OPEN created, release_files() drops
 // descriptors but keeps handles, and descriptor exhaustion is OpenFailed.
-void persistent_cases(Fixture &f, aqsync::ArchiveSession &session,
+void persistent_cases(Fixture &f, ossync::ArchiveSession &session,
                       unsigned idle_descriptors) {
   const std::string path = f.directory + "/sample.parquet";
   const std::string moved = f.directory + "/moved.parquet";
@@ -637,7 +637,7 @@ std::vector<std::uint8_t> other_parquet(std::size_t size) {
   std::memcpy(data.data() + size - 4, "PAR1", 4);
   return data;
 }
-void expect_bad_handle_read(Fixture &f, aqsync::ArchiveSession &session,
+void expect_bad_handle_read(Fixture &f, ossync::ArchiveSession &session,
                             std::uint16_t handle) {
   f.clear();
   serve(session, read(f, handle, 0, 10), true);
@@ -645,12 +645,12 @@ void expect_bad_handle_read(Fixture &f, aqsync::ArchiveSession &session,
   expect_error(f, ble::kErrBadHandle);
 }
 // A remount the board completed, as probe_storage reports it.
-void remount(aqsync::ArchiveSession &session) {
+void remount(ossync::ArchiveSession &session) {
   session.remounted();
   session.mounted();
 }
 // READ_END status 4 at offset with no CHUNK, the retryable open failure.
-void expect_open_failed_read(Fixture &f, aqsync::ArchiveSession &session,
+void expect_open_failed_read(Fixture &f, ossync::ArchiveSession &session,
                              std::uint16_t handle, std::uint32_t offset) {
   f.clear();
   serve(session, read(f, handle, offset, 10), true);
@@ -660,7 +660,7 @@ void expect_open_failed_read(Fixture &f, aqsync::ArchiveSession &session,
          get_u16(end.data() + 1) == handle &&
          get_u32(end.data() + 3) == offset && end[7] == ble::kErrOpenFailed);
 }
-void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
+void remount_cases(Fixture &f, ossync::ArchiveSession &session,
                    unsigned idle_descriptors) {
   const std::string path = f.directory + "/sample.parquet";
   unsigned checks = f.checks;
@@ -881,7 +881,7 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
   // READ rechecks before any byte instead of serving the old stream, so
   // unchanged bytes serve and a changed file ends the handle.
   for (const bool changed : {false, true}) {
-    aqlogger::power::EmergencyClose close;
+    oslogger::power::EmergencyClose close;
     handle = open(f, session);
     assert(f.checks == ++checks);
     f.clear();
@@ -897,8 +897,8 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
     assert(f.checks == checks);
     assert(close.due(0));
     remount(session); // the Retry probe inside writable()
-    assert(close.finish(aqlogger::power::CloseOutcome::Closed, 0) ==
-           aqlogger::power::Next::Done);
+    assert(close.finish(oslogger::power::CloseOutcome::Closed, 0) ==
+           oslogger::power::Next::Done);
     f.close = nullptr;
     if (changed) {
       write_file(path, other_parquet(f.bytes.size()));
@@ -921,9 +921,9 @@ void remount_cases(Fixture &f, aqsync::ArchiveSession &session,
 
 // LIST runs as a job of bounded steps (issue #33). handle() starts it and
 // the storage worker calls step() once per pass.
-void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
-  namespace abort = aqsync::abort;
-  constexpr auto kStep = aqsync::ArchiveSession::kListStepEntries;
+void list_job_cases(Fixture &f, ossync::ArchiveSession &session) {
+  namespace abort = ossync::abort;
+  constexpr auto kStep = ossync::ArchiveSession::kListStepEntries;
   const auto stamped = [](ble::ControlRequest r) {
     abort::stamp(r);
     abort::commit(r);
@@ -1054,13 +1054,13 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
   {
     unsigned partials = 0;
     const auto hooks = f.archive();
-    const aqsync::FileEmitter collect = [](void *out, const char *name,
+    const ossync::FileEmitter collect = [](void *out, const char *name,
                                            std::uint32_t) {
       static_cast<std::vector<std::string> *>(out)->push_back(name);
       return true;
     };
     assert(hooks.list(hooks.context, true, UINT32_MAX, collect, &unbounded,
-                      partials) == aqsync::ListStatus::Complete);
+                      partials) == ossync::ListStatus::Complete);
   }
   f.list_steps = 0;
   serve(session, request(f, ble::kOpList), true);
@@ -1169,11 +1169,11 @@ void list_job_cases(Fixture &f, aqsync::ArchiveSession &session) {
 
 // The storage worker glue around a LIST job (aq_logger_list_job.h), driven
 // with the real planner, governor and session as the worker runs them.
-void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
-  namespace listjob = aqlogger::listjob;
-  namespace storage = aqlogger::storage;
+void worker_glue_cases(Fixture &f, ossync::ArchiveSession &session) {
+  namespace listjob = oslogger::listjob;
+  namespace storage = oslogger::storage;
   using listjob::StoragePass;
-  constexpr auto kStep = aqsync::ArchiveSession::kListStepEntries;
+  constexpr auto kStep = ossync::ArchiveSession::kListStepEntries;
   reset_abort();
   f.payload = {517, 1024, 1024, 1024};
 
@@ -1184,7 +1184,7 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
     listjob::StoragePlanner planner;
     unsigned remounts = 0, kept = 0, rechecks = 0;
     std::uint64_t free_bytes = 0;
-    StoragePass pass(aqsync::ArchiveSession &session, std::int64_t now,
+    StoragePass pass(ossync::ArchiveSession &session, std::int64_t now,
                      bool owner = false) {
       listjob::StorageInputs in;
       in.probe_due = governor.probe_due(now);
@@ -1321,7 +1321,7 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
   {
     struct CloseCard {
       Fixture &f;
-      aqsync::ArchiveSession &session;
+      ossync::ArchiveSession &session;
       unsigned remounts = 0;
       bool has_data() const { return true; }
       bool writable() {
@@ -1333,7 +1333,7 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
       }
       bool finalize() { return true; }
     };
-    aqlogger::power::EmergencyClose close;
+    oslogger::power::EmergencyClose close;
     CloseCard card{f, session};
     f.clear();
     f.list_repeats = 4 * kStep;
@@ -1344,12 +1344,12 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
     const std::size_t sent = f.frames.size();
     // Nothing is due, so the pass leaves the job alone.
     assert(!listjob::preempt_for_close(session, close, 0));
-    assert(!aqlogger::power::service(close, card, 0).attempted);
+    assert(!oslogger::power::service(close, card, 0).attempted);
     close.request();
     assert(listjob::preempt_for_close(session, close, 0));
-    const auto pass = aqlogger::power::service(close, card, 0);
+    const auto pass = oslogger::power::service(close, card, 0);
     assert(pass.attempted &&
-           pass.outcome == aqlogger::power::CloseOutcome::Closed);
+           pass.outcome == oslogger::power::CloseOutcome::Closed);
     assert(card.remounts == 1 && !f.list_open && f.list_cancels == 1);
     assert(f.frames.size() == sent && f.errors.size() == 1 &&
            f.errors[0].code == ble::kErrBusy &&
@@ -1366,7 +1366,7 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
            f.errors[0].code == ble::kErrAborted);
     reset_abort();
     assert(close.due(0));
-    close.finish(aqlogger::power::CloseOutcome::Closed, 0);
+    close.finish(oslogger::power::CloseOutcome::Closed, 0);
   }
 
   // The queue glue. A request the job holds parks outside the queue, so an
@@ -1464,31 +1464,31 @@ void worker_glue_cases(Fixture &f, aqsync::ArchiveSession &session) {
   f.clear();
 }
 
-ble::ControlRequest since_request(Fixture &f, const aqsync::ListCursor &cursor,
+ble::ControlRequest since_request(Fixture &f, const ossync::ListCursor &cursor,
                                   ble::Link link = ble::Link::Ble) {
   auto r = request(f, ble::kOpListSince, link);
-  aqsync::encode_cursor(cursor,
-                        std::span<std::uint8_t, aqsync::kListCursorBytes>(
-                            r.bytes + 1, aqsync::kListCursorBytes));
-  r.length = aqsync::kListSinceRequestBytes;
+  ossync::encode_cursor(cursor,
+                        std::span<std::uint8_t, ossync::kListCursorBytes>(
+                            r.bytes + 1, ossync::kListCursorBytes));
+  r.length = ossync::kListSinceRequestBytes;
   return r;
 }
 
 // LIST_SINCE shares the LIST job. It sends the same FILE frames, then a
 // LIST_SINCE_END whose first 15 bytes are LIST_END.
-void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
-  namespace abort = aqsync::abort;
+void list_since_cases(Fixture &f, ossync::ArchiveSession &session) {
+  namespace abort = ossync::abort;
   static_assert(ble::kOpListSince == 0x10 && ble::kFrameListSinceEnd == 0x4e);
   reset_abort();
   f.payload = {517, 1024, 1024, 1024};
   f.list_repeats = 3;
-  const aqsync::ListCursor cursor{
+  const ossync::ListCursor cursor{
       .mount_epoch = 0xa1b2c3d4,
       .day = 20260315,
       .boot = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
       .seq = 0x0102030405060708ULL};
   f.since_result = {
-      .flags = aqsync::kListSinceUnsyncedFull,
+      .flags = ossync::kListSinceUnsyncedFull,
       .next = {.mount_epoch = 0xa1b2c3d4,
                .day = 20260316,
                .boot = {0xf0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0f},
@@ -1511,7 +1511,7 @@ void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
     assert(end.size() == 48 && end[0] == ble::kFrameListSinceEnd);
     assert(get_u32(end.data() + 1) == 3 && get_u16(end.data() + 5) == 65535);
     assert(get_u32(end.data() + 7) == 123 && get_u32(end.data() + 11) == 45);
-    assert(end[15] == aqsync::kListSinceUnsyncedFull);
+    assert(end[15] == ossync::kListSinceUnsyncedFull);
     assert(get_u32(end.data() + 16) == 0xa1b2c3d4);
     assert(get_u32(end.data() + 20) == 20260316);
     assert(end[24] == 0xf0 && end[39] == 0x0f);
@@ -1551,7 +1551,7 @@ void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
   }
   // Day 0 is no floor, and an all zero cursor is a valid first request.
   f.clear();
-  serve(session, since_request(f, aqsync::ListCursor{}), true);
+  serve(session, since_request(f, ossync::ListCursor{}), true);
   assert(f.errors.empty() && f.frames.back().bytes.size() == 48);
 
   // Storage, busy, preempted and a link too small for LIST_SINCE_END.
@@ -1624,7 +1624,7 @@ void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
   // to fall back to LIST.
   auto hooks = f.archive();
   hooks.list_since = nullptr;
-  aqsync::ArchiveSession bare(hooks, f.transport());
+  ossync::ArchiveSession bare(hooks, f.transport());
   f.clear();
   assert(serve(bare, since_request(f, cursor), true));
   assert(!bare.listing() && f.frames.empty());
@@ -1638,7 +1638,7 @@ void list_since_cases(Fixture &f, aqsync::ArchiveSession &session) {
 int main(int argc, char **argv) {
   assert(argc == 2);
   Fixture f(argv[1]);
-  aqsync::ArchiveSession session(f.archive(), f.transport());
+  ossync::ArchiveSession session(f.archive(), f.transport());
 
   assert(!serve(session, request(f, ble::kOpStatus), true));
   assert(serve(session, request(f, ble::kOpList), false));
@@ -1699,7 +1699,7 @@ int main(int argc, char **argv) {
   // gate passes FILE frames and refuses only READ CHUNK frames. The worker
   // runs the close, then a retried LIST completes.
   {
-    aqlogger::power::EmergencyClose close;
+    oslogger::power::EmergencyClose close;
     f.clear();
     f.list_repeats = 3;
     f.close = &close;
@@ -1717,8 +1717,8 @@ int main(int argc, char **argv) {
            f.errors[0].code == ble::kErrBusy &&
            f.errors[0].detail == "preempted");
     const unsigned listed_before = f.listed;
-    assert(close.due(0) && close.finish(aqlogger::power::CloseOutcome::Closed,
-                                        0) == aqlogger::power::Next::Done);
+    assert(close.due(0) && close.finish(oslogger::power::CloseOutcome::Closed,
+                                        0) == oslogger::power::Next::Done);
     f.clear();
     f.raise_close_after = static_cast<std::size_t>(-1);
     serve(session, request(f, ble::kOpList, ble::Link::Lan), true);
@@ -1834,7 +1834,7 @@ int main(int argc, char **argv) {
         open(f, session, ble::Link::Lan, "sample.parquet", peer);
     assert(descriptor_count() == idle_descriptors + 2 + peer);
   }
-  constexpr unsigned all_slots = aqsync::ArchiveSession::kReadHandles;
+  constexpr unsigned all_slots = ossync::ArchiveSession::kReadHandles;
   static_assert(all_slots == 1 + ble::kMaxLanClients, "one slot per peer");
   assert(descriptor_count() == idle_descriptors + all_slots);
   for (std::uint8_t peer = 0; peer < ble::kMaxLanClients; ++peer) {

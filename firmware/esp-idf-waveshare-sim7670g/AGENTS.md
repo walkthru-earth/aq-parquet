@@ -14,8 +14,8 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
 - The board adapter owns UART1 PMS5003T RX1/TX2, 9600 8N1; four particle bins
   plus temperature/RH. GPIO2 is valid on V2, conflicting with the V1 gauge.
 - Mount TF with SDMMC CLK5/CMD4/D0=6 in one-bit mode without formatting. After
-  startup, AQLogger's single worker owns every filesystem operation.
-- AQLogger, AQConnectivity, AQRuntime and AQCommon own shared application
+  startup, OSLogger's single worker owns every filesystem operation.
+- OSLogger, OSConnectivity, OSRuntime and OSCommon own shared application
   services. Board code supplies only descriptors, sensor collection, card
   capacity hooks and board GPIO setup. No second radio initializer.
 - Reserve the heap-owned 4 KiB internal DMA SD transfer buffer before radios
@@ -34,7 +34,7 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   `battery_health_state`, which is always written and reads 0 when unknown.
   Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
-- Current firmware is `idf-waveshare-parquet-v2.9`, schema v5/dictionary v6
+- Current firmware is `idf-waveshare-parquet-v2.10`, schema v5/dictionary v6
   with 62 fields. Fields 57 to 62 hold MAX17048 diagnostics and the shared
   `power/` battery health state. Battery thresholds live in
   `telemetry_contract.h` (`kBatteryThresholds`) and are uncalibrated until a

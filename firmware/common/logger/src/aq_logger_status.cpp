@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <cstdio>
 
-namespace aqlogger {
+namespace oslogger {
 namespace {
 // Bounds a printed number. Every reachable value lies inside, so only the
 // worst-case length changes: the UTC anchor is limited to 2020 to 2100 (13
@@ -62,4 +62,4 @@ std::size_t format_status(const StatusSnapshot &view, char *out,
   return written > 0 && std::size_t(written) < capacity ? std::size_t(written)
                                                         : 0;
 }
-} // namespace aqlogger
+} // namespace oslogger

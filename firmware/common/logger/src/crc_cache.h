@@ -12,7 +12,7 @@
 // caller recomputes. Pure and allocation-free so the host test exercises it
 // unchanged. The logger places one instance in PSRAM and touches it only from
 // its storage worker, so it needs no lock.
-namespace aq {
+namespace opensensor {
 namespace storage {
 struct CrcKey {
   std::uint64_t path_hash = 0;
@@ -112,4 +112,4 @@ private:
   std::uint64_t clock_ = 0;
 };
 } // namespace storage
-} // namespace aq
+} // namespace opensensor

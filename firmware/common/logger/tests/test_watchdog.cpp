@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <string>
 
-namespace wd = aqlogger::watchdog;
+namespace wd = oslogger::watchdog;
 
 namespace {
 constexpr std::int64_t kSecond = 1000000LL;

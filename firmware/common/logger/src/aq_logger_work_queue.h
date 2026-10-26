@@ -7,7 +7,7 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
-namespace aqlogger::work {
+namespace oslogger::work {
 enum class StallAction : std::uint8_t { None, Warn, Restart };
 
 // Copy first, then signal. The binary wakeup may coalesce several enqueues;
@@ -49,4 +49,4 @@ inline StallAction check_stall(std::int64_t now_us, std::int64_t heartbeat_us,
   }
   return StallAction::None;
 }
-} // namespace aqlogger::work
+} // namespace oslogger::work

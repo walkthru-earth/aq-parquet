@@ -3,14 +3,14 @@
 // Bench only. The `parquet bench-stall <s>` serial command blocks the storage
 // worker without stamping its heartbeat, so a bench can force the worker
 // watchdog (issue #49, #61 item 3). aq_logger.cpp compiles the command only
-// with CONFIG_AQ_LOGGER_BENCH_STALL=y. Pure and allocation free, so the host
+// with CONFIG_OS_LOGGER_BENCH_STALL=y. Pure and allocation free, so the host
 // test runs the same parser and deadline the firmware uses.
 
 #include <cstdint>
 #include <expected>
 #include <string_view>
 
-namespace aqlogger::bench {
+namespace oslogger::bench {
 
 inline constexpr std::string_view kStallPrefix = "parquet bench-stall ";
 // 0 blocks forever. Anything else is a returning stall of that many seconds.
@@ -71,4 +71,4 @@ parse_stall_seconds(std::string_view command) {
          now_us - start_us < static_cast<std::int64_t>(seconds) * 1000000;
 }
 
-} // namespace aqlogger::bench
+} // namespace oslogger::bench

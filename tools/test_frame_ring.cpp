@@ -9,8 +9,8 @@
 #include <random>
 #include <vector>
 
-using aqsync::EnqueueResult;
-using aqsync::FrameRing;
+using ossync::EnqueueResult;
+using ossync::FrameRing;
 
 namespace {
 std::vector<std::uint8_t> body(std::size_t length, std::uint8_t seed) {

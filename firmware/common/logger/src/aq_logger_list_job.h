@@ -6,7 +6,7 @@
 // Storage worker glue around a running radio LIST job (archive_sync.h).
 // Pure decisions with no IO, queue or clock, so the host tests drive the same
 // code as the firmware. The worker asks these once per pass.
-namespace aqlogger::listjob {
+namespace oslogger::listjob {
 
 // What service_storage runs on this pass.
 enum class StoragePass : std::uint8_t {
@@ -116,7 +116,7 @@ inline bool serial_walks_archive(const char *text) {
 // in Retry, and a remount would end a running LIST with ERROR busy
 // "remount". The job ends first with ERROR busy "preempted" and its walk
 // closes, so the close runs with no directory open. `Close` is
-// power::EmergencyClose and `Session` is aqsync::ArchiveSession. True when
+// power::EmergencyClose and `Session` is ossync::ArchiveSession. True when
 // a job was ended.
 template <class Session, class Close>
 bool preempt_for_close(Session &session, const Close &close,
@@ -127,4 +127,4 @@ bool preempt_for_close(Session &session, const Close &close,
   return true;
 }
 
-} // namespace aqlogger::listjob
+} // namespace oslogger::listjob

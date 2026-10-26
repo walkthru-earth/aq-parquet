@@ -42,7 +42,7 @@ public:
   static constexpr std::size_t kLockedCopyBytes = 256;
 
   // Sizes of an attached persistent block. A board chooses them through
-  // aq::log::attach_persistent (log_persist.h), never in this file.
+  // opensensor::log::attach_persistent (log_persist.h), never in this file.
   struct Layout {
     std::size_t ring_bytes;
     std::size_t event_slots;
@@ -163,4 +163,4 @@ private:
   std::uint16_t fallback_counters_[kCounters]{};
 };
 
-extern DebugLog aqlog;
+extern DebugLog oslog;

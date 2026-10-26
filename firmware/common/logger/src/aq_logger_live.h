@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aqlogger {
+namespace oslogger {
 // LIVE keys are short JSON names chosen by each board's field table. They are
 // emitted verbatim, so keep them to 1..15 characters of [a-z0-9_].
 constexpr std::size_t kMaxLiveKey = 15;
@@ -66,4 +66,4 @@ private:
   bool logged_ = false;
   std::int64_t last_log_us_ = 0;
 };
-} // namespace aqlogger
+} // namespace oslogger

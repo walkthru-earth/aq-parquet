@@ -106,7 +106,7 @@ public:
   void close();
 
   // Ok consumes a credit, Full waits for one, Closed never retries.
-  aqsync::EnqueueResult take(std::uint32_t generation, std::int64_t now_us);
+  ossync::EnqueueResult take(std::uint32_t generation, std::int64_t now_us);
   // A producer that took a credit gives it back unused.
   void cancel(std::uint32_t generation);
   // BLE_GAP_EVENT_NOTIFY_TX for a queued response frame. Returns false when
@@ -152,7 +152,7 @@ struct TxSlot {
 class ResponseQueue {
 public:
   struct Reservation {
-    aqsync::EnqueueResult result = aqsync::EnqueueResult::Closed;
+    ossync::EnqueueResult result = ossync::EnqueueResult::Closed;
     std::uint8_t slot = 0;
     std::uint32_t epoch = 0;
   };

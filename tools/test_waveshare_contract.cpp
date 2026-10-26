@@ -65,7 +65,7 @@ constexpr std::int64_t kUtcUs = kI64 / 1000; // 9223372036854775000 ns
 constexpr std::int64_t kU16 = 65535;
 // `t` is the PMS5003T signed int16 deci degree, so -3276.8 prints widest.
 // `rh` is capped at 100.0. `bat` passes the MAX17048 2500..4500 mV check.
-// `bstate` is aq::battery::State (0..5).
+// `bstate` is opensensor::battery::State (0..5).
 constexpr livewidest::Widest kWidest[] = {
     {"seq", kI64, 0.0F},  {"mono", kI64, 0.0F}, {"utc", kUtcUs, 0.0F},
     {"pms", 9, 0.0F},     {"c1", kU16, 0.0F},   {"c25", kU16, 0.0F},
@@ -83,7 +83,7 @@ constexpr livewidest::Widest kWidest[] = {
 // changed, update the numbers.
 constexpr std::size_t kWidestLiveBytes = 270;
 constexpr std::size_t kAllNullLiveBytes = 211;
-void assert_live_keys(const aqlogger::Field *table, std::size_t count) {
+void assert_live_keys(const oslogger::Field *table, std::size_t count) {
   const auto bytes = livewidest::measure(table, count, kWidest);
   const auto nulls = livewidest::all_null(table, count);
   assert(bytes <= ble::kMaxJson);
@@ -113,8 +113,8 @@ void assert_identity_rules() {
   assert(!batch_eligible(kVendor, kModel, "PMS5003T-202605011332"));
   assert(!batch_eligible(kVendor, "PMSA003", "PMS5003T-202604081332"));
 }
-aq::Max17048Extended extended_ok() {
-  aq::Max17048Extended ext;
+opensensor::Max17048Extended extended_ok() {
+  opensensor::Max17048Extended ext;
   ext.mode = {0x1000, true};
   ext.crate = {0xfff6, true};  // -10 LSB, -2.08 %/h
   ext.status = {0x4000, true}; // EnVr only
@@ -129,8 +129,8 @@ struct GaugeBus {
   static bool read(void *context, std::uint8_t, std::uint8_t reg,
                    std::uint8_t *data, std::size_t) {
     const auto &bus = *static_cast<GaugeBus *>(context);
-    const bool vcell = reg == aq::Max17048::kRegVcell;
-    if (!vcell && reg != aq::Max17048::kRegSoc)
+    const bool vcell = reg == opensensor::Max17048::kRegVcell;
+    if (!vcell && reg != opensensor::Max17048::kRegSoc)
       return false;
     if (vcell ? bus.nack_vcell : bus.nack_soc)
       return false;
@@ -145,9 +145,9 @@ struct GaugeBus {
 void assert_voltage_only_critical() {
   for (const bool nack : {true, false}) {
     GaugeBus bus{0xa500, 0xffff, false, nack}; // 3300 mV
-    const aq::Max17048 gauge{{&bus, GaugeBus::read}};
-    aq::battery::Monitor monitor{kBatteryThresholds};
-    aq::battery::Assessment last;
+    const opensensor::Max17048 gauge{{&bus, GaugeBus::read}};
+    opensensor::battery::Monitor monitor{kBatteryThresholds};
+    opensensor::battery::Assessment last;
     BatteryHealth health{};
     for (int tick = 1; tick <= kBatteryThresholds.debounce_samples + 2;
          ++tick) {
@@ -157,8 +157,8 @@ void assert_voltage_only_critical() {
           battery_sample(tick * 10000, health.reading, health.extended));
       health.assessment = last;
       const bool debounced = tick >= kBatteryThresholds.debounce_samples;
-      assert(last.state == (debounced ? aq::battery::State::Critical
-                                      : aq::battery::State::Unknown));
+      assert(last.state == (debounced ? opensensor::battery::State::Critical
+                                      : opensensor::battery::State::Unknown));
       assert(!last.soc_trusted && last.minutes_to_empty == -1);
     }
     Sample row{};
@@ -170,13 +170,13 @@ void assert_voltage_only_critical() {
            !row.valid[battery_minutes_to_empty]);
     assert(row.valid[battery_health_state] &&
            row.data[battery_health_state] ==
-               static_cast<std::int32_t>(aq::battery::State::Critical));
+               static_cast<std::int32_t>(opensensor::battery::State::Critical));
     assert(row.valid[battery_charge_rate_percent_per_h] &&
            row.valid[gauge_status_flags] && row.valid[gauge_hibernating]);
   }
   // A NACKed VCELL with a good SOC keeps the percent and no voltage.
   GaugeBus bus{0xa500, 0x4b80, true, false};
-  const aq::Max17048 gauge{{&bus, GaugeBus::read}};
+  const opensensor::Max17048 gauge{{&bus, GaugeBus::read}};
   Sample row{};
   apply_gauge(row, gauge_snapshot(gauge.read()));
   assert(row.data[gauge_status] == 1 && !row.valid[battery_mv] &&
@@ -187,7 +187,7 @@ void assert_battery_gates() {
   // Mapping from the driver into the classifier input.
   auto ext = extended_ok();
   ext.status.raw = 0x4100;
-  const auto reading = aq::Max17048::decode(0xc800, 0x4b80);
+  const auto reading = opensensor::Max17048::decode(0xc800, 0x4b80);
   const auto sample = battery_sample(1234, reading, ext);
   assert(sample.now_ms == 1234 && sample.vcell_ok && sample.soc_ok &&
          sample.millivolts == 4000 && sample.raw_soc == 0x4b80 &&
@@ -195,12 +195,12 @@ void assert_battery_gates() {
          sample.status_ok && sample.reset_indicator);
   // VCELL and SOC map on their own. A wild SOC keeps the voltage.
   const auto wild_soc =
-      battery_sample(0, aq::Max17048::decode(0xd200, 0xffff), ext);
+      battery_sample(0, opensensor::Max17048::decode(0xd200, 0xffff), ext);
   assert(wild_soc.vcell_ok && wild_soc.millivolts == 4200 && !wild_soc.soc_ok);
   const auto wild_vcell =
-      battery_sample(0, aq::Max17048::decode(0xffff, 0x4b80), ext);
+      battery_sample(0, opensensor::Max17048::decode(0xffff, 0x4b80), ext);
   assert(!wild_vcell.vcell_ok && wild_vcell.soc_ok);
-  assert(!battery_sample(0, aq::Max17048Reading{}, ext).vcell_ok);
+  assert(!battery_sample(0, opensensor::Max17048Reading{}, ext).vcell_ok);
   // Not installed leaves every new column null.
   Sample absent{};
   apply_battery_health(absent, {});
@@ -224,8 +224,8 @@ void assert_battery_gates() {
          !row.valid[battery_minutes_to_empty]);
   // An uncapped raw SOC above 100% is still written as measured.
   Sample over{};
-  apply_battery_health(over,
-                       {true, aq::Max17048::decode(0xd5c0, 0x6bc9), {}, {}});
+  apply_battery_health(
+      over, {true, opensensor::Max17048::decode(0xd5c0, 0x6bc9), {}, {}});
   float over_percent = 0;
   std::memcpy(&over_percent, &over.data[battery_soc_raw_percent],
               sizeof(over_percent));
@@ -233,14 +233,16 @@ void assert_battery_gates() {
          over_percent < 107.8F);
   assert_voltage_only_critical();
   // A gauge reset at boot reports settling until the window ends.
-  aq::battery::Monitor monitor{kBatteryThresholds};
+  opensensor::battery::Monitor monitor{kBatteryThresholds};
   monitor.note_gauge_reset(0);
-  aq::battery::Assessment last;
+  opensensor::battery::Assessment last;
   for (int i = 1; i <= 3; ++i)
     last = monitor.update(battery_sample(i * 10000, reading, extended_ok()));
-  assert(last.state == aq::battery::State::Settling && !last.soc_trusted);
+  assert(last.state == opensensor::battery::State::Settling &&
+         !last.soc_trusted);
   last = monitor.update(battery_sample(3600000, reading, extended_ok()));
-  assert(last.state == aq::battery::State::Ok && last.minutes_to_empty == 2177);
+  assert(last.state == opensensor::battery::State::Ok &&
+         last.minutes_to_empty == 2177);
 }
 // Warm-up runs from the last PMS wake, not from boot.
 void assert_warmup_from_wake() {
@@ -329,18 +331,21 @@ void assert_gates() {
   apply_gauge(bad_gauge, {true, false, false, 4200, 100});
   assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv] &&
          !bad_gauge.valid[battery_percent]);
-  const auto decoded = gauge_snapshot(aq::Max17048::decode(0xd200, 0x6400));
+  const auto decoded =
+      gauge_snapshot(opensensor::Max17048::decode(0xd200, 0x6400));
   assert(decoded.vcell_ok && decoded.soc_ok && decoded.millivolts == 4200 &&
          decoded.percent == 100);
   apply_gauge(installed, decoded);
   assert(installed.data[gauge_status] == 2 && installed.valid[battery_mv] &&
          installed.valid[battery_percent]);
-  const auto no_volts = gauge_snapshot(aq::Max17048::decode(0, 0x5000));
+  const auto no_volts = gauge_snapshot(opensensor::Max17048::decode(0, 0x5000));
   assert(!no_volts.vcell_ok && no_volts.soc_ok);
-  const auto over_full = gauge_snapshot(aq::Max17048::decode(0xd5c0, 0x6bc9));
+  const auto over_full =
+      gauge_snapshot(opensensor::Max17048::decode(0xd5c0, 0x6bc9));
   assert(over_full.vcell_ok && over_full.soc_ok &&
          over_full.millivolts == 4275 && over_full.percent == 100);
-  const auto wild = gauge_snapshot(aq::Max17048::decode(0xd200, 0xffff));
+  const auto wild =
+      gauge_snapshot(opensensor::Max17048::decode(0xd200, 0xffff));
   assert(wild.vcell_ok && !wild.soc_ok);
   Sample volts_only{};
   apply_gauge(volts_only, wild);
@@ -381,7 +386,7 @@ std::string board_template() {
       .keywords = kTemplateKeywords,
       .dictionary_href = kTemplateDictionaryHref,
       .dict = kDictionarySha256,
-      .sample_interval_ms = aqlogger::cadence::kDefaultSampleIntervalMs,
+      .sample_interval_ms = oslogger::cadence::kDefaultSampleIntervalMs,
       .proto_min = ble::kProtocolVersion,
   };
   return boardtemplate::build(board, kFields, kSemantics, kClasses, kDerived);
@@ -433,7 +438,7 @@ int main(int argc, char **argv) {
   const bool located = argc == 5 && std::strcmp(argv[4], "located") == 0;
   const bool compressed = std::strcmp(argv[2], "lz4") == 0;
   const bool anchored = std::strcmp(argv[3], "anchored") == 0;
-  aqlogger::LocationSample<Sample> rows[90]{};
+  oslogger::LocationSample<Sample> rows[90]{};
   const config::LocationSettings location =
       located ? config::LocationSettings{0x85283473fffffffULL, 5, "US"}
               : config::LocationSettings{};
@@ -441,11 +446,11 @@ int main(int argc, char **argv) {
   Workspace workspace{};
   Lz4Workspace lz4{};
   const auto compression = lz4.configuration();
-  aq::battery::Monitor monitor{kBatteryThresholds};
+  opensensor::battery::Monitor monitor{kBatteryThresholds};
   for (std::size_t i = 0; i < 90; ++i) {
     auto &row = rows[i];
     row.location = location;
-    aqlogger::apply_location(
+    oslogger::apply_location(
         row, row.location,
         {h3_cell_id, h3_resolution, h3_center_lat_e7, h3_center_lon_e7});
     const auto now = std::int64_t(10000000 + i * 10000000);
@@ -481,11 +486,11 @@ int main(int argc, char **argv) {
         // Both basic reads failed, a default reading has no ok flag.
       } else if (i == 2) {
         // VCELL read, SOC NACKed. Voltage is published without SOC.
-        health.reading = aq::Max17048::decode(0xc800, 0x4b80);
+        health.reading = opensensor::Max17048::decode(0xc800, 0x4b80);
         health.reading.soc_ok = false;
         health.extended = extended_ok();
       } else {
-        health.reading = aq::Max17048::decode(0xc800, 0x4b80);
+        health.reading = opensensor::Max17048::decode(0xc800, 0x4b80);
         health.extended = extended_ok();
       }
       health.assessment = monitor.update(
@@ -495,7 +500,7 @@ int main(int argc, char **argv) {
     apply_battery_health(row, health);
   }
   prepare_columns(columns, rows);
-  const aqlogger::LocationMetadata location_metadata(location);
+  const oslogger::LocationMetadata location_metadata(location);
   KeyValue metadata[18] = {{"schema_version", kSchemaName},
                            {"firmware", kFirmware},
                            {"dictionary_version", kDictionaryVersion},

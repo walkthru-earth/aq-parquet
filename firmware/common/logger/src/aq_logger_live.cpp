@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
-namespace aqlogger {
+namespace oslogger {
 namespace {
 bool key_chars(const char *key) {
   const auto length = std::strlen(key);
@@ -179,4 +179,4 @@ LivePublish LiveOverflow::publish(const Field *fields, std::size_t count,
   }
   return result;
 }
-} // namespace aqlogger
+} // namespace oslogger

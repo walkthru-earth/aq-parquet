@@ -31,7 +31,7 @@ struct Board {
   // describedby link to the dictionary, with file:checksum "1220" + dict.
   std::string_view dictionary_href;
   std::string_view dict;
-  // aqlogger::Config default, the board does not override it.
+  // oslogger::Config default, the board does not override it.
   std::uint32_t sample_interval_ms = 0;
   // ble::kProtocolVersion, the lowest sync protocol the board speaks.
   unsigned proto_min = 0;
@@ -98,7 +98,7 @@ public:
   // Decimal text from the .inc, written as a JSON number unchanged so the
   // template carries exactly the sourced bound.
   void decimal(std::string_view number) {
-    if (!aq::semantics::is_decimal(number))
+    if (!opensensor::semantics::is_decimal(number))
       fail("not a decimal", number);
     const auto digits = number.substr(number.starts_with('-') ? 1 : 0);
     if (digits.size() > 1 && digits[0] == '0' && digits[1] != '.')
@@ -130,8 +130,8 @@ inline std::string_view type_name(telemetry::PhysicalType type) {
   fail("unknown physical type", "");
 }
 
-inline std::string_view role_name(aq::semantics::Role role) {
-  using aq::semantics::Role;
+inline std::string_view role_name(opensensor::semantics::Role role) {
+  using opensensor::semantics::Role;
   switch (role) {
   case Role::physicalMeasurement:
     return "physicalMeasurement";
@@ -149,8 +149,9 @@ inline std::string_view role_name(aq::semantics::Role role) {
   fail("unknown role", "");
 }
 
-inline std::string_view aggregate_name(aq::semantics::Aggregate aggregate) {
-  using aq::semantics::Aggregate;
+inline std::string_view
+aggregate_name(opensensor::semantics::Aggregate aggregate) {
+  using opensensor::semantics::Aggregate;
   switch (aggregate) {
   case Aggregate::mean:
     return "mean";
@@ -184,7 +185,7 @@ inline std::string seconds(std::uint32_t ms) {
 
 // "<column> == <n>" as {"column","equals":n}, "finite" as the column's own
 // finite gate, "" as no key.
-inline void gate(Writer &out, const aq::semantics::Column &row) {
+inline void gate(Writer &out, const opensensor::semantics::Column &row) {
   const auto when = row.valid_when;
   if (when.empty())
     return;
@@ -209,21 +210,21 @@ inline void gate(Writer &out, const aq::semantics::Column &row) {
 }
 
 template <typename Field>
-bool instrument(const Field &field, const aq::semantics::Column &row) {
+bool instrument(const Field &field, const opensensor::semantics::Column &row) {
   // A procedure that names a fitted sensor. Identity, clock and logger
   // bookkeeping have no sensor model, and a sensor the board cannot read
   // (validity "unavailable") is not an instrument of this build.
   return !row.sensor_model.empty() &&
-         row.role != aq::semantics::Role::referenceInformation &&
+         row.role != opensensor::semantics::Role::referenceInformation &&
          std::string_view{field.validity} != "unavailable";
 }
 
 template <typename Fields>
 std::string build(const Board &board, const Fields &fields,
-                  std::span<const aq::semantics::Column> rows,
-                  std::span<const aq::semantics::Class> classes,
-                  std::span<const aq::semantics::Derived> derived) {
-  if (!aq::semantics::aligned(fields, rows))
+                  std::span<const opensensor::semantics::Column> rows,
+                  std::span<const opensensor::semantics::Class> classes,
+                  std::span<const opensensor::semantics::Derived> derived) {
+  if (!opensensor::semantics::aligned(fields, rows))
     fail("FIELD and SEM rows differ", board.id);
   if (board.dict.size() != 64)
     fail("dict is not a SHA-256", board.dict);

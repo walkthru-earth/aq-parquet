@@ -43,7 +43,7 @@ the build, and the measured high water mark comes from the board.
   after boot, then hourly. `parquet mem` on the USB console prints them at
   once from the board task, so it answers even while the storage worker is busy.
   `DIAG tasks` gives the bytes never used on each task stack (`cores3-board`,
-  `parquet-sd`, `aq-lan`, `aq_ble_error`, `nimble_host`, `tcpip`, `esp_timer`
+  `parquet-sd`, `os-lan`, `os_ble_error`, `nimble_host`, `tcpip`, `esp_timer`
   and `sys_evt`, with `-1` for a task that is not running). `DIAG heap` gives
   free, minimum free and largest free block for internal, DMA capable and PSRAM
   heap. Nothing new crosses BLE or LAN except these lines in `LOG_TAIL`.
@@ -63,5 +63,5 @@ Bench recipe, about 75 min.
    image hash and what was exercised. A task with less than a quarter of its
    stack left (cores3-board has 16,384 B) is a finding to raise on issue #37.
 
-| Date | Image hash | Exercised | cores3-board | parquet-sd | aq-lan | aq_ble_error | nimble_host | tcpip | esp_timer | sys_evt | internal_min | internal_largest | dma_largest | psram_largest |
+| Date | Image hash | Exercised | cores3-board | parquet-sd | os-lan | os_ble_error | nimble_host | tcpip | esp_timer | sys_evt | internal_min | internal_largest | dma_largest | psram_largest |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

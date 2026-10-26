@@ -1,7 +1,7 @@
 # Reusable firmware modules
 
-The common tree contains six opt-in native ESP-IDF components: **AQCommon**,
-**AQSensors**, **AQRuntime**, **AQConnectivity**, **AQLogger** and **AQLocation**. The target is ESP32-S3 with
+The common tree contains six opt-in native ESP-IDF components: **OSCommon**,
+**OSSensors**, **OSRuntime**, **OSConnectivity**, **OSLogger** and **OSLocation**. The target is ESP32-S3 with
 ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
 math plus the actual status/provisioning helpers remain host-testable. Boards
 own peripheral initialization and consume only the required components.
@@ -31,17 +31,17 @@ own peripheral initialization and consume only the required components.
 
 ```mermaid
 flowchart TD
-  Board[Board adapter: pins, power, sensors, display, RTC, card mount, dictionary] --> Logger[AQLogger: sampling and archive worker]
-  Board --> Base[AQCommon: drivers, rows, clocks, writer]
+  Board[Board adapter: pins, power, sensors, display, RTC, card mount, dictionary] --> Logger[OSLogger: sampling and archive worker]
+  Board --> Base[OSCommon: drivers, rows, clocks, writer]
   Logger --> Base
-  Logger --> Runtime[AQRuntime: configuration and logs]
-  Radio[AQConnectivity: BLE and Wi-Fi LAN] -->|enqueue copied requests| Logger
-  Logger --> Archive[AQConnectivity ArchiveSession: immutable file transfers]
+  Logger --> Runtime[OSRuntime: configuration and logs]
+  Radio[OSConnectivity: BLE and Wi-Fi LAN] -->|enqueue copied requests| Logger
+  Logger --> Archive[OSConnectivity ArchiveSession: immutable file transfers]
   Archive -->|responses| Radio
   Logger -->|control responses and snapshots| Radio
   Radio --> Base
   Radio --> Runtime
-  Runtime --> Location[AQLocation: official H3 validation and geometry]
+  Runtime --> Location[OSLocation: official H3 validation and geometry]
   Logger --> Location
   Phone[Phone or host: local archive and shared sync protocol] <--> Radio
 ```
@@ -86,16 +86,16 @@ pixi run waveshare-build
 pixi run waveshare-build diagnostic
 ```
 
-AQRuntime replaces Preferences with native NVS while preserving namespaces,
+OSRuntime replaces Preferences with native NVS while preserving namespaces,
 keys and value types, including station identity. DebugLog uses `LogOutput`
-and the native physical console. AQConnectivity uses native NimBLE GATT/GAP,
+and the native physical console. OSConnectivity uses native NimBLE GATT/GAP,
 Wi-Fi events and `esp_netif_sntp`, plus managed mDNS 1.14.0. Driver credential
-storage is RAM only; `aqcfg` remains the sole persistent settings owner. The
+storage is RAM only; `oscfg` remains the sole persistent settings owner. The
 logger keeps only its `station` and `codec` keys in the `parquet` namespace.
 Existing Arduino-era BLE bonds need hardware qualification and may require
 phone re-pairing. This does not authorize erasing identity or settings.
 
-Call `aqlogger::begin(config, hooks, sd_mounted)` once after board setup, then
+Call `oslogger::begin(config, hooks, sd_mounted)` once after board setup, then
 `start_links(display_detected)` and `poll()` on the main loop. Stable descriptors
 and callback contexts must outlive the runtime. The board collector fills only
 hardware fields; the engine maps standard clock/identity/counter fields by name,
@@ -115,7 +115,7 @@ phone/laptop archive its first copy. Finalized files are immutable; each complet
 row group is fsynced, but unfinished RAM rows can be lost and power-cut durability
 requires board measurements.
 
-Both current board logger adapters consume AQLogger. CoreS3 retains M5Unified,
+Both current board logger adapters consume OSLogger. CoreS3 retains M5Unified,
 its 81-column v4 dictionary, SPI/display arbitration and optional BM8563 hooks.
 Waveshare supplies its 62-column PMS5003T v5 dictionary and one-bit SDMMC adapter,
 with no RTC hook in this image. Its retained diagnostic consumes common/runtime for the parser and physical
@@ -132,15 +132,15 @@ LIVE keys come from the `live_key` each board sets in its field table. `t` and
 Floats print with the decimals each board sets per field. Without an RTC,
 `rtc=2`, `clk=0` and UTC stays null until host SET_TIME or a successful network response, including after reboot.
 
-AQLocation vendors unmodified official H3 4.5.0 with verified hashes. AQRuntime
+OSLocation vendors unmodified official H3 4.5.0 with verified hashes. OSRuntime
 stores one coherent location record containing only the coarsened cell, cap and
-optional owner-declared ISO country. AQLogger captures it at acquisition and
+optional owner-declared ISO country. OSLogger captures it at acquisition and
 splits batches/files when it changes. Four nullable fields carry the cell,
 actual resolution and derived center in 1e-7 degrees; metadata records country
 and policy. The [time/location contract](../../docs/shared/time-and-location.md)
 describes mobile provisioning and NTP restrictions.
 
-Physical serial owner/provisioning commands are documented in [AQLogger](logger/README.md).
+Physical serial owner/provisioning commands are documented in [OSLogger](logger/README.md).
 Their PIN/profile replies bypass the log ring and radio interfaces; host tooling
 must consume credentials in memory and exclude them from retained captures.
 
@@ -154,7 +154,7 @@ format boundaries, not real radio behavior, NVS atomicity or SD durability.
 
 ### Historical Arduino verification on 2026-09-28
 
-The pre-AQLogger gates, formatting, cppcheck and host BLE/LAN protocol tests passed for the historical builds below. The host module tests use AddressSanitizer and UndefinedBehaviorSanitizer; Parquet/measurement fixtures also passed both readers.
+The pre-OSLogger gates, formatting, cppcheck and host BLE/LAN protocol tests passed for the historical builds below. The host module tests use AddressSanitizer and UndefinedBehaviorSanitizer; Parquet/measurement fixtures also passed both readers.
 
 | Compiled consumer | Program bytes | Static RAM bytes |
 | --- | ---: | ---: |
@@ -164,7 +164,7 @@ The pre-AQLogger gates, formatting, cppcheck and host BLE/LAN protocol tests pas
 
 The retained Waveshare diagnostic produced the UART/TF observations in its [bench record](../../docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md). The historical CoreS3 v6.4 build was subsequently flashed and passed a [short hardware test](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-esp32-s3-modules-firmware-v64), including identical BLE/LAN Parquet readback. This does not extend the earlier full-window/endurance measurements to the extracted image.
 
-### Historical AQLogger host/Arduino compile verification on 2026-09-28
+### Historical OSLogger host/Arduino compile verification on 2026-09-28
 
 The generic ESP32-S3 logger fixture compiled with all four components and no
 M5Unified/M5GFX dependency: 1,139,806 program bytes and 83,500 static RAM bytes.

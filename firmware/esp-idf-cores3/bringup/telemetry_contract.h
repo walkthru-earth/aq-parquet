@@ -27,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.15";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.16";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -74,22 +74,22 @@ constexpr const char *live_or_null(const char *key) {
 template <std::size_t N> constexpr bool decimals_fit(const Definition (&f)[N]) {
   return std::all_of(std::begin(f), std::end(f), [](const Definition &field) {
     return field.decimals <=
-           (field.type == PhysicalType::Float ? aqlogger::kMaxLiveDecimals : 0);
+           (field.type == PhysicalType::Float ? oslogger::kMaxLiveDecimals : 0);
   });
 }
 // Column semantics for the STAC template (#84). telemetry_semantics.inc stays
 // out of the dict digest. It is the single source of each FIELD property_uri,
 // a board neutral id looked up by name at compile time, so only the property
 // strings reach the image.
-static constexpr aq::semantics::Column kSemantics[] = {
+static constexpr opensensor::semantics::Column kSemantics[] = {
 #define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
             plausible_max, settle_s, valid_when, property, sensor_vendor,      \
             sensor_model)                                                      \
   {#name,                                                                      \
    ucum,                                                                       \
-   aq::semantics::Role::role,                                                  \
+   opensensor::semantics::Role::role,                                          \
    cf_standard_name,                                                           \
-   aq::semantics::Aggregate::aggregate,                                        \
+   opensensor::semantics::Aggregate::aggregate,                                \
    #plausible_min,                                                             \
    #plausible_max,                                                             \
    settle_s,                                                                   \
@@ -107,7 +107,7 @@ constexpr Definition kFields[] = {
    #procedure,                                                                 \
    unit,                                                                       \
    #validity,                                                                  \
-   aq::semantics::property_of(kSemantics, #name),                              \
+   opensensor::semantics::property_of(kSemantics, #name),                      \
    live_or_null(live),                                                         \
    decimals},
 #include "telemetry_fields.inc"
@@ -119,14 +119,14 @@ static_assert(
     decimals_fit(kFields),
     "decimals is 0 for integer fields and at most kMaxLiveDecimals for Float");
 
-static_assert(aq::semantics::aligned(kFields, kSemantics),
+static_assert(opensensor::semantics::aligned(kFields, kSemantics),
               "telemetry_semantics.inc must list every FIELD in order");
-static_assert(aq::semantics::well_formed(kFields, kSemantics),
+static_assert(opensensor::semantics::well_formed(kFields, kSemantics),
               "telemetry_semantics.inc has a malformed row");
-static_assert(aq::semantics::every_property_set(kFields),
+static_assert(opensensor::semantics::every_property_set(kFields),
               "every FIELD needs a property from telemetry_semantics.inc");
 
-using Sample = aq::NumericSample<field_count>;
+using Sample = opensensor::NumericSample<field_count>;
 
 // Fields whose unit is microseconds since the Unix epoch are the UTC instants;
 // the annotation changes what readers present, never the stored INT64.
@@ -158,10 +158,10 @@ inline void prepare_columns(Column *columns, Row *rows) {
 //      drift since that sync); a later host sync starts a new epoch
 //   3  successful Wi-Fi SNTP response on this boot, microsecond resolution
 enum ClockSource : std::int32_t {
-  kClockNone = aq::utc::None,
-  kClockHost = aq::utc::Host,
-  kClockRtc = aq::utc::Rtc,
-  kClockNetwork = aq::utc::Network,
+  kClockNone = opensensor::utc::None,
+  kClockHost = opensensor::utc::Host,
+  kClockRtc = opensensor::utc::Rtc,
+  kClockNetwork = opensensor::utc::Network,
 };
 
 // Status codes collect() writes in telemetry_logger.cpp. telemetry_classes.inc
@@ -207,7 +207,7 @@ constexpr const char *kProximityStatusLegend =
 
 // classification:classes for the board template (#85), out of the dict
 // digest like kSemantics.
-static constexpr aq::semantics::Class kClasses[] = {
+static constexpr opensensor::semantics::Class kClasses[] = {
 #define CLASS(column, value, name, nodata)                                     \
   {#column, static_cast<std::int64_t>(value), name, nodata},
 #include "telemetry_classes.inc"
@@ -217,34 +217,35 @@ static constexpr aq::semantics::Class kClasses[] = {
 // frame bytes with no published code list, imu_fresh_mask is a bitmask.
 static constexpr std::string_view kClasslessColumns[] = {
     "pms_firmware", "pms_error", "imu_fresh_mask"};
-static_assert(aq::semantics::classes_complete(kSemantics, kClasses,
-                                              kClasslessColumns),
+static_assert(opensensor::semantics::classes_complete(kSemantics, kClasses,
+                                                      kClasslessColumns),
               "every code or boolean column needs telemetry_classes.inc rows");
-static_assert(aq::semantics::matches_legend(kClasses, "pms_status",
-                                            kPmsStatusLegend) &&
-                  aq::semantics::matches_legend(kClasses, "light_status",
-                                                kLightStatusLegend) &&
-                  aq::semantics::matches_legend(kClasses, "proximity_status",
-                                                kProximityStatusLegend) &&
-                  aq::semantics::matches_legend(kClasses, "charging_status",
-                                                kChargingStatusLegend),
-              "telemetry_classes.inc and the status legends differ");
+static_assert(
+    opensensor::semantics::matches_legend(kClasses, "pms_status",
+                                          kPmsStatusLegend) &&
+        opensensor::semantics::matches_legend(kClasses, "light_status",
+                                              kLightStatusLegend) &&
+        opensensor::semantics::matches_legend(kClasses, "proximity_status",
+                                              kProximityStatusLegend) &&
+        opensensor::semantics::matches_legend(kClasses, "charging_status",
+                                              kChargingStatusLegend),
+    "telemetry_classes.inc and the status legends differ");
 // The clock sources this board writes, in code order. clock_status rows
-// must be exactly these, each named by aq::utc::source_name.
+// must be exactly these, each named by opensensor::utc::source_name.
 static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
                                                  kClockRtc, kClockNetwork};
-static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
-                                           kClockSources,
-                                           [](std::int64_t code) {
-                                             return aq::utc::source_name(
-                                                 static_cast<std::int32_t>(
-                                                     code));
-                                           }),
+static_assert(opensensor::semantics::matches_codes(
+                  kClasses, "clock_status", kClockSources,
+                  [](std::int64_t code) {
+                    return opensensor::utc::source_name(
+                        static_cast<std::int32_t>(code));
+                  }),
               "clock_status classes must be the board's clock sources");
 
 // No CoreS3 column is a modelResult, so no column needs opensensor:derived.
-static constexpr std::span<const aq::semantics::Derived> kDerived{};
-static_assert(aq::semantics::derived_complete(kFields, kSemantics, kDerived),
+static constexpr std::span<const opensensor::semantics::Derived> kDerived{};
+static_assert(opensensor::semantics::derived_complete(kFields, kSemantics,
+                                                      kDerived),
               "every modelResult column needs one kDerived entry");
 
 // Board template title and keywords (#85). The title names the board and its
@@ -269,9 +270,9 @@ inline void apply_clock(Sample &row, std::int64_t now, std::int64_t mono_anchor,
   row.integer(clock_epoch, generation);
   if (generation) {
     row.counter(event_time_utc_us,
-                aq::utc::estimate_us(now, mono_anchor, utc_anchor));
+                opensensor::utc::estimate_us(now, mono_anchor, utc_anchor));
     row.counter(clock_anchor_mono_us, mono_anchor);
-    row.counter(clock_anchor_utc_us, aq::utc::ns_to_us(utc_anchor));
+    row.counter(clock_anchor_utc_us, opensensor::utc::ns_to_us(utc_anchor));
   }
 }
 } // namespace contract

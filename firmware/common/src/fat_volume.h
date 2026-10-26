@@ -9,7 +9,7 @@
 
 #include <cstdint>
 
-namespace aq::storage {
+namespace opensensor::storage {
 
 // A build directory sdkconfig made before tools/idf-sdkconfig.defaults raised
 // the value keeps the old one. Delete that sdkconfig to regenerate it.
@@ -79,4 +79,4 @@ inline bool fat_free_bytes(const char *base, std::uint64_t &free_bytes) {
   return true;
 }
 
-} // namespace aq::storage
+} // namespace opensensor::storage

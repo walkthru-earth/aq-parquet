@@ -26,7 +26,7 @@ def check_start_order(source: str) -> None:
     # A timeout starts the worker anyway. Its only step before the first
     # stamp is the worker-start-wait line, which says the order is lost.
     rest = code.removeprefix(first).lstrip()
-    timeout = re.match(r'if \(!released\) \{ \+\+errors; aqlog\.printf\("PARQUET ERROR '
+    timeout = re.match(r'if \(!released\) \{ \+\+errors; oslog\.printf\("PARQUET ERROR '
                        r'operation=worker-start-wait [^;]*\); \} ', rest)
     assert timeout, "a start wait timeout must log worker-start-wait before anything else"
     assert rest[timeout.end():].startswith("stamp_heartbeat();"), "the first stamp must follow the start wait"

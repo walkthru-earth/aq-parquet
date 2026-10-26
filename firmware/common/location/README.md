@@ -7,7 +7,7 @@ license and NOTICE are unmodified and checked by SHA-256 in both builds and
 host tests. The public header is generated from the upstream template with
 version 4.5.0; unused H3 functions are removed by linker section collection.
 
-`aq::location::coarsen` limits a valid supplied cell to a maximum resolution
+`opensensor::location::coarsen` limits a valid supplied cell to a maximum resolution
 0–15 (default 5). A coarser input stays coarser. Persist only its output and
 calculate the published center using `center_degrees` or `center_e7`, which
 rounds to 10⁻⁷ degrees. Neither coordinates nor the original finer cell are

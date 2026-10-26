@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace aq::logger::detail {
+namespace opensensor::logger::detail {
 
 struct ArchiveResetIo {
 #ifdef ESP_PLATFORM
@@ -207,4 +207,4 @@ inline bool erase_archive(const char *root, const char *output_root,
                              io);
 }
 
-} // namespace aq::logger::detail
+} // namespace opensensor::logger::detail

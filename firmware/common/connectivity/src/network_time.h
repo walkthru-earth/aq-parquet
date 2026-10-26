@@ -5,7 +5,7 @@
 
 // Board-neutral native SNTP service. One network owner drives lifecycle;
 // status and the bounded pending anchor may be consumed by other tasks.
-namespace aq::network_time {
+namespace opensensor::network_time {
 constexpr std::size_t kServerCount = 2;
 constexpr std::size_t kServerMax = 253;
 constexpr std::uint32_t kMinIntervalSeconds = 60;
@@ -54,4 +54,4 @@ void set_network_available(bool available);
 void poll();
 bool take_anchor(Anchor &anchor);
 Status status();
-} // namespace aq::network_time
+} // namespace opensensor::network_time

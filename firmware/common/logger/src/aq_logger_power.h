@@ -8,7 +8,7 @@
 #include <cstdio>
 
 // Pure power-state bookkeeping for the logger runtime. No IO, no clocks.
-namespace aqlogger::power {
+namespace oslogger::power {
 
 struct Change {
   bool changed = false;  // first report or a different state
@@ -24,13 +24,13 @@ struct Change {
 // that window re-arms only once settling ends and Ok is reported.
 class Tracker {
 public:
-  static bool rearms(aq::battery::State state) {
-    using aq::battery::State;
+  static bool rearms(opensensor::battery::State state) {
+    using opensensor::battery::State;
     return state == State::Ok || state == State::ExternalPowerLikely;
   }
 
-  Change observe(aq::battery::State state) {
-    using aq::battery::State;
+  Change observe(opensensor::battery::State state) {
+    using opensensor::battery::State;
     Change change;
     change.changed = !seen_ || state != last_;
     if (state == State::Critical) {
@@ -43,10 +43,10 @@ public:
     last_ = state;
     return change;
   }
-  aq::battery::State last() const { return last_; }
+  opensensor::battery::State last() const { return last_; }
 
 private:
-  aq::battery::State last_ = aq::battery::State::Unknown;
+  opensensor::battery::State last_ = opensensor::battery::State::Unknown;
   bool seen_ = false;
   bool armed_ = true;
 };
@@ -55,8 +55,8 @@ private:
 // storage worker's close intent and then wakes the worker. It never touches
 // the card and there is no queue to fill.
 template <class Wake>
-Change report(Tracker &tracker, EmergencyClose &close, aq::battery::State state,
-              Wake &&wake) {
+Change report(Tracker &tracker, EmergencyClose &close,
+              opensensor::battery::State state, Wake &&wake) {
   const Change change = tracker.observe(state);
   if (change.finalize) {
     close.request();
@@ -69,12 +69,12 @@ Change report(Tracker &tracker, EmergencyClose &close, aq::battery::State state,
 // finalize was requested. A negative mV prints as `mv=null`. Returns the
 // length without the NUL, or zero when `capacity` is too small.
 inline std::size_t format_line(char *out, std::size_t capacity,
-                               aq::battery::State state, std::int32_t mv,
-                               bool finalize) {
+                               opensensor::battery::State state,
+                               std::int32_t mv, bool finalize) {
   if (!out || capacity == 0)
     return 0;
   const char *action = finalize ? " action=finalize" : "";
-  const char *name = aq::battery::state_name(state);
+  const char *name = opensensor::battery::state_name(state);
   const int written =
       mv < 0 ? std::snprintf(out, capacity, "POWER STATE state=%s mv=null%s",
                              name, action)
@@ -87,4 +87,4 @@ inline std::size_t format_line(char *out, std::size_t capacity,
   return static_cast<std::size_t>(written);
 }
 
-} // namespace aqlogger::power
+} // namespace oslogger::power

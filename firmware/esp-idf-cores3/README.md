@@ -1,7 +1,7 @@
 # CoreS3 native ESP-IDF logger
 
 The current source is a pure **ESP-IDF 6.1** application, firmware identity
-**`idf-cores3-parquet-v6.15`**, with an **81-column** CoreS3 schema
+**`idf-cores3-parquet-v6.16`**, with an **81-column** CoreS3 schema
 `cores3-telemetry-v5` and dictionary `cores3-telemetry-v6`. The original 77
 columns retain their order and types; four nullable H3 location fields are
 appended. Since v6.12 the two UTC instants are `event_time_utc_us` and
@@ -10,7 +10,7 @@ and every leaf carries Parquet `field_id` = its 1-based dictionary position
 (see [mobile migration](../../docs/shared/mobile-migration.md)). Each `FIELD`
 row ends with its LIVE key and its LIVE float decimals, so the dictionary
 SHA-256 `4f80c26c…` covers the LIVE key map and precision. `bringup/main.cpp` owns board setup, sensors, display and native
-UART; `bringup/telemetry_logger.cpp` supplies the AQLogger adapter. M5Unified
+UART; `bringup/telemetry_logger.cpp` supplies the OSLogger adapter. M5Unified
 **0.2.26** and M5GFX **0.2.33** are native IDF components; there are no Arduino
 APIs or Arduino component in the application. Location uses the optional shared
 component with official H3 **4.5.0**. Shared connectivity uses native
@@ -67,7 +67,7 @@ CoreS3 M5Unified/M5GFX own the display and existing SPI2 bus. The native SDSPI
 adapter attaches the SD device to that bus instead of creating another SPI
 controller owner; application locking and completed display DMA retain the
 shared-bus ordering. The board owns power sequencing, PMSA003 UART GPIO18/17,
-IMU/light/touch acquisition and BM8563 RTC callbacks. AQLogger owns the
+IMU/light/touch acquisition and BM8563 RTC callbacks. OSLogger owns the
 10-second monotonic deadline and the sole archive worker after startup.
 Missing measurements and unknown UTC remain null; finalized Parquet remains
 immutable and interrupted `.partial` files remain retained.
@@ -149,14 +149,14 @@ The device now tells a phone that is *not* connected that something changed: ten
 
 | Piece | State |
 | --- | --- |
-| `../common/runtime/src/device_config.{h,cpp}` — NVS `aqcfg` settings, `key=value` parser, CONFIG JSON, LAN token, first-boot pairing default (display → `random`, none → random per-device `fixed`; legacy 123456 rotates) | done; `GET_CONFIG`, `SET_CONFIG` validation (`code=12`) and `GET_TOKEN` **verified over BLE** |
+| `../common/runtime/src/device_config.{h,cpp}` — NVS `oscfg` settings, `key=value` parser, CONFIG JSON, LAN token, first-boot pairing default (display → `random`, none → random per-device `fixed`; legacy 123456 rotates) | done; `GET_CONFIG`, `SET_CONFIG` validation (`code=12`) and `GET_TOKEN` **verified over BLE** |
 | `../common/connectivity/src/ble_sync.{h,cpp}` — v2 opcodes/frames, `Link` tag on requests, `random`/`fixed`/`none` pairing, `clear_bonds()`, **every BLE frame ≤ 512 bytes** (Android drops larger notifications), 4 s notify retry budget; since `-v6.3` the 2.1 advertising payload (`publish_advert`, name/UUID list in the scan response) | done; only `random` (the CoreS3 default) has run on hardware; the 512 cap fixed the phone's deterministic BLE gap; the advertisement woke the phone's dead app process once, measured |
-| `../common/runtime/src/debug_log.{h,cpp}`, the `aqlog` serial tee with a persistent PSRAM ring sized by `CONFIG_AQ_LOG_PERSIST_RING_BYTES` (64 KiB default, 4 KiB internal fallback); every `Serial.print*` in the firmware goes through it | done; `LOG_TAIL` **verified over BLE** |
-| `../common/connectivity/src/wifi_link.{h,cpp}` — LAN task: STA state machine, `WIFI_SCAN`, mDNS `_aqsync._tcp`, TCP :47390 with `AQS1`+token handshake, STATUS/LIVE pushes, send failure drops the session, **token takeover** (a second connection with the valid token replaces a half-open session) | **verified on hardware** from the Mac (provisioning, rejoin after reflash/reboot, mDNS, handshake, auth refusal, LIST, 6- and 40-file syncs at 19–62 KB/s, REBOOT, takeover/wrong-token/silent challenger) and from the phone (all 776 files synced over LAN across three runs, 45–63 files/min); BLE+Wi-Fi jitter ≤ 17.7 ms, heap 82 KB free — see the bench record |
+| `../common/runtime/src/debug_log.{h,cpp}`, the `oslog` serial tee with a persistent PSRAM ring sized by `CONFIG_OS_LOG_PERSIST_RING_BYTES` (64 KiB default, 4 KiB internal fallback); every `Serial.print*` in the firmware goes through it | done; `LOG_TAIL` **verified over BLE** |
+| `../common/connectivity/src/wifi_link.{h,cpp}` — LAN task: STA state machine, `WIFI_SCAN`, mDNS `_ossync._tcp`, TCP :47390 with `OSS1`+token handshake, STATUS/LIVE pushes, send failure drops the session, **token takeover** (a second connection with the valid token replaces a half-open session) | **verified on hardware** from the Mac (provisioning, rejoin after reflash/reboot, mDNS, handshake, auth refusal, LIST, 6- and 40-file syncs at 19–62 KB/s, REBOOT, takeover/wrong-token/silent challenger) and from the phone (all 776 files synced over LAN across three runs, 45–63 files/min); BLE+Wi-Fi jitter ≤ 17.7 ms, heap 82 KB free — see the bench record |
 | `bringup/telemetry_logger.cpp` — link-aware dispatch (`respond`/`respond_error`/`link_payload_max`), new ops incl. `REBOOT` (finalizes the batch first), worker heartbeat (stamped per frame) + stall report, worker stack 24 KiB | done; `REBOOT` verified over LAN; `ble.clear_bonds`, `lan.rotate_token` not yet exercised |
 | `bringup/bringup.ino` — page 4 shows pairing mode / default-PIN warning / Wi-Fi / LAN, header `WiFi ..|up|ok`, `start_links(display_detected)` | done, seen on the LCD |
 | `tools/ble_sync.py` — `config`, `set`, `wifi-scan`, `token --save`, `log`, `reboot`; `--lan HOST[:PORT] --token-file` runs every command over TCP | done; scripted protocol tests and the retained CoreS3 LAN runs are recorded in the [bench record](../../docs/boards/m5stack-cores3/bench-verified.md) |
-| Docs | contract v2, bench record (BLE, Wi-Fi, LAN, phone), lessons, `cores3-wireless.md` (Wi-Fi in use), `cores3-development.md` (footprint, wedged-task recipe, `aqlog`), router rows — done |
+| Docs | contract v2, bench record (BLE, Wi-Fi, LAN, phone), lessons, `cores3-wireless.md` (Wi-Fi in use), `cores3-development.md` (footprint, wedged-task recipe, `oslog`), router rows — done |
 | Android v2 (`../../../opensensor-space-android`) | commits `f16420e`…`2f4c994` (88 unit tests, lint clean) tested on a **OnePlus 7 Pro / Android 16**: BLE reconnect, automatic token fetch, LAN selection via NsdManager, `dataSync` foreground service with progress notification (survives screen-off), reconnect + resume, window-loss recovery, **Auto-sync** (WorkManager, LAN first, bonded BLE fallback, interactive-session guard proven in logcat), Reboot only via the Device-screen dialog. `2f4c994` (WifiLock, resume after transport failure, transport chip) is installed but not yet exercised. Commit `678c1c0` (2026-09-18, 151 tests, APK `3c454c74…` installed 14:03) adds the event-driven triggers — companion-device presence, the `-v6.3` advertising-flag scan, Wi-Fi arrival; the advertising wake is measured (28 s file → phone, app closed), the other two are not |
 
 Next: the owner taps "Set up wake when nearby" on the phone (companion association) and we measure the presence event and whether the screen-off socket kill goes away; then one uninterrupted full-card run for a clean timing number, a scheduled auto-sync with the app closed and the three triggers ([background-sync-triggers](../../docs/shared/background-sync-triggers.md), "Measure before believing"), `ble.clear_bonds` / `lan.rotate_token` from the app, `fixed`/`none` pairing on a display-less board.
@@ -377,10 +377,10 @@ The original 16 MB UIFlow image is preserved under `backup/`. `pixi run restore 
 
 ## Shared module extraction (v6.4 hardware verification)
 
-Source firmware **v6.4** consumes [AQCommon, AQRuntime and AQConnectivity](../common/README.md). BLE, Wi-Fi/LAN, configuration, logs, immutable file sessions and common control handlers live outside this trial. `telemetry_logger.cpp` supplies its worker queue, archive policy and snapshots; `ltr553.h` is a thin M5 internal-I²C adapter. Its 77-column dictionary, provenance, RTC, sampling, display arbitration and rotation/quarantine policy remain board-owned. The image was flashed and verified with a four-row sensor file, RTC restoration, configuration/log handlers, 1,079-file listing and identical CRC/SHA-256/reader results over BLE and LAN. The [dated bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-esp32-s3-modules-firmware-v64) includes the initial Wi-Fi retry and intermittent macOS name discovery; earlier endurance/phone-wake numbers remain tied to their retained images.
+Source firmware **v6.4** consumes [OSCommon, OSRuntime and OSConnectivity](../common/README.md). BLE, Wi-Fi/LAN, configuration, logs, immutable file sessions and common control handlers live outside this trial. `telemetry_logger.cpp` supplies its worker queue, archive policy and snapshots; `ltr553.h` is a thin M5 internal-I²C adapter. Its 77-column dictionary, provenance, RTC, sampling, display arbitration and rotation/quarantine policy remain board-owned. The image was flashed and verified with a four-row sensor file, RTC restoration, configuration/log handlers, 1,079-file listing and identical CRC/SHA-256/reader results over BLE and LAN. The [dated bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-esp32-s3-modules-firmware-v64) includes the initial Wi-Fi retry and intermittent macOS name discovery; earlier endurance/phone-wake numbers remain tied to their retained images.
 
 ## Shared sampling and archive engine (v6.5)
 
-`telemetry_logger.cpp` is now the CoreS3 acquisition/RTC/storage adapter for [AQLogger](../common/logger/README.md). The common library owns deadlines, the queue, worker, file rotation, immutable finalization, clock epochs and sync dispatch. This trial retains M5 initialization, display/SD bus hooks, LTR553 acquisition and the 77-field dictionary. The `/sd/parquet` legacy listing route, station NVS namespace, configuration and board provenance are preserved. A seven-row file passed both readers and matched across USB, encrypted BLE and authenticated LAN; earlier v6.4 tests above remain separate evidence. See the [v6.5 bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-logger-engine-firmware-v65).
+`telemetry_logger.cpp` is now the CoreS3 acquisition/RTC/storage adapter for [OSLogger](../common/logger/README.md). The common library owns deadlines, the queue, worker, file rotation, immutable finalization, clock epochs and sync dispatch. This trial retains M5 initialization, display/SD bus hooks, LTR553 acquisition and the 77-field dictionary. The `/sd/parquet` legacy listing route, station NVS namespace, configuration and board provenance are preserved. A seven-row file passed both readers and matched across USB, encrypted BLE and authenticated LAN; earlier v6.4 tests above remain separate evidence. See the [v6.5 bench record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-shared-logger-engine-firmware-v65).
 
 The final v6.5 image also replaces the automatic startup filename dump with a bounded archive summary. On the measured card, unattended startup reached 17 buffered samples at 209 seconds with zero drop/error/missed counters; explicit listing still returned 1,089 entries and both legacy files. A final 30-row file passed USB/LAN readback. The earlier failed no-reader boot and its 12 visible drops are retained separately in the bench record, alongside the final image hashes.

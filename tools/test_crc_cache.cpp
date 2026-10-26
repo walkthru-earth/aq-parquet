@@ -7,10 +7,10 @@
 #include <cstdio>
 #include <string>
 
-using aq::storage::crc_path_hash;
-using aq::storage::crc_stat_key;
-using aq::storage::CrcCache;
-using aq::storage::CrcKey;
+using opensensor::storage::crc_path_hash;
+using opensensor::storage::crc_stat_key;
+using opensensor::storage::CrcCache;
+using opensensor::storage::CrcKey;
 
 namespace {
 CrcKey key(const char *path, std::uint32_t size, std::int64_t mtime) {

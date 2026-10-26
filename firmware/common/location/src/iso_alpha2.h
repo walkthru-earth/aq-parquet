@@ -6,7 +6,7 @@
 // https://unstats.un.org/unsd/methodology/m49/overview/
 // https://www.iso.org/iso-3166-country-codes.html
 // https://www.iso.org/obp/ui/#iso:code:3166:TW
-namespace aq::location {
+namespace opensensor::location {
 inline constexpr char kIsoAlpha2[] =
     "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE "
     "BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD "
@@ -21,4 +21,4 @@ inline constexpr char kIsoAlpha2[] =
     "SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK "
     "TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI "
     "VN VU WF WS YE YT ZA ZM ZW";
-} // namespace aq::location
+} // namespace opensensor::location

@@ -53,7 +53,7 @@ constexpr int kPmsTx = 17;
 constexpr uart_port_t kPmsPort = UART_NUM_1;
 bool pms_uart_ready = false;
 sdmmc_card_t *sd_card = nullptr;
-aq::storage::SdTransferBuffer sd_transfer_buffer;
+opensensor::storage::SdTransferBuffer sd_transfer_buffer;
 
 std::uint32_t monotonic_ms() {
   return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
@@ -189,7 +189,7 @@ void report_chip() {
   std::uint8_t mac[6]{};
   const esp_err_t mac_result = esp_read_mac(mac, ESP_MAC_WIFI_STA);
 
-  aqlog.printf(
+  oslog.printf(
       "DIAG chip model=%s revision=%u cores=%u features=0x%08lx reset=%s(%d) "
       "board=%s(%d)\n",
       "ESP32-S3", static_cast<unsigned>(chip.revision),
@@ -199,22 +199,22 @@ void report_chip() {
       static_cast<int>(esp_reset_reason()), board_name(M5.getBoard()),
       static_cast<int>(M5.getBoard()));
   if (mac_result == ESP_OK) {
-    aqlog.printf("DIAG identity wifi_sta_mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+    oslog.printf("DIAG identity wifi_sta_mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   } else {
-    aqlog.printf("DIAG identity wifi_sta_mac=unavailable error=%d\n",
+    oslog.printf("DIAG identity wifi_sta_mac=unavailable error=%d\n",
                  mac_result);
   }
   std::uint32_t flash_bytes = 0;
   const esp_err_t flash_result = esp_flash_get_size(nullptr, &flash_bytes);
-  aqlog.printf("DIAG flash bytes=%lu size_error=%d configured_speed=%s "
+  oslog.printf("DIAG flash bytes=%lu size_error=%d configured_speed=%s "
                "configured_mode=%s\n",
                static_cast<unsigned long>(flash_bytes), flash_result,
                CONFIG_ESPTOOLPY_FLASHFREQ, flash_mode_name());
 }
 
 void report_memory() {
-  aqlog.printf(
+  oslog.printf(
       "DIAG memory heap_total=%lu heap_free=%lu heap_min_free=%lu "
       "heap_largest_internal=%lu psram_found=%s psram_total=%lu psram_free=%lu "
       "psram_largest=%lu\n",
@@ -233,14 +233,14 @@ void report_memory() {
 
 void report_dma_memory(const char *stage) {
   constexpr auto caps = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
-  aqlog.printf(
+  oslog.printf(
       "DIAG dma stage=%s free=%lu largest=%lu min_free=%lu "
       "sd_buffer_bytes=%u\n",
       stage, static_cast<unsigned long>(heap_caps_get_free_size(caps)),
       static_cast<unsigned long>(heap_caps_get_largest_free_block(caps)),
       static_cast<unsigned long>(heap_caps_get_minimum_free_size(caps)),
       sd_transfer_buffer.data()
-          ? static_cast<unsigned>(aq::storage::SdTransferBuffer::kBytes)
+          ? static_cast<unsigned>(opensensor::storage::SdTransferBuffer::kBytes)
           : 0);
 }
 
@@ -258,9 +258,9 @@ void report_i2c() {
     if (std::strcmp(name, "unexpected") == 0) {
       ++unexpected;
     }
-    aqlog.printf("DIAG i2c address=0x%02x device=%s\n", address, name);
+    oslog.printf("DIAG i2c address=0x%02x device=%s\n", address, name);
   }
-  aqlog.printf(
+  oslog.printf(
       "DIAG i2c_summary sda=12 scl=11 frequency_hz=%lu found=%u unexpected=%u "
       "note_bmm150=behind_bmi270_aux_bus\n",
       static_cast<unsigned long>(kI2cScanFrequency), found, unexpected);
@@ -268,7 +268,7 @@ void report_i2c() {
 
 void report_power() {
   const auto charging = M5.Power.isCharging();
-  aqlog.printf(
+  oslog.printf(
       "DIAG power pmic_type=%d external_5v=%s usb_output=%s vbus_mv=%d "
       "battery_mv=%d battery_percent=%ld charging=%s battery_current_ma=%ld\n",
       static_cast<int>(M5.Power.getType()),
@@ -283,12 +283,12 @@ void report_power() {
 void report_rtc_imu_touch() {
   m5::rtc_datetime_t datetime{};
   if (M5.Rtc.isEnabled() && M5.Rtc.getDateTime(&datetime)) {
-    aqlog.printf(
+    oslog.printf(
         "DIAG rtc enabled=true date=%04d-%02d-%02d time=%02d:%02d:%02d\n",
         datetime.date.year, datetime.date.month, datetime.date.date,
         datetime.time.hours, datetime.time.minutes, datetime.time.seconds);
   } else {
-    aqlog.println("DIAG rtc enabled=false_or_read_failed");
+    oslog.println("DIAG rtc enabled=false_or_read_failed");
   }
 
   M5.Imu.update();
@@ -300,14 +300,14 @@ void report_rtc_imu_touch() {
   float gz = 0.0f;
   const bool accel_ok = M5.Imu.isEnabled() && M5.Imu.getAccel(&ax, &ay, &az);
   const bool gyro_ok = M5.Imu.isEnabled() && M5.Imu.getGyro(&gx, &gy, &gz);
-  aqlog.printf("DIAG imu enabled=%s type=%d accel_ok=%s accel_g=%.4f,%.4f,%.4f "
+  oslog.printf("DIAG imu enabled=%s type=%d accel_ok=%s accel_g=%.4f,%.4f,%.4f "
                "gyro_ok=%s gyro_dps=%.4f,%.4f,%.4f\n",
                M5.Imu.isEnabled() ? "true" : "false",
                static_cast<int>(M5.Imu.getType()), accel_ok ? "true" : "false",
                ax, ay, az, gyro_ok ? "true" : "false", gx, gy, gz);
 
   M5.update();
-  aqlog.printf("DIAG touch controller_ack=%s active_points=%u\n",
+  oslog.printf("DIAG touch controller_ack=%s active_points=%u\n",
                M5.In_I2C.scanID(0x38, kI2cScanFrequency) ? "true" : "false",
                static_cast<unsigned>(M5.Touch.getCount()));
 }
@@ -334,12 +334,12 @@ esp_err_t mount_sd(bool keep_buffer) {
     return ESP_ERR_NO_MEM;
   host.dma_aligned_buffer = sd_transfer_buffer.data();
   host.unaligned_multi_block_rw_max_chunk_size =
-      aq::storage::SdTransferBuffer::kSectors;
+      opensensor::storage::SdTransferBuffer::kSectors;
   sdspi_device_config_t device = SDSPI_DEVICE_CONFIG_DEFAULT();
   device.host_id = SPI2_HOST;
   device.gpio_cs = static_cast<gpio_num_t>(kSdCs);
   const esp_vfs_fat_sdmmc_mount_config_t mount =
-      aq::storage::archive_mount_config();
+      opensensor::storage::archive_mount_config();
   const esp_err_t result =
       esp_vfs_fat_sdspi_mount("/sd", &host, &device, &mount, &sd_card);
   if (result != ESP_OK && !keep_buffer)
@@ -353,25 +353,25 @@ bool report_sd() {
   const auto board = M5.getBoard();
   if (board != m5::board_t::board_M5StackCoreS3 &&
       board != m5::board_t::board_M5StackCoreS3SE) {
-    aqlog.println("DIAG sd mounted=false status=unexpected_board "
+    oslog.println("DIAG sd mounted=false status=unexpected_board "
                   "format_attempted=false");
     return false;
   }
   if (!sd_transfer_buffer.reserve()) {
-    aqlog.println("DIAG sd mounted=false status=dma_buffer_unavailable "
+    oslog.println("DIAG sd mounted=false status=dma_buffer_unavailable "
                   "format_attempted=false");
     return false;
   }
   const esp_err_t result = mount_sd(false);
   if (result != ESP_OK) {
-    aqlog.printf("DIAG sd mounted=false status=missing_or_mount_failed "
+    oslog.printf("DIAG sd mounted=false status=missing_or_mount_failed "
                  "error=%d format_attempted=false\n",
                  result);
     return false;
   }
   std::uint64_t total = 0, free = 0;
   const esp_err_t capacity = esp_vfs_fat_info("/sd", &total, &free);
-  aqlog.printf(
+  oslog.printf(
       "DIAG sd mounted=true card_bytes=%llu total_bytes=%llu "
       "used_bytes=%llu capacity_error=%d cluster_bytes=%lu clock_hz=%d "
       "spi_host=SPI2 sck=%d miso=%d mosi=%d cs=%d dma_buffer_bytes=%u\n",
@@ -380,9 +380,10 @@ bool report_sd() {
       static_cast<unsigned long long>(total),
       static_cast<unsigned long long>(total >= free ? total - free : 0),
       capacity,
-      static_cast<unsigned long>(aq::storage::fat_cluster_bytes(sd_card)),
+      static_cast<unsigned long>(
+          opensensor::storage::fat_cluster_bytes(sd_card)),
       sd_card->real_freq_khz * 1000, kSdSck, kSdMiso, kSdMosi, kSdCs,
-      static_cast<unsigned>(aq::storage::SdTransferBuffer::kBytes));
+      static_cast<unsigned>(opensensor::storage::SdTransferBuffer::kBytes));
   return true;
 }
 
@@ -404,7 +405,7 @@ bool start_pms() {
       pins == ESP_OK ? uart_driver_install(kPmsPort, 2048, 0, 0, nullptr, 0)
                      : pins;
   if (installed != ESP_OK) {
-    aqlog.printf("DIAG pmsa003 status=uart_init_failed error=%d\n", installed);
+    oslog.printf("DIAG pmsa003 status=uart_init_failed error=%d\n", installed);
     return false;
   }
   pms_uart_ready = true;
@@ -432,7 +433,7 @@ bool start_pms() {
     wait_ms(1);
   }
   if (!received) {
-    aqlog.printf(
+    oslog.printf(
         "DIAG pmsa003 status=no_valid_frame_within_timeout timeout_ms=%lu "
         "checksum_failures=%lu length_failures=%lu values_valid=false\n",
         static_cast<unsigned long>(kPmsProbeDurationMs),
@@ -441,7 +442,7 @@ bool start_pms() {
     return false;
   }
 
-  aqlog.printf(
+  oslog.printf(
       "DIAG pmsa003 status=frame_received values_valid=%s sensor_error=%u "
       "firmware=%u atmospheric_pm1_ug_m3=%u atmospheric_pm25_ug_m3=%u "
       "atmospheric_pm10_ug_m3=%u cf1_pm1_ug_m3=%u cf1_pm25_ug_m3=%u "
@@ -474,7 +475,7 @@ void poll_pms() {
 
 void print_periodic_pms() {
   if (!has_pms_frame) {
-    aqlog.printf(
+    oslog.printf(
         "MEAS pmsa003 values_valid=false interval_ms=%lu checksum_failures=%lu "
         "length_failures=%lu\n",
         static_cast<unsigned long>(kDisplayIntervalMs),
@@ -483,7 +484,7 @@ void print_periodic_pms() {
     return;
   }
 
-  aqlog.printf(
+  oslog.printf(
       "MEAS pmsa003 values_valid=%s sensor_error=%u frame_age_ms=%lu "
       "atmospheric_pm1_ug_m3=%u atmospheric_pm25_ug_m3=%u "
       "atmospheric_pm10_ug_m3=%u cf1_pm1_ug_m3=%u cf1_pm25_ug_m3=%u "
@@ -716,7 +717,7 @@ void draw_bluetooth_page() {
                       link.authenticated ? "paired" : "pairing...",
                       static_cast<unsigned>(link.mtu));
   else
-    M5.Display.print("BT advertising: open the AQ Sync app to pair");
+    M5.Display.print("BT advertising: open the OpenSensor Sync app to pair");
   M5.Display.setCursor(8, 96);
   M5.Display.printf("Pairing: %s   bonded phones: %lu",
                     config::pair_name(settings.pair),
@@ -843,7 +844,7 @@ void handle_touch_navigation() {
 
   screen_page = next_page;
   show_pms_screen();
-  aqlog.printf("UI page=%u/%u gesture=%s\n",
+  oslog.printf("UI page=%u/%u gesture=%s\n",
                static_cast<unsigned>(screen_page + 1),
                static_cast<unsigned>(kScreenPageCount), gesture);
 }
@@ -858,13 +859,13 @@ bool telemetry::remount_sd() {
   return mount_sd(true) == ESP_OK;
 }
 std::uint32_t telemetry::sd_cluster_bytes() {
-  return aq::storage::fat_cluster_bytes(sd_card);
+  return opensensor::storage::fat_cluster_bytes(sd_card);
 }
 std::uint32_t telemetry::sd_volume_serial() {
-  return aq::storage::fat_volume_serial(sd_card);
+  return opensensor::storage::fat_volume_serial(sd_card);
 }
 bool telemetry::sd_free_bytes(std::uint64_t &free_bytes) {
-  return sd_card && aq::storage::fat_free_bytes("/sd", free_bytes);
+  return sd_card && opensensor::storage::fat_free_bytes("/sd", free_bytes);
 }
 
 static void board_begin() {
@@ -882,7 +883,7 @@ static void board_begin() {
   M5.begin(config);
   wait_ms(500);
 
-  aqlog.println("DIAG BEGIN schema=cores3-bringup-v1");
+  oslog.println("DIAG BEGIN schema=cores3-bringup-v1");
   report_chip();
   report_memory();
   report_i2c();
@@ -899,7 +900,7 @@ static void board_begin() {
   }
   show_pms_screen();
   last_display_ms = monotonic_ms();
-  aqlog.println("DIAG COMPLETE schema=cores3-bringup-v1");
+  oslog.println("DIAG COMPLETE schema=cores3-bringup-v1");
 }
 
 static void board_poll() {
@@ -950,17 +951,18 @@ void board_task(void *) {
 } // namespace
 
 extern "C" void app_main() {
-  if (!aq::console::begin())
+  if (!opensensor::console::begin())
     return;
-  aq::log::attach_persistent(); // PSRAM log; the internal ring otherwise
+  opensensor::log::attach_persistent(); // PSRAM log; the internal ring
+                                        // otherwise
   const esp_err_t nvs = nvs_flash_init();
   if (nvs != ESP_OK) {
-    aqlog.printf("DIAG ERROR operation=nvs-init error=%d erased=false\n", nvs);
+    oslog.printf("DIAG ERROR operation=nvs-init error=%d erased=false\n", nvs);
     return;
   }
-  aq::log::report_coredump();
-  aq::power::configure_dfs();
+  opensensor::log::report_coredump();
+  opensensor::power::configure_dfs();
   if (xTaskCreate(board_task, "cores3-board", 16 * 1024, nullptr,
-                  aqlogger::kBoardTaskPriority, nullptr) != pdPASS)
-    aqlog.println("DIAG ERROR operation=board-task-create");
+                  oslogger::kBoardTaskPriority, nullptr) != pdPASS)
+    oslog.println("DIAG ERROR operation=board-task-create");
 }

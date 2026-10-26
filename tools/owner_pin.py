@@ -21,11 +21,11 @@ def main() -> None:
     with device.open_port(args.port, 115200) as port:
         device.send_command(port, "parquet owner-pin")
         for line in device.lines_until(port, time.monotonic() + args.timeout):
-            match = re.fullmatch(r"AQ OWNER_PIN (\d{6})", line)
+            match = re.fullmatch(r"OS OWNER_PIN (\d{6})", line)
             if match:
                 print(match.group(1))
                 return
-            if line.startswith("AQ OWNER_PIN ERROR"):
+            if line.startswith("OS OWNER_PIN ERROR"):
                 raise SystemExit("This device uses its pairing display rather than a fixed PIN.")
     raise SystemExit("No owner PIN response before the deadline; check the logger and port.")
 

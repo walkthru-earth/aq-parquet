@@ -145,7 +145,7 @@ struct Client {
   std::atomic<std::uint8_t> drop_reason{0};
   std::atomic<int> drop_err{0};
   SemaphoreHandle_t tx_lock = nullptr;
-  aqsync::FrameRing tx;
+  ossync::FrameRing tx;
   // Under tx_lock. While a scan reply retries after a flush, other producers
   // see Full so the worker cannot refill the space the flush just freed.
   bool scan_reserve = false;
@@ -248,19 +248,19 @@ void request_drop(Client &client, DisconnectReason reason, int err) {
   client.drop = true;
 }
 
-aqsync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
+ossync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
                            std::size_t length,
                            std::uint32_t expected_generation = 0,
                            bool require_authenticated = true,
                            bool scan_reply = false) {
   if (peer >= ble::kMaxLanClients || !clients[peer].tx_lock)
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   // A frame this side cannot encode is a caller bug, not a peer failure: keep
   // the client and refuse the frame without retry.
   if (length == 0 || length > kPayloadMax) {
-    aqlog.record_only().printf("LAN SEND REJECTED bytes=%u max=%u\n",
+    oslog.record_only().printf("LAN SEND REJECTED bytes=%u max=%u\n",
                                unsigned(length), unsigned(kPayloadMax));
-    return aqsync::EnqueueResult::Rejected;
+    return ossync::EnqueueResult::Rejected;
   }
   auto &client = clients[peer];
   TxLock lock(client);
@@ -270,17 +270,17 @@ aqsync::EnqueueResult push(std::uint8_t peer, const std::uint8_t *frame,
       (!require_authenticated || client.authenticated.load()) &&
       (!expected_generation || client.generation.load() == expected_generation);
   if (!valid)
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   if (client.scan_reserve && !scan_reply)
-    return aqsync::EnqueueResult::Full;
+    return ossync::EnqueueResult::Full;
   if (!client.tx.fits(length)) {
     // Waiting cannot help a frame larger than the ring. Close the peer so the
     // reply fails visibly instead of looping on Full.
-    aqlog.record_only().printf("LAN TX OVERFLOW slot=%u bytes=%u ring=%u\n",
+    oslog.record_only().printf("LAN TX OVERFLOW slot=%u bytes=%u ring=%u\n",
                                unsigned(peer), unsigned(length),
                                unsigned(client.tx.capacity()));
     request_drop(client, DisconnectReason::TxOverflow, 0);
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   }
   return client.tx.try_push(frame, length);
 }
@@ -325,7 +325,7 @@ bool flush(std::uint8_t peer, std::int64_t now) {
       break;
     if (count <= 0) {
       const int failure = count == 0 ? EPIPE : errno;
-      aqlog.record_only().printf("LAN SEND FAILED slot=%u errno=%d\n",
+      oslog.record_only().printf("LAN SEND FAILED slot=%u errno=%d\n",
                                  unsigned(peer), failure);
       errno = failure;
       return false;
@@ -380,7 +380,7 @@ void finish_close(std::uint8_t peer) {
   ble::record_disconnect(
       client.close_reason, static_cast<std::uint8_t>(peer + 1), generation,
       clamp_err(client.close_err), client.close_queued, esp_timer_get_time());
-  aqlog.record_only().printf(
+  oslog.record_only().printf(
       "LAN DISCONNECT slot=%u reason=%s err=%d queued=%u authenticated=%s\n",
       unsigned(peer), ble::disconnect_reason_name(client.close_reason),
       client.close_err, unsigned(client.close_queued),
@@ -420,7 +420,7 @@ void begin_close(std::uint8_t peer, DisconnectReason reason, int err = 0) {
           frame, sizeof(frame), reason, client.generation.load(),
           clamp_err(err), client.close_queued,
           static_cast<std::uint32_t>(now / 1000000));
-      if (client.tx.try_push(frame, length) != aqsync::EnqueueResult::Ok) {
+      if (client.tx.try_push(frame, length) != ossync::EnqueueResult::Ok) {
         // A full ring cannot hold BYE behind its frames. The reason matters
         // more than frames that would not drain within the budget anyway.
         client.tx.drop_unstarted();
@@ -506,7 +506,7 @@ void update_power() {
   if (active_lock)
     lock = active ? esp_pm_lock_acquire(active_lock)
                   : esp_pm_lock_release(active_lock);
-  aqlog.record_only().printf("LAN POWER mode=%s ps=%s cpu_lock=%s code=%d/%d\n",
+  oslog.record_only().printf("LAN POWER mode=%s ps=%s cpu_lock=%s code=%d/%d\n",
                              active ? "active" : "idle",
                              active ? "none" : "min-modem",
                              !active_lock ? "unavailable"
@@ -520,7 +520,7 @@ void start_server() {
     return;
   listen_fd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (listen_fd < 0) {
-    aqlog.record_only().printf("LAN ERROR operation=socket errno=%d\n", errno);
+    oslog.record_only().printf("LAN ERROR operation=socket errno=%d\n", errno);
     return;
   }
   int reuse = 1;
@@ -532,7 +532,7 @@ void start_server() {
   if (::bind(listen_fd, reinterpret_cast<sockaddr *>(&address),
              sizeof(address)) != 0 ||
       ::listen(listen_fd, ble::kMaxLanClients) != 0) {
-    aqlog.record_only().printf("LAN ERROR operation=bind-listen errno=%d\n",
+    oslog.record_only().printf("LAN ERROR operation=bind-listen errno=%d\n",
                                errno);
     ::close(listen_fd);
     listen_fd = -1;
@@ -547,19 +547,19 @@ void start_server() {
   if (mdns_init() == ESP_OK) {
     if (mdns_hostname_set(host_label) == ESP_OK &&
         mdns_instance_name_set(ble::local_name()) == ESP_OK &&
-        mdns_service_add(nullptr, "_aqsync", "_tcp", config::kLanPort, txt,
+        mdns_service_add(nullptr, "_ossync", "_tcp", config::kLanPort, txt,
                          sizeof(txt) / sizeof(txt[0])) == ESP_OK)
       mdns_on = true;
     else
       mdns_free();
   }
   if (!mdns_on)
-    aqlog.record_only().println("LAN ERROR operation=mdns");
+    oslog.record_only().println("LAN ERROR operation=mdns");
   portENTER_CRITICAL(&status_mutex);
   current.mdns = mdns_on;
   portEXIT_CRITICAL(&status_mutex);
-  aqlog.record_only().printf(
-      "LAN LISTEN port=%u host=%s.local mdns=%s service=_aqsync._tcp\n",
+  oslog.record_only().printf(
+      "LAN LISTEN port=%u host=%s.local mdns=%s service=_ossync._tcp\n",
       unsigned(config::kLanPort), host_label, mdns_on ? "true" : "false");
 }
 
@@ -609,7 +609,7 @@ void stop_server(DisconnectReason reason) {
   if (listen_fd >= 0) {
     ::close(listen_fd);
     listen_fd = -1;
-    aqlog.record_only().printf("LAN STOP reason=%s\n",
+    oslog.record_only().printf("LAN STOP reason=%s\n",
                                ble::disconnect_reason_name(reason));
   }
   portENTER_CRITICAL(&status_mutex);
@@ -618,24 +618,24 @@ void stop_server(DisconnectReason reason) {
 }
 
 void radio_off(const char *reason) {
-  aq::network_time::set_network_available(false);
+  opensensor::network_time::set_network_available(false);
   stop_server(DisconnectReason::LanDisabled);
   if (radio_on) {
     esp_wifi_disconnect();
     esp_wifi_stop();
     station_has_ip = false;
     radio_on = false;
-    aqlog.record_only().printf("WIFI OFF reason=%s\n", reason);
+    oslog.record_only().printf("WIFI OFF reason=%s\n", reason);
   }
   connected = false;
   set_status("off", false);
 }
 
 void radio_connect() {
-  // aqcfg is the sole persistent settings owner; the driver uses RAM storage.
+  // oscfg is the sole persistent settings owner; the driver uses RAM storage.
   // Restart on apply so old association/IP cannot keep an old LAN alive.
   station_has_ip = false;
-  aq::network_time::prepare_network();
+  opensensor::network_time::prepare_network();
   // Every caller closed the sessions first; drop the active power state with
   // them so the new association starts in modem sleep.
   update_power();
@@ -663,19 +663,19 @@ void radio_connect() {
   connect_started_us = esp_timer_get_time();
   retry_at_us = result == ESP_OK ? 0 : connect_started_us + kRetryUs;
   set_status(result == ESP_OK ? "connecting" : "failed", false);
-  aqlog.record_only().printf("WIFI CONNECT ssid=%s code=%d\n", settings.ssid,
+  oslog.record_only().printf("WIFI CONNECT ssid=%s code=%d\n", settings.ssid,
                              result);
 }
 
 void apply_time_policy(const config::NtpSettings &policy) {
-  aq::network_time::Policy time_policy;
+  opensensor::network_time::Policy time_policy;
   time_policy.enabled = policy.enabled;
   time_policy.dhcp = policy.dhcp;
   time_policy.public_fallback = policy.public_fallback;
   time_policy.interval_s = policy.interval_s;
   static_assert(sizeof(time_policy.servers) == sizeof(policy.servers));
   std::memcpy(time_policy.servers, policy.servers, sizeof(time_policy.servers));
-  aq::network_time::configure(time_policy);
+  opensensor::network_time::configure(time_policy);
 }
 
 void poll_radio() {
@@ -713,28 +713,28 @@ void poll_radio() {
   const auto ip_generation = station_ip_generation.load();
   if (up && ip_generation != handled_ip_generation) {
     handled_ip_generation = ip_generation;
-    aq::network_time::ip_changed();
+    opensensor::network_time::ip_changed();
   }
   if (up && !connected) {
     connected = true;
     // Nonblocking SNTP: successful responses alone produce an anchor. DNS or
     // internet failure leaves monotonic capture running without fake UTC.
-    aq::network_time::set_network_available(true);
+    opensensor::network_time::set_network_available(true);
     set_status("connected", true);
-    aqlog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
+    oslog.record_only().printf("WIFI CONNECTED ssid=%s ip=%s rssi=%d\n",
                                settings.ssid, status().ip, station_rssi());
     start_server();
   } else if (!up && connected) {
     connected = false;
-    aq::network_time::set_network_available(false);
+    opensensor::network_time::set_network_available(false);
     stop_server(DisconnectReason::WifiLost);
-    aqlog.record_only().println("WIFI LOST");
+    oslog.record_only().println("WIFI LOST");
     radio_connect();
   } else if (!up && retry_at_us == 0 &&
              now - connect_started_us > kConnectTimeoutUs) {
     set_status("failed", false);
     retry_at_us = now + kRetryUs;
-    aqlog.record_only().printf("WIFI FAILED ssid=%s status=%d retry_s=%lld\n",
+    oslog.record_only().printf("WIFI FAILED ssid=%s status=%d retry_s=%lld\n",
                                settings.ssid, int(disconnect_reason.load()),
                                static_cast<long long>(kRetryUs / 1000000));
     esp_wifi_disconnect();
@@ -753,7 +753,7 @@ void poll_radio() {
       portEXIT_CRITICAL(&status_mutex);
     }
   }
-  aq::network_time::poll();
+  opensensor::network_time::poll();
 }
 
 std::uint8_t auth_code(wifi_auth_mode_t mode) {
@@ -779,7 +779,7 @@ std::uint8_t auth_code(wifi_auth_mode_t mode) {
   }
 }
 
-// Scans run on aq-lan, the only sender, so a full ring cannot drain while a
+// Scans run on os-lan, the only sender, so a full ring cannot drain while a
 // scan reply waits. Reserve the ring, flush the peer once and retry, else
 // close it as tx-overflow so the scan never stalls the LAN task. The reserve
 // keeps the worker from refilling the flushed space before the retry, so a
@@ -789,8 +789,8 @@ bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
   if (link != ble::Link::Lan)
     return ble::send_response(frame, length, link_generation);
   auto result = enqueue_response(frame, length, peer, link_generation);
-  if (result != aqsync::EnqueueResult::Full)
-    return result == aqsync::EnqueueResult::Ok;
+  if (result != ossync::EnqueueResult::Full)
+    return result == ossync::EnqueueResult::Ok;
   auto &client = clients[peer];
   {
     TxLock lock(client);
@@ -810,14 +810,14 @@ bool respond(ble::Link link, std::uint32_t link_generation, std::uint8_t peer,
   {
     TxLock lock(client);
     client.scan_reserve = false;
-    if (result == aqsync::EnqueueResult::Full) {
-      aqlog.record_only().printf("LAN SCAN OVERFLOW slot=%u free=%u\n",
+    if (result == ossync::EnqueueResult::Full) {
+      oslog.record_only().printf("LAN SCAN OVERFLOW slot=%u free=%u\n",
                                  unsigned(peer), unsigned(client.tx.free()));
       request_drop(client, DisconnectReason::TxOverflow, 0);
     }
   }
   signal_space();
-  return result == aqsync::EnqueueResult::Ok;
+  return result == ossync::EnqueueResult::Ok;
 }
 
 // A scan runs without blocking the LAN task: start_scan asks the driver for
@@ -840,7 +840,7 @@ void finish_scan(esp_err_t result) {
   // get_ap_records releases the driver's full list. Release it on errors too.
   if (result != ESP_OK) {
     esp_wifi_clear_ap_list();
-    aqlog.record_only().printf("WIFI SCAN FAILED code=%d\n", result);
+    oslog.record_only().printf("WIFI SCAN FAILED code=%d\n", result);
     const std::uint8_t frame[] = {ble::kFrameWifiScanEnd, 0, 0,
                                   ble::kErrWifiUnavailable};
     respond(link, link_generation, peer, frame, sizeof(frame));
@@ -879,7 +879,7 @@ void finish_scan(esp_err_t result) {
         ble::kFrameWifiScanEnd, static_cast<std::uint8_t>(count & 0xff),
         static_cast<std::uint8_t>((count >> 8) & 0xff), 0};
     respond(link, link_generation, peer, end, sizeof(end));
-    aqlog.record_only().printf("WIFI SCAN END found=%u reported=%u\n",
+    oslog.record_only().printf("WIFI SCAN END found=%u reported=%u\n",
                                unsigned(found), unsigned(count));
   }
   if (scan_temporary) {
@@ -896,7 +896,7 @@ void start_scan() {
   esp_err_t result = ESP_OK;
   if (scan_temporary)
     result = esp_wifi_start();
-  aqlog.record_only().println("WIFI SCAN BEGIN");
+  oslog.record_only().println("WIFI SCAN BEGIN");
   wifi_scan_config_t scan{};
   scan.show_hidden = false;
   scan_done = false;
@@ -934,7 +934,7 @@ bool constant_time_equal(const std::uint8_t *a, const std::uint8_t *b,
 
 bool token_matches(const std::uint8_t *handshake) {
   const config::Settings now = config::get();
-  return std::memcmp(handshake, "AQS1", 4) == 0 &&
+  return std::memcmp(handshake, "OSS1", 4) == 0 &&
          constant_time_equal(handshake + 4, now.token, config::kTokenBytes);
 }
 
@@ -993,7 +993,7 @@ void accept_client() {
     if (clients[peer].fd.load() < 0 && clients[peer].tx_lock)
       break;
   if (peer == ble::kMaxLanClients) {
-    aqlog.record_only().printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
+    oslog.record_only().printf("LAN REFUSE peer=%s reason=busy\n", peer_text);
     refuse_client(fd);
     return;
   }
@@ -1013,7 +1013,7 @@ void accept_client() {
     client.fd = fd;
   }
   set_status(connected ? "connected" : "connecting", connected);
-  aqlog.record_only().printf("LAN CONNECT peer=%s slot=%u\n", peer_text,
+  oslog.record_only().printf("LAN CONNECT peer=%s slot=%u\n", peer_text,
                              unsigned(peer));
 }
 
@@ -1028,7 +1028,7 @@ bool send_hello(std::uint8_t peer) {
   frame[2] = kPayloadMax & 0xff;
   frame[3] = (kPayloadMax >> 8) & 0xff;
   std::memcpy(frame + 4, info, info_length);
-  return push(peer, frame, 4 + info_length) == aqsync::EnqueueResult::Ok;
+  return push(peer, frame, 4 + info_length) == ossync::EnqueueResult::Ok;
 }
 
 bool open_session(std::uint8_t peer) {
@@ -1053,7 +1053,7 @@ bool open_session(std::uint8_t peer) {
   }
   client.status_wanted = client.live_wanted = true;
   set_status("connected", true);
-  aqlog.record_only().printf("LAN AUTH result=ok slot=%u session=%lu\n",
+  oslog.record_only().printf("LAN AUTH result=ok slot=%u session=%lu\n",
                              unsigned(peer),
                              static_cast<unsigned long>(sessions.load()));
   return true;
@@ -1061,7 +1061,7 @@ bool open_session(std::uint8_t peer) {
 
 // LAN task frames that are not worker replies: auth and framing errors and
 // the queue-full refusal. They may target an unauthenticated slot.
-aqsync::EnqueueResult queue_error(std::uint8_t peer, ble::Op op,
+ossync::EnqueueResult queue_error(std::uint8_t peer, ble::Op op,
                                   ble::Error code, const char *detail) {
   std::uint8_t frame[kErrorFrameBytes];
   const auto length = encode_error(frame, op, code, detail);
@@ -1092,7 +1092,7 @@ void handle_client_bytes(std::uint8_t peer) {
     if (client.rx_length < kHandshakeBytes)
       return;
     if (!token_matches(client.rx)) {
-      aqlog.record_only().println("LAN AUTH result=rejected");
+      oslog.record_only().println("LAN AUTH result=rejected");
       queue_error(peer, static_cast<ble::Op>(0), ble::kErrAuth, "token");
       begin_close(peer, DisconnectReason::AuthFailed);
       return;
@@ -1124,19 +1124,19 @@ void handle_client_bytes(std::uint8_t peer) {
     std::memcpy(request.bytes, client.rx + 2, body);
     std::memmove(client.rx, client.rx + 2 + body, client.rx_length - 2 - body);
     client.rx_length -= 2 + body;
-    aqlog.record_only().printf("LAN CMD slot=%u op=0x%02x bytes=%u\n",
+    oslog.record_only().printf("LAN CMD slot=%u op=0x%02x bytes=%u\n",
                                unsigned(peer), unsigned(request.bytes[0]),
                                unsigned(request.length));
-    aqsync::abort::stamp(request);
+    ossync::abort::stamp(request);
     if (request_handler(request)) {
-      aqsync::abort::commit(request);
+      ossync::abort::commit(request);
       continue;
     }
     // A refusal that cannot be queued would leave the request unanswered,
     // so close the session visibly instead.
     if (queue_error(peer, static_cast<ble::Op>(request.bytes[0]), ble::kErrBusy,
-                    "queue-full") != aqsync::EnqueueResult::Ok) {
-      aqlog.record_only().printf("LAN REFUSAL LOST slot=%u op=0x%02x\n",
+                    "queue-full") != ossync::EnqueueResult::Ok) {
+      oslog.record_only().printf("LAN REFUSAL LOST slot=%u op=0x%02x\n",
                                  unsigned(peer), unsigned(request.bytes[0]));
       begin_close(peer, DisconnectReason::TxOverflow);
       return;
@@ -1171,7 +1171,7 @@ void fill_push(std::uint8_t peer, std::uint8_t type, const char *json,
   TxLock lock(client);
   if (client.closing.load() || !client.authenticated.load())
     return;
-  if (client.tx.try_push(frame, 1 + length) == aqsync::EnqueueResult::Ok) {
+  if (client.tx.try_push(frame, 1 + length) == ossync::EnqueueResult::Ok) {
     end = client.tx.pushed_total();
     wanted = false;
   }
@@ -1268,7 +1268,7 @@ void poll_server(int wait_us = 0) {
     } else if (client.stalled_since_us < 0) {
       client.stalled_since_us = now;
     } else if (now - client.stalled_since_us >= slow_peer_us) {
-      aqlog.record_only().printf(
+      oslog.record_only().printf(
           "LAN SLOW PEER slot=%u stalled_ms=%lld\n", unsigned(peer),
           static_cast<long long>((now - client.stalled_since_us) / 1000));
       begin_close(peer, DisconnectReason::SlowPeer, EAGAIN);
@@ -1305,7 +1305,7 @@ void lan_task(void *) {
 } // namespace
 
 bool take_time_anchor(TimeAnchor &anchor) {
-  return aq::network_time::take_anchor(anchor);
+  return opensensor::network_time::take_anchor(anchor);
 }
 
 // Rings live for the program: a failed begin keeps them for the retry.
@@ -1331,7 +1331,7 @@ bool allocate_clients() {
       bytes = std::min<std::size_t>(bytes, 2 + kPayloadMax + 2 * 1024);
       storage = static_cast<std::uint8_t *>(
           heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-      aqlog.record_only().printf("LAN RING internal slot=%u bytes=%u\n",
+      oslog.record_only().printf("LAN RING internal slot=%u bytes=%u\n",
                                  unsigned(peer), unsigned(bytes));
     }
     if (!storage)
@@ -1350,7 +1350,7 @@ bool begin(const char *host, const ble::Identity &identity,
   slow_peer_us = std::int64_t(options.slow_peer_ms) * 1000;
   close_flush_us = std::int64_t(options.close_flush_ms) * 1000;
   if (!allocate_clients()) {
-    aqlog.record_only().println("LAN ERROR operation=ring");
+    oslog.record_only().println("LAN ERROR operation=ring");
     return false;
   }
   device_identity = identity;
@@ -1381,7 +1381,7 @@ bool begin(const char *host, const ble::Identity &identity,
     result = esp_event_handler_instance_register(
         IP_EVENT, ESP_EVENT_ANY_ID, station_event, nullptr, &ip_events);
   if (result != ESP_OK) {
-    aqlog.record_only().printf("LAN ERROR operation=wifi-init code=%d\n",
+    oslog.record_only().printf("LAN ERROR operation=wifi-init code=%d\n",
                                result);
     release_station();
     return false;
@@ -1389,20 +1389,20 @@ bool begin(const char *host, const ble::Identity &identity,
   std::snprintf(current.host, sizeof(current.host), "%s", host_label);
   station_mac(current.mac, sizeof(current.mac));
   reapply = true;
-  if (!active_lock && esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "aq-lan",
+  if (!active_lock && esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "os-lan",
                                          &active_lock) != ESP_OK) {
     // Without PM_ENABLE the CPU stays at its boot frequency; only power
     // save follows activity.
     active_lock = nullptr;
   }
-  if (xTaskCreate(lan_task, "aq-lan", options.task_stack_bytes, nullptr,
+  if (xTaskCreate(lan_task, "os-lan", options.task_stack_bytes, nullptr,
                   options.task_priority, nullptr) != pdPASS) {
-    aqlog.record_only().println("LAN ERROR operation=task");
+    oslog.record_only().println("LAN ERROR operation=task");
     release_station();
     return false;
   }
   lan_ready = true;
-  aqlog.record_only().printf("LAN BEGIN host=%s port=%u\n", host_label,
+  oslog.record_only().printf("LAN BEGIN host=%s port=%u\n", host_label,
                              unsigned(config::kLanPort));
   return true;
 }
@@ -1434,7 +1434,7 @@ void drop_session(ble::DisconnectReason reason) {
   drop_requested = true;
 }
 
-aqsync::EnqueueResult enqueue_response(const std::uint8_t *frame,
+ossync::EnqueueResult enqueue_response(const std::uint8_t *frame,
                                        std::size_t length, std::uint8_t peer,
                                        std::uint32_t expected_generation) {
   return push(peer, frame, length, expected_generation);
@@ -1451,12 +1451,12 @@ std::size_t encode_error(std::uint8_t *frame, ble::Op op, ble::Error code,
     std::memcpy(frame + 3, detail, copy);
     length += copy;
   }
-  aqlog.record_only().printf("LAN ERROR op=0x%02x code=%u\n", unsigned(op),
+  oslog.record_only().printf("LAN ERROR op=0x%02x code=%u\n", unsigned(op),
                              unsigned(code));
   return length;
 }
 
-aqsync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
+ossync::EnqueueResult enqueue_error(ble::Op op, ble::Error code,
                                     const char *detail, std::uint8_t peer,
                                     std::uint32_t expected_generation) {
   std::uint8_t frame[kErrorFrameBytes];
@@ -1481,13 +1481,13 @@ bool deliver(const std::uint8_t *frame, std::size_t length, std::uint8_t peer,
   std::int64_t waited_from = -1;
   for (;;) {
     const auto result = push(peer, frame, length, expected_generation);
-    if (result != aqsync::EnqueueResult::Full)
-      return result == aqsync::EnqueueResult::Ok;
+    if (result != ossync::EnqueueResult::Full)
+      return result == ossync::EnqueueResult::Ok;
     const std::int64_t now = esp_timer_get_time();
     if (waited_from < 0) {
       waited_from = now;
     } else if (now - waited_from >= budget_us) {
-      aqlog.record_only().printf(
+      oslog.record_only().printf(
           "LAN ERROR operation=deliver slot=%u waited_ms=%lld\n",
           unsigned(peer), static_cast<long long>((now - waited_from) / 1000));
       return false;

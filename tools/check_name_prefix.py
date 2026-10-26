@@ -3,7 +3,7 @@
 The BLE name prefix is a board constant passed through ble::Identity, so
 firmware/common, the host tools and their tests must not carry the old
 product prefix as a literal. A board passes its own prefix from its own
-directory. AQS1 and _aqsync belong to #93 and are not matched.
+directory. OSS1 and _ossync belong to #93 and are not matched.
 
 Only source files are scanned (C, C++, Python and shell), not docs, which
 may name the old prefix when they describe the migration.

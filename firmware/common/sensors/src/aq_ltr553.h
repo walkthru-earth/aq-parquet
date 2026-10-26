@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aq {
+namespace opensensor {
 
 struct Ltr553Reading {
   std::uint16_t als_ch0 = 0;
@@ -137,4 +137,4 @@ private:
   bool available_ = false;
 };
 
-} // namespace aq
+} // namespace opensensor

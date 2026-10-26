@@ -6,7 +6,7 @@
 // No IO, no heap, no clocks. The board feeds one Sample per acquisition
 // tick and owns every hardware decision. The thresholds are an
 // uncalibrated starting point, not a measured discharge curve.
-namespace aq::battery {
+namespace opensensor::battery {
 
 // Stable integer codes. They are stored in telemetry and must never be
 // renumbered. Add new states at the end.
@@ -103,4 +103,4 @@ private:
   std::int64_t settling_start_ms_ = 0;
 };
 
-} // namespace aq::battery
+} // namespace opensensor::battery

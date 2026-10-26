@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace aq {
+namespace opensensor {
 // Zero-initialize each acquired row. A validity byte of zero is a null; the
 // trial owns column names, physical types, units and acquisition semantics.
 template <std::size_t Columns> struct NumericSample {
@@ -25,4 +25,4 @@ template <std::size_t Columns> struct NumericSample {
       set(field, value);
   }
 };
-} // namespace aq
+} // namespace opensensor

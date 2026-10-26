@@ -18,7 +18,7 @@
 #include <span>
 #include <sys/stat.h>
 
-namespace aq::logger::list_since {
+namespace opensensor::logger::list_since {
 
 using BootId = std::array<std::uint8_t, 16>;
 inline constexpr std::size_t kRingBoots = 16;
@@ -360,7 +360,7 @@ constexpr std::optional<std::uint64_t> first_seq(const char *relative) {
 
 // What the logger knows when a LIST_SINCE starts.
 struct Inputs {
-  aqsync::ListCursor cursor;
+  ossync::ListCursor cursor;
   // FAT volume serial of this mount, 0 when unknown.
   std::uint32_t mount_epoch = 0;
   // UTC day before today, 0 without UTC.
@@ -389,7 +389,7 @@ struct Plan {
   // first_age keeps only names whose first sequence is at least first_seq.
   std::size_t first_age = 0;
   std::uint64_t first_seq = 0;
-  aqsync::ListSinceResult result;
+  ossync::ListSinceResult result;
 };
 
 constexpr Plan plan(const Inputs &in) {
@@ -419,7 +419,7 @@ constexpr Plan plan(const Inputs &in) {
     next.seq = kSeqDone;
   }
   if (out.full) {
-    out.result.flags = aqsync::kListSinceFull;
+    out.result.flags = ossync::kListSinceFull;
     return out;
   }
   if (!ring_trusted) {
@@ -439,7 +439,7 @@ constexpr Plan plan(const Inputs &in) {
     out.unsynced_full = true;
   }
   if (out.unsynced_full)
-    out.result.flags = aqsync::kListSinceUnsyncedFull;
+    out.result.flags = ossync::kListSinceUnsyncedFull;
   return out;
 }
 
@@ -459,7 +459,7 @@ public:
     if (!benchmark && !dated_file && last >= 0)
       last_unsynced_seq_ = static_cast<std::uint64_t>(last);
   }
-  Inputs inputs(const aqsync::ListCursor &cursor, std::uint32_t mount_epoch,
+  Inputs inputs(const ossync::ListCursor &cursor, std::uint32_t mount_epoch,
                 std::uint32_t yesterday, RingKeeper &keeper,
                 const RingStore &store) const {
     Inputs in;
@@ -507,7 +507,7 @@ inline bool marker_path(std::span<char> out, const char *directory,
 // with name relative to the archive root, exactly as plain LIST names it.
 template <class IO> class IncrementalWalk {
 public:
-  using Walk = aq::logger::detail::DirectoryWalk<IO>;
+  using Walk = opensensor::logger::detail::DirectoryWalk<IO>;
   using Status = typename Walk::Status;
 
   // `root` must outlive the walk. The plan and ring are copied.
@@ -710,4 +710,4 @@ private:
   bool widened_ = false;
 };
 
-} // namespace aq::logger::list_since
+} // namespace opensensor::logger::list_since

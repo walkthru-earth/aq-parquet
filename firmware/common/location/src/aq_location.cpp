@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace aq::location {
+namespace opensensor::location {
 bool valid_cell(Cell cell) { return isValidCell(cell) != 0; }
 
 int resolution(Cell cell) {
@@ -97,4 +97,4 @@ bool valid_country(const char *country) {
       return true;
   return false;
 }
-} // namespace aq::location
+} // namespace opensensor::location

@@ -9,7 +9,7 @@
 // may raise the intent, only the storage worker runs it, so the card keeps
 // a single accessor. No IO, no clocks, no ESP-IDF headers, so the host tests
 // run this exact code.
-namespace aqlogger::power {
+namespace oslogger::power {
 
 // Result of one close attempt on the worker.
 enum class CloseOutcome : std::uint8_t {
@@ -196,4 +196,4 @@ inline std::size_t format_pass(char *out, std::size_t capacity,
   return static_cast<std::size_t>(written);
 }
 
-} // namespace aqlogger::power
+} // namespace oslogger::power

@@ -2,7 +2,7 @@
 
 ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have a native ESP-IDF application and separate hardware documentation. Application source uses no Arduino APIs or Arduino component. Both applications implement writing real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
 
-Each board owns its pins, peripherals, schema and acquisition callbacks. Five opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**AQCommon**), settings/logging (**AQRuntime**), radios and sync (**AQConnectivity**), the sampling/storage worker (**AQLogger**), and official H3 geometry (**AQLocation**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
+Each board owns its pins, peripherals, schema and acquisition callbacks. Five opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**OSCommon**), settings/logging (**OSRuntime**), radios and sync (**OSConnectivity**), the sampling/storage worker (**OSLogger**), and official H3 geometry (**OSLocation**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).

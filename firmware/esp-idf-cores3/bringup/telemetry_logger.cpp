@@ -14,7 +14,7 @@ namespace {
 using namespace contract;
 Ltr553 light_sensor;
 PmsSnapshot latest;
-std::array<aqlogger::Field, field_count> fields;
+std::array<oslogger::Field, field_count> fields;
 // charging_status writes M5Unified is_charging_t, which telemetry_classes.inc
 // names through ChargingStatus.
 constexpr bool same_code(ChargingStatus code,
@@ -27,7 +27,7 @@ static_assert(same_code(kChargingDischarging,
                   same_code(kChargingUnknown, m5::Power_Class::charge_unknown),
               "ChargingStatus must match M5Unified is_charging_t");
 
-void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
+void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
   const auto &pms = latest;
   const PmsStatus status = !pms.present        ? kPmsMissing
                            : now < 30000000    ? kPmsWarming
@@ -132,9 +132,10 @@ bool rtc_read(std::int64_t &seconds, void *) {
   if (day < 1 || day > max_day)
     return false;
   seconds =
-      aq::utc::days_from_civil(year, unsigned(month), unsigned(day)) * 86400 +
+      opensensor::utc::days_from_civil(year, unsigned(month), unsigned(day)) *
+          86400 +
       rtc.time.hours * 3600 + rtc.time.minutes * 60 + rtc.time.seconds;
-  return aq::utc::supported_epoch(seconds);
+  return opensensor::utc::supported_epoch(seconds);
 }
 
 bool rtc_write(std::int64_t seconds, void *) {
@@ -160,7 +161,7 @@ const KeyValue metadata[] = {
 };
 // OpenSensor BLE name prefix, so the board advertises OS-xxxx.
 constexpr char kBleNamePrefix[] = "OS-";
-aqlogger::Config logger_config;
+oslogger::Config logger_config;
 std::uint64_t cached_total_bytes = 0;
 std::uint64_t cached_used_bytes = 0;
 
@@ -207,7 +208,7 @@ void begin_logger(bool sd_mounted) {
       .descriptor_bytes = sizeof(kTemplateJson) - 1,
       .descriptor_sha256 = kDescriptorSha256,
   };
-  const aqlogger::Hooks hooks{
+  const oslogger::Hooks hooks{
       .collect = collect,
       .storage_total_bytes =
           [](void *) {
@@ -228,27 +229,27 @@ void begin_logger(bool sd_mounted) {
       .rtc_write = rtc_write,
   };
   const bool light = light_sensor.begin();
-  aqlog.printf("PARQUET HARDWARE board=cores3 light_available=%s\n",
+  oslog.printf("PARQUET HARDWARE board=cores3 light_available=%s\n",
                light ? "true" : "false");
-  aqlogger::begin(logger_config, hooks, sd_mounted);
+  oslogger::begin(logger_config, hooks, sd_mounted);
 }
 void poll_logger(const PmsSnapshot &pms) {
   latest = pms;
-  aqlogger::poll();
+  oslogger::poll();
 }
-void lock_display() { aqlogger::lock_bus(); }
-void unlock_display() { aqlogger::unlock_bus(); }
+void lock_display() { oslogger::lock_bus(); }
+void unlock_display() { oslogger::unlock_bus(); }
 bool start_links(bool display_detected) {
-  return aqlogger::start_links(display_detected);
+  return oslogger::start_links(display_detected);
 }
 bool enqueue_request(const ble::ControlRequest &request) {
-  return aqlogger::enqueue_request(request);
+  return oslogger::enqueue_request(request);
 }
-const char *station_text_id() { return aqlogger::station_text_id(); }
-const char *device_text_id() { return aqlogger::device_text_id(); }
-const char *firmware_text_id() { return aqlogger::firmware_text_id(); }
+const char *station_text_id() { return oslogger::station_text_id(); }
+const char *device_text_id() { return oslogger::device_text_id(); }
+const char *firmware_text_id() { return oslogger::firmware_text_id(); }
 ClockView clock_view() {
-  const auto view = aqlogger::clock_view();
+  const auto view = oslogger::clock_view();
   return {view.utc_ns, view.epoch, view.source, view.rtc_state,
           view.source_name};
 }

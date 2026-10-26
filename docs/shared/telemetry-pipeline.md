@@ -1,7 +1,7 @@
 # Sensor telemetry, Parquet and cloud pipeline
 
 
-> **Board scope:** AQCommon/AQLogger implement the shared pipeline for both native
+> **Board scope:** OSCommon/OSLogger implement the shared pipeline for both native
 > ESP-IDF 6.1 board adapters. CoreS3 uses an 81-column v4 schema; Waveshare
 > V2 uses its 62-column PMS5003T v5 schema. Schema identities and hardware
 > acquisition remain board-owned. Dated SD/throughput results below are historical
@@ -139,7 +139,7 @@ An optional spool can remain uncompressed. Measure complete Parquet bytes, CPU t
 ## Memory, tasks and backpressure
 
 - Sensor code parses into typed records and never writes the filesystem directly.
-- The 90-row batch and writer workspace reside in PSRAM, Quad on CoreS3 and OPI on Waveshare. The sample queue defaults to eight rows through `aqsync::ServiceConfig` and is allocated by FreeRTOS. Allocation failure disables logging with an error. Queue depth is not a qualified stall budget.
+- The 90-row batch and writer workspace reside in PSRAM, Quad on CoreS3 and OPI on Waveshare. The sample queue defaults to eight rows through `ossync::ServiceConfig` and is allocated by FreeRTOS. Allocation failure disables logging with an error. Queue depth is not a qualified stall budget.
 - One storage task owns FatFs and all SD transactions. CoreS3 shares SPI2 with the display through the application bus lock. Waveshare owns one-bit SDMMC. Neither waits for network work while holding the bus lock.
 - The writer streams through a 4 KiB stdio buffer on the storage task's internal stack. Each archive read handle has a separate 4 KiB PSRAM stdio buffer. Both boards reserve a heap-owned 4 KiB internal DMA SD transfer buffer before radios and retain it for the mount. The shared mount helper and descriptor budget cover writers, transient streams and four persistent archive readers.
 - A separate later uploader will read only finalized Parquet files. No retention deletion or object-storage synchronization is implemented yet.
