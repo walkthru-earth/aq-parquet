@@ -95,7 +95,7 @@ FIELD(clock_anchor_utc_us, Int64, clock, "us_since_unix_epoch", clock_anchored, 
 // Optional owner-provisioned H3 cell. location_source says where it came from
 // and geometry is a native Parquet GEOMETRY 2D WKB Point at the cell centre,
 // never the raw fix. All four are null when there is no location.
-FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_configured, "", 0)
-FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_configured, "", 0)
-FIELD(location_source, Int32, h3_grid, "uint8_code", location_configured, "", 0)
-FIELD(geometry, ByteArray, h3_grid_center, "wkb_point_crs84", location_configured, "", 0)
+FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_present, "", 0)
+FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_present, "", 0)
+FIELD(location_source, Int32, h3_grid, "uint8_code", location_present, "", 0)
+FIELD(geometry, ByteArray, h3_grid_center, "wkb_point_crs84", location_present, "", 0)

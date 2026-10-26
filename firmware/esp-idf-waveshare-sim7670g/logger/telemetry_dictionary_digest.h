@@ -4,6 +4,6 @@ namespace telemetry {
 namespace contract {
 // SHA-256 of telemetry_fields.inc; build and host tests verify exact bytes.
 constexpr const char *kDictionarySha256 =
-    "8be98b66ab3090be16aaa4f33086cdf76ed403648d5700daa00e83889572197b";
+    "3e0d0278be007b22d426171c8e4167ef2e117078bd3db066029b830b8df2dcae";
 } // namespace contract
 } // namespace telemetry

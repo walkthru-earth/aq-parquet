@@ -2,7 +2,7 @@
   "board": "waveshare",
   "convention": "Every field valid with integers 1 and floats 1.0, rendered by the shared emitter through tools/live_sample.h. utc is the stored microseconds times 1000 on the wire.",
   "digests": {
-    "8be98b66ab3090be16aaa4f33086cdf76ed403648d5700daa00e83889572197b": {
+    "3e0d0278be007b22d426171c8e4167ef2e117078bd3db066029b830b8df2dcae": {
       "note": "Dictionary waveshare-sim7670g-telemetry-v7 (#83). The two H3 centre columns become location_source and geometry, neither has a LIVE key, so the LIVE keys and decimals are those of waveshare-sim7670g-telemetry-v6. Older digests are retired and no longer listed.",
       "builds": [
         {
