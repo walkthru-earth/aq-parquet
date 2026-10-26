@@ -14,7 +14,8 @@ backup/
 
 # Local secrets, the app signing key and its .env. Never commit them.
 # tools/check_secrets.py fails lint if anything here is ever tracked.
-/secrets/
+# No trailing slash, so a secrets symlink or file is ignored too.
+/secrets
 
 # Host Python bytecode
 __pycache__/

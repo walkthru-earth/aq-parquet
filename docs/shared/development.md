@@ -384,8 +384,10 @@ not rewritten.
 The app signing key lives only on the owner machine, in `secrets/` at the
 repository root. It is never a GitHub secret and CI never sees it. `secrets/`
 is ignored by git, and `pixi run lint` runs `tools/check_secrets.py`, which
-fails when any path under `secrets/` is tracked or when a tracked file holds a
-PEM private key header. `pixi run secrets-check` runs the same check alone.
+fails when any path under `secrets/` is tracked, in any letter case, when a
+tracked file holds a PEM or PGP private key header, or when a tracked file has
+a binary key store name such as `.p12`, `.pfx` or `.jks`. `pixi run
+secrets-check` runs the same check alone.
 
 Firmware does not check app signatures yet. Turning that on is #40, and it
 waits on an owner-approved bootloader reflash. Until then a signed image boots
