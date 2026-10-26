@@ -23,6 +23,7 @@ docs/shared/development.md for build and environment names.
   pixi project name      the old workspace name in pixi.toml
   board component (#111) the old CoreS3 and Waveshare board component names
   source file (#111)     the old logger source file names and fixture projects
+  common source (#111)   the old location, power, console and sensor file names
 
 History is exempt. The dated bench records, the migration log and the #93
 audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
@@ -104,6 +105,8 @@ RETIRED = (
         "source file",
         re.compile(r"\b" + "aq" + r"_logger\w*|\b" + "aq" + r"_(connectivity_fixture|psram_probe)\b"),
     ),
+    # Common sources renamed in #111 Phase 2e, the files and their includes.
+    ("common source", re.compile(r"\b" + "aq" + r"_(location|battery_health|console|ltr553|max17048)\b")),
 )
 # Build and environment names. Their new form is in the development guide,
 # not the mobile migration log, which tracks what the phone can observe.
@@ -117,6 +120,7 @@ BUILD_KINDS = frozenset(
         "pixi project name",
         "board component",
         "source file",
+        "common source",
     }
 )
 # History that names the old forms on purpose.

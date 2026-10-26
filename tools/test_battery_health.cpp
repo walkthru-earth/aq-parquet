@@ -1,4 +1,4 @@
-#include "../firmware/common/power/src/aq_battery_health.h"
+#include "../firmware/common/power/src/os_battery_health.h"
 
 #include <cassert>
 #include <cstdint>

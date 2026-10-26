@@ -1,10 +1,10 @@
 #include "../board_io.h"
-#include <aq_console.h>
 #include <esp_flash.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <os_console.h>
 #include <pms_frame.h>
 
 #ifdef CONFIG_SPIRAM

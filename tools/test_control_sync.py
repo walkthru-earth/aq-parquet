@@ -45,14 +45,14 @@ def main() -> None:
             "-I", str(common), "-I", str(runtime), "-I", str(connectivity),
             str(root / "tools/test_control_sync.cpp"),
             str(runtime / "device_config.cpp"), str(runtime / "debug_log.cpp"),
-            str(root / "tools/host_fakes/config/aq_console.cpp"),
+            str(root / "tools/host_fakes/config/os_console.cpp"),
             str(connectivity / "control_sync.cpp"), str(connectivity / "archive_sync.cpp"),
             str(connectivity / "disconnect.cpp"), "-o", str(executable),
         ]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         location = root / "firmware/common/location/src"
-        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "aq_location.cpp"),
+        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "os_location.cpp"),
                     *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         downloads = Path(directory) / "descriptors"

@@ -52,20 +52,20 @@ cppcheck "${options[@]}" \
   firmware/common/connectivity/src/ble_policy.cpp \
   firmware/common/connectivity/src/wifi_link.cpp \
   firmware/common/connectivity/src/network_time.cpp \
-  firmware/common/location/src/aq_location.cpp \
+  firmware/common/location/src/os_location.cpp \
   firmware/common/connectivity/src/sync_service.cpp \
   firmware/common/connectivity/src/archive_sync.cpp \
   firmware/common/connectivity/src/control_sync.cpp \
   firmware/common/runtime/src/device_config.cpp \
   firmware/common/runtime/src/debug_log.cpp \
-  firmware/common/runtime/src/aq_console.cpp \
+  firmware/common/runtime/src/os_console.cpp \
   firmware/common/runtime/src/coredump_report.cpp \
   firmware/esp-idf-waveshare-sim7670g/board_io.cpp \
   firmware/common/src/parquet_writer.cpp \
   firmware/common/src/parquet_reader.cpp \
   firmware/common/src/lz4_codec.cpp \
   firmware/common/sensors/src/pms_frame.cpp \
-  firmware/common/power/src/aq_battery_health.cpp \
+  firmware/common/power/src/os_battery_health.cpp \
   firmware/common/logger/src/os_logger.cpp \
   firmware/common/logger/src/os_logger_status.cpp \
   firmware/common/logger/src/os_logger_provision.cpp \

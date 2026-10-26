@@ -1,5 +1,4 @@
 #include "board_io.h"
-#include <aq_max17048.h>
 #include <driver/i2c_master.h>
 #include <driver/sdmmc_host.h>
 #include <driver/uart.h>
@@ -7,6 +6,7 @@
 #include <fat_volume.h>
 #include <freertos/FreeRTOS.h>
 #include <led_strip.h>
+#include <os_max17048.h>
 #include <sd_transfer_buffer.h>
 #include <sdmmc_cmd.h>
 

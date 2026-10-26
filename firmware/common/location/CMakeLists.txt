@@ -20,7 +20,7 @@ configure_file("${h3_root}/h3lib/include/h3api.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/include/h3api.h" @ONLY)
 file(GLOB h3_sources "${h3_root}/h3lib/lib/*.c")
 idf_component_register(
-    SRCS "src/aq_location.cpp" ${h3_sources}
+    SRCS "src/os_location.cpp" ${h3_sources}
     INCLUDE_DIRS "src"
     PRIV_INCLUDE_DIRS "${h3_root}/h3lib/include" "${CMAKE_CURRENT_BINARY_DIR}/include")
 os_pin_cxx_standard(${COMPONENT_LIB})

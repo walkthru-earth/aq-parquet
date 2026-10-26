@@ -1,7 +1,5 @@
 #include "../board_io.h"
 #include "telemetry_contract.h"
-#include <aq_console.h>
-#include <aq_max17048.h>
 #include <debug_log.h>
 #include <device_config.h>
 #include <esp_flash.h>
@@ -13,7 +11,9 @@
 #include <freertos/task.h>
 #include <log_persist.h>
 #include <nvs_flash.h>
+#include <os_console.h>
 #include <os_logger.h>
+#include <os_max17048.h>
 #include <pms_frame.h>
 #include <power.h>
 

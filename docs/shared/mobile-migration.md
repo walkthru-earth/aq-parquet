@@ -9,6 +9,26 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## Settings no longer read per-key values (issue #111)
+
+**No app update needed.** Wire, `GET_CONFIG` and `SET_CONFIG` do not change.
+
+**What changed.** A board with no valid `cfg` settings record now does a
+first boot. It gets a new random PIN and LAN token, Wi-Fi off and default
+location and NTP, and seeds a fresh record. It no longer reads the per-key
+values that firmware before the `cfg` record stored. No real board has them in
+the `oscfg` namespace. Per-key writes left the firmware in 6727547, the
+commit that added the record, and `oscfg` was first used in b37a76b two weeks
+later. The log line for a damaged record is now
+`CONFIG BLOB invalid=true fallback=defaults` instead of `fallback=legacy`.
+Nothing in NVS is erased.
+
+**Why.** No backward compatibility (owner decision 14). The fallback was dead
+code on every board.
+
+**What the app must do.** Nothing. If a damaged record ever shows up, the
+board looks freshly reset and needs pairing and Wi-Fi setup again, as before.
+
 ## BREAKING. Station becomes Thing, native geometry column and geo footer key (feat/thing-ab, issue #83)
 
 **Needs app update.** Every board needs a matched reflash with the app build

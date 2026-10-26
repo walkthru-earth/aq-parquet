@@ -9,7 +9,7 @@
 #include <pms_frame.h>
 #include <sd_transfer_buffer.h>
 
-#include "aq_console.h"
+#include "os_console.h"
 #include <driver/sdspi_host.h>
 #include <driver/uart.h>
 #include <esp_chip_info.h>

@@ -1,10 +1,10 @@
 // The shared runtime is board neutral. These fixtures borrow the Waveshare
 // PMS5003T rules as a realistic board policy.
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/pms5003t_identity.h"
-#include <aq_location.h>
 #include <debug_log.h>
 #include <device_config.h>
 #include <nvs.h>
+#include <os_location.h>
 
 #include <cassert>
 #include <cstdio>
@@ -54,7 +54,7 @@ void set_field(std::size_t offset, std::size_t size, const char *text) {
 void reseal() {
   put_le32(cfg().data() + 8, crc32(payload(), cfg().size() - kHeaderBytes));
 }
-bool has_legacy_key() {
+bool has_old_key() {
   for (const auto *key : {"pair", "pin", "disp", "wifion", "ssid", "psk",
                           "lanon", "token", "sensor", "location", "ntp"})
     if (fake_platform::nvs.types.count(key))
@@ -79,9 +79,9 @@ std::string log_text() {
   return logs;
 }
 
-// A pre-blob image: every setting in its own typed key, as older firmware
-// committed them.
-void seed_legacy(bool with_policy_records) {
+// Pre-blob keys: every setting in its own typed key, as firmware before the
+// `cfg` blob committed them. Since #111 they are never read.
+void seed_old_keys(bool with_policy_records) {
   auto &nvs = fake_platform::nvs;
   nvs = {};
   const auto number = [&](const char *key, std::uint32_t value, unsigned type) {
@@ -107,15 +107,33 @@ void seed_legacy(bool with_policy_records) {
     string("ntp", "1|0|0|7200|ntp.local|");
   }
 }
-void check_legacy_values(const config::Settings &settings) {
-  assert(settings.pair == config::PairMode::Fixed && settings.pin == 654321);
-  assert(!settings.display && settings.wifi_on && !settings.lan_on);
-  assert(std::strcmp(settings.ssid, "legacy-net") == 0);
-  assert(std::strcmp(settings.psk, "legacy-password") == 0);
+// First boot defaults. None of the seeded old key values may leak through.
+void check_defaults(const config::Settings &settings, bool display) {
+  assert(settings.display == display);
+  assert(settings.pair ==
+         (display ? config::PairMode::Random : config::PairMode::Fixed));
+  assert(settings.pin < 1000000 && settings.pin != config::kFactoryDefaultPin &&
+         settings.pin != 654321);
+  assert(!settings.wifi_on && settings.lan_on && !settings.ssid[0] &&
+         !settings.psk[0]);
+  bool old_token = true;
   for (const auto byte : settings.token)
-    assert(byte == 0x5a);
-  assert(std::strcmp(settings.sensor_serial, "PMS5003T-202604081332") == 0);
-  assert(settings.sensor_batch_candidate);
+    old_token = old_token && byte == 0x5a;
+  assert(!old_token);
+  assert(!settings.sensor_serial[0] && !settings.sensor_batch_candidate);
+  assert(settings.location.cell == 0 && !settings.location.country[0]);
+  assert(settings.ntp.enabled && settings.ntp.dhcp &&
+         settings.ntp.public_fallback && settings.ntp.interval_s != 7200);
+}
+// Old keys stay exactly as older firmware left them, with `cfg` beside them.
+void check_old_keys_kept(const fake_platform::Values &old) {
+  const auto &nvs = fake_platform::nvs;
+  assert(nvs.numbers == old.numbers && nvs.strings == old.strings);
+  for (const auto &entry : old.blobs)
+    assert(nvs.blobs.at(entry.first) == entry.second);
+  for (const auto &entry : old.types)
+    assert(nvs.types.at(entry.first) == entry.second);
+  assert(nvs.blobs.size() == old.blobs.size() + 1);
 }
 bool same(const config::Settings &a, const config::Settings &b) {
   return a.pair == b.pair && a.pin == b.pin && a.display == b.display &&
@@ -163,7 +181,7 @@ void first_boot(bool display) {
   assert(first.display == display);
   assert(first.pair ==
          (display ? config::PairMode::Random : config::PairMode::Fixed));
-  assert(first.pin < 1000000 && first.pin != config::kLegacyDefaultPin);
+  assert(first.pin < 1000000 && first.pin != config::kFactoryDefaultPin);
   assert(!first.wifi_on && first.lan_on && !first.ssid[0] && !first.psk[0]);
   assert(!config::reboot_required());
   // A fresh device seeds one CRC-protected record with one write and commit.
@@ -171,7 +189,7 @@ void first_boot(bool display) {
   assert(le32(payload() + kPinAt) == first.pin);
   assert(std::memcmp(payload() + kTokenAt, first.token, config::kTokenBytes) ==
          0);
-  assert(!has_legacy_key());
+  assert(!has_old_key());
   assert(fake_platform::nvs.writes == 1 && fake_platform::nvs.commits == 1);
   assert(
       config::load(!display)); // stored capability/pairing defaults are frozen
@@ -186,28 +204,29 @@ void first_boot(bool display) {
 void migration() {
   assert(config::load(false));
   const auto original = config::get();
-  put_le32(payload() + kPinAt, config::kLegacyDefaultPin);
+  put_le32(payload() + kPinAt, config::kFactoryDefaultPin);
   reseal();
   assert(config::load(false));
   const auto migrated = config::get();
-  assert(migrated.pin != config::kLegacyDefaultPin && migrated.pin < 1000000);
+  assert(migrated.pin != config::kFactoryDefaultPin && migrated.pin < 1000000);
   assert(migrated.pair == config::PairMode::Fixed);
   assert(std::memcmp(migrated.token, original.token, config::kTokenBytes) == 0);
   check_blob_header();
   assert(le32(payload() + kPinAt) == migrated.pin);
   assert(config::load(false));
   assert(same(migrated, config::get()));
-  // Legacy per-key universal PIN still rotates, while the old key is retained.
-  seed_legacy(true);
-  fake_platform::nvs.numbers["pin"] = config::kLegacyDefaultPin;
+  // An old per-key universal PIN is not read. The board gets a fresh random
+  // PIN and the old key is left in place.
+  seed_old_keys(true);
+  fake_platform::nvs.numbers["pin"] = config::kFactoryDefaultPin;
   assert(config::load(false));
-  const auto rotated = config::get();
-  assert(rotated.pin != config::kLegacyDefaultPin && rotated.pin < 1000000);
+  const auto fresh = config::get();
+  check_defaults(fresh, false);
   check_blob_header();
-  assert(le32(payload() + kPinAt) == rotated.pin);
-  assert(fake_platform::nvs.numbers.at("pin") == config::kLegacyDefaultPin);
+  assert(le32(payload() + kPinAt) == fresh.pin);
+  assert(fake_platform::nvs.numbers.at("pin") == config::kFactoryDefaultPin);
   assert(config::load(false));
-  assert(same(rotated, config::get()));
+  assert(same(fresh, config::get()));
 }
 
 void validation() {
@@ -492,7 +511,7 @@ void time_and_location() {
   fake_platform::nvs.fail_commit_key.clear();
   assert(config::load(false));
   assert(same(before_failure, config::get()));
-  // A sealed record still passes the same validation as per-key values.
+  // A sealed record still passes the same validation as a SET_CONFIG value.
   // A record from before #83 has no mobility and reads as a fixed Thing.
   accept("thing.mobility=moving");
   set_field(kLocationAt, 40, "|7|EG");
@@ -532,7 +551,7 @@ void blob_round_trip() {
   assert(fake_platform::nvs.writes == writes + 1);
   assert(fake_platform::nvs.commits == commits + 1);
   check_blob_header();
-  assert(!has_legacy_key());
+  assert(!has_old_key());
   const auto saved = config::get();
   assert(std::strcmp(field(kPskAt), "round-trip-password") == 0);
   assert(payload()[kPairAt] == 2 && payload()[kWifiAt] == 1 &&
@@ -549,55 +568,34 @@ void blob_round_trip() {
   assert(logs.find("CONFIG BLOB") == std::string::npos);
 }
 
-void legacy_migration() {
+// No backward compatibility (#111). Pre-blob keys without a `cfg` record are
+// a first boot. Defaults are seeded and the old keys are neither read nor
+// erased.
+void old_keys_ignored() {
   config::set_sensor_policy(kPms5003t);
-  seed_legacy(true);
-  const fake_platform::Values legacy = fake_platform::nvs;
-  assert(config::load(true));
-  const auto loaded = config::get();
-  check_legacy_values(loaded);
-  assert(std::strcmp(loaded.location.country, "EG") == 0);
-  assert(loaded.ntp.enabled && !loaded.ntp.dhcp &&
-         !loaded.ntp.public_fallback && loaded.ntp.interval_s == 7200 &&
-         std::strcmp(loaded.ntp.servers[0], "ntp.local") == 0);
-  // Reading the legacy layout alone writes nothing.
-  assert(fake_platform::nvs.writes == 0 &&
-         !fake_platform::nvs.types.count("cfg"));
-  accept("wifi.on=0");
-  check_blob_header();
-  // Legacy keys stay exactly as older firmware left them.
-  auto &nvs = fake_platform::nvs;
-  assert(nvs.numbers == legacy.numbers && nvs.strings == legacy.strings);
-  for (const auto &entry : legacy.blobs)
-    assert(nvs.blobs.at(entry.first) == entry.second);
-  for (const auto &entry : legacy.types)
-    assert(nvs.types.at(entry.first) == entry.second);
-  assert(nvs.blobs.size() == legacy.blobs.size() + 1);
-  const auto migrated = config::get();
-  assert(!migrated.wifi_on);
-  assert(config::load(true));
-  assert(same(migrated, config::get()));
-  // Missing policy records on a legacy image receive defaults.
-  seed_legacy(false);
-  assert(config::load(false));
-  check_legacy_values(config::get());
-  assert(config::get().ntp.enabled && config::get().ntp.dhcp &&
-         config::get().ntp.public_fallback);
-  assert(config::get().location.cell == 0 &&
-         !config::get().location.country[0]);
-  // Malformed legacy records become unset location and disabled NTP.
-  seed_legacy(true);
-  fake_platform::nvs.strings["location"] = "broken|15|EG";
-  fake_platform::nvs.strings["ntp"] = "broken";
-  assert(config::load(false));
-  assert(config::get().location.cell == 0 &&
-         !config::get().location.country[0]);
-  assert(!config::get().ntp.enabled && !config::get().ntp.public_fallback);
+  for (const bool records : {true, false}) {
+    for (const bool display : {true, false}) {
+      seed_old_keys(records);
+      const fake_platform::Values old = fake_platform::nvs;
+      assert(config::load(display));
+      const auto seeded = config::get();
+      check_defaults(seeded, display);
+      // One seed write and one commit, the same as a clean first boot.
+      assert(fake_platform::nvs.writes == 1 && fake_platform::nvs.commits == 1);
+      check_blob_header();
+      check_old_keys_kept(old);
+      assert(log_text().find("CONFIG BLOB") == std::string::npos);
+      assert(config::load(!display));
+      assert(same(seeded, config::get()));
+      accept("wifi.on=0");
+      check_old_keys_kept(old);
+    }
+  }
 }
 
 void torn_blob() {
   config::set_sensor_policy(kPms5003t);
-  seed_legacy(true);
+  seed_old_keys(true);
   assert(config::load(false));
   accept("wifi.ssid=blob-net\nwifi.psk=blob-password");
   const auto good = cfg();
@@ -627,9 +625,11 @@ void torn_blob() {
       reseal();
     const auto writes = fake_platform::nvs.writes;
     assert(config::load(false));
-    check_legacy_values(config::get());
-    assert(fake_platform::nvs.writes == writes); // no silent rewrite
-    assert(log_text().find("CONFIG BLOB invalid=true fallback=legacy") !=
+    // A damaged record is a first boot. Old keys are not a fallback.
+    check_defaults(config::get(), false);
+    assert(fake_platform::nvs.writes == writes + 1); // one reseed write
+    check_blob_header();
+    assert(log_text().find("CONFIG BLOB invalid=true fallback=defaults") !=
            std::string::npos);
     cfg() = good;
     assert(config::load(false));
@@ -641,15 +641,15 @@ void torn_blob() {
   fake_platform::nvs.strings["cfg"] = "not-a-blob";
   fake_platform::nvs.types["cfg"] = 8;
   assert(config::load(false));
-  check_legacy_values(config::get());
-  // A damaged record with no legacy keys seeds a first-boot profile again.
+  check_defaults(config::get(), false);
+  // A damaged record with no old keys seeds a first-boot profile again.
   fake_platform::nvs = {};
   assert(config::load(false));
   cfg()[kHeaderBytes] ^= 1;
   assert(config::load(false));
   assert(config::get().pair == config::PairMode::Fixed);
   check_blob_header();
-  assert(!has_legacy_key());
+  assert(!has_old_key());
   // Invalid sensor text inside a sealed record clears only the sensor profile.
   cfg() = good;
   set_field(kSensorAt, 80, "Other|PMS5003T|PMS5003T-202604081332|1");
@@ -692,8 +692,8 @@ int main(int argc, char **argv) {
     time_and_location();
   else if (test == "blob")
     blob_round_trip();
-  else if (test == "legacy")
-    legacy_migration();
+  else if (test == "old-keys")
+    old_keys_ignored();
   else if (test == "torn")
     torn_blob();
   else if (test == "unavailable")

@@ -6,13 +6,13 @@
 #include "telemetry_logical.h"
 #include "telemetry_template.h"
 #include <algorithm>
-#include <aq_battery_health.h>
-#include <aq_max17048.h>
 #include <column_semantics.h>
 #include <cstring>
 #include <iterator>
+#include <os_battery_health.h>
 #include <os_logger.h>
 #include <os_logger_live.h>
+#include <os_max17048.h>
 #include <pinned_uri.h>
 #include <pms_frame.h>
 #include <span>

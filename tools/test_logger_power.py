@@ -20,7 +20,7 @@ def main() -> None:
         for library in ["power/src", "logger/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_power.cpp"),
-                    str(common / "power/src/aq_battery_health.cpp"),
+                    str(common / "power/src/os_battery_health.cpp"),
                     "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all",

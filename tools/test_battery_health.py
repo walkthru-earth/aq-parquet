@@ -18,7 +18,7 @@ def main() -> None:
         executable = Path(directory) / "battery-health-test"
         command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
                    str(root / "tools/test_battery_health.cpp"),
-                   str(root / "firmware/common/power/src/aq_battery_health.cpp"),
+                   str(root / "firmware/common/power/src/os_battery_health.cpp"),
                    "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]

@@ -1,6 +1,6 @@
 """Exercise real shared configuration/log code against host platform fakes.
 
-Settings persist as one CRC-checked NVS blob with legacy per-key fallback.
+Settings persist as one CRC-checked NVS blob. Old per-key values are never read.
 Failure tests establish runtime atomicity, fallback and error reporting, not
 NVS power-loss durability on hardware.
 """
@@ -30,18 +30,18 @@ def main() -> None:
             "-I", str(root / "tools/host_fakes/config"), "-I", str(shared),
             str(root / "tools/test_device_config.cpp"),
             str(shared / "device_config.cpp"), str(shared / "debug_log.cpp"),
-            str(root / "tools/host_fakes/config/aq_console.cpp"),
+            str(root / "tools/host_fakes/config/os_console.cpp"),
             "-o", str(executable),
         ]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         location = root / "firmware/common/location/src"
-        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "aq_location.cpp"),
+        command += ["-I", str(Path(directory) / "h3"), "-I", str(location), str(location / "os_location.cpp"),
                     *compile_h3(root, Path(directory), args.sanitize)]
         subprocess.run(command, check=True)
         for scenario in ("headless", "screen", "migration", "validation",
                          "credentials", "sensor", "nvs", "unavailable", "time-location",
-                         "blob", "legacy", "torn"):
+                         "blob", "old-keys", "torn"):
             result = subprocess.run([str(executable), scenario],
                                     capture_output=True, text=True)
             if result.returncode:
@@ -53,8 +53,8 @@ def main() -> None:
                 assert "pin" not in document["ble"]
                 assert "psk" not in document["wifi"]
                 assert "token" not in document["lan"]
-    print("Shared configuration: defaults, migration, validation, secrecy, blob "
-          "fallback and NVS failures passed")
+    print("Shared configuration: defaults, PIN rotation, validation, secrecy, "
+          "blob, ignored old keys and NVS failures passed")
 
 
 if __name__ == "__main__":

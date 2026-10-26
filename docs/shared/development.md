@@ -157,6 +157,8 @@ The old board component names are retired too (#111). The board components
 are `os_cores3`, `os_waveshare_logger` and `os_waveshare_diagnostic`.
 The old logger source file names are retired too (#111). The logger sources
 are `firmware/common/logger/src/os_logger*`.
+The old common source file names are retired too (#111). They are now
+`os_location`, `os_battery_health`, `os_console`, `os_ltr553` and `os_max17048`.
 `retired-names-test` covers the rule.
 
 ### Source paths
