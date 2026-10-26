@@ -136,6 +136,32 @@ def main() -> None:
             mutate(scratch, wrong_desc, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
                    f"{gate.INDEX} entry for {s.dict}", f"{s.board.name} wrong desc in {gate.INDEX}")
 
+            def wrong_dict(copy: Path, s=s) -> None:
+                index = copy / directory / gate.INDEX
+                entries = json.loads(index.read_text())
+                entries["by_desc"][s.desc]["dict"] = s.dict[::-1]
+                index.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n")
+
+            mutate(scratch, wrong_dict, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+                   f"by_desc entry for {s.desc}", f"{s.board.name} wrong dict in {gate.INDEX} by_desc")
+
+            def write_prunes(copy: Path, s=s) -> None:
+                # Retired board folder, stray non JSON file and stray template.
+                root = copy / directory
+                (root / "retired-board").mkdir()
+                (root / "retired-board" / f"{'1' * 64}.json").write_bytes(s.raw)
+                (root / s.board.name / "notes.txt").write_text("stray")
+                (root / f"{'2' * 64}.json").write_bytes(s.raw)
+                gate.write(copy)
+                gate.check(copy)
+                gate.require(not (root / "retired-board").exists(), "write removes a retired board folder")
+                gate.require((root / gate.README).is_file(), "write keeps README.md")
+
+            copy = scratch_copy(scratch)
+            write_prunes(copy)
+            shutil.rmtree(copy)
+            print(f"PASS --write-template removes stray files and retired folders, {s.board.name}", flush=True)
+
         def dropped(copy: Path) -> None:
             index = copy / directory / gate.INDEX
             entries = json.loads(index.read_text())
@@ -144,6 +170,24 @@ def main() -> None:
 
         mutate(scratch, dropped, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
                "lists exactly the current dict", f"entry missing from {gate.INDEX}")
+
+        def dropped_desc(copy: Path) -> None:
+            index = copy / directory / gate.INDEX
+            entries = json.loads(index.read_text())
+            entries["by_desc"].pop(found[0].desc)
+            index.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n")
+
+        mutate(scratch, dropped_desc, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+               "by_desc lists exactly the current desc", f"desc missing from {gate.INDEX} by_desc")
+
+        def no_by_desc(copy: Path) -> None:
+            index = copy / directory / gate.INDEX
+            entries = json.loads(index.read_text())
+            entries.pop("by_desc")
+            index.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n")
+
+        mutate(scratch, no_by_desc, lambda copy: gate.check_index(copy / directory, gate.sources(copy)),
+               "holds templates and by_desc", f"{gate.INDEX} without by_desc")
 
         def minified(copy: Path) -> None:
             index = copy / directory / gate.INDEX

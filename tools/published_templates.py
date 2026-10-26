@@ -4,7 +4,8 @@
 Each board publishes exactly the kTemplateJson bytes of its generated
 telemetry_template.h as <board>/<dict sha256>.json, with no trailing newline,
 so the SHA-256 of the file is the board desc. index.json maps each dict to the
-board, the schema name, the template href and desc. Only the current dict of
+board, the schema name, the template href and desc under templates, and each
+desc to the board, dict and href under by_desc. Only the current dict of
 each board is published (no backward compatibility, owner decision 14), so a
 file for any other dict is stale. The contract tests call write() after
 --write-template regenerates the headers, so one command keeps the headers and
@@ -92,9 +93,15 @@ def sources(root: Path) -> list[Source]:
     return [source(root, board) for board in BOARDS]
 
 
+def index_entries(found: list[Source]) -> dict:
+    """templates keyed by dict, and by_desc keyed by desc for the app, which resolves by desc first."""
+    return {"templates": {s.dict: {"board": s.board.name, "schema": s.schema, "href": s.href, "desc": s.desc}
+                          for s in found},
+            "by_desc": {s.desc: {"board": s.board.name, "dict": s.dict, "href": s.href} for s in found}}
+
+
 def index_bytes(found: list[Source]) -> bytes:
-    index = {"templates": {s.dict: {"board": s.board.name, "schema": s.schema, "href": s.href, "desc": s.desc}
-                           for s in found}}
+    index = index_entries(found)
     return (json.dumps(index, indent=2, sort_keys=True) + "\n").encode("ascii")
 
 
@@ -106,14 +113,22 @@ def expected(found: list[Source]) -> dict[str, bytes]:
 
 
 def write(root: Path = ROOT) -> None:
-    """Publish the current header bytes of every board, drop stale templates, rewrite index.json."""
+    """Publish the current header bytes of every board, rewrite index.json, remove everything else.
+
+    Anything under docs/shared/templates but README.md and the expected files
+    is removed, retired board folders included, the same set check_no_stale
+    rejects.
+    """
     found = sources(root)
     directory = root / TEMPLATES
     files = expected(found)
-    for board in BOARDS:
-        for stale in (directory / board.name).glob("*.json"):
-            if stale.relative_to(directory).as_posix() not in files:
-                stale.unlink()
+    keep = set(files) | {README}
+    for path in sorted(directory.rglob("*"), reverse=True):
+        if path.is_dir():
+            if not any(path.iterdir()):
+                path.rmdir()
+        elif path.relative_to(directory).as_posix() not in keep:
+            path.unlink()
     for relative, raw in files.items():
         path = directory / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +196,8 @@ def check_index(directory: Path, found: list[Source]) -> None:
     require(path.is_file(), f"no {INDEX}")
     raw = path.read_bytes()
     index = json.loads(raw, object_pairs_hook=live_key_fixture.unique_pairs)
-    entries = index.get("templates", {})
+    require(sorted(index) == ["by_desc", "templates"], f"{INDEX} holds templates and by_desc")
+    entries = index["templates"]
     require(sorted(entries) == sorted(s.dict for s in found), f"{INDEX} lists exactly the current dict of each board")
     for s in found:
         entry = entries[s.dict]
@@ -190,6 +206,11 @@ def check_index(directory: Path, found: list[Source]) -> None:
         target = directory / entry["href"]
         require(target.is_file() and hashlib.sha256(target.read_bytes()).hexdigest() == entry["desc"],
                 f"{INDEX} desc for {s.dict} is not the SHA-256 of its href")
+    by_desc = index["by_desc"]
+    require(sorted(by_desc) == sorted(s.desc for s in found), f"{INDEX} by_desc lists exactly the current desc of each board")
+    for s in found:
+        require(by_desc[s.desc] == {"board": s.board.name, "dict": s.dict, "href": s.href},
+                f"{INDEX} by_desc entry for {s.desc} differs from the {s.board.name} headers")
     require(raw == index_bytes(found), f"{INDEX} is not the deterministic output, run --write-template")
 
 

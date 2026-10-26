@@ -17,7 +17,8 @@ owner wipes them and starts again.
 in [`docs/shared/templates`](templates/README.md), exactly the `kTemplateJson`
 bytes the board embeds, minified with no final newline. The SHA-256 of each
 file is the board `desc`. `index.json` maps each `dict` to the board, schema
-name, template `href` and `desc`. Only the current `dict` per board is
+name, template `href` and `desc` under `templates`, and each `desc` to the
+board, `dict` and `href` under `by_desc`. Only the current `dict` per board is
 published, older digests are dropped. The dict digests, `desc`, columns, LIVE
 keys and firmware identities are unchanged.
 
@@ -32,8 +33,9 @@ one template per board, and the app can match it by `desc`.
 
 **What the app must do.** Replace both bundled templates with these files,
 copied verbatim (no reformat, no added newline). Resolve a board template by
-`desc` first, then by `dict`. Read LIVE keys through `firmware.live_keys` of
-the template, which matches the board LIVE key order.
+`desc` first through `by_desc`, then by `dict` through `templates`. Read LIVE
+keys through `firmware.live_keys` of the template, which matches the board
+LIVE key order.
 
 ## BREAKING. AQ wire, NVS and internal names move to OpenSensor (fix/93-renames, issue #93)
 
