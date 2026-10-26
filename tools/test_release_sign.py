@@ -49,7 +49,7 @@ def make_repo(root: Path, name: str, env: str | None = None) -> Path:
     secrets = repo / "secrets"
     secrets.mkdir(parents=True)
     git(repo, "init", "-q")
-    (repo / ".gitignore").write_text("/secrets/\n")
+    (repo / ".gitignore").write_text("/secrets\n")
     git(repo, "add", ".gitignore")
     secrets.chmod(0o700)
     make_key(secrets / KEY_NAME)
@@ -91,6 +91,16 @@ def check_parse_env() -> None:
         except rs.Refused as error:
             assert str(error) == "secrets/.env line 2 is not NAME=VALUE", error
             assert bad not in str(error)
+        else:
+            raise AssertionError(bad)
+    # A comment after a quoted value is dropped with its quotes (#45).
+    values = rs.parse_env("A=\"x\" # note\nB='y'# note\nC=\"a # b\"\nD=\"\"\n")
+    assert values == {"A": "x", "B": "y", "C": "a # b", "D": ""}, values
+    for bad in ('A="x', "A='x\"", 'A="x" y', 'A="x"y'):
+        try:
+            rs.parse_env(f"OK=1\n{bad}\n")
+        except rs.Refused as error:
+            assert str(error) == "secrets/.env line 2 has an unmatched quote or text after it", error
         else:
             raise AssertionError(bad)
 
@@ -184,6 +194,26 @@ def check_fake_espsecure(root: Path) -> None:
         code, _, stderr = run(["--repo", str(repo), "--out", str(out), *map(str, bins)])
         assert code == 0, stderr
         assert (out / rs.SUMS).is_file()
+        # A failed rename of SHA256SUMS leaves no .SHA256SUMS.* temp file (#45).
+        out = root / "fake-out-rename"
+        replace = rs.os.replace
+
+        def failing_replace(*_args: object) -> None:
+            raise OSError("rename failed")
+
+        rs.os.replace = failing_replace
+        try:
+            try:
+                rs.sign(repo, out, bins)
+            except OSError as error:
+                assert str(error) == "rename failed", error
+            else:
+                raise AssertionError("a failed rename must raise")
+        finally:
+            rs.os.replace = replace
+        left = sorted(path.name for path in out.iterdir() if path.name.startswith("."))
+        assert left == [], left
+        assert not (out / rs.SUMS).exists()
     finally:
         rs.ESPSECURE = real
 

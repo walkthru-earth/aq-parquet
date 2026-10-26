@@ -66,8 +66,13 @@ def parse_env(text: str) -> dict[str, str]:
         if not sep or not ENV_NAME_RE.fullmatch(name):
             raise Refused(f"secrets/.env line {number} is not NAME=VALUE")
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
+        if value[:1] in ("\"", "'"):
+            # A quoted value ends at its closing quote. Only a comment may follow.
+            end = value.find(value[0], 1)
+            rest = value[end + 1:].strip()
+            if end < 0 or (rest and not rest.startswith("#")):
+                raise Refused(f"secrets/.env line {number} has an unmatched quote or text after it")
+            value = value[1:end]
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         values[name] = value
@@ -206,10 +211,16 @@ def sign(repo: Path, out: Path, images: list[Path]) -> list[str]:
     text = "".join(f"{line}\n" for line in sorted(lines, key=lambda line: line.split("  ", 1)[1]))
     # Write a fresh file and rename it over SHA256SUMS. The rename replaces a
     # link that appeared since the check, it never writes through one.
-    with tempfile.NamedTemporaryFile("w", dir=out_real, prefix=f".{SUMS}.", delete=False) as handle:
-        handle.write(text)
-    os.chmod(handle.name, 0o644)
-    os.replace(handle.name, sums)
+    # A failed write or rename removes the temp file, so no .SHA256SUMS.* is left.
+    handle = tempfile.NamedTemporaryFile("w", dir=out_real, prefix=f".{SUMS}.", delete=False)
+    try:
+        with handle:
+            handle.write(text)
+        os.chmod(handle.name, 0o644)
+        os.replace(handle.name, sums)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
     print(f"wrote {sums}")
     return lines
 

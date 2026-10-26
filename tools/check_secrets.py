@@ -6,8 +6,15 @@ ignore rule does not stop `git add -f`. This check reads the staged blobs in
 the git index, not the working tree, so a key that was staged and then deleted
 or replaced on disk still fails. It fails when
 
-- any tracked path is under secrets/, or
-- a tracked file holds a PEM private key header, for any key type.
+- any tracked path is under secrets/, in any letter case, since the default
+  macOS file system treats Secrets/ and secrets/ as one directory,
+- a tracked file holds a PEM or PGP private key header, for any key type, or
+- a tracked file name ends in a binary key store extension such as .p12,
+  .pfx, .p8, .pk8, .jks or .keystore. DER keys have no header to match, so
+  their name is the only signal.
+
+Only the index is read, never untracked files, because the index is what the
+next commit holds and an untracked file cannot be pushed.
 
 It prints the offending path only, never file contents. Symlink and gitlink
 entries are skipped by their index mode.
@@ -30,8 +37,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_DIR = "secrets"
 # Split so this file does not match its own pattern. It covers RSA, EC,
-# ENCRYPTED, OPENSSH and plain PKCS#8 private keys.
-PRIVATE_KEY_RE = re.compile(b"-----BEGIN (?:[A-Z0-9]+ )*" + b"PRIVATE" + b" KEY-----")
+# ENCRYPTED, OPENSSH, plain PKCS#8 and PGP private keys.
+PRIVATE_KEY_RE = re.compile(b"-----BEGIN (?:[A-Z0-9]+ )*" + b"PRIVATE" + b" KEY(?: BLOCK)?-----")
+# Binary PKCS#12, PKCS#8 DER and Java key stores, matched by name in any case.
+KEY_STORE_SUFFIXES = (".p12", ".pfx", ".p8", ".pk8", ".jks", ".keystore")
 
 
 def index_entries(root: Path) -> list[tuple[str, str, str]]:
@@ -70,8 +79,11 @@ def findings(root: Path) -> list[str]:
     found = []
     regular = []
     for mode, blob, name in index_entries(root):
-        if name == SECRETS_DIR or name.startswith(SECRETS_DIR + "/"):
+        folded = name.casefold()
+        if folded == SECRETS_DIR or folded.startswith(SECRETS_DIR + "/"):
             found.append(f"{name}: tracked under {SECRETS_DIR}/")
+        elif folded.endswith(KEY_STORE_SUFFIXES):
+            found.append(f"{name}: has a binary key store name")
         # Regular files only. A symlink entry (120000) holds a target path and
         # a gitlink (160000) is another repository.
         elif mode in ("100644", "100755"):
@@ -79,7 +91,7 @@ def findings(root: Path) -> list[str]:
     contents = read_blobs(root, sorted({blob for blob, _ in regular}))
     for blob, name in regular:
         if PRIVATE_KEY_RE.search(contents[blob]):
-            found.append(f"{name}: holds a PEM private key header")
+            found.append(f"{name}: holds a private key header")
     # A conflicted path has one entry per stage. Report it once.
     return list(dict.fromkeys(found))
 

@@ -115,6 +115,14 @@ jobs:
           - name: component-fixtures
             task: connectivity-build-test
             extra_task: logger-build-test
+          # Bench only images with tools/idf-bench-stall-sdkconfig.defaults,
+          # built in their own build/<variant>-bench-stall directories. Only
+          # a compile, so a refactor cannot break the bench branch unseen
+          # (#45). They are never shipped, so they have no image to size.
+          - name: bench-stall
+            task: cores3-build
+            extra_task: waveshare-build logger
+            bench: stall
     env:
       IDF_CCACHE_ENABLE: "1"
       CCACHE_MAXSIZE: 500M
@@ -200,11 +208,14 @@ jobs:
         env:
           TASK: ${{ matrix.task }}
           EXTRA_TASK: ${{ matrix.extra_task }}
+          # Empty builds the shipped image, stall the bench image.
+          OS_BENCH: ${{ matrix.bench }}
         run: |
           read -r -a task <<<"${TASK}"
           pixi run "${task[@]}"
           if [[ -n "${EXTRA_TASK}" ]]; then
-            pixi run "${EXTRA_TASK}"
+            read -r -a extra <<<"${EXTRA_TASK}"
+            pixi run "${extra[@]}"
           fi
           # A build that rewrites a committed lock means the lock is stale.
           git diff --exit-code -- '*dependencies.lock'

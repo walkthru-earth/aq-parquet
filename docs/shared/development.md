@@ -258,7 +258,10 @@ and by hand from the Actions tab (`workflow_dispatch`).
   commit in `tools/idf-dependencies.lock`. The SDK and ccache caches are
   restored on every run but written only by pushes to `main`, and the SDK is
   saved from the cores3 leg alone, so pull requests never evict the `main`
-  entries. `waveshare-psram-build` stays a manual SDK fixture.
+  entries. `waveshare-psram-build` stays a manual SDK fixture. A
+  `bench-stall` leg compiles the CoreS3 and Waveshare logger bench images
+  with `OS_BENCH=stall`, so the `CONFIG_OS_LOGGER_BENCH_STALL` code keeps
+  building. It only compiles them and has no size or slot check.
 - Each board job uploads its `idf.py size --format json2` report and
   `os-build-sha256.json` as the `size-<board>` artifact, and the ELF, map and
   `flash_args` as `firmware-<board>`. Both are kept 90 days for `main` builds
@@ -284,6 +287,9 @@ and by hand from the Actions tab (`workflow_dispatch`).
   required check.
 - `.github/workflows/release.yml` is a separate workflow for `v*` tags and
   is not part of `CI result`, see [Cutting a release](#cutting-a-release).
+- `.github/workflows/scorecard.yml` runs the OpenSSF Scorecard weekly and on
+  pushes to `main` and uploads its SARIF result to code scanning. It never
+  runs on pull requests and is not part of `CI result`.
 - Dependabot opens one grouped pull request a week for action pin updates,
   only for releases at least 7 days old (`.github/dependabot.yml`).
 
@@ -384,8 +390,10 @@ not rewritten.
 The app signing key lives only on the owner machine, in `secrets/` at the
 repository root. It is never a GitHub secret and CI never sees it. `secrets/`
 is ignored by git, and `pixi run lint` runs `tools/check_secrets.py`, which
-fails when any path under `secrets/` is tracked or when a tracked file holds a
-PEM private key header. `pixi run secrets-check` runs the same check alone.
+fails when any path under `secrets/` is tracked, in any letter case, when a
+tracked file holds a PEM or PGP private key header, or when a tracked file has
+a binary key store name such as `.p12`, `.pfx` or `.jks`. `pixi run
+secrets-check` runs the same check alone.
 
 Firmware does not check app signatures yet. Turning that on is #40, and it
 waits on an owner-approved bootloader reflash. Until then a signed image boots
@@ -498,16 +506,25 @@ Run these from the repository root, with `v1.2.0` standing for the new tag.
    ```
 
 2. Wait for the Release workflow to finish and the draft to appear. The run
-   can take a few seconds to show up after the push, so the loop waits for it.
+   can take a few seconds to show up after the push, so the loop looks for it
+   every 10 seconds and gives up after 5 minutes, also when `gh` keeps failing.
    `--exit-status` makes the watch fail when the run fails. The run is also on
    the repository Actions page under Release.
 
    ```sh
-   until run_id="$(gh run list --workflow release.yml --branch v1.2.0 --event push \
-       --limit 1 --json databaseId --jq '.[0].databaseId // empty')" && [ -n "$run_id" ]; do
+   run_id=""
+   for _ in $(seq 30); do
+     run_id="$(gh run list --workflow release.yml --branch v1.2.0 --event push \
+       --limit 1 --json databaseId --jq '.[0].databaseId // empty')" || run_id=""
+     [ -n "$run_id" ] && break
      sleep 10
    done
-   gh run watch "$run_id" --exit-status
+   if [ -n "$run_id" ]; then
+     gh run watch "$run_id" --exit-status
+   else
+     echo "no Release run for v1.2.0 after 5 minutes" >&2
+     false
+   fi
    ```
 
 3. Download the draft and check it against `SHA256SUMS`. Then check the
@@ -518,8 +535,8 @@ Run these from the repository root, with `v1.2.0` standing for the new tag.
    gh release download v1.2.0 --dir exports/release-v1.2.0/unsigned
    (cd exports/release-v1.2.0/unsigned && shasum -a 256 -c SHA256SUMS)
    for f in exports/release-v1.2.0/unsigned/*.bin exports/release-v1.2.0/unsigned/*.spdx.json; do
-     gh attestation verify "$f" --repo walkthru-earth/aq-parquet \
-       --signer-workflow walkthru-earth/aq-parquet/.github/workflows/release.yml
+     gh attestation verify "$f" --repo walkthru-earth/opensensor-space-firmware \
+       --signer-workflow walkthru-earth/opensensor-space-firmware/.github/workflows/release.yml
    done
    ```
 
