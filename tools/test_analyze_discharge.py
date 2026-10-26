@@ -10,7 +10,9 @@ pre schema v5 file without the new battery columns, a quarantine file, a
 torn file and board logs with several boots. It also covers a clean single
 boot run with a recharge boot after it, which must have no findings, the
 loop boot rules, Critical to cutoff under 182 s, overlapping LOG_TAIL polls
-of one boot, and the finalize findings. Each of those checks was confirmed
+of one boot, the one line overlap and named loop boot merge limits, the
+first critical boot never being a loop boot, a nothing-open answer to a
+finalize, and the finalize findings. Each of those checks was confirmed
 to fail against the code before the verify-77 review, or against a mutant.
 """
 
@@ -200,6 +202,20 @@ def test_parse_log() -> None:
                                           "POWER STATE state=critical mv=3340 action=finalize\n"))
     require(hung["boots_with_unclosed_finalize"] == [0], f"{hung}")
     require(any("action=finalize with no close" in p for p in ad.findings(None, hung)), f"{hung}")
+    # A finalize with nothing open has nothing to close, so it is answered.
+    idle = ad.summarize_logs(ad.parse_log(f"PARQUET BEGIN boot={a}\n"
+                                          "POWER STATE state=critical mv=3340 action=finalize\n"
+                                          "PARQUET FLUSH reason=power-critical result=nothing-open attempt=1 files=0\n"))
+    require(idle["boots_with_unclosed_finalize"] == [], f"nothing-open answers a finalize, {idle}")
+
+    # The boot that went critical first is not a loop boot, even when it never
+    # logged ok, so its own short close file does not count.
+    reset_at_low = ad.parse_log(f"PARQUET BEGIN boot={a}\nPOWER STATE state=low mv=3480\n"
+                                "POWER STATE state=critical mv=3340 action=finalize\n"
+                                "PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1\n"
+                                "PARQUET READY name=x rows=4 row_groups=1 first=1 last=4\n")
+    require([x["loop"] for x in reset_at_low] == [False], f"the first critical boot is no loop boot, {reset_at_low}")
+    require(ad.summarize_logs(reset_at_low)["loop_small_files"] == 0, f"{reset_at_low}")
 
     # Loop boots without storage print no BEGIN and repeat the same lines.
     # Boots of one log are never joined, even then.
@@ -273,6 +289,29 @@ def test_overlapping_polls(work: Path) -> None:
     require([x["boot"] for x in boots] == [e, f], f"{boots}")
     require(boots[0]["closed"] == 1 and boots[0]["finalize_requests"] == 1, f"{boots[0]}")
     require(boots[0]["ready_rows"] == [12, 8], f"{boots[0]}")
+
+    # One shared line is not an overlap. A tail without BEGIN whose first line
+    # repeats the last line of an earlier poll is a later boot.
+    one = [("ble-log-1.txt", f"PARQUET BEGIN boot={e}\nPOWER STATE state=ok mv=3600\n"
+                             "POWER STATE state=low mv=3480\n"),
+           ("ble-log-2.txt", "POWER STATE state=low mv=3480\nPOWER STATE state=critical mv=3290 action=finalize\n"
+                             "PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1\n")]
+    boots = ad.parse_logs(one)
+    require([x["boot"] for x in boots] == [e, None], f"a one line overlap does not join, {boots}")
+
+    # The card is out (#61 step 6), so no SCAN line breaks the overlap. Loop
+    # boot g prints BEGIN, then the same two lines the tail of the boot before
+    # ended with. It names its id, so it joins the earlier boot without one
+    # only by holding it, and its own close still counts.
+    g = "a" * 32
+    close = ("POWER STATE state=critical mv=3290 action=finalize\n"
+             "PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1\n")
+    card_out = [("ble-log-1.txt", "POWER STATE state=low mv=3480\n" + close),
+                ("capture.log", f"ESP-ROM:esp32s3-20210327\nPARQUET BEGIN boot={g}\n" + close
+                                + "PARQUET READY name=x rows=2 row_groups=1 first=1 last=2\n")]
+    boots = ad.parse_logs(card_out)
+    require([x["boot"] for x in boots] == [None, g], f"a named loop boot stays apart, {boots}")
+    require([x["closed"] for x in boots] == [1, 1], f"both closes count, {boots}")
 
 
 def test_clean_single_boot(work: Path) -> None:
