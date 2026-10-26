@@ -19,8 +19,8 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 | [Waveshare logger v2.7](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns; native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
 
 Both source adapters implement the existing offline archive, configuration, BLE
-and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields; new schemas
-append four nullable H3 location fields. It retains persistent config NVS keys and types, and flash partition
+and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields, new schemas
+append four nullable location fields (h3_cell_id, h3_resolution, location_source, geometry). It retains persistent config NVS keys and types, and flash partition
 offsets. The Thing id lives in NVS `parquet/thing`, and the old `parquet/station` key stays in flash unread. Existing BLE bond compatibility is not guaranteed; native bonded
 reconnect or re-pairing needs a hardware check. Cellular/GNSS/camera integration
 remains future board work. See the [component map](firmware/common/README.md).
