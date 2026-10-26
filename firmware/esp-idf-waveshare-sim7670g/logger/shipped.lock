@@ -1,0 +1,95 @@
+{
+  "board": "waveshare-esp32-s3-sim7670g",
+  "releases": [
+    {
+      "dict": "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7",
+      "rows": 62,
+      "segments": [
+        {
+          "module": "system",
+          "segment": "head",
+          "first": 1,
+          "rows": 10,
+          "sha256": "f8d63dc250ef43b6bc993add6c519444cf06136e4c53ccaa1fc2fb0b40f30954"
+        },
+        {
+          "module": "pms5003t",
+          "segment": "core",
+          "first": 11,
+          "rows": 12,
+          "sha256": "765ecdf99c4cbfa9ec952336a7620531fe35b927da2ef9a3416eb8e53bf1e893"
+        },
+        {
+          "module": "waveshare",
+          "segment": "pms_identity",
+          "first": 23,
+          "rows": 3,
+          "sha256": "6b09395f4f3c41e69885695a21c5bd1316cc4d06d3145044747615159fd5b5d6"
+        },
+        {
+          "module": "pms5003t",
+          "segment": "tail",
+          "first": 26,
+          "rows": 7,
+          "sha256": "534471acf15e333d754ea620f39ddb8c478fcf536d3ff6a2be16a18bd29da817"
+        },
+        {
+          "module": "max17048",
+          "segment": "core",
+          "first": 33,
+          "rows": 3,
+          "sha256": "90cc9bafa74ebe1118e9b05caf37b61362ec029c2d82fc85d07d168fdaa21f48"
+        },
+        {
+          "module": "system",
+          "segment": "runtime",
+          "first": 36,
+          "rows": 12,
+          "sha256": "618ccfddd9013bd941fb60a562ab25f0433893fb0d37555ade4f9ccdc12731d6"
+        },
+        {
+          "module": "system",
+          "segment": "clock_close",
+          "first": 48,
+          "rows": 2,
+          "sha256": "f960d7a8e1c0e7f764edbbc176ad32df34b8ff5afbd782f127fb0b287311bbc4"
+        },
+        {
+          "module": "pms5003t",
+          "segment": "received",
+          "first": 50,
+          "rows": 1,
+          "sha256": "4a6e2b2a37f83b3ab14d461563e06c0336f17b40b1eded1305b3aa6e4db70fad"
+        },
+        {
+          "module": "system",
+          "segment": "clock_anchor",
+          "first": 51,
+          "rows": 2,
+          "sha256": "d560c885630a5511ac50bed6981d2edec1b9186a4ad68f2006f4022eaea7053b"
+        },
+        {
+          "module": "system",
+          "segment": "location",
+          "first": 53,
+          "rows": 4,
+          "sha256": "0d7e1e7a66992d35564ff37ad430fc0efaa03155ab22746211c11e8059f2a256"
+        },
+        {
+          "module": "max17048",
+          "segment": "v5",
+          "first": 57,
+          "rows": 4,
+          "sha256": "eb960eac63f7bd9556d1bb1a1365e76bd99a0d56816f2a305c6a868cf031f9e2"
+        },
+        {
+          "module": "battery_health",
+          "segment": "core",
+          "first": 61,
+          "rows": 2,
+          "sha256": "9a2ad8c6ad19f43bd6729458a36bdf5fd3bac0a94a408f0365c70c898b0f115f"
+        }
+      ]
+    }
+  ]
+}
