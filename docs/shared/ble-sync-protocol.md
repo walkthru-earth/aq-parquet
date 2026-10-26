@@ -708,30 +708,35 @@ The answer is one `DESCRIPTOR_CHUNK` (`0x4F`).
 | 5 | `offset` | u32, echoes the request |
 | 9 | bytes | `min(length, total − offset, payload_max − 9)` |
 
-`payload_max` is 512 over BLE and 1024 over LAN, so a chunk carries at most
-503 or 1015 bytes. A phone may ask for more and gets the clamped amount.
+`payload_max` over BLE is the negotiated MTU minus 3, up to 512, and over LAN
+it is 1024. A chunk therefore carries at most 503 bytes over BLE on an MTU 517
+link, fewer on a smaller MTU, and at most 1015 bytes over LAN. A phone may ask
+for more and gets the clamped amount.
 
 Golden request `11000200000004` is offset 512 and length 1024. On a 1300 byte
 template its answer starts `4f1405000000020000`, total 1300 and offset 512,
-followed over LAN by the 788 bytes from 512 to the end. Over BLE the same
-request returns 503 bytes.
+followed over LAN by the 788 bytes from 512 to the end. Over BLE on an MTU
+517 link the same request returns 503 bytes.
 
-**Errors**, all with op `0x11`.
+**Errors**, all with op `0x11`, checked in this order. The first match
+answers, so a 7 byte request with `length` 0 to an image without a template
+gets `ERROR` 17.
 
-| Case | Answer |
-| --- | --- |
-| Length not 7 | `ERROR` 1 `detail="descriptor"` |
-| `length` 0 | `ERROR` 1 `detail="length"` |
-| `offset` ≥ `total` | `ERROR` 6 `detail="offset"` |
-| `payload_max` of 9 or less | `ERROR` 7 `detail="mtu"` |
-| Image built without a template | `ERROR` 17 |
+| Order | Case | Answer |
+| --- | --- | --- |
+| 1 | Length not 7 | `ERROR` 1 `detail="descriptor"` |
+| 2 | Image built without a template | `ERROR` 17 |
+| 3 | `length` 0 | `ERROR` 1 `detail="length"` |
+| 4 | `offset` ≥ `total` | `ERROR` 6 `detail="offset"` |
+| 5 | `payload_max` of 9 or less | `ERROR` 7 `detail="mtu"` |
 
 **How a phone downloads it.** Each request returns exactly one chunk, and the
 board keeps no download state. The phone sends offset 0, learns `total`, then
 asks for the next missing offset until it holds `total` bytes. A lost or late
 reply costs one more request for the same offset. A chunk for an offset the
 phone did not ask for is dropped. If `total` changes between chunks, the phone
-starts over. It can also re-request any range later.
+drops what it holds and starts over from offset 0 once. A second change fails
+the download. It can also re-request any range later.
 
 **How a phone checks it.** `desc` is the SHA-256 of the exact downloaded bytes,
 with no trailing NUL and no reformatting. The template cannot carry its own

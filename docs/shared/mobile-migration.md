@@ -25,14 +25,17 @@ cached templates keep working.
 - New opcode `0x11` `GET_DESCRIPTOR` over BLE and LAN. The request is the
   opcode, then `offset` u32 and `length` u16, little-endian, 7 bytes in all.
 - New frame `0x4F` `DESCRIPTOR_CHUNK`, `total` u32, `offset` u32, then up to
-  `min(length, total − offset, payload_max − 9)` template bytes. That is at
+  `min(length, total − offset, payload_max − 9)` template bytes. BLE
+  `payload_max` is the negotiated MTU minus 3, up to 512, so a chunk is at
   most 503 bytes over BLE and 1015 over LAN. The board only sends it as the
   reply to a `GET_DESCRIPTOR`, never unsolicited.
 - New error code 17, no descriptor, for an image built without a template.
-  Other failures reuse codes the app knows. `ERROR` 1 `detail="descriptor"`
-  for a request that is not 7 bytes, `ERROR` 1 `detail="length"` for length 0,
-  `ERROR` 6 `detail="offset"` for an offset at or past `total`, `ERROR` 7
-  `detail="mtu"` when the link budget cannot hold a byte.
+  Other failures reuse codes the app knows. The board checks in this order
+  and answers the first match. `ERROR` 1 `detail="descriptor"` for a request
+  that is not 7 bytes, then `ERROR` 17, then `ERROR` 1 `detail="length"` for
+  length 0, then `ERROR` 6 `detail="offset"` for an offset at or past
+  `total`, then `ERROR` 7 `detail="mtu"` when the link budget cannot hold a
+  byte.
 
 **Why.** The app needs the board template (the `OpenSensorTemplate` JSON) to describe
 a station without a network. The board already carries it in flash, and now
@@ -47,7 +50,8 @@ serves it.
    `total` bytes are in. The board keeps no state between requests, so a lost
    or late reply costs one more request for the same offset, and any missing
    range can be asked for again later. Drop a chunk whose offset the app did
-   not ask for, and start over if `total` changes.
+   not ask for. If `total` changes, drop the bytes and start over from offset
+   0 once, and fail the download if it changes again.
 3. Hash the exact bytes, without a trailing NUL and without reformatting. The
    full `desc` is the SHA-256 of these bytes. The template cannot carry its own
    hash, so check the hex digest twice. First its first 16 characters must

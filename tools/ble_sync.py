@@ -538,12 +538,15 @@ class Session:
 
         Requests the next missing offset until `total` bytes arrived. A lost
         or late reply only costs a re-request of the same offset, and a stale
-        chunk for another offset is dropped.
+        chunk for another offset is dropped. A changed `total` means another
+        template, so the bytes are dropped and the download restarts from
+        offset 0 once. A second change raises.
         """
         if not 1 <= length <= 0xFFFF:
             raise ValueError("length must be 1..65535")
         data = bytearray()
         total = None
+        restarted = False
         while total is None or len(data) < total:
             offset = len(data)
             for attempt in range(DESCRIPTOR_TRIES):
@@ -559,7 +562,13 @@ class Session:
             if total is None:
                 total = chunk_total
             elif chunk_total != total:
-                raise ProtocolError(f"DESCRIPTOR_CHUNK total changed {total} -> {chunk_total}")
+                if restarted:
+                    raise ProtocolError(f"DESCRIPTOR_CHUNK total changed {total} -> {chunk_total} "
+                                        "again after a restart")
+                restarted = True
+                data.clear()
+                total = None
+                continue
             if not payload or offset + len(payload) > total:
                 raise ProtocolError(f"DESCRIPTOR_CHUNK of {len(payload)} bytes at {offset} "
                                     f"does not fit total {total}")

@@ -75,6 +75,9 @@ class FakeClient:
         self.descriptor_budget = 512
         self.descriptor_drop = set()
         self.descriptor_drop_always = False
+        # Templates swapped in, one per request at a nonzero offset, as a
+        # reflash between chunks would.
+        self.descriptor_next = []
         self.descriptor_stale = False
         self.descriptor_requests = []
 
@@ -170,6 +173,8 @@ class FakeClient:
         elif op == ble.OP_GET_DESCRIPTOR:
             # Mirrors firmware encode_descriptor_chunk, error for error.
             self.descriptor_requests.append(bytes(data))
+            if self.descriptor_next and len(data) == 7 and struct.unpack_from("<I", data, 1)[0]:
+                self.descriptor = self.descriptor_next.pop(0)
             if len(data) != 7:
                 self.emit(bytes([ble.F_ERROR, op, 1]) + b"descriptor")
                 return
@@ -356,6 +361,27 @@ async def run_descriptor():
     assert await session.descriptor(length=600) == DESCRIPTOR
     assert descriptor_offsets(client) == [0, 600, 600, 1200], descriptor_offsets(client)
 
+    # A changed total drops the bytes and restarts from offset 0 once.
+    other = DESCRIPTOR[:-2] + b'bb"}'
+    client = FakeClient()
+    client.descriptor_next = [other]
+    session = ble.Session(client)
+    await session.start()
+    assert await session.descriptor() == other
+    assert descriptor_offsets(client) == [0, 503, 0, 503, 1006], descriptor_offsets(client)
+    # A second change after the restart fails the download.
+    client = FakeClient()
+    client.descriptor_next = [other, DESCRIPTOR]
+    session = ble.Session(client)
+    await session.start()
+    try:
+        await session.descriptor()
+    except ble.ProtocolError as error:
+        assert "again after a restart" in str(error), error
+    else:
+        raise AssertionError("a second total change must raise")
+    assert descriptor_offsets(client) == [0, 503, 0, 503], descriptor_offsets(client)
+
     # A reply lost every time gives up after DESCRIPTOR_TRIES requests.
     client = FakeClient()
     client.descriptor_drop = {0}
@@ -402,7 +428,8 @@ async def run_descriptor():
     expect_protocol_error(lambda: ble.check_descriptor(DESCRIPTOR, {}), "no 16 hex desc")
     expect_protocol_error(lambda: ble.check_descriptor(DESCRIPTOR, info, "0" * 64), "expected")
     print("PASS ble_sync GET_DESCRIPTOR: golden request and header, 512 and 1024 budgets, "
-          "re-request after a lost reply, stale chunk dropped, retry limit, ERROR 17, hash check")
+          "re-request after a lost reply, stale chunk dropped, one restart on a changed total, retry limit, "
+          "ERROR 17, hash check")
 
 
 async def run_auth_refused():
