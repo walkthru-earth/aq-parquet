@@ -13,6 +13,8 @@ Matched names (old form, see docs/shared/mobile-migration.md for the new one)
   Kconfig symbols        the old logger and runtime symbols, with or without CONFIG_
   serial tags            a line tag at a line start, after a quote or backtick,
                          or anywhere inside a string literal
+  CMake helpers (#111)   the old firmware/cmake file names, the functions they
+                         define and the variables they set, now os_ and OS_
 
 History is exempt. The dated bench records, the migration log and the #93
 audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
@@ -49,6 +51,17 @@ RETIRED = (
         "serial tag",
         re.compile("(^|[\"'`])" + OLD + r" [A-Z][A-Z_]+|[\"'`][^\"'`]*\b" + OLD + r" ([A-Z][A-Z_]{2,}|TF)\b"),
     ),
+    # CMake helpers renamed in #111 Phase 2a. The files, the functions and the
+    # variables they set moved from the aq_ and AQ_ prefix to os_ and OS_.
+    (
+        "CMake helper",
+        re.compile(
+            r"\b" + "aq" + r"_(pin_cxx_standard|map_source_paths|map_debug_paths|patch_nimble|enable_stack_usage)\b"
+            r"|\b" + "aq" + r"_(cxx_standard|source_paths|nimble_patches|stack_usage)\.cmake\b"
+            r"|\b" + "aq" + r"_nimble_patch\b"
+        ),
+    ),
+    ("CMake variable", re.compile(r"\b" + OLD + r"_(SOURCE_ROOT|SOURCE_ROOT_REAL|NIMBLE_PATCH_DIR|PATCH_PROGRAM)\b")),
 )
 # History that names the old forms on purpose.
 EXEMPT = {
