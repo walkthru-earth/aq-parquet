@@ -4,6 +4,7 @@
 // interoperability fixture. No host-stack, controller or board dependencies.
 #include "ble_sync.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <expected>
@@ -152,10 +153,8 @@ build_info(std::span<char> out, const Identity &identity) {
                            identity.station,
                            identity.device,
                            identity.boot};
-  for (const char *text : strings)
-    if (!text)
-      return std::unexpected(InfoError::Missing);
-  if (std::strlen(identity.descriptor_sha256) < kInfoDescChars)
+  if (std::ranges::any_of(strings, [](const char *text) { return !text; }) ||
+      std::strlen(identity.descriptor_sha256) < kInfoDescChars)
     return std::unexpected(InfoError::Missing);
   std::size_t used = 0;
   bool fits = true;
