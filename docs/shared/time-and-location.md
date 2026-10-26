@@ -125,6 +125,9 @@ buffered readings. The footer carries no location since #88. The rows hold
 the cell, resolution, source and centre point, and the country is not written to the file.
 The owner also sets `thing.mobility` (`fixed` by default, or `moving`), which
 the footer `thing.mobility` records per file.
+The reserved `SET_CONFIG` key `location.phone_cell` is the future source 3 path,
+a cell from the phone's own fix that the board keeps in RAM only and never
+persists. This firmware does not accept it yet.
 Existing archives are immutable.
 
 Host tests and native builds verify contracts and compilation. Router option

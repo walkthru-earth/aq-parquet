@@ -42,6 +42,13 @@ after the reflash.
 - `location_source` codes are 0 none, 1 configured, 2 gnss, 3 phone, null when
   the row has no location. The template lists them as `classification:classes`.
   This firmware only writes 1, it has no GNSS or phone location path yet.
+- `location.phone_cell` is a reserved `SET_CONFIG` key for source 3, the
+  phone's own fix. The board will coarsen it to `location.resolution`, keep it
+  in RAM only and fall back to `location.cell` when it is cleared or on
+  reboot. The app may show the key now but must not send it until a firmware
+  release says it is accepted. Until then the board rejects it like any
+  unknown key, with `ERROR` 12 and `detail` `location.phone_cell`, and the
+  whole request changes nothing, so never batch it with other keys.
 - A second footer key `geo` holds compact GeoParquet 2.0 JSON,
   `{"version":"2.0.0","primary_column":"geometry","columns":{"geometry":{"encoding":"WKB","geometry_types":["Point"],"bbox":[xmin,ymin,xmax,ymax]}}}`.
   The bbox is left out when the file has no location. A file holds exactly the
