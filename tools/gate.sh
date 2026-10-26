@@ -51,6 +51,7 @@ tasks=(
   "column-semantics-test"
   "board-template-check-test"
   "published-templates-test"
+  "plugin-contract-test"
   "pinned-uris-test"
   # Sensor drivers on fake buses
   "pms-frame-test"

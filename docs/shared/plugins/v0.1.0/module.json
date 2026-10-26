@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json#",
+  "title": "OpenSensor Sensor Module Manifest",
+  "description": "One sensor module, its default procedure and identity, and its named column segments. Columns are stac-opensensor v0.1.0 columns plus a firmware member.",
+  "type": "object",
+  "required": ["type", "module_version", "stac_opensensor", "id", "procedure", "buses", "segments"],
+  "properties": {
+    "type": {"const": "OpenSensorModule"},
+    "module_version": {"const": "0.1.0"},
+    "stac_opensensor": {"const": "0.1.0"},
+    "id": {"$ref": "#/definitions/id"},
+    "procedure": {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column/properties/opensensor:procedure"},
+    "vendor": {"type": "string"},
+    "model": {"type": "string"},
+    "buses": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["i2c", "spi", "uart", "adc", "pcnt", "gpio", "onewire"]}
+    },
+    "requires": {
+      "type": "object",
+      "properties": {
+        "i2c_address": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 8, "maximum": 119}},
+        "pcnt_units": {"type": "integer", "minimum": 1},
+        "adc_channels": {"type": "integer", "minimum": 1},
+        "uart_baud": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "settle_s": {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column/properties/opensensor:settle_s"},
+    "init_errors": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/definitions/id"}
+    },
+    "status": {
+      "description": "The status column of the module. Its codes are that column's classification:classes, written once.",
+      "type": "object",
+      "required": ["column"],
+      "properties": {"column": {"$ref": "#/definitions/name"}},
+      "additionalProperties": false
+    },
+    "segments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"$ref": "#/definitions/id"},
+      "additionalProperties": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/column"}}
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "column": {
+      "allOf": [
+        {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column"},
+        {
+          "required": ["name", "roles", "opensensor:property", "opensensor:aggregate", "firmware"],
+          "not": {"anyOf": [
+            {"required": ["opensensor:field_id"]},
+            {"required": ["opensensor:scale"]},
+            {"required": ["title"]},
+            {"required": ["type"]}
+          ]},
+          "properties": {
+            "name": {"$ref": "#/definitions/name"},
+            "unit": {"type": "string", "minLength": 1},
+            "roles": {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/profile.json#/definitions/column/properties/roles"},
+            "cf:standard_name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+            "classification:classes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["value", "name"],
+                "properties": {
+                  "value": {"type": "integer"},
+                  "name": {"type": "string", "minLength": 1},
+                  "nodata": {"const": true}
+                },
+                "additionalProperties": false
+              }
+            },
+            "firmware": {"$ref": "#/definitions/firmware"}
+          },
+          "patternProperties": {
+            "^(?!opensensor:)(?!name$|unit$|roles$|cf:standard_name$|classification:classes$|firmware$)": false
+          }
+        }
+      ]
+    },
+    "firmware": {
+      "type": "object",
+      "required": ["type", "unit", "validity", "live_key", "decimals"],
+      "properties": {
+        "type": {"enum": ["Int32", "Int64", "Float", "ByteArray"]},
+        "unit": {"type": "string", "pattern": "^[^\"\\\\]+$"},
+        "validity": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        "vendor": {"type": "string", "pattern": "^[^\"\\\\]*$"},
+        "model": {"type": "string", "pattern": "^[^\"\\\\]*$"},
+        "live_key": {"anyOf": [
+          {"const": ""},
+          {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/template.json#/properties/firmware/properties/live_keys/additionalProperties"}
+        ]},
+        "decimals": {"type": "integer", "minimum": 0, "maximum": 9}
+      },
+      "additionalProperties": false
+    }
+  }
+}

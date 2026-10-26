@@ -1,0 +1,53 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "bme280",
+  "procedure": "bme280",
+  "vendor": "Bosch Sensortec",
+  "model": "BME280",
+  "buses": ["i2c"],
+  "requires": {"i2c_address": [118, 119]},
+  "settle_s": 2,
+  "init_errors": ["not_found", "bad_chip_id"],
+  "status": {"column": "bme280_status"},
+  "segments": {
+    "core": [
+      {
+        "name": "bme280_status",
+        "unit": "{code}",
+        "roles": ["qualityInformation"],
+        "classification:classes": [
+          {"value": 0, "name": "missing", "nodata": true},
+          {"value": 1, "name": "read-error"},
+          {"value": 2, "name": "valid"}
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:bme280_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {"type": "Int32", "unit": "code", "validity": "always", "live_key": "", "decimals": 0}
+      },
+      {
+        "name": "air_temperature_c",
+        "unit": "Cel",
+        "roles": ["physicalMeasurement"],
+        "cf:standard_name": "air_temperature",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0023/",
+        "opensensor:valid_when": {"column": "bme280_status", "equals": 2},
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [-40, 85],
+        "firmware": {"type": "Float", "unit": "degC", "validity": "bme280_valid", "live_key": "ta", "decimals": 2}
+      },
+      {
+        "name": "air_pressure_hpa",
+        "unit": "hPa",
+        "roles": ["physicalMeasurement"],
+        "cf:standard_name": "air_pressure",
+        "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/air_pressure/",
+        "opensensor:valid_when": {"column": "bme280_status", "equals": 2},
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [300, 1100],
+        "firmware": {"type": "Float", "unit": "hPa", "validity": "bme280_valid", "live_key": "p", "decimals": 2}
+      }
+    ]
+  }
+}
