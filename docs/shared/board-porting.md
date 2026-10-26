@@ -6,7 +6,7 @@ controller initialization, power, mount policy, measurements and capabilities.
 Extend hooks or configuration for a new capability. Never branch on a board
 name inside common code or include a sibling trial.
 
-A proposal to declare sensor modules and boards as versioned manifests is in [Sensor plugins](sensor-plugins.md).
+Sensor modules and boards are declared as versioned manifests, gated against the board files. See [Sensor plugins](plugins/README.md).
 
 ## Logger hooks and capabilities
 
