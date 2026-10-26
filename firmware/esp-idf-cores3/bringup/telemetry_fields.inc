@@ -3,10 +3,10 @@
 // LIVE. decimals is the number of digits after the point when a Float prints,
 // chosen from the sensor resolution, and 0 for integer fields. Both are part
 // of the digest, so the app keeps one LIVE profile per dictionary SHA-256.
-// Parquet/Iceberg field_id = 1-based order of the FIELD entries below. Append
-// new fields only. Never reorder, remove or reuse a position without an
-// explicit owner decision and a new dictionary. Decision 32 (#83) put
-// location_source and geometry in the two H3 centre positions.
+// Parquet/Iceberg field_id = 1-based order of the FIELD entries below. The
+// Thing release (#83) is the baseline. From it, append new fields only and
+// never reorder, remove or reuse a position (owner answer to bridge question
+// 36, 2026-10-26).
 // The property id of each field comes from telemetry_semantics.inc, board
 // neutral, looked up by name (#99).
 // Procedure identifiers describe code paths, not instrument serial numbers.

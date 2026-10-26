@@ -96,7 +96,9 @@ file in `docs/README.md` after this one.
 - ESP-IDF source/toolchain is pinned by `tools/idf-dependencies.lock`. Managed
   components use exact manifest pins. Use `pixi run idf-setup`, `cores3-build`
   and `waveshare-build [logger|diagnostic]`. Never erase NVS during migration.
-  Retain station/config namespaces, keys, types and flash partition offsets.
+  Retain config namespaces, keys, types and flash partition offsets. The
+  Thing id lives in NVS `parquet/thing` (owner decision 31, 2026-10-26). The
+  old `parquet/station` key stays in flash unread, never erase it.
 - Prefer DHCP/router and configured local NTP before permitted public fallback.
   Never infer internet availability or UTC from Wi-Fi association. Preserve RTC
   and authenticated host anchors offline. Location starts unset. Persist only
@@ -141,8 +143,11 @@ file in `docs/README.md` after this one.
   merge commit, everything else squashes. A squash would drop the pinned commit
   from main.
 - Parquet columns keep stable `field_id` values (1-based position in the board
-  `telemetry_fields.inc`. Append only, never reorder, remove or reuse a
-  position). Parquet UTC columns (`*_utc_us`) use `TIMESTAMP(MICROS, UTC)` so
+  `telemetry_fields.inc`). From the Thing baseline (#83) the rule is append
+  only, never reorder, remove or reuse a position (owner answer to bridge
+  question 36, 2026-10-26). That baseline dropped the H3 centre columns
+  (decision 32) and is a fresh numbering, readers never key on an id from an
+  earlier dictionary. Parquet UTC columns (`*_utc_us`) use `TIMESTAMP(MICROS, UTC)` so
   files register in Iceberg v3 tables without rewrites. Do not switch them to
   NANOS, which maps only to v3 `timestamptz_ns` that Spark, Athena and Redshift
   cannot read. LIVE `utc` stays nanoseconds.

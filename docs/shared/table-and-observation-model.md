@@ -53,15 +53,21 @@ dictionary digest are planned to live in the generated board templates under
 
 | Field | Physical type | Meaning |
 | --- | --- | --- |
-| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range; hex in config/footer |
+| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range, hex in config |
 | `h3_resolution` | INT32 | Actual published cell resolution, potentially coarser than the configured maximum |
-| `h3_center_lat_e7` | INT64 | H3 grid-center latitude in 1e-7 degrees |
-| `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
+| `location_source` | INT32 with `INTEGER(8,false)` (UINT8) | Where the row location came from. 0 none, 1 configured, 2 gnss, 3 phone. Classes live in `telemetry_classes.inc` |
+| `geometry` | BYTE_ARRAY with the Parquet `GEOMETRY` logical type, no crs (OGC:CRS84) | 2D WKB Point, little endian, 21 bytes, at the H3 cell centre |
 
-All four remain null while the deployment cell is unset. Firmware derives the
-center from the published cell; no raw GPS is stored. The footer carries no
-location (#88). The rows hold the cell, the resolution and the center, and the
-country is no longer written to the file. Country is not inferred from H3.
+All four are null while the deployment cell is unset, and `geometry` is null
+exactly when `h3_cell_id` is null. Since the Thing release (#83) the centre is
+no longer two integer columns (decision 32). Each `geometry` chunk carries
+Parquet `GeospatialStatistics` (bbox and geometry type) and no min or max. A
+second footer key, `geo`, holds compact GeoParquet 2.0 JSON naming `geometry`
+as the primary column, with a bbox only when the file has a location. Firmware
+derives the centre from the published cell, no raw GPS is stored. The
+`opensensor` footer key carries no location (#88). Country is not written to
+the file and is not inferred from H3. Today every located row has
+`location_source` 1, because the firmware has no GNSS or phone path yet.
 
 Acquisition snapshots cell, maximum precision and country into each queued row.
 The worker splits the RAM batch and open file before appending a different
@@ -92,9 +98,9 @@ Our proposed mapping:
 
 | Concept | Project interpretation |
 | --- | --- |
-| Thing | Persistent station UUID; hardware MAC remains separate |
+| Thing | Persistent Thing UUID, footer `thing.id` and Hive `thing=`. Hardware MAC remains separate |
 | Sensor | Instrument/procedure, with actual replacement and calibration history when known |
-| Datastream | Stable measurement contract for a sensor/procedure at a station |
+| Datastream | Stable measurement contract for a sensor/procedure on a Thing |
 | ObservedProperty | Exact quantity and processing variant; atmospheric PM2.5 is distinct from CF=1 PM2.5 |
 | Observation | Sensor result with time, quality and stable identity |
 | Location / HistoricalLocation | Deployment geometry and when it applied; unknown until provisioned |
@@ -104,7 +110,7 @@ One physical Parquet row can supply several semantic observations. Keep the wide
 
 ```mermaid
 flowchart TD
-    T[Thing: station UUID] --> DS[Datastream: station + procedure + contract]
+    T[Thing: Thing UUID] --> DS[Datastream: Thing + procedure + contract]
     S[Sensor / procedure] --> DS
     OP[Observed properties + units] --> DS
     DS --> OB[Semantic observations]
@@ -137,7 +143,7 @@ Each board has a single-source field dictionary that drives the enum and physica
 
 Each board also embeds one stac-opensensor v0.1.0 board template, a minified JSON built on the host from the field dictionary, `telemetry_semantics.inc`, `telemetry_classes.inc` and the title and keywords in `telemetry_contract.h`. It sits in `.rodata` as `kTemplateJson` in `telemetry_template.h`, and `desc` in `telemetry_descriptor_digest.h` is the SHA-256 of exactly those bytes. The contract tests fail when either header is stale and validate the template against the pinned schemas. `tools/build-idf-board.sh` checks `desc` before the build and checks the app image holds the same bytes after it. The template's `describedby` link is `kDictionaryUri`, the raw `telemetry_fields.inc` at a full 40 hex commit on `main`, with `file:checksum` `1220` plus the dict digest. The footer `dictionary.uri` inside the `opensensor` key is the same string. `kTemplateHref` names the published template, the raw `docs/shared/templates/<board>/<dict>.json` at a full commit whose bytes hash to `desc` (#89). The footer `template.href` carries it (#88). Commit URLs never move, so the bytes at each link always hash to its digest. `pixi run pinned-uris-test` fails on a `main` or branch URL, on a commit that is not on `main` and on a commit whose bytes miss the digest. Readers trust `dictionary.sha256` and `template.sha256`, never a URL, and fetch the dictionary by its digest. Files written before #88 and #89 carry the old flat `dictionary_uri` (on `main`, which may have moved since) and `dictionary_sha256` keys. That is history only, the app does not read those older files (no backward compatibility, owner decision 14).
 
-Each new file carries exactly one Parquet key-value entry, `opensensor`, whose value is compact JSON per stac-opensensor `footer.json` v0.1.0 (pinned in `tools/stac_opensensor/`). Its groups are `station`, `firmware`, `dictionary` (`sha256` is `dict`), `template` (`href` and `sha256`, which is `desc`), `acquisition` (sample period, time semantics, config id, config and calibration id) and `file` (rotation, row groups, rows per group, compression and purpose). The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
+Each new file carries exactly one Parquet key-value entry, `opensensor`, whose value is compact JSON per stac-opensensor `footer.json` v0.1.0 at commit `4408c4e52366bb3d154d22bbfffc88ff09aed6f1` (pinned in `tools/stac_opensensor/`). A second key, `geo`, holds the GeoParquet 2.0 metadata for the `geometry` column, and no other key is written. Its groups are `thing` (id, device id, board slug, deployment id and `mobility`), `firmware` (with the 32 hex `boot_id` of the file name), `dictionary` (`sha256` is `dict`), `template` (`href` and `sha256`, which is `desc`), `acquisition` (sample period, time semantics, config id, config and calibration id) and `file` (rotation, row groups, rows per group, compression and purpose). The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
 ```sh
 pixi run telemetry-contract-test --sanitize

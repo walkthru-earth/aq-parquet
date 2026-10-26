@@ -87,8 +87,8 @@ sends only a cell, maximum resolution and optional declared country; the app
 reads page 1 back before reporting confirmation. This does not enable uploads.
 Older firmware without that page shows setup as unsupported.
 
-The default maximum H3 resolution is 5, configurable from 0 through 15.
-Lower resolutions disclose larger areas. Resolution 5 averages about 253 km²;
+The default maximum H3 resolution is 8 (#83), configurable from 0 through 15.
+Lower resolutions disclose larger areas. Resolution 8 averages about 0.74 km²;
 actual area varies, and an approximate phone fix does not become accurate by
 choosing a finer cell. The official [H3 resolution table](https://h3geo.org/docs/core-library/restable/)
 describes these averages. Fine cells can identify a specific place. Public
@@ -107,21 +107,24 @@ may span a border and its center cannot prove a country's assignment.
 
 ## Parquet provenance
 
-CoreS3 schema v4 and Waveshare schema v3 append four nullable columns while
-preserving all earlier fields:
+From the Thing release (#83) both boards hold four nullable location columns
+next to each other:
 
 | Column | Physical type | Meaning |
 | --- | --- | --- |
 | `h3_cell_id` | INT64 | Valid retained H3 cell, stored as a numeric index |
 | `h3_resolution` | INT32 | Actual cell resolution, which may be coarser than the maximum |
-| `h3_center_lat_e7` | INT64 | Grid-center latitude in 10⁻⁷ degrees |
-| `h3_center_lon_e7` | INT64 | Grid-center longitude in 10⁻⁷ degrees |
+| `location_source` | UINT8 | 0 none, 1 configured, 2 gnss, 3 phone. Every located row is 1 today |
+| `geometry` | GEOMETRY | 2D WKB Point at the cell centre, no crs (OGC:CRS84), with GeoParquet 2.0 `geo` footer metadata |
 
-Unset or invalid location produces four nulls. Each sample captures its
+Unset or invalid location produces four nulls, and `geometry` is null exactly
+when `h3_cell_id` is null. Each sample captures its
 location settings before entering the worker queue. A cell, precision cap or
 country change splits the batch/open file, so a later setting never relabels
 buffered readings. The footer carries no location since #88. The rows hold
-the cell, resolution and center, and the country is not written to the file.
+the cell, resolution, source and centre point, and the country is not written to the file.
+The owner also sets `thing.mobility` (`fixed` by default, or `moving`), which
+the footer `thing.mobility` records per file.
 Existing archives are immutable.
 
 Host tests and native builds verify contracts and compilation. Router option

@@ -51,7 +51,7 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 | Field | Requirement |
 | --- | --- |
 | `schema_version` | INT32 schema version of the board that wrote the file. The current schema name, dictionary version and column count are not repeated here, because they move with every dictionary bump. Read `kSchemaName`, `kDictionaryVersion` and the `static_assert` on `field_count` in `firmware/esp-idf-cores3/bringup/telemetry_contract.h` and `firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h`. CoreS3 v6.12 wrote `cores3-telemetry-v4`, and the next version kept the same columns and added LIVE keys to the dictionary bytes. Every leaf carries Parquet `field_id` = its 1-based dictionary position. Native v6.9 to v6.11 wrote version 4 with the same leaves under the old `*_utc_ns` names. Native v6.8 retained historical schema v3/77 columns. Firmware v3–v5 wrote version 2 with the same 77 columns; earlier bench images used version 1 with 72/73 columns. Check the actual schema and image identity. |
-| `station_id` | UUID generated once and persisted in NVS (`parquet` namespace, `station` key); carried in the footer `station.id` and the Hive directory, not repeated as a numeric row column. Erasing NVS creates a new station identity. |
+| `thing_id` | UUID generated once and persisted in NVS (`parquet` namespace, `thing` key, owner decision 31); carried in the footer `thing.id` and the Hive directory `thing=<uuid>`, not repeated as a numeric row column. Erasing NVS creates a new Thing identity. The first boot of the Thing release mints a new id, the old `station` key stays unread. |
 | `device_id` | INT64 containing the board's 48-bit Wi-Fi station MAC; a hardware identifier, not an anonymized UUID. |
 | `boot_id_hi`, `boot_id_lo` | Two INT64 fields carrying a random 128-bit identifier generated once per boot. |
 | `sequence` | Monotonic INT64 counter within one boot; device, boot and sequence identify the row. Missed sample deadlines create observable sequence gaps. |
@@ -60,12 +60,12 @@ Every sample has an identity independent of wall-clock quality. Never turn a tim
 | `clock_status`, `clock_epoch` | Status 0 = unsynchronized, 1 = host estimate supplied on this boot, 2 = restored at boot from the BM8563 RTC (firmware v6.2, source 2026-09-18). Status 3 = a successful network SNTP response. Code 2 is the last external estimate the RTC was written with, at whole-second resolution plus RTC drift since that sync; it is dated (Hive tree, not `unsynced`) but a reader that wants host-fresh time should filter on `clock_status IN (1, 3)` or on `clock_epoch` after the sync. Since CoreS3 v6.10 / Waveshare v2.4, the epoch increments for initial UTC (RTC seed included), an RTC-to-external upgrade, or a correction strictly larger than two seconds; small host/network refreshes preserve the epoch. Files split when the epoch or UTC window changes. Per-row anchors and source retain each accepted estimate; old rows are never relabeled. Older firmware incremented at every anchor. No measured clock-uncertainty bound or synchronized status is claimed. |
 | Measurements | Fixed-width typed fields with units in the schema, not encoded into display strings. |
 | Validity | Per-sensor status and validity bits; preserve missing, warming, stale, checksum error and device error distinctly. |
-| Provenance | File metadata records firmware, board, station, boot, cadence, status meanings and unavailable measurements. New source adds dictionary version/SHA-256 and acquisition configuration; deployment/calibration identifiers remain explicitly unknown. Owner-declared sensor/H3 provisioning is implemented; external deployment history and calibration remain future work. |
+| Provenance | File metadata records firmware, board, Thing, boot, cadence, status meanings and unavailable measurements. New source adds dictionary version/SHA-256 and acquisition configuration; deployment/calibration identifiers remain explicitly unknown. Owner-declared sensor/H3 provisioning is implemented; external deployment history and calibration remain future work. |
 | Additional v2 timing | `collection_completed_mono_us`, `pms_received_mono_us`, `clock_anchor_mono_us`, `clock_anchor_utc_us`; see [semantics and validity](table-and-observation-model.md#timing-and-validity-dictionary). |
 
-Use `pixi run parquet-device sync-time --port <port>` to explicitly supply this host's current UTC estimate, or `--sync-time` with `parquet-device bench`. The serial `parquet time <epoch-seconds>` command anchors that value to the device monotonic clock and reports the anchor. This is not NTP; command/transport latency and host error are not measured. The common Android/iOS session refreshes unset/RTC clocks, external anchors older than six hours, or current estimates more than two seconds from the phone, with microsecond precision when supported. Wi-Fi SNTP also establishes UTC without a phone. Accepted anchors affect future rows only and do not flush the current interval. TIME_SET supplies immediate reconciliation evidence. Since #88 the footer holds no anchor. Every row written after an accepted anchor carries it in `clock_anchor_mono_us` and `clock_anchor_utc_us`, which are evidence for that row's device, station and boot only. Routine sync lists completed files; explicit FLUSH closes the unfinished window when current stored readings are requested. No synthetic measurement is created. A separate uncertainty-bearing anchor journal is not implemented.
+Use `pixi run parquet-device sync-time --port <port>` to explicitly supply this host's current UTC estimate, or `--sync-time` with `parquet-device bench`. The serial `parquet time <epoch-seconds>` command anchors that value to the device monotonic clock and reports the anchor. This is not NTP; command/transport latency and host error are not measured. The common Android/iOS session refreshes unset/RTC clocks, external anchors older than six hours, or current estimates more than two seconds from the phone, with microsecond precision when supported. Wi-Fi SNTP also establishes UTC without a phone. Accepted anchors affect future rows only and do not flush the current interval. TIME_SET supplies immediate reconciliation evidence. Since #88 the footer holds no anchor. Every row written after an accepted anchor carries it in `clock_anchor_mono_us` and `clock_anchor_utc_us`, which are evidence for that row's device, Thing and boot only. Routine sync lists completed files; explicit FLUSH closes the unfinished window when current stored readings are requested. No synthetic measurement is created. A separate uncertainty-bearing anchor journal is not implemented.
 
-The anchor uses the command's monotonic receipt time, not the later time at which the storage worker handles it. This avoids adding worker-queue delay to the clock mapping, but host integer-second truncation and USB latency remain. Station UUID persists across normal resets; the runtime interval choice does not. Source: [current logger](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp).
+The anchor uses the command's monotonic receipt time, not the later time at which the storage worker handles it. This avoids adding worker-queue delay to the clock mapping, but host integer-second truncation and USB latency remain. Thing UUID persists across normal resets; the runtime interval choice does not. Source: [current logger](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp).
 
 **RTC hand-off (firmware v6.2).** Every host or network sync is also copied into the onboard BM8563 RTC in UTC: the main task (the only I2C user after startup) waits for the anchor's next whole-second boundary (≤ 60 ms late on the 20 ms loop, forced after 5 s) and logs `PARQUET RTC write=ok utc=… late_ms=…` after a read-back. At the next boot, `begin_logger` reads the RTC before the first sample; if the chip reports no voltage-low event and the calendar decodes to 2020–2100, it becomes anchor epoch 1 with `clock_status = 2` (`PARQUET TIME … source=rtc`), so a power-cycled logger dates its rows from the first sample instead of filling `unsynced/`. Otherwise it logs `PARQUET RTC state=unusable reason=voltage-low|invalid-calendar|out-of-range` and behaves as before. A later host sync upgrades an RTC epoch or starts a new epoch for a correction larger than two seconds, and logs the measured error of the clock it replaced (`PARQUET CLOCK transport=… previous=rtc|host skew_ms=…`, new host time minus the device's previous estimate of the same monotonic instant) — this is the only clock-accuracy evidence the device produces; collect it in `bench-verified.md` before trusting RTC-restored time to better than seconds. The RTC never holds local time. Whether the CoreS3 RTC keeps running with the main battery removed is **not verified**; see [hardware](../boards/m5stack-cores3/cores3-hardware.md).
 
@@ -75,20 +75,27 @@ Schema versions: **v1** 73 columns; **v2** 77 columns (`cores3-telemetry-v2`, fi
 
 ## Deployment cell and country (native schemas)
 
-CoreS3 v4 (81 fields, dictionary v3) and Waveshare v3 (56 fields, dictionary v3)
-append four nullable leaves, preserving their former 77/52-field prefixes:
+Both boards hold four nullable location leaves next to each other. From the
+Thing release (#83, CoreS3 schema `cores3-telemetry-v6`, Waveshare schema
+`waveshare-sim7670g-telemetry-v6`) they are
 
 | Field | Physical type | Meaning |
 | --- | --- | --- |
-| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range; hex in config/footer |
+| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range, hex in config |
 | `h3_resolution` | INT32 | Actual published cell resolution, potentially coarser than the configured maximum |
-| `h3_center_lat_e7` | INT64 | H3 grid-center latitude in 1e-7 degrees |
-| `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
+| `location_source` | INT32 with `INTEGER(8,false)` (UINT8) | Where the row location came from. 0 none, 1 configured, 2 gnss, 3 phone. Classes live in `telemetry_classes.inc` |
+| `geometry` | BYTE_ARRAY with the Parquet `GEOMETRY` logical type, no crs (OGC:CRS84) | 2D WKB Point, little endian, 21 bytes, at the H3 cell centre |
 
-All four remain null while the deployment cell is unset. Firmware derives the
-center from the published cell; no raw GPS is stored. The footer carries no
-location (#88). The rows hold the cell, the resolution and the center, and the
-country is no longer written to the file. Country is not inferred from H3.
+All four are null while the deployment cell is unset, and `geometry` is null
+exactly when `h3_cell_id` is null. Since the Thing release (#83) the centre is
+no longer two integer columns (decision 32). Each `geometry` chunk carries
+Parquet `GeospatialStatistics` (bbox and geometry type) and no min or max. A
+second footer key, `geo`, holds compact GeoParquet 2.0 JSON naming `geometry`
+as the primary column, with a bbox only when the file has a location. Firmware
+derives the centre from the published cell, no raw GPS is stored. The
+`opensensor` footer key carries no location (#88). Country is not written to
+the file and is not inferred from H3. Today every located row has
+`location_source` 1, because the firmware has no GNSS or phone path yet.
 
 Acquisition snapshots cell, maximum precision and country into each queued row.
 The worker splits the RAM batch and open file before appending a different
@@ -153,14 +160,18 @@ Record sample jitter, queue high-water mark, drops, internal and PSRAM minimum f
 The SD layout already uses the requested Hive partition directories, ready to preserve as object keys when upload is added. UTC-dated files use:
 
 ```text
-output/station=<UUID>/year=YYYY/month=MM/day=DD/data_HHMM_<boot>_<first>-<last>-<attempt>.parquet
+output/thing=<UUID>/year=YYYY/month=MM/day=DD/data_HHMM_<boot>_<first>-<last>-<attempt>.parquet
 ```
+
+Only these dated `data_HHMM_` files are meant for publication. Unsynced files,
+quarantine and bench copies stay in the local archive (stac-opensensor
+PROFILE at 4408c4e52366bb3d154d22bbfffc88ff09aed6f1).
 
 `HHMM` identifies the start of the UTC-aligned 10-, 15-, 30- or 60-minute window, not the upload time. The boot, sequence-range and attempt suffix prevents distinct files in the same window from overwriting each other after reboot, manual flush or a clock correction. The extension remains `.parquet`; the interval is configuration, not an extension suffix. New windows, midnight and clock-epoch changes split batches. Startup mid-window produces a short first file. Firmware paths include the `/sd` mount prefix; the card/object path starts at `output/`.
 
 The worker detects window/epoch changes on arrival of the next sample; there is no independent wall-clock finalization alarm. Since CoreS3 v6.10 / Waveshare v2.4, accepted external anchors do not independently finalize files: a genuine epoch/window transition closes the old file on the next sample, while the first newly timed sample starts the normal interval. Since #5, unanchored rows rotate on the same configured window measured on this boot's monotonic clock, so a day without UTC yields about 96 files at 900 s instead of about 1,440 one-minute files. A `READY` line proves that one file finalized, not that a full configured window was collected. In particular, `bench --sync-time --until-ready` may retrieve the old unsynced or shortened batch closed by the new anchor. Check row count, sequence range and timestamps before labeling a run a full 10/15-minute test.
 
-Before a real time anchor exists, rows have null UTC and files go to `output/station=<UUID>/unsynced/boot=<boot>/data_unsynced_<boot>_<first>-<last>-<attempt>.parquet`. The `monotonic_us` column preserves microsecond resolution. Raw files are never assigned a guessed calendar date or retroactively renamed. The mobile archive owns reconciliation: using an acknowledged or persisted same-boot anchor, derive UTC microseconds as `clock_anchor_utc_us + (monotonic_us - clock_anchor_mono_us)`, then rebuild per-key UTC day partitions atomically from immutable raw files. Row anchors in a later file of the same boot also let a later download reconcile after the source device has rebooted. Reconciliation must use matching device, station and boot identities; a powered-off interval without RTC or an anchor from that boot cannot be reconstructed. Such files remain unresolved. No internet or server is required once the phone has the files and valid anchor evidence.
+Before a real time anchor exists, rows have null UTC and files go to `output/thing=<UUID>/unsynced/boot=<boot>/data_unsynced_<boot>_<first>-<last>-<attempt>.parquet`. The `monotonic_us` column preserves microsecond resolution. Raw files are never assigned a guessed calendar date or retroactively renamed. The mobile archive owns reconciliation: using an acknowledged or persisted same-boot anchor, derive UTC microseconds as `clock_anchor_utc_us + (monotonic_us - clock_anchor_mono_us)`, then rebuild per-key UTC day partitions atomically from immutable raw files. Row anchors in a later file of the same boot also let a later download reconcile after the source device has rebooted. Reconciliation must use matching device, Thing and boot identities; a powered-off interval without RTC or an anchor from that boot cannot be reconstructed. Such files remain unresolved. No internet or server is required once the phone has the files and valid anchor evidence.
 
 Unanchored rows now follow the normal row-group cadence, so an abrupt power cut can lose up to one RAM batch (at most 90 rows, 15 minutes at the 900 s default) before UTC exists, the same bound as dated rows. Abrupt power loss can still lose the current RAM batch or leave an incomplete `.partial`, which remains quarantined rather than silently repaired. Finalized-file durability under arbitrary power cuts is not yet bench-qualified.
 

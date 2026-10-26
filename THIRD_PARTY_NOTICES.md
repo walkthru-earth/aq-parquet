@@ -125,7 +125,7 @@ text [`tools/stac_opensensor/PROFILE.md`](tools/stac_opensensor/PROFILE.md)
 and the example [`tools/stac_opensensor/footers/cores3-telemetry-v5.json`](tools/stac_opensensor/footers/cores3-telemetry-v5.json)
 are unmodified copies of
 [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) at commit
-`2f32104`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
+`4408c4e52366bb3d154d22bbfffc88ff09aed6f1`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). The host contract
 tests use them to validate the board templates and the `opensensor` Parquet
 footer each board writes. They are not in any firmware image.

@@ -99,9 +99,9 @@ use the pinned SDK's [SD buffer API](https://docs.espressif.com/projects/esp-idf
 native Waveshare throughput/coexistence remains unqualified.
 
 Location starts unset. Owner provisioning supplies a cell, configurable maximum
-resolution (default **5**) and optional declared ISO country code. Only the
-coarsened cell is persisted; its center supplies `h3_center_lat_e7` and
-`h3_center_lon_e7`, alongside `h3_cell_id` and actual `h3_resolution`. Country
+resolution (default **8**) and optional declared ISO country code. Only the
+coarsened cell is persisted. Its centre supplies the `geometry` WKB Point,
+alongside `h3_cell_id`, actual `h3_resolution` and `location_source`. Country
 and precision provenance are file metadata. Each queued sample owns its location
 snapshot; cell, maximum resolution and country changes split RAM batches and
 files, preserving older file metadata. See

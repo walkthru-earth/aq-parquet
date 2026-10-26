@@ -8,7 +8,8 @@ initialization and each board's schema/provenance remain in its own trial.
 
 - Never include a board trial, M5Unified or a board filesystem/controller initializer here. Storage is already
   mounted and capacity callbacks borrow the board's filesystem instance.
-- Preserve the `parquet` NVS namespace, its `station` string key and its `codec`
+- Preserve the `parquet` NVS namespace, its `thing` string key (owner decision
+  31, 2026-10-26, the old `station` key stays unread) and its `codec`
   u8 key (Parquet codec value, 0 or 7). A missing or unreadable `codec` boots
   LZ4_RAW and logs why. It is never erased, and only a codec command rewrites
   it. Radio initialization belongs to OSConnectivity; retain its shared

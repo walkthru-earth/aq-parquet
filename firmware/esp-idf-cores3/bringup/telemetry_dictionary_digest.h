@@ -6,6 +6,6 @@ namespace contract {
 // It hashes raw bytes, so any edit to that file, comments and whitespace
 // included, moves the digest and needs a new LIVE fixture and a phone release.
 constexpr const char *kDictionarySha256 =
-    "0763a1bb8ad3f8b185694fbb0382f7ec712191d8eb5ece8df01873a34804462c";
+    "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9";
 } // namespace contract
 } // namespace telemetry

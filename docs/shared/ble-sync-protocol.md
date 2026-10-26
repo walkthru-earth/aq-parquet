@@ -25,7 +25,7 @@ readback has dated evidence, while proto 3 phone transfers, bonded reconnect,
 radio coexistence and durability still need image-specific qualification. Wire UUIDs,
 archive semantics and board dictionaries are preserved. Arduino-era
 bond-store compatibility is not guaranteed; qualify reconnect/re-pairing while
-retaining station/config NVS. [Migration validation](development.md#native-migration-validation-2026-10-09).
+retaining config NVS. [Migration validation](development.md#native-migration-validation-2026-10-09).
 
 **Protocol 3** (issue #1, 2026-10-11) is a breaking contract with no backward
 compatibility. Mobile refuses a device that reports `proto` below 3. It adds
@@ -81,7 +81,8 @@ the reflash and the phone may cache the old GATT table, so forget the board in
 the phone's Bluetooth settings and send `ble.clear_bonds=1` before pairing
 again. The old settings and crash log namespaces stay in flash with the old
 Wi-Fi password and LAN token, and only a full flash erase removes them. The
-`parquet` namespace with the station UUID stays.
+`parquet` namespace stays. Since #83 the Thing UUID is its `thing` key, and the
+old `station` key stays unread.
 
 The native server handles `BLE_GAP_EVENT_PASSKEY_ACTION` and supplies display
 passkeys with `ble_sm_inject_io`: random mode generates per-attempt digits,
@@ -144,15 +145,15 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.20","schema":"cores3-telemetry-v5","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.21","schema":"cores3-telemetry-v6","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","desc":"<first 16 hex of desc>",
- "station":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
+ "thing":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
-`waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
-and firmware `idf-waveshare-parquet-v2.14`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+`waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`
+and firmware `idf-waveshare-parquet-v2.15`. Clients use that identity to interpret shortened LIVE keys. `thing`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -161,8 +162,8 @@ SHA-256 of the exact template bytes that [GET_DESCRIPTOR](#get_descriptor)
 serves. It sits after `dict` and is always present. The phone fetches the
 template again only when this prefix changes. The key order is fixed and the
 document stays under 400 bytes. With the longest values a board can report
-(a 36 character station, 999 columns, 64 hex `dict`) CoreS3 is 314 bytes and
-Waveshare 329, checked by `pixi run ble-advert-test` with 48 bytes of headroom.
+(a 36 character Thing id, 999 columns, 64 hex `dict`) CoreS3 is 312 bytes and
+Waveshare 327, checked by `pixi run ble-advert-test` with 48 bytes of headroom.
 
 ### `status` (read, notify)
 
@@ -305,7 +306,7 @@ Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet 
 
 Rules:
 
-- **Names** are the same relative paths the serial `PARQUET FILE name=` line prints: `station=…/year=…/month=…/day=…/data_HHMM_<boot>_<first>-<last>-<n>.parquet`, `station=…/unsynced/boot=…/…`, or `legacy-parquet/…`. Since #5, `codec-test` copies live under `/sd/bench/boot=…/` outside the archive root and are never listed. Older cards may still list `benchmarks/boot=…/…`. Same character whitelist as `safe_name()` in the firmware: `[0-9a-z._=/-]`, no `..`, no `//`, ends in `.parquet`.
+- **Names** are the same relative paths the serial `PARQUET FILE name=` line prints: `thing=…/year=…/month=…/day=…/data_HHMM_<boot>_<first>-<last>-<n>.parquet`, `thing=…/unsynced/boot=…/…`, or `legacy-parquet/…`. Since #5, `codec-test` copies live under `/sd/bench/boot=…/` outside the archive root and are never listed. Older cards may still list `benchmarks/boot=…/…`. Same character whitelist as `safe_name()` in the firmware: `[0-9a-z._=/-]`, no `..`, no `//`, ends in `.parquet`.
 - **`OPEN`** runs the finalized-file check (magic `PAR1` head and tail, footer length sane) and returns the CRC-32 (IEEE, same as the serial `crc32=` field) of the whole file. The device remembers the CRC it computed when it finalized the file, keyed by path, size and modification time, so `OPEN` of a recent file skips the full read. A cache miss (an older file, a reboot, a remount) reads the whole file once. Either way the value is the same. At most one logical file is open per connection; a new `OPEN` implicitly closes that connection's previous one without affecting other connections. Handles start at 1 and are invalid after disconnect. A path that does not exist is `ERROR` 3. A file the device cannot open for another reason, such as a full descriptor table, is `ERROR` 4.
 - **CRC-32 check values.** Device (ROM table routine) and host tools agree on these, and a phone CRC implementation must too. Empty input is `00000000`. ASCII `123456789` is `cbf43926`. ASCII `The quick brown fox jumps over the lazy dog` is `414fa339`. The 1 MiB fixture whose byte `i` is `((i*31+7) & 0xff) ^ ((i>>12) & 0xff)` is `391e95d7`. Chunk boundaries never change the result.
 - **`READ`** is clipped to `max_read` and to end-of-file. Chunks are delivered in offset order; `next_offset` tells the phone where to continue. Offsets are absolute, so a phone can resume after a disconnect by `OPEN` + `READ` from where it stopped, provided `size` and `crc32` in the new `OPENED` frame match the earlier one (the file is immutable, so they must). After a storage remount the card may have been edited or swapped, so the first `READ` on each open handle runs the finalized check again. The same `size` and `crc32` keep the handle and the read proceeds. Only a proven change drops the handle. That is a different size or CRC from a completed check, or a file that is missing or no longer finalized on a card that mounted again. That `READ` answers `ERROR` 5 (bad handle), as does every later `READ` or `CLOSE` on it. The phone fails that file for the current run and a fresh `LIST` and `OPEN` decide what to fetch next. While the card has not mounted again, or when the check hits an I/O error or a short read, or the descriptor table is full, `READ` answers `READ_END` status 4 with no `CHUNK`. The handle stays valid and the check runs on the next `READ`. `CLOSE` on a handle still waiting for its check answers `CLOSED`.
@@ -336,8 +337,9 @@ Rules:
 | `ntp.interval_s` | `60..86400`, default 3600 | immediately | wait between successful synchronization cycles |
 | `ntp.server1`, `ntp.server2` | DNS name or literal IP, ≤253 bytes; empty clears | immediately | configured local/approved endpoints, tried in order after DHCP servers; no URLs or ports |
 | `location.cell` | canonical 15-digit H3 cell hex; empty clears | next sample | persist only the cell coarsened to the configured privacy cap |
-| `location.resolution` | `0..15`, default 5 | next sample | maximum disclosure precision; increasing alone never restores finer coordinates |
+| `location.resolution` | `0..15`, default 8 | next sample | maximum disclosure precision; increasing alone never restores finer coordinates |
 | `location.country` | assigned uppercase ISO 3166-1 alpha-2; empty clears | next sample | optional owner-declared country, not inferred from the cell |
+| `thing.mobility` | `fixed` \| `moving`, default `fixed` | next sample | how the Thing moves, written to the footer `thing.mobility`. A change splits the file like a location change |
 | `sensor.vendor` | `Plantower` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified vendor; must match the board's declared physical sensor |
 | `sensor.model` | `PMS5003T` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified model; does not change the hardcoded UART parser |
 | `sensor.serial` | `PMS5003T-` + valid `YYYYMMDD` + 1–9 unit digits, or empty | immediately | scanned or manually entered module sticker, echoed in CONFIG; an empty value clears it. Impossible calendar dates and mismatched model prefixes are rejected |
@@ -361,7 +363,7 @@ the requested object means unsupported, not an unset location.
 | Page | Response JSON |
 | --- | --- |
 | 0 or empty | Legacy `ble`, `wifi`, `lan`, `sensor` snapshot |
-| 1 | `{"location":{"cell":"","resolution":5,"cell_resolution":null,"lat":null,"lon":null,"country":""}}`; populated cells return their actual resolution and derived center in degrees |
+| 1 | `{"location":{"cell":"","resolution":8,"cell_resolution":null,"lat":null,"lon":null,"country":""},"thing":{"mobility":"fixed"}}`; populated cells return their actual resolution and derived center in degrees |
 | 2 | `ntp` policy (`on`, `dhcp`, `public_fallback`, `interval_s`) plus `state`, `running`, `anchored`, `age_s` (null before sync), `stale`, `source`, `last_public`, `sync_count`, `error` |
 | 3 | `{"ntp":{"server1":""}}` |
 | 4 | `{"ntp":{"server2":""}}` |
@@ -380,7 +382,7 @@ Missing records receive defaults; corrupt location becomes unset and corrupt
 NTP becomes disabled. A failed save does not publish the live snapshot; the
 whole legacy multi-key save is still not transactional.
 
-Location is the monitoring device/station deployment, explicitly configured
+Location is the monitoring Thing deployment, explicitly configured
 from the mobile app. The app sends only a cell; firmware derives its center and
 splits files when cell, cap or country changes. See [time and location](time-and-location.md)
 for country restrictions, offline time and privacy limitations. Host readback:
@@ -570,7 +572,7 @@ a 13-byte `LIST_END`.
 
 ### LIST_SINCE
 
-`LIST_SINCE` (`0x10`) lists the files of this station that are new since a
+`LIST_SINCE` (`0x10`) lists the files of this Thing that are new since a
 cursor the phone saved from an earlier `LIST_SINCE_END`. On a large archive it
 reads a few folders instead of the whole card. It runs over BLE and LAN with
 the same rules as `LIST` (one walk at a time, 32 directory entries per step,
@@ -606,7 +608,7 @@ The answer is `FILE` frames, exactly as `LIST` sends them, then
 The first 15 bytes have the `LIST_END` layout. `flags` bit 0 `full` means the
 cursor did not match this mount and the board walked everything plain `LIST`
 walks. Bit 1 `unsynced_full` means the board walked the whole unsynced tree of
-this station because it could not place the cursor boot. Other bits are 0.
+this Thing because it could not place the cursor boot. Other bits are 0.
 
 Golden request
 `10d4c3b2a1db25350100112233445566778899aabbccddeeff0700000000000000` is epoch
@@ -625,14 +627,14 @@ all-zero cursor, which asks for a full listing and returns a first cursor.
 - The mount epoch is the FAT volume serial of the card. A cursor from another
   card, a reformatted card or a board that cannot read the serial (epoch 0)
   gets the `full` listing.
-- Dated files. The board walks `station=<id>/year=…/month=…/day=…` from a
+- Dated files. The board walks `thing=<id>/year=…/month=…/day=…` from a
   floor day up, and skips older year, month and day folders without reading
   them. The floor is the smallest of the cursor day, the UTC day before today
   and the lowest day this boot wrote a dated file in. A cursor day of 0 sets
   no floor. A floor before 2020 counts as no floor. A file the board writes
   into an older day folder, after a clock that moved back, is still found
   this way, as long as the board has not rebooted since.
-- Unsynced files. Each boot that writes into `station=<id>/unsynced/` first
+- Unsynced files. Each boot that writes into `thing=<id>/unsynced/` first
   appends its boot id to a ring of the last 16 such boots in NVS (namespace
   `parquet`, key `boots`). The board walks the cursor boot folder, keeping
   only names whose first sequence is at least the cursor `seq`, then every
@@ -642,7 +644,7 @@ all-zero cursor, which asks for a full listing and returns a first cursor.
   of all `0xff` in the next cursor means the board could not vouch for the
   ring, so the next request walks the whole unsynced tree again. An NVS
   failure never stops a file from being written.
-- Files of other stations, `legacy-parquet/` and `benchmarks/` appear only in a
+- Files of other Things, `legacy-parquet/` and `benchmarks/` appear only in a
   `full` listing.
 
 **Errors**, all with op `0x10`.
@@ -666,7 +668,7 @@ STATUS `part` count, which follows the last full walk.
 RAM only, so the board writes nothing to NVS per listing. A clock moved back
 across a reboot can put a file in a day folder below the next floor. A boot
 whose ring append fails makes an empty marker folder
-`station=<id>/unsynced/ringless=<boot>` before its first unsynced file. Every
+`thing=<id>/unsynced/ringless=<boot>` before its first unsynced file. Every
 incremental walk reads the entries of `unsynced/` once and lists each marked
 boot that is not in the ring in full, so a later boot still finds it. The
 phone drops the names it already holds. The logger removes the marker, best
@@ -775,7 +777,7 @@ The same request bodies and response frames as BLE, carried over **one TCP conne
 
 | Item | Value |
 | --- | --- |
-| Discovery | mDNS/DNS-SD service **`_ossync._tcp.local.`**, instance = BLE local name (`OS-xxxx`), host `os-xxxx.local`, TXT records `proto=3`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
+| Discovery | mDNS/DNS-SD service **`_ossync._tcp.local.`**, instance = BLE local name (`OS-xxxx`), host `os-xxxx.local`, TXT records `proto=3`, `thing=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
 | Port | **47390** (unassigned at IANA; deliberately not Meshtastic's 4403). |
 | Framing | Every message in both directions is `len` u16 LE followed by exactly `len` bytes. Phone → device: a control request body (first byte = opcode), ≤ 512 bytes. Device → phone: one response or push frame, ≤ `payload_max` = **1024** bytes, so `CHUNK` carries up to 1017 bytes. |
 | Handshake | Within 5 s of connecting the phone sends `"OSS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `OSS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
@@ -793,14 +795,14 @@ sequenceDiagram
     participant D as Device
     P->>D: (BLE, once) GET_TOKEN
     D-->>P: TOKEN port, token
-    P->>P: mDNS browse _ossync._tcp, match TXT station to a known device
+    P->>P: mDNS browse _ossync._tcp, match TXT thing to a known device
     P->>D: TCP connect :47390, "OSS1" + token
     D-->>P: HELLO proto, payload_max, info JSON
     P->>D: LIST / OPEN / READ / CLOSE exactly as over BLE (len-prefixed)
     D-->>P: frames (len-prefixed), STATUS/LIVE pushes interleaved
 ```
 
-The phone should prefer LAN when the device is discovered on the current network and a token is held, fall back to BLE otherwise, and treat both as the same device: archive identity is still `(station, name)`. Three LAN sessions and one BLE session may exist at the same time. Each has **one independent logical open file**: `OPEN` replaces only that session's handle, and `READ`/`CLOSE` cannot use a handle from another peer or connection generation (`ERROR` 5). The sole storage worker processes bounded requests serially, while phones can maintain concurrent syncs. Logical handles retain an immutable path, size and CRC. Each open handle also keeps one read-only descriptor from `OPEN` until `CLOSE`, a replacing `OPEN`, an archive erase, a storage remount or the first request on any link after that peer's connection generation changes. A disconnect alone does not release it, so on an idle device a departed peer's descriptor stays open until the next request. `READ` windows seek within it instead of reopening the file. Four handles at most (one BLE, three LAN), and the card mount reserves a descriptor for each (`firmware/common/src/archive_files.h`). After a remount the next `READ` reopens the path and checks that it still holds the same size and CRC. A proven change answers `ERROR` 5, and an unmounted card or an I/O error answers `READ_END` status 4 and keeps the handle. Queued requests and replies from a disconnected generation are discarded before a slot is reused.
+The phone should prefer LAN when the device is discovered on the current network and a token is held, fall back to BLE otherwise, and treat both as the same device: archive identity is still `(thing, name)`. Three LAN sessions and one BLE session may exist at the same time. Each has **one independent logical open file**: `OPEN` replaces only that session's handle, and `READ`/`CLOSE` cannot use a handle from another peer or connection generation (`ERROR` 5). The sole storage worker processes bounded requests serially, while phones can maintain concurrent syncs. Logical handles retain an immutable path, size and CRC. Each open handle also keeps one read-only descriptor from `OPEN` until `CLOSE`, a replacing `OPEN`, an archive erase, a storage remount or the first request on any link after that peer's connection generation changes. A disconnect alone does not release it, so on an idle device a departed peer's descriptor stays open until the next request. `READ` windows seek within it instead of reopening the file. Four handles at most (one BLE, three LAN), and the card mount reserves a descriptor for each (`firmware/common/src/archive_files.h`). After a remount the next `READ` reopens the path and checks that it still holds the same size and CRC. A proven change answers `ERROR` 5, and an unmounted card or an I/O error answers `READ_END` status 4 and keeps the handle. Queued requests and replies from a disconnected generation are discarded before a slot is reused.
 
 Ownership rules are unchanged: the LAN task never touches the SD card or the display. It parses the envelope, checks the token, and pushes the request body onto the same command queue the BLE and serial paths use; the storage worker answers through the link that asked.
 
@@ -872,7 +874,7 @@ sequenceDiagram
     P->>D: read info
     P->>D: LIST
     D-->>P: FILE × n, LIST_END
-    loop each FILE not already in local archive (station, name, bytes)
+    loop each FILE not already in local archive (thing, name, bytes)
         P->>D: OPEN name
         D-->>P: OPENED handle,size,crc32
         loop offset < size
@@ -884,7 +886,7 @@ sequenceDiagram
     end
 ```
 
-Local archive identity is `(station, relative name)`; the file is immutable so `bytes` and `crc32` act as a consistency check, and a mismatch is an error to surface, not a version to merge. Store each file at `<archive root>/<station uuid from info>/<relative name verbatim>`. Station files therefore land at `…/<uuid>/station=<uuid>/year=…` — the repetition is intentional: `benchmarks/…` and `legacy-parquet/…` names carry no station of their own, and two devices must never collide. Below the station directory the tree is a drop-in mirror of the SD card and of `tools/export_parquet.py` output.
+Local archive identity is `(thing, relative name)`; the file is immutable so `bytes` and `crc32` act as a consistency check, and a mismatch is an error to surface, not a version to merge. Store each file at `<archive root>/<thing uuid from info>/<relative name verbatim>`. Thing files therefore land at `…/<uuid>/thing=<uuid>/year=…`. The repetition is intentional, `benchmarks/…` and `legacy-parquet/…` names carry no Thing of their own, and two devices must never collide. Below the Thing directory the tree is a drop-in mirror of the SD card and of `tools/export_parquet.py` output.
 
 ## Concurrent collection validation
 

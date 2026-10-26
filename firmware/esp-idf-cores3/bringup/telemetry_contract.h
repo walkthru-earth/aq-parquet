@@ -28,8 +28,10 @@ namespace contract {
 // Dictionary v6 (firmware v6.14) adds per field LIVE decimals, columns stay v5.
 // Schema v6 and dictionary v7 (firmware v6.21, #83, owner decision 32) put
 // location_source (UINT8) and geometry (native Parquet GEOMETRY, a 2D WKB
-// Point at the H3 cell centre) in the two positions h3_center_lat_e7 and
-// h3_center_lon_e7 held, field ids 80 and 81. Still 81 leaves.
+// Point at the H3 cell centre) next to h3_cell_id and h3_resolution, field
+// ids 80 and 81. Still 81 leaves. This is the Thing field table baseline,
+// field ids are plain 1-based positions and append only from here (owner
+// answer to bridge question 36, 2026-10-26).
 constexpr std::int32_t kSchemaVersion = 6;
 constexpr const char *kSchemaName = "cores3-telemetry-v6";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v7";

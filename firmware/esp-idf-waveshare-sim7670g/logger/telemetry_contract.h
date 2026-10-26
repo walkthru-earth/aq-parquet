@@ -28,8 +28,10 @@ namespace contract {
 // microseconds and added a Parquet field_id on every leaf for Iceberg v3.
 // Schema v6 and dictionary v7 (firmware v2.15, #83, owner decision 32) put
 // location_source (UINT8) and geometry (native Parquet GEOMETRY, a 2D WKB
-// Point at the H3 cell centre) in the two positions h3_center_lat_e7 and
-// h3_center_lon_e7 held, field ids 55 and 56. Still 62 leaves.
+// Point at the H3 cell centre) next to h3_cell_id and h3_resolution, field
+// ids 55 and 56. Still 62 leaves. This is the Thing field table baseline,
+// field ids are plain 1-based positions and append only from here (owner
+// answer to bridge question 36, 2026-10-26).
 constexpr std::int32_t kSchemaVersion = 6;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v6";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v7";

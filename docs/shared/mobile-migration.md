@@ -9,6 +9,83 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. Station becomes Thing, native geometry column and geo footer key (feat/thing-ab, issue #83)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that reads the Thing footer, the `thing` INFO key and the new location
+columns. Old archives are not read (owner decision 14), the owner wipes them
+after the reflash.
+
+**What changed.** The firmware follows stac-opensensor commit
+`4408c4e52366bb3d154d22bbfffc88ff09aed6f1` (bridge decisions 31 to 35).
+
+- Station is now Thing (decision 31). The footer group `station` is
+  `thing`, with `id`, `device_id`, `board`, `deployment_id` and a new required
+  `mobility`. BLE `info` and LAN HELLO name the id `thing` instead of
+  `station`. The mDNS TXT record is `thing=<uuid>`. Hive paths start
+  `thing=<uuid>/` instead of `station=<uuid>/`, for dated and unsynced files.
+  NVS holds the id in `parquet/thing`, so the first boot of this image mints a
+  new Thing id. The old `parquet/station` key stays in flash and is never read.
+- `thing.mobility` is `fixed` (default) or `moving`. It is a new `SET_CONFIG`
+  key, `GET_CONFIG` page 1 returns it as `{"thing":{"mobility":"fixed"}}` after
+  the `location` object, and a change splits the file like a location change.
+- `thing.board` is the board slug of the template folder,
+  `m5stack-cores3` or `waveshare-esp32-s3-sim7670g`. The free text board name
+  is the template title. `firmware.boot_id` is the 32 hex boot id that also
+  appears in the file name.
+- `h3_center_lat_e7` and `h3_center_lon_e7` are gone (decision 32). Their
+  places hold `location_source` (INT32 annotated `INTEGER(8,false)`, so UINT8)
+  and `geometry` (BYTE_ARRAY with the Parquet `GEOMETRY` logical type, no crs,
+  so OGC:CRS84). `geometry` is a 2D little endian WKB Point of 21 bytes at
+  the H3 cell centre, null exactly when `h3_cell_id` is null. Its column chunks
+  carry `GeospatialStatistics` and no min or max.
+- `location_source` codes are 0 none, 1 configured, 2 gnss, 3 phone, null when
+  the row has no location. The template lists them as `classification:classes`.
+  This firmware only writes 1, it has no GNSS or phone location path yet.
+- A second footer key `geo` holds compact GeoParquet 2.0 JSON,
+  `{"version":"2.0.0","primary_column":"geometry","columns":{"geometry":{"encoding":"WKB","geometry_types":["Point"],"bbox":[xmin,ymin,xmax,ymax]}}}`.
+  The bbox is left out when the file has no location. A file holds exactly the
+  `opensensor` and `geo` keys.
+- The default maximum H3 resolution moves from 5 to 8 (about 0.74 km2 on
+  average). Locations already saved keep their stored resolution.
+- The validity predicate of the four location columns is `location_present`.
+- The Thing release is a fresh field table baseline on both boards (owner
+  answer to bridge question 36, 2026-10-26). Every `field_id` is renumbered as
+  a plain 1-based position. The app must not key on any id from an earlier
+  dictionary, take ids from the new template only. From this baseline the
+  rule is append only again.
+- Template columns follow the spec spelling. `h3_cell_id` is `int64` with role
+  `referenceInformation`, `h3_resolution` is `int32` with role
+  `referenceInformation`, `location_source` is `uint8` with role
+  `qualityInformation` and aggregate `mode`, `geometry` is type `geometry` with
+  role `coordinate` and no unit. The data asset has
+  `table:primary_geometry` `geometry`.
+- Only dated `data_HHMM_` files are meant for publication. Unsynced files stay
+  in the local archive.
+
+| | CoreS3 | Waveshare V2 |
+| --- | --- | --- |
+| Firmware | `idf-cores3-parquet-v6.21` | `idf-waveshare-parquet-v2.15` |
+| Schema | `cores3-telemetry-v6` | `waveshare-sim7670g-telemetry-v6` |
+| Dictionary | `cores3-telemetry-v7` | `waveshare-sim7670g-telemetry-v7` |
+| Columns | 81 | 62 |
+| `dict` | `3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9` | `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` |
+| `desc` | `@DESC_CORES3@` | `@DESC_WAVESHARE@` |
+
+LIVE keys and decimals are unchanged, neither new column has a LIVE key.
+
+**Why.** The ecosystem names the monitored object a Thing, which may move.
+A native GEOMETRY column lets DuckDB, GDAL and Iceberg v3 read the location
+without a custom decoder, and the H3 cell stays the privacy unit.
+
+**What the app must do.** Read `thing.id` instead of `station.id` and the
+`thing` key from `info`, HELLO and mDNS TXT. Archive under `thing=<uuid>/`.
+Read `thing.mobility` and offer `thing.mobility` in settings. Read the
+location from `geometry` (WKB Point, x is longitude) and `location_source`,
+and use the `geo` key for the file bbox. Send resolution 8 as the default.
+Bundle the new templates by `desc` and resolve every column by name or by the
+new `field_id` values only.
+
 ## BREAKING. One versioned opensensor footer key (fix/88-opensensor-footer, issue #88)
 
 **Needs app update.** Every board needs a matched reflash with the app build
