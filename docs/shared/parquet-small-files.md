@@ -88,7 +88,7 @@ Issue #25 tracks each one as a task. Item 2 is done, the others are not decided.
 3. Move long static key value entries behind a short versioned URI and hash. This is a wire contract change and needs its own decision.
 4. Prefer fewer row groups per file, since each one costs about 4.4 KB of footer.
 5. Treat DELTA_BINARY_PACKED for integers as the largest future win, after the phone reader supports it. Measure dictionary RAM on device before using it.
-6. Register v6.12 and v2.6 files with iceberg-go `AddFiles` as a raw tier, then rewrite them on the host into Iceberg v3 data files of about 256 MB, sorted by Thing, H3 cell and event time, with dictionary plus LZ4_RAW or SNAPPY, the page index on and bloom filters on `h3_cell_id`, `device_id` and a new `thing_id` column. The October 2026 survey named it `station_id`, the Thing rename in #108 changed the name only.
+6. Register v6.12 and v2.6 files with iceberg-go `AddFiles` as a raw tier, then rewrite them on the host into Iceberg v3 data files of about 256 MB, sorted by Thing, H3 cell and event time, with dictionary plus LZ4_RAW or SNAPPY, the page index on and bloom filters on `h3_cell_id`, `device_id` and a new `thing_id` column. The October 2026 survey called it `station_id`. #108 renamed it and changed nothing else.
 7. Partition by month while the fleet is small, then move to day with partition evolution.
 8. Keep anything the phone may read in LZ4_RAW or SNAPPY until iOS reads ZSTD. Keep device originals as an immutable archive.
 
