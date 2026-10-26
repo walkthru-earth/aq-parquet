@@ -27,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.16";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.17";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";

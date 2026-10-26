@@ -6,7 +6,7 @@
       "note": "Dictionary cores3-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. t prints two decimals, imu_t and rh one. Older digests are retired and no longer listed.",
       "builds": [
         {
-          "firmware": "idf-cores3-parquet-v6.16",
+          "firmware": "idf-cores3-parquet-v6.17",
           "emitter": "board field table through oslogger::format_live",
           "fields": {
             "seq": "sequence",
