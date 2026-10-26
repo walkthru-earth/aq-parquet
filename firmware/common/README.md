@@ -25,7 +25,7 @@ own peripheral initialization and consume only the required components.
 | `connectivity/src/control_sync.*` | Configuration, BLE-only token and bounded log-tail commands | Worker-side response adapters |
 | `connectivity/src/sync_service.*` | Configuration and transport startup | Storage queue ready, identity and display capability |
 | `connectivity/src/archive_sync.*` | Immutable file LIST/OPEN/READ/CLOSE sessions, offsets and link generations | Archive enumeration/path/finalization callbacks, worker bus lock and response adapters |
-| `logger/src/aq_logger.*` | Sampling deadline (`Config::sample_interval_ms`, 10 s default), single worker, station identity, clock anchors, PSRAM batching, Hive paths, immutable archive lifecycle and serial/link snapshots | Static board dictionary/provenance, acquisition callback, already mounted filesystem, capacity and optional bus/RTC callbacks |
+| `logger/src/aq_logger.*` | Sampling deadline (`Config::sample_interval_ms`, 10 s default), single worker, Thing identity, clock anchors, PSRAM batching, Hive paths, immutable archive lifecycle and serial/link snapshots | Static board dictionary/provenance, acquisition callback, already mounted filesystem, capacity and optional bus/RTC callbacks |
 | `logger/src/aq_logger_status.*` | Pure bounded STATUS formatting | Coherent runtime snapshot |
 | `logger/src/aq_logger_provision.*` | Physical UART profile encoding and local SET_CONFIG reply capture | Physical serial owner access; host handling that excludes credentials from captures |
 
@@ -64,9 +64,9 @@ Both boards keep the default values. Footer `acquisition.sample_interval_ms`
 comes from the live `Config::sample_interval_ms` (default `10000`), the same
 value that sets the sampling deadline, so it is the truth for each file.
 `file.row_group_rows_max` comes from `cadence::kMaxBatchRows` (`90`), and
-`station.deployment_id` and `acquisition.calibration_id` from `Config`
+`thing.deployment_id` and `acquisition.calibration_id` from `Config`
 (default `unknown`). `acquisition.sample_interval_ms` and
-`file.row_group_rows_max` are JSON numbers, and `station.deployment_id` and
+`file.row_group_rows_max` are JSON numbers, and `thing.deployment_id` and
 `acquisition.calibration_id` are JSON strings, `"unknown"` included, all inside
 the one `opensensor` footer value. The build time `opensensor:sample_interval_s` in
 the board template is only the default. Readers trust the footer. `pixi run logger-footer-test` pins the default bytes and writes a non
@@ -88,7 +88,7 @@ pixi run waveshare-build diagnostic
 ```
 
 OSRuntime replaces Preferences with native NVS while preserving namespaces,
-keys and value types, including station identity. DebugLog uses `LogOutput`
+keys and value types, including Thing identity. DebugLog uses `LogOutput`
 and the native physical console. OSConnectivity uses native NimBLE GATT/GAP,
 Wi-Fi events and `esp_netif_sntp`, plus managed mDNS 1.14.0. Driver credential
 storage is RAM only; `oscfg` remains the sole persistent settings owner. The

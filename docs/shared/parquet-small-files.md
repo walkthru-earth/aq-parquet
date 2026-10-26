@@ -71,13 +71,13 @@ Raw results sit next to this page in [`parquet-small-files/`](parquet-small-file
 | Dictionary, LZ4_RAW, page index | 131.8 | −79 % |
 | PLAIN, ZSTD | 92.8 | −85 % |
 
-The sample is small, so read it as a direction. At about 93 B per row a 256 MB file holds about 2.9 million rows, roughly 333 station days. Partitioning by station and day would recreate tiny files.
+The sample is small, so read it as a direction. At about 93 B per row a 256 MB file holds about 2.9 million rows, roughly 333 Thing days. Partitioning by Thing and day would recreate tiny files.
 
 ## Scale
 
-- 900 s rotation gives 96 files and 8,640 rows per station per day.
-- 1,000 stations write about 35 million files a year, and 30,000 stations about 1 billion.
-- One station writes about 4.8 MB a day uncompressed, and about 0.9 MB of that is repeated footers.
+- 900 s rotation gives 96 files and 8,640 rows per Thing per day.
+- 1,000 Things write about 35 million files a year, and 30,000 Things about 1 billion.
+- One Thing writes about 4.8 MB a day uncompressed, and about 0.9 MB of that is repeated footers.
 
 ## Proposals
 
@@ -88,7 +88,7 @@ Issue #25 tracks each one as a task. Item 2 is done, the others are not decided.
 3. Move long static key value entries behind a short versioned URI and hash. This is a wire contract change and needs its own decision.
 4. Prefer fewer row groups per file, since each one costs about 4.4 KB of footer.
 5. Treat DELTA_BINARY_PACKED for integers as the largest future win, after the phone reader supports it. Measure dictionary RAM on device before using it.
-6. Register v6.12 and v2.6 files with iceberg-go `AddFiles` as a raw tier, then rewrite them on the host into Iceberg v3 data files of about 256 MB, sorted by station, H3 cell and event time, with dictionary plus LZ4_RAW or SNAPPY, the page index on and bloom filters on `h3_cell_id`, `device_id` and a new `station_id` column.
+6. Register v6.12 and v2.6 files with iceberg-go `AddFiles` as a raw tier, then rewrite them on the host into Iceberg v3 data files of about 256 MB, sorted by Thing, H3 cell and event time, with dictionary plus LZ4_RAW or SNAPPY, the page index on and bloom filters on `h3_cell_id`, `device_id` and a new `thing_id` column. The October 2026 survey named it `station_id`, the Thing rename in #108 changed the name only.
 7. Partition by month while the fleet is small, then move to day with partition evolution.
 8. Keep anything the phone may read in LZ4_RAW or SNAPPY until iOS reads ZSTD. Keep device originals as an immutable archive.
 
@@ -97,7 +97,7 @@ Issue #25 tracks each one as a task. Item 2 is done, the others are not decided.
 The opensensor-space-mobile `:core:parquet` reader reads UNCOMPRESSED, LZ4_RAW, SNAPPY and GZIP on iOS and Android, ZSTD on Android only, and PLAIN, RLE and dictionary encodings. It refuses DELTA_* and BYTE_STREAM_SPLIT. It reads a 64 KiB tail on local links, 128 KiB on cellular and 256 KiB on Wi Fi, and it reads the page index but not bloom filters.
 
 - LZ4_RAW or dictionary on device needs no reader work.
-- DELTA, BYTE_STREAM_SPLIT, ZSTD on iOS, bloom filters, the metadata URI and a `station_id` column all need reader work first.
+- DELTA, BYTE_STREAM_SPLIT, ZSTD on iOS, bloom filters, the metadata URI and a `thing_id` column all need reader work first.
 
 ## Rerun
 

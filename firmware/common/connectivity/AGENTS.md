@@ -15,7 +15,7 @@ remains tied to each board image and is historical until native readback.
   delivery of per-attempt random or per-device fixed PINs, the public address,
   UUIDs, MTU bounds, long reads and ordered responses. Existing Arduino-era
   bonds are not assumed compatible; qualify bonded reconnect or re-pairing on
-  hardware without erasing station/config NVS.
+  hardware without erasing Thing/config NVS.
 - Preserve the ESP32-S3 `TWO` universal-MAC policy from both prior board images:
   Bluetooth uses the factory base + 1. IDF's `FOUR` default changes it to base +
   2, preventing the stored local IRK lookup and breaking phone identity matches.

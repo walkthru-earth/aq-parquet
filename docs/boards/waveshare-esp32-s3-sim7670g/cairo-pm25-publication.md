@@ -31,14 +31,14 @@ even after a quality filter or correction is introduced.
 
 ## Deployment record required before outdoor publication
 
-Create a time-effective record for each deployment, linked to station/device
+Create a time-effective record for each deployment, linked to Thing/device
 identity and the immutable file set. Record the sensor's own identifier if
 available, firmware image hash, dictionary/configuration versions, coordinates,
 inlet height above ground, indoor/outdoor status, site type (for example roadside
 or residential), inlet/enclosure arrangement, start/end UTC times and who made
 each change. Record maintenance, cleaning, sensor replacement, blocked airflow,
 rain ingress and condensation as time intervals. Do not infer placement or
-sensor identity from the board name or station UUID.
+sensor identity from the board name or Thing UUID.
 
 The PMS5003T temperature/RH reading comes from inside the sensor/enclosure. It
 does not establish humidity at the outdoor air inlet. For an outdoor site, log a
@@ -51,11 +51,11 @@ spikes; retain the original observations and the reason for each exclusion.
 ## Host aggregation policy to implement before publishing daily values
 
 1. Archive and expose the original fixed 10-second rows with UTC timestamp,
-   station/device/boot identity, atmospheric PM2.5, PMS5003T RH and status,
+   Thing/device/boot identity, atmospheric PM2.5, PMS5003T RH and status,
    clock status and parser counters. A row is eligible for an environmental
    aggregate only when UTC is anchored, `pms_status = 4`, PM2.5 is present,
    and no recorded deployment/maintenance quality flag invalidates it.
-2. Deduplicate by station, boot and sequence; keep clock corrections and epochs
+2. Deduplicate by Thing, boot and sequence; keep clock corrections and epochs
    auditable. Group scheduled rows into UTC hours and then `Africa/Cairo`
    calendar hours.
    For this **project's provisional quality rule**, an hour is complete with at

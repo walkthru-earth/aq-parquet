@@ -37,7 +37,7 @@ It must pass `cadence::valid_sample_interval()` in `aq_logger_cadence.h`, 1 s
 to 300 s and a divisor of 300 s, so every rotation window stays whole. Row
 groups hold one rotation window of rows, at most `cadence::kMaxBatchRows` (90),
 which is also the footer `file.row_group_rows_max`. `Config::deployment_id`
-and `Config::calibration_id` fill `station.deployment_id` and
+and `Config::calibration_id` fill `thing.deployment_id` and
 `acquisition.calibration_id` and default to `unknown`. The footer sample
 period always comes from the live config value, never a build time default.
 `footer::build` in `aq_logger_footer.h` writes the one `opensensor` key, see
@@ -67,7 +67,7 @@ whole-second boundary, with a bounded late fallback.
 One worker owns the filesystem, and receives copied nonblocking control requests
 from BLE/LAN. Card data is the origin: finalized files can be copied over serial,
 BLE or token-authenticated local LAN without any cloud service. The runtime uses
-the existing protocol UUIDs, settings, station NVS key and archive sessions.
+the existing protocol UUIDs, settings, Thing NVS key and archive sessions.
 BLE and up to three authenticated LAN clients retain independent file handles;
 OPEN, CLOSE and disconnect affect only the requesting connection. Queued stale
 commands and responses are rejected by connection generation. Each open handle
@@ -87,7 +87,7 @@ the point. `begin()` rejects malformed or duplicate keys and decimals above 6.
 
 The RAM batch holds at most 90 rows. Each completed row group is fsynced and a
 file holds at most eight row groups. Clock epochs and UTC rotation windows never
-mix; station location snapshots never mix either. Unknown UTC uses the `unsynced`
+mix; Thing location snapshots never mix either. Unknown UTC uses the `unsynced`
 Hive tree and rotates on the same window measured on the boot's monotonic clock.
 An empty `unsynced/ringless=<boot>/` folder marks a boot whose NVS boot ring
 append failed, so a later `LIST_SINCE` still lists that boot's unsynced files.
@@ -95,7 +95,7 @@ The logger removes it, best effort, when a later append in the same boot
 succeeds. Otherwise it stays until the archive is erased.
 Finalization writes/syncs the
 footer, checks structure and CRC, then renames to immutable `.parquet`. Interrupted
-`.partial` files are retained under `quarantine/<station>/<partition>/`, at boot
+`.partial` files are retained under `quarantine/<thing>/<partition>/`, at boot
 and right after a same-boot failure; a partial whose finalized sibling exists is
 left in place as a crosslink suspect. The boot walk is iterative and opens
 directories six levels deep. A deeper directory is not entered and prints
