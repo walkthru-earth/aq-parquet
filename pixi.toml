@@ -131,6 +131,8 @@ config-test = "python tools/test_device_config.py --sanitize"
 common-test = "python tools/test_common.py --sanitize"
 ltr553-test = "python tools/test_ltr553.py --sanitize"
 column-semantics-test = "python tools/test_column_semantics.py --sanitize"
+# Pre and post build desc gate of the embedded board template (#85).
+board-template-check-test = "python tools/test_check_board_template.py"
 max17048-test = "python tools/test_max17048.py --sanitize"
 battery-health-test = "python tools/test_battery_health.py --sanitize"
 coredump-report-test = "python tools/test_coredump_report.py --sanitize"
@@ -171,6 +173,10 @@ duckdb = ">=1.5.5,<2"
 # stat, date and friends first on PATH, so scripts must stay portable (wc -c,
 # not stat -f).
 coreutils = ">=9.5,<10"
+# Board template check (#85). stac-opensensor v0.1.0 schemas are draft-07 and
+# use format "uri", which jsonschema only enforces with rfc3986-validator.
+jsonschema = "==4.26.0"
+rfc3986-validator = "==0.1.1"
 
 [activation.env]
 # Firmware SDKs are large and are not conda packages, so the project bootstraps

@@ -15,14 +15,25 @@ using namespace contract;
 Ltr553 light_sensor;
 PmsSnapshot latest;
 std::array<aqlogger::Field, field_count> fields;
+// charging_status writes M5Unified is_charging_t, which telemetry_classes.inc
+// names through ChargingStatus.
+constexpr bool same_code(ChargingStatus code,
+                         m5::Power_Class::is_charging_t m5_code) {
+  return std::int32_t(code) == std::int32_t(m5_code);
+}
+static_assert(same_code(kChargingDischarging,
+                        m5::Power_Class::is_discharging) &&
+                  same_code(kChargingCharging, m5::Power_Class::is_charging) &&
+                  same_code(kChargingUnknown, m5::Power_Class::charge_unknown),
+              "ChargingStatus must match M5Unified is_charging_t");
 
 void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
   const auto &pms = latest;
-  const int status = !pms.present        ? 0
-                     : now < 30000000    ? 1
-                     : pms.age_ms > 5000 ? 2
-                     : pms.error         ? 3
-                                         : 4;
+  const PmsStatus status = !pms.present        ? kPmsMissing
+                           : now < 30000000    ? kPmsWarming
+                           : pms.age_ms > 5000 ? kPmsStale
+                           : pms.error         ? kPmsSensorError
+                                               : kPmsValid;
   row.integer(pms_status, status);
   if (pms.present) {
     row.counter(pms_age_ms, pms.age_ms);
@@ -30,7 +41,7 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
     row.integer(pms_firmware, pms.firmware);
     row.integer(pms_error, pms.error);
   }
-  if (status == 4)
+  if (status == kPmsValid)
     for (std::size_t i = 0; i < 12; ++i)
       row.integer(static_cast<Field>(pm1_cf1_ug_m3 + i), pms.values[i]);
   row.counter(pms_frames, pms.frames);
@@ -60,16 +71,17 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
   if (M5.Imu.isEnabled() && M5.Imu.getTemp(&temperature))
     row.number(imu_temperature_c, temperature);
   const auto light = light_sensor.read();
-  row.integer(light_status, !light_sensor.available() ? 0
-                            : light.io_error          ? 4
-                            : !light.als_fresh        ? 1
-                            : light.als_valid         ? 3
-                                                      : 2);
-  row.integer(proximity_status, !light_sensor.available() ? 0
-                                : light.io_error          ? 4
-                                : !light.proximity_fresh  ? 1
-                                : light.proximity_valid   ? 3
-                                                          : 2);
+  row.integer(light_status, !light_sensor.available() ? kLightUnavailable
+                            : light.io_error          ? kLightIoError
+                            : !light.als_fresh        ? kLightNotFresh
+                            : light.als_valid         ? kLightValid
+                                                      : kLightInvalid);
+  row.integer(proximity_status, !light_sensor.available()
+                                    ? kProximityUnavailable
+                                : light.io_error         ? kProximityIoError
+                                : !light.proximity_fresh ? kProximityNotFresh
+                                : light.proximity_valid  ? kProximityValid
+                                                         : kProximitySaturated);
   if (light.als_valid) {
     row.integer(light_ch0_raw, light.als_ch0);
     row.integer(light_ch1_raw, light.als_ch1);
@@ -139,10 +151,9 @@ bool rtc_write(std::int64_t seconds, void *) {
 }
 
 const KeyValue metadata[] = {
-    {"pms_status", "0=missing,1=warming,2=stale,3=sensor-error,4=valid"},
-    {"light_status", "0=unavailable,1=not-fresh,2=invalid,3=valid,4=io-error"},
-    {"proximity_status",
-     "0=unavailable,1=not-fresh,2=saturated,3=valid,4=io-error"},
+    {"pms_status", kPmsStatusLegend},
+    {"light_status", kLightStatusLegend},
+    {"proximity_status", kProximityStatusLegend},
     {"magnetic_units", "M5Unified BMI270 auxiliary raw counts; uncalibrated"},
     {"unavailable", "SHT20 address collision; battery current unsupported; "
                     "camera/audio not sampled"},
@@ -192,6 +203,9 @@ void begin_logger(bool sd_mounted) {
       .metadata = metadata,
       .metadata_count = sizeof(metadata) / sizeof(metadata[0]),
       .ble_name_prefix = kBleNamePrefix,
+      .descriptor = kTemplateJson,
+      .descriptor_bytes = sizeof(kTemplateJson) - 1,
+      .descriptor_sha256 = kDescriptorSha256,
   };
   const aqlogger::Hooks hooks{
       .collect = collect,

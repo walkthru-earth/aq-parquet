@@ -17,6 +17,7 @@ import tempfile
 from test_location import compile_h3
 
 import duckdb
+import board_template
 import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -148,6 +149,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sanitize", action="store_true")
     parser.add_argument("--dictionary-out", type=Path)
+    parser.add_argument("--write-template", action="store_true",
+                        help="regenerate telemetry_template.h and telemetry_descriptor_digest.h")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     firmware = root / "firmware/esp-idf-waveshare-sim7670g/logger"
@@ -173,6 +176,9 @@ def main() -> None:
         dictionary = json.loads(subprocess.check_output([str(executable), "dictionary"], text=True))
         require(dictionary["sha256"] == hashlib.sha256((firmware / "telemetry_fields.inc").read_bytes()).hexdigest(),
                 "stale compiled dictionary digest")
+        if board_template.run(executable, firmware, dictionary, [firmware / "main.cpp"], args.write_template,
+                              "pixi run python tools/test_waveshare_contract.py --write-template") is None:
+            return
         fields = dictionary["fields"]
         names = {field["name"] for field in fields}
         require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:52]],

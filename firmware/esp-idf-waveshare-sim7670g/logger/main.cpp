@@ -114,19 +114,13 @@ void collect(aqlogger::Row &row, std::int64_t now, std::int64_t, void *) {
 }
 
 const telemetry::KeyValue kMetadata[] = {
-    {"pms_status", "0=missing,1=warming,2=stale,3=sensor-error,4=valid,"
-                   "5=model-mismatch"},
-    {"gauge_status",
-     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
-     "gauge_status stays 1 when only VCELL is valid, battery_mv is still "
-     "written"},
+    {"pms_status", kPmsStatusLegend},
+    {"gauge_status", kGaugeStatusLegend},
     {"unavailable",
      "charger STAT and USB VBUS are not wired to the ESP32-S3; external power "
      "is inferred from VCELL only; no battery current; no onboard external "
      "RTC; modem/GNSS/camera not sampled"},
-    {"battery_health_state",
-     "0=unknown,1=external-power-likely,2=ok,3=low,4=critical,5=settling; "
-     "VCELL thresholds in acquisition_config are uncalibrated"},
+    {"battery_health_state", kBatteryHealthStateLegend},
     {"gauge_status_flags",
      "MAX17048 STATUS high byte: bit0=RI,bit1=VH,bit2=VL,bit3=VR,bit4=HD,"
      "bit5=SC,bit6=EnVr"},
@@ -141,8 +135,7 @@ const telemetry::KeyValue kMetadata[] = {
     {"pm25_batch_candidate_validation",
      "owner-opt-in research candidate; not Cairo-reference-validated; raw PM "
      "unchanged"},
-    {"pm25_batch_candidate_status",
-     "0=disabled,1=identity-mismatch,2=PMS-unavailable,3=candidate-only"},
+    {"pm25_batch_candidate_status", kBatchCandidateStatusLegend},
     {"hardware_revision", "Waveshare ESP32-S3-SIM7670G-4G V2.0"},
     {"storage_bus", "SDMMC one-bit CLK5 CMD4 D0=6; no automatic format"},
 };
@@ -166,6 +159,9 @@ const aqlogger::Config kLoggerConfig{
     .metadata = kMetadata,
     .metadata_count = sizeof(kMetadata) / sizeof(kMetadata[0]),
     .ble_name_prefix = kBleNamePrefix,
+    .descriptor = kTemplateJson,
+    .descriptor_bytes = sizeof(kTemplateJson) - 1,
+    .descriptor_sha256 = kDescriptorSha256,
 };
 const aqlogger::Hooks kHooks{
     .collect = collect,

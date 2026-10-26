@@ -20,6 +20,8 @@ if [[ "${variant}" != diagnostic ]]; then
   digest="$(sed -n 's/.*"\([0-9a-f]\{64\}\)".*/\1/p' "${trial_dir}/${variant}/telemetry_dictionary_digest.h")"
   test "${#digest}" -eq 64
   printf '%s  %s\n' "${digest}" "${trial_dir}/${variant}/telemetry_fields.inc" | shasum -a 256 -c -
+  # desc, the SHA-256 of the embedded board template (#85).
+  python "${repo_root}/tools/check_board_template.py" "${trial_dir}/${variant}"
 fi
 # AQ_BENCH=stall builds a bench image with tools/idf-bench-stall-sdkconfig.defaults
 # in its own directory, so its sdkconfig never leaks into the shipped build.
@@ -39,5 +41,8 @@ case "${AQ_BENCH:-}" in
 esac
 rm -f "${build_dir}/aq-build-target.txt" "${build_dir}/aq-build-sha256.json"
 "${repo_root}/tools/idf.sh" -C "${trial_dir}" -B "${build_dir}" "${idf_args[@]}" build
+if [[ "${variant}" != diagnostic ]]; then
+  python "${repo_root}/tools/check_board_template.py" "${trial_dir}/${variant}" --build "${build_dir}"
+fi
 python "${repo_root}/tools/check_idf_target.py" "${build_dir}" --board "${board}" --variant "${variant}" --write-manifest
 printf '%s\n' "${target}" > "${build_dir}/aq-build-target.txt"

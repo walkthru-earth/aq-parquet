@@ -243,4 +243,179 @@ constexpr bool well_formed(const Fields &fields, std::span<const Column> rows) {
   return true;
 }
 
+// One classification:classes entry of a code or boolean column (#85). Each
+// board keeps a telemetry_classes.inc beside telemetry_semantics.inc with one
+// CLASS row per value, grouped by column in value order. Like the SEM rows
+// they stay out of the dict digest. A value names the enum or bool the board
+// code writes, so the table follows the code.
+struct Class {
+  std::string_view column;
+  std::int64_t value = 0;
+  std::string_view name;
+  // True on the value that means no reading, such as a missing sensor.
+  bool nodata = false;
+};
+
+// Columns that hold labels rather than quantities, by their UCUM annotation.
+constexpr bool labelled(const Column &row) {
+  return row.ucum == "{code}" || row.ucum == "{boolean}" ||
+         row.ucum == "{bitmask}";
+}
+
+// [0-9A-Za-z_-]+, the classification extension name pattern.
+constexpr bool is_class_name(std::string_view text) {
+  if (text.empty())
+    return false;
+  for (const char c : text)
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '_' || c == '-'))
+      return false;
+  return true;
+}
+
+constexpr bool listed(std::span<const std::string_view> list,
+                      std::string_view name) {
+  for (const auto entry : list)
+    if (entry == name)
+      return true;
+  return false;
+}
+
+constexpr const Column *find_column(std::span<const Column> rows,
+                                    std::string_view name) {
+  for (const auto &row : rows)
+    if (row.name == name)
+      return &row;
+  return nullptr;
+}
+
+// Every class names a labelled column and has a valid name. The rows of one
+// column are contiguous, values strictly ascending, names unique, and at most
+// one is nodata. A {boolean} column uses only 0 and 1. Every labelled column
+// has classes unless it is in `classless`, and a listed column must exist, be
+// labelled and have none, so the list cannot go stale.
+constexpr bool classes_complete(std::span<const Column> rows,
+                                std::span<const Class> classes,
+                                std::span<const std::string_view> classless) {
+  for (std::size_t i = 0; i < classes.size(); ++i) {
+    const auto &entry = classes[i];
+    const auto *row = find_column(rows, entry.column);
+    if (row == nullptr || !labelled(*row) || !is_class_name(entry.name))
+      return false;
+    if (row->ucum == "{boolean}" && entry.value != 0 && entry.value != 1)
+      return false;
+    const bool continues = i > 0 && classes[i - 1].column == entry.column;
+    if (continues && !(classes[i - 1].value < entry.value))
+      return false;
+    std::size_t nodata = 0;
+    for (std::size_t j = 0; j < classes.size(); ++j) {
+      if (classes[j].column != entry.column)
+        continue;
+      // The column appeared before this run started, so it is split.
+      if (j < i && !continues)
+        return false;
+      if (j != i && classes[j].name == entry.name)
+        return false;
+      nodata += classes[j].nodata ? 1 : 0;
+    }
+    if (nodata > 1)
+      return false;
+  }
+  for (const auto &row : rows) {
+    bool has = false;
+    for (const auto &entry : classes)
+      has = has || entry.column == row.name;
+    if (listed(classless, row.name) ? (!labelled(row) || has)
+                                    : (labelled(row) && !has))
+      return false;
+  }
+  for (const auto name : classless)
+    if (find_column(rows, name) == nullptr)
+      return false;
+  return true;
+}
+
+// A footer legend such as "0=missing,1=warming; free text". The entries
+// before the first ';' must equal the classes of `column`, in table order,
+// value for value and name for name.
+constexpr bool matches_legend(std::span<const Class> classes,
+                              std::string_view column,
+                              std::string_view legend) {
+  const auto stop = legend.find(';');
+  if (stop != std::string_view::npos)
+    legend = legend.substr(0, stop);
+  std::size_t at = 0;
+  bool any = false;
+  for (const auto &entry : classes) {
+    if (entry.column != column)
+      continue;
+    if (at > legend.size())
+      return false;
+    auto end = legend.find(',', at);
+    if (end == std::string_view::npos)
+      end = legend.size();
+    const auto item = legend.substr(at, end - at);
+    const auto equals = item.find('=');
+    if (equals == std::string_view::npos || equals == 0)
+      return false;
+    std::int64_t value = 0;
+    for (const char c : item.substr(0, equals)) {
+      if (c < '0' || c > '9')
+        return false;
+      value = value * 10 + (c - '0');
+    }
+    if (value != entry.value || item.substr(equals + 1) != entry.name)
+      return false;
+    at = end + 1;
+    any = true;
+  }
+  return any && at == legend.size() + 1;
+}
+
+// The opensensor:derived object of a modelResult column (#85). Like the
+// classes it stays out of the dict digest.
+struct Derived {
+  std::string_view column;
+  // Columns of the same table the value is computed from.
+  std::span<const std::string_view> from;
+  // urn:walkthru-earth:method:<FIELD procedure>, so the method names the same
+  // procedure the dictionary does.
+  std::string_view method;
+};
+
+inline constexpr std::string_view kMethodUrn = "urn:walkthru-earth:method:";
+
+// Every modelResult column has exactly one entry and every entry names a
+// modelResult column. Each source is another column of the table, and the
+// method is kMethodUrn plus that column's FIELD procedure.
+template <typename Fields>
+constexpr bool derived_complete(const Fields &fields,
+                                std::span<const Column> rows,
+                                std::span<const Derived> derived) {
+  for (const auto &entry : derived) {
+    const auto *row = find_column(rows, entry.column);
+    if (row == nullptr || row->role != Role::modelResult || entry.from.empty())
+      return false;
+    for (const auto source : entry.from)
+      if (source == entry.column || find_column(rows, source) == nullptr)
+        return false;
+    bool method = false;
+    for (const auto &field : fields)
+      if (field.name != nullptr && std::string_view{field.name} == entry.column)
+        method = entry.method.starts_with(kMethodUrn) &&
+                 entry.method.substr(kMethodUrn.size()) ==
+                     std::string_view{field.procedure};
+    if (!method)
+      return false;
+  }
+  for (const auto &row : rows) {
+    std::size_t count = 0;
+    for (const auto &entry : derived)
+      count += entry.column == row.name ? 1 : 0;
+    if (count != (row.role == Role::modelResult ? 1U : 0U))
+      return false;
+  }
+  return true;
+}
+
 } // namespace aq::semantics

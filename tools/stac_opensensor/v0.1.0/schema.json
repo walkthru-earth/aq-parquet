@@ -1,0 +1,307 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#",
+  "title": "OpenSensor Extension",
+  "description": "STAC OpenSensor Extension for STAC Collections and STAC Items that describe sensor station tables.",
+  "type": "object",
+  "required": [
+    "stac_extensions",
+    "type"
+  ],
+  "properties": {
+    "stac_extensions": {
+      "type": "array",
+      "contains": {
+        "const": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json"
+      }
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "Collection",
+        "Feature"
+      ]
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/tableHolder"
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "properties"
+      ],
+      "properties": {
+        "type": {
+          "const": "Feature"
+        },
+        "properties": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/fields"
+            },
+            {
+              "$ref": "#/definitions/tableHolder"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "Collection"
+        },
+        "item_assets": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/tableHolder"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/fields"
+        },
+        {
+          "$ref": "#/definitions/tableHolder"
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "fields": {
+      "$comment": "Fields allowed at the top of a Collection and in Item properties.",
+      "type": "object",
+      "properties": {
+        "opensensor:scales": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/definitions/id"
+          },
+          "additionalProperties": {
+            "$ref": "#/definitions/scale"
+          }
+        },
+        "opensensor:sample_interval_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "patternProperties": {
+        "^(?!opensensor:)": {}
+      },
+      "additionalProperties": false
+    },
+    "tableHolder": {
+      "$comment": "Validates OpenSensor fields inside Table extension columns wherever table:columns appears.",
+      "type": "object",
+      "properties": {
+        "table:columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/column"
+          }
+        }
+      }
+    },
+    "column": {
+      "$comment": "Fields allowed inside table:columns entries.",
+      "type": "object",
+      "properties": {
+        "opensensor:property": {
+          "type": "string",
+          "format": "uri"
+        },
+        "opensensor:procedure": {
+          "type": "string",
+          "minLength": 1
+        },
+        "opensensor:field_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "opensensor:valid_when": {
+          "$ref": "#/definitions/gate"
+        },
+        "opensensor:settle_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "opensensor:aggregate": {
+          "type": "string",
+          "enum": [
+            "mean",
+            "minimum",
+            "maximum",
+            "sum",
+            "point",
+            "mode"
+          ]
+        },
+        "opensensor:plausible_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "number"
+          }
+        },
+        "opensensor:scale": {
+          "$ref": "#/definitions/id"
+        },
+        "opensensor:derived": {
+          "type": "object",
+          "required": [
+            "from",
+            "method"
+          ],
+          "properties": {
+            "from": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "method": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "patternProperties": {
+        "^(?!opensensor:)": {}
+      },
+      "additionalProperties": false
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "colorHint": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{6}$"
+    },
+    "label": {
+      "$comment": "A plain string, or a map from language code to string.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]+)*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
+    },
+    "gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "column",
+            "equals"
+          ],
+          "properties": {
+            "column": {
+              "type": "string",
+              "minLength": 1
+            },
+            "equals": {
+              "type": [
+                "number",
+                "string",
+                "boolean"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "column",
+            "finite"
+          ],
+          "properties": {
+            "column": {
+              "type": "string",
+              "minLength": 1
+            },
+            "finite": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scale": {
+      "type": "object",
+      "required": [
+        "source",
+        "steps"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "format": "uri"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "guideline": {
+          "type": "number"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "upper",
+              "label"
+            ],
+            "properties": {
+              "upper": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "label": {
+                "$ref": "#/definitions/label"
+              },
+              "color_hint": {
+                "$ref": "#/definitions/colorHint"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

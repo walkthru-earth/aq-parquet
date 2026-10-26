@@ -66,6 +66,9 @@ void released_defaults() {
   const auto config = base_config();
   check(config.sample_interval_ms == 10000);
   check(config.ble_name_prefix == nullptr); // required board constant
+  // The board template is required too, begin() rejects a missing one.
+  check(config.descriptor == nullptr && config.descriptor_bytes == 0 &&
+        config.descriptor_sha256 == nullptr);
   std::array<KeyValue, footer::kFixedEntries> out{};
   footer::Text text;
   footer::fill(out, config, {.device = "d", .station = "s", .boot = "b"},

@@ -1,8 +1,10 @@
 #include "../firmware/common/src/lz4_codec.h"
 #include "../firmware/esp-idf-cores3/bringup/telemetry_contract.h"
 
+#include "board_template.h"
 #include "live_sample.h"
 #include "live_widest.h"
+#include <aq_logger_cadence.h>
 #include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <cassert>
@@ -71,9 +73,41 @@ struct BoardTable {
 };
 } // namespace
 
+namespace {
+// The board template (#85) from the board tables, and the bytes the firmware
+// embeds. tools/board_template.py compares the two and hashes the embedded
+// bytes as desc.
+std::string board_template() {
+  const boardtemplate::Board board{
+      .id = kSchemaName,
+      .title = kTemplateTitle,
+      .keywords = kTemplateKeywords,
+      .dictionary_href = kTemplateDictionaryHref,
+      .dict = kDictionarySha256,
+      .sample_interval_ms = aqlogger::cadence::kDefaultSampleIntervalMs,
+      .proto_min = ble::kProtocolVersion,
+  };
+  return boardtemplate::build(board, kFields, kSemantics, kClasses, kDerived);
+}
+bool template_mode(const char *mode) {
+  if (std::strcmp(mode, "template") == 0) {
+    const auto text = board_template();
+    std::fwrite(text.data(), 1, text.size(), stdout);
+    return true;
+  }
+  if (std::strcmp(mode, "embedded") == 0) {
+    std::fwrite(kTemplateJson, 1, sizeof(kTemplateJson) - 1, stdout);
+    return true;
+  }
+  return false;
+}
+} // namespace
+
 int main(int argc, char **argv) {
   const BoardTable board;
   assert_live_keys(board.fields, field_count);
+  if (argc == 2 && template_mode(argv[1]))
+    return 0;
   if (argc == 2 && std::strcmp(argv[1], "live") == 0) {
     livesample::print(board.fields, field_count);
     return 0;
@@ -81,9 +115,9 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","
-                "\"fields\":[",
+                "\"uri\":\"%s\",\"descriptor_sha256\":\"%s\",\"fields\":[",
                 kSchemaName, int(kSchemaVersion), kDictionaryVersion, kFirmware,
-                kDictionarySha256);
+                kDictionarySha256, kDictionaryUri, kDescriptorSha256);
     for (std::size_t i = 0; i < field_count; ++i) {
       const auto &f = kFields[i];
       // Dictionary tokens are compile-time literals, validated by the host.

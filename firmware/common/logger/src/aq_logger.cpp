@@ -2509,9 +2509,11 @@ void storage_worker(void *) {
           station_text, codec_name(selected_codec), config.schema_name,
           config.configuration_id);
     } else if (std::strcmp(command.text, "parquet schema") == 0) {
-      aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s\n",
+      aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s "
+                   "desc=%s desc_bytes=%u\n",
                    config.schema_name, unsigned(field_count),
-                   config.dictionary_sha256);
+                   config.dictionary_sha256, config.descriptor_sha256,
+                   unsigned(config.descriptor_bytes));
       for (std::size_t i = 0; i < field_count; ++i) {
         const auto &field = config.fields[i];
         aqlog.printf("PARQUET FIELD name=%s type=%u procedure=%s unit=%s "
@@ -2939,7 +2941,10 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !cadence::valid_sample_interval(config.sample_interval_ms) ||
       !config.deployment_id || !config.deployment_id[0] ||
       !config.calibration_id || !config.calibration_id[0] ||
-      !ble::wire::valid_name_prefix(config.ble_name_prefix))
+      !ble::wire::valid_name_prefix(config.ble_name_prefix) ||
+      !config.descriptor || config.descriptor_bytes == 0 ||
+      std::strlen(config.descriptor) != config.descriptor_bytes ||
+      !config.descriptor_sha256 || std::strlen(config.descriptor_sha256) != 64)
     return false;
   sample_us = std::int64_t{config.sample_interval_ms} * 1000;
   for (std::size_t i = 0; i < field_count; ++i) {
