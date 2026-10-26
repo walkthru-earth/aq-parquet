@@ -68,7 +68,7 @@ def partitions(data: bytes) -> list[tuple]:
 
 # The C++ dialect is written in four places. They must name the same standard.
 DIALECT_SOURCES = (
-    ("firmware/cmake/aq_cxx_standard.cmake", r"-std=gnu\+\+(\d+)"),
+    ("firmware/cmake/os_cxx_standard.cmake", r"-std=gnu\+\+(\d+)"),
     ("tools/host_cxx.py", r'CXX_STD = "-std=c\+\+(\d+)"'),
     ("pixi.toml", r"clang\+\+ -std=c\+\+(\d+)"),
     ("tools/lint.sh", r"--std=c\+\+(\d+)"),
@@ -104,7 +104,7 @@ def expand_response_files(arguments: list[str], directory: Path) -> list[str]:
 
 
 def maps_source_root(arguments: list[str]) -> bool:
-    """True when a -ffile-prefix-map from aq_map_source_paths() maps the repo root to "."."""
+    """True when a -ffile-prefix-map from os_map_source_paths() maps the repo root to "."."""
     for argument in arguments:
         old, separator, new = argument.removeprefix("-ffile-prefix-map=").rpartition("=")
         if argument.startswith("-ffile-prefix-map=") and separator and new == "." and \
@@ -133,14 +133,14 @@ def check_compile_dialect(commands: list[dict], firmware_std: str) -> int:
         if source.suffix == ".cpp":
             require(bool(standards) and standards[-1] == firmware_std,
                     f"{relative} builds with {standards[-1] if standards else 'no -std'}, "
-                    f"expected {firmware_std}. Call aq_pin_cxx_standard() in its component")
+                    f"expected {firmware_std}. Call os_pin_cxx_standard() in its component")
             checked += 1
         elif source.suffix == ".c":
             require(not any("++" in standard for standard in standards), f"{relative} got a C++ -std")
         if source.suffix in {".c", ".cpp"}:
             require(maps_source_root(arguments),
                     f"{relative} does not map the repo root with -ffile-prefix-map. "
-                    "Call aq_map_source_paths() in its component")
+                    "Call os_map_source_paths() in its component")
     require(checked > 0, "no repo-owned C++ files in the compiler database")
     return checked
 

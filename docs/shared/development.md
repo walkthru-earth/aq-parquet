@@ -87,8 +87,8 @@ interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 
 Firmware and host tests are pinned to C++23. ESP-IDF 6.1 adds `-std=gnu++26`
 for chip targets, so every repo-owned component calls
-`aq_pin_cxx_standard(${COMPONENT_LIB})` from
-[`firmware/cmake/aq_cxx_standard.cmake`](../../firmware/cmake/aq_cxx_standard.cmake),
+`os_pin_cxx_standard(${COMPONENT_LIB})` from
+[`firmware/cmake/os_cxx_standard.cmake`](../../firmware/cmake/os_cxx_standard.cmake),
 which appends `$<$<COMPILE_LANGUAGE:CXX>:-std=gnu++23>`. Board and fixture
 projects include that file before `project.cmake`. C sources such as vendored
 H3 keep the SDK C dialect, and third-party components keep the SDK default.
@@ -96,7 +96,7 @@ The standard is named in four places. Change them together.
 
 | Place | Spelling |
 | --- | --- |
-| `firmware/cmake/aq_cxx_standard.cmake` | `-std=gnu++23` in the function body |
+| `firmware/cmake/os_cxx_standard.cmake` | `-std=gnu++23` in the function body |
 | `tools/host_cxx.py` | `CXX_STD = "-std=c++23"` for every `tools/test_*.py` |
 | `pixi.toml` task `pms-frame-test` | `clang++ -std=c++23` |
 | `tools/lint.sh` | cppcheck `--std=c++23` |
@@ -135,12 +135,12 @@ the old Kconfig names, so a saved sdkconfig value under an old name is dropped.
 ### Source paths
 
 Two checkouts of one commit build the same image. Every repo-owned component
-also calls `aq_map_source_paths(${COMPONENT_LIB})` from
-[`firmware/cmake/aq_source_paths.cmake`](../../firmware/cmake/aq_source_paths.cmake),
+also calls `os_map_source_paths(${COMPONENT_LIB})` from
+[`firmware/cmake/os_source_paths.cmake`](../../firmware/cmake/os_source_paths.cmake),
 which adds `-ffile-prefix-map=<repo root>=.`. `__FILE__` in asserts and
 `ESP_ERROR_CHECK` then reads `./firmware/common/...` instead of the checkout
 path, because the SDK's `CONFIG_COMPILER_HIDE_PATHS_MACROS` maps only the board
-project directory. Each board project also calls `aq_map_debug_paths()`, a
+project directory. Each board project also calls `os_map_debug_paths()`, a
 `-fdebug-prefix-map` of the repo root for every component, since the app image
 embeds the ELF SHA-256 and third-party debug info (managed components, the
 NimBLE copy in the build directory) would otherwise still carry the path.

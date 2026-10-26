@@ -26,6 +26,20 @@ FIRES = [
     "std::printf(\"%s " + OLD + " READY\\n\", prefix);",
     "ESP_LOGI(kTag, \"boot " + OLD + " TF mounted\");",
     "log('[' + now + '] " + OLD + " OWNER_PIN set')",
+    "aq" + "_pin_cxx_standard(${COMPONENT_LIB})",
+    "aq" + "_map_source_paths(${COMPONENT_LIB})",
+    "aq" + "_map_debug_paths()",
+    "aq" + "_patch_nimble()",
+    "aq" + "_enable_stack_usage()",
+    "include(\"${CMAKE_CURRENT_LIST_DIR}/../cmake/" + "aq" + "_cxx_standard.cmake\")",
+    "See firmware/cmake/" + "aq" + "_source_paths.cmake for the map.",
+    "include(../cmake/" + "aq" + "_nimble_patches.cmake)",
+    "include(../cmake/" + "aq" + "_stack_usage.cmake)",
+    "set(stage \"${CMAKE_BINARY_DIR}/" + "aq" + "_nimble_patch\")",
+    "-ffile-prefix-map=${" + OLD + "_SOURCE_ROOT}=.",
+    "if(NOT " + OLD + "_SOURCE_ROOT_REAL STREQUAL root)",
+    "set(" + OLD + "_NIMBLE_PATCH_DIR dir)",
+    "find_program(" + OLD + "_PATCH_PROGRAM patch REQUIRED)",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -41,6 +55,11 @@ QUIET = [
     "constexpr char kIso[] = \"AN AO " + OLD + " AR AS\";",
     "Tested near " + OLD + " READY state in prose without a literal.",
     "printf(\"%s OS READY\\n\", prefix);",
+    "os_pin_cxx_standard(${COMPONENT_LIB})",
+    "include(../cmake/os_nimble_patches.cmake)",
+    "-ffile-prefix-map=${OS_SOURCE_ROOT}=.",
+    "set(stage \"${CMAKE_BINARY_DIR}/os_nimble_patch\")",
+    "components/aq_cores3 and aq_logger_live.cpp keep their names for now.",
 ]
 
 

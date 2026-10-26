@@ -1,7 +1,7 @@
 """Static stack worst case per task and linker section sizes per image (issue #37).
 
 Board builds compile every object with `-fstack-usage -fcallgraph-info=su`
-(firmware/cmake/aq_stack_usage.cmake), so GCC leaves a `.ci` call graph with
+(firmware/cmake/os_stack_usage.cmake), so GCC leaves a `.ci` call graph with
 each function's frame size next to every object. This tool joins those graphs,
 walks them from each tracked task's entry and prints the deepest path. Functions
 with no `.ci` (prebuilt newlib, libgcc and the Wi-Fi and Bluetooth blobs) take
@@ -596,7 +596,7 @@ def measure_image(name: str, spec: dict, budgets: dict, require_objdump: bool,
     elf = build / json.loads(description.read_text())["app_elf"]
     ci_files = sorted(build.rglob("*.ci"))
     if not ci_files:
-        raise BudgetError(f"{name}: no .ci call graphs in {spec['build']}, rebuild with aq_enable_stack_usage()")
+        raise BudgetError(f"{name}: no .ci call graphs in {spec['build']}, rebuild with os_enable_stack_usage()")
     graph = load_ci(ci_files)
     tool = objdump_path(build)
     if tool is None:
