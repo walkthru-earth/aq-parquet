@@ -148,6 +148,11 @@ jobs:
       # Pull request scoped entries cannot be restored by main or by other
       # pull requests, so writing them would only evict the main entries from
       # the 10 GB repository quota.
+      #
+      # The IDF Python venv under ~/.espressif links to the pixi interpreter
+      # in the checkout, whose path holds the repository name. The key carries
+      # that name, so a renamed repository installs a fresh venv instead of
+      # restoring one that points at the old path.
       - name: Restore ESP-IDF SDK and tools
         id: sdk-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -156,7 +161,7 @@ jobs:
             ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
             ~/.espressif
             !~/.espressif/dist
-          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
       - name: Install pinned ESP-IDF
         run: pixi run idf-setup
       # Every leg installs the same SDK, so one leg saves it.
@@ -358,7 +363,7 @@ jobs:
             ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
             ~/.espressif
             !~/.espressif/dist
-          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
       - name: Install pinned ESP-IDF
         run: pixi run idf-setup
       - name: Build from two paths and compare
