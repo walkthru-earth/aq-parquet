@@ -392,4 +392,20 @@ build_geo(std::span<char> out,
   json.close();
   return json.finish();
 }
+
+// The key-value list a file ends with, in footer order. `opensensor` comes
+// first, then `geo` when the table has a GEOMETRY column. The logger and the
+// host contract fixtures both finish files through this, so a host test sees
+// the order a board writes.
+struct Metadata {
+  std::array<telemetry::KeyValue, 2> entries{};
+  std::size_t count = 0;
+};
+
+[[nodiscard]] constexpr Metadata metadata(const char *opensensor_json,
+                                          const char *geo_json, bool geometry) {
+  return {.entries = {{{.key = kKey, .value = opensensor_json},
+                       {.key = kGeoKey, .value = geo_json}}},
+          .count = geometry ? std::size_t{2} : std::size_t{1}};
+}
 } // namespace oslogger::footer

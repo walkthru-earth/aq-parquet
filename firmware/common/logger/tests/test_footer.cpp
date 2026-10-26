@@ -514,9 +514,11 @@ void soil_board(const char *path) {
                        .compression = "UNCOMPRESSED",
                        .benchmark = false})
             .has_value());
-  const KeyValue metadata[] = {{footer::kKey, json}};
+  // No GEOMETRY column, so the helper the logger uses gives one entry.
+  const auto metadata = footer::metadata(json, "", false);
+  check(metadata.count == 1);
   check(writer
-            .finish(metadata, std::size(metadata), config.firmware,
+            .finish(metadata.entries.data(), metadata.count, config.firmware,
                     "fixture-soil-board")
             .ok);
   check(std::fclose(file) == 0);

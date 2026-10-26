@@ -2,9 +2,10 @@
 
 Run with ``pixi run python tools/test_geoparquet.py [--sanitize]``.
 
-tools/geo_fixture.cpp writes two files through the exact firmware writer, one
-where three of every four rows have a location and one where none has. This
-test proves for both
+tools/geo_fixture.cpp writes three files through the exact firmware writer,
+one where three of every four rows have a location, one where none has, and
+one whose middle row group is wholly null between two located ones. This test
+proves for all three
 
 - the Parquet schema marks `geometry` BYTE_ARRAY with the GEOMETRY logical
   type and no crs, and `location_source` INT32 with INTEGER(8, unsigned) and
@@ -42,7 +43,7 @@ import parquet_footer as footer  # noqa: E402
 from host_cxx import CXX_STD  # noqa: E402
 
 GROUP_ROWS = 30
-GROUPS = 2
+GROUPS = {"with": 2, "none": 2, "mixed": 3}
 # parquet.thrift 2.12.0 field ids not named in parquet_footer.py.
 SCHEMA_CONVERTED = 6
 LOGICAL_INTEGER, LOGICAL_GEOMETRY = 10, 17
@@ -50,9 +51,9 @@ META_GEOSPATIAL = 17
 BYTE_ARRAY, INT32, UINT_8 = 6, 1, 11
 
 
-def row(n: int, locations: bool) -> tuple[int | None, tuple[int, int] | None]:
+def row(n: int, mode: str) -> tuple[int | None, tuple[int, int] | None]:
     """The rule of row() in tools/geo_fixture.cpp, location in degrees e7."""
-    if not locations or n % 4 == 0:
+    if mode == "none" or (mode == "mixed" and n // GROUP_ROWS == 1) or n % 4 == 0:
         return None, None
     step = n % 3
     return 1, (312345678 + step * 100000, 300444000 - step * 50000)
@@ -111,15 +112,18 @@ def check_chunks(meta: dict, expected: list[list[tuple[int, int]]]) -> None:
         assert geo == {1: {1: box[0], 2: box[2], 3: box[1], 4: box[3]}, 2: [1]}, geo
 
 
-def check_file(path: Path, locations: bool, printed: str) -> None:
+def check_file(path: Path, mode: str, printed: str) -> None:
     sources, points = [], []
-    for n in range(GROUP_ROWS * GROUPS):
-        source, point = row(n, locations)
+    for n in range(GROUP_ROWS * GROUPS[mode]):
+        source, point = row(n, mode)
         sources.append(source)
         points.append(point)
     present = [p for p in points if p is not None]
     groups = [[p for p in points[g * GROUP_ROWS:(g + 1) * GROUP_ROWS] if p is not None]
-              for g in range(GROUPS)]
+              for g in range(GROUPS[mode])]
+    assert len(footer.read_footer(path)[footer.FILE_ROW_GROUPS]) == GROUPS[mode]
+    if mode == "mixed":
+        assert groups[0] and not groups[1] and groups[2], "null group between located ones"
 
     meta = footer.read_footer(path)
     check_schema(meta)
@@ -211,11 +215,11 @@ def main() -> None:
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
-        for mode in ("with", "none"):
+        for mode in GROUPS:
             output = Path(directory) / f"{mode}.parquet"
             printed = subprocess.run([str(executable), mode, str(output)], capture_output=True,
                                      text=True, check=True).stdout
-            check_file(output, mode == "with", printed)
+            check_file(output, mode, printed)
             print(f"PASS {mode} locations, GEOMETRY and UINT8 read by PyArrow {pa.__version__} "
                   f"and DuckDB {duckdb.__version__}, geo valid against {footer_contract.GEO_SPEC}")
 

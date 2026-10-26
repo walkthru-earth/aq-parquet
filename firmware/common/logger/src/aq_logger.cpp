@@ -851,11 +851,12 @@ bool finalize_file(OutputFile &target) {
       return false;
     }
   }
-  const KeyValue metadata[] = {{footer::kKey, writer_state->footer_json},
-                               {footer::kGeoKey, writer_state->geo_json}};
+  const auto metadata = footer::metadata(writer_state->footer_json,
+                                         writer_state->geo_json, geometry);
   const auto started = esp_timer_get_time();
-  const auto result = target.writer.finish(metadata, geometry ? 2 : 1,
-                                           config.firmware, config.created_by);
+  const auto result =
+      target.writer.finish(metadata.entries.data(), metadata.count,
+                           config.firmware, config.created_by);
   target.writer_us += esp_timer_get_time() - started;
   if (!result.ok) {
     close_failed(target, "finish", result.error);

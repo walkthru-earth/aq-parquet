@@ -518,12 +518,12 @@ int main(int argc, char **argv) {
   // takes its bbox from the rows written, so it follows the row group.
   static char json[oslogger::footer::kMaxJsonBytes + 1];
   static char geo[oslogger::footer::kMaxGeoJsonBytes + 1];
-  const KeyValue metadata[] = {
-      {oslogger::footer::kKey, footerfixture::build(json, 900, 1, compressed)},
-      {oslogger::footer::kGeoKey, footerfixture::geo(geo, writer, geometry)}};
+  const auto metadata = oslogger::footer::metadata(
+      footerfixture::build(json, 900, 1, compressed),
+      footerfixture::geo(geo, writer, geometry), true);
   if (result.ok)
-    result =
-        writer.finish(metadata, std::size(metadata), kFirmware, kCreatedBy);
+    result = writer.finish(metadata.entries.data(), metadata.count, kFirmware,
+                           kCreatedBy);
   const bool closed = std::fclose(file) == 0;
   return result.ok && closed ? 0 : 4;
 }

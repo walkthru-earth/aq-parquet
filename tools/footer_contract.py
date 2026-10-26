@@ -174,11 +174,20 @@ def kv_problems(kv: dict[str, str], *, dict_sha: str, desc: str, geometry: bool 
     return found
 
 
+def kv_dict(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    """The footer pairs as a dict in footer order. A repeated key fails here,
+    since a dict would keep only one of the two values."""
+    keys = [key for key, _ in pairs]
+    repeated = sorted({key for key in keys if keys.count(key) > 1})
+    require(not repeated, f"footer repeats keys {repeated}")
+    return dict(pairs)
+
+
 def read_kv(path: Path) -> dict[str, str]:
     """Key-value metadata in footer order. pyarrow hands the keys back sorted,
     so the raw Thrift list is decoded to check that opensensor comes first."""
     entries = parquet_footer.read_footer(path).get(parquet_footer.FILE_KV, [])
-    return {entry[1].decode(): entry.get(2, b"").decode() for entry in entries}
+    return kv_dict([(entry[1].decode(), entry.get(2, b"").decode()) for entry in entries])
 
 
 # The configured cell the board contract fixtures write when located.
@@ -329,6 +338,12 @@ def mutation_proof(text: str, *, dict_sha: str, desc: str, geo: str = GEO_NO_BBO
         "geo second column": {KEY: text, GEO_KEY: geo_mutated(second_column)},
     }
     results = []
+    try:
+        kv_dict([(KEY, text), (GEO_KEY, geo), (KEY, text)])
+    except AssertionError as error:
+        results.append(f"opensensor key repeated: fails ({error})")
+    else:
+        raise AssertionError("mutation not caught: opensensor key repeated")
     for name, kv in cases.items():
         found = kv_problems(kv, dict_sha=dict_sha, desc=desc)
         require(bool(found), f"mutation not caught: {name}")
