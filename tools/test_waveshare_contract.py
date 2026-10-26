@@ -53,7 +53,8 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] ==
             "waveshare-sim7670g-telemetry-v5", "schema identity")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"], "dictionary identity")
+    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] ==
+            "waveshare-sim7670g-telemetry-v6", "dictionary identity")
     require(metadata[b"dictionary_uri"].decode() == dictionary["uri"], "dictionary URI")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by ==
@@ -201,14 +202,15 @@ def main() -> None:
         rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
         require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],
                 "dictionary carries every LIVE key and decimals")
-        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
-                "decimals is 0 for integer fields and at most 6 for Float")
+        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= live_key_fixture.MAX_LIVE_DECIMALS
+                    for f in fields),
+                f"decimals is 0 for integer fields and at most {live_key_fixture.MAX_LIVE_DECIMALS} for Float")
         require([f["field_id"] for f in fields] == list(range(1, 63)), "append-only 1-based field ids")
         require(len({field["property"] for field in fields}) == len(fields), "property identifiers")
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.9", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.10", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)
         live_key_fixture.check("waveshare", dictionary["sha256"], dictionary["firmware"], live)

@@ -20,18 +20,18 @@ void NotifyCredits::close() {
   available_ = capacity_;
 }
 
-aqsync::EnqueueResult NotifyCredits::take(std::uint32_t generation,
+ossync::EnqueueResult NotifyCredits::take(std::uint32_t generation,
                                           std::int64_t now_us) {
   if (!open_for(generation))
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   if (!available_)
-    return aqsync::EnqueueResult::Full;
+    return ossync::EnqueueResult::Full;
   // The stall clock starts when the first frame of a burst goes out, so a
   // long idle spell before it never counts against the host.
   if (available_ == capacity_)
     progress_us_ = now_us;
   --available_;
-  return aqsync::EnqueueResult::Ok;
+  return ossync::EnqueueResult::Ok;
 }
 
 void NotifyCredits::cancel(std::uint32_t generation) {
@@ -103,7 +103,7 @@ bool ResponseQueue::publish(const Reservation &reservation,
                             std::uint16_t handle) {
   // Pops move head and queued together, so within one epoch the next free
   // slot is still the reserved one.
-  if (reservation.result != aqsync::EnqueueResult::Ok ||
+  if (reservation.result != ossync::EnqueueResult::Ok ||
       reservation.epoch != epoch_ || !credits_.open_for(generation) ||
       queued_ >= capacity() ||
       reservation.slot != (head_ + queued_) % capacity())

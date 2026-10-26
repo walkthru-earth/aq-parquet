@@ -18,7 +18,7 @@
 #include <expected>
 #include <span>
 
-namespace aq::coredump {
+namespace opensensor::coredump {
 
 // ESP-IDF 6.1 always uses SHA-256 for core dumps in flash.
 inline constexpr std::size_t kChecksumBytes = 32;
@@ -105,4 +105,4 @@ decode(std::span<const std::uint8_t, kRecordBytes> record);
 [[nodiscard]] Report report(const Source &source, const Store &store,
                             std::span<char, kLineBytes> line);
 
-} // namespace aq::coredump
+} // namespace opensensor::coredump

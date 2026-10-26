@@ -10,7 +10,7 @@
 #include <cstring>
 #include <string_view>
 
-namespace store = aqlogger::codec_store;
+namespace store = oslogger::codec_store;
 using fake_nvs::Type;
 using telemetry::Codec;
 

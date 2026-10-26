@@ -14,12 +14,12 @@ import tempfile
 import check_board_conditionals as bc
 
 FIRES = [
-    "#if 0\n#elif defined(CONFIG_AQ_BOARD_CORES3)\n#endif\n",
+    "#if 0\n#elif defined(CONFIG_OS_BOARD_CORES3)\n#endif\n",
     "#if !defined(WAVESHARE_X)\n#endif\n",
     "#  ifdef m5stack_core\n#  endif\n",
     "#ifndef AQ_CORE_S3_PINS\n#endif\n",
     "#if CONFIG_IDF_TARGET == \"esp32s3\"\n#endif\n",
-    "#if 0\n#elif CONFIG_AQ_SIM7670G_UART\n#endif\n",
+    "#if 0\n#elif CONFIG_OS_SIM7670G_UART\n#endif\n",
     "#if defined(A) || \\\n    CONFIG_IDF_TARGET_ESP32S3\n#endif\n",
     "#if defined(A) /* a block comment\n   over two lines */ || defined(M5_CORE_X)\n#endif\n",
 ]
@@ -27,9 +27,9 @@ QUIET = [
     "#if CONFIG_IDF_TARGET_ARCH_XTENSA\n#endif\n",
     "#if CONFIG_SOC_UART_NUM > 2\n#endif\n",
     "#if CONFIG_IDF_TARGET_LINUX\n#endif\n",
-    "#ifdef CONFIG_AQ_SCORE_S\n#endif\n",
+    "#ifdef CONFIG_OS_SCORE_S\n#endif\n",
     "#ifndef AQ_SHARED_H\n#define AQ_SHARED_H\n#endif\n",
-    "#if CONFIG_AQ_LOGGER_WORKER_WDT // not for CORES3\n#endif // CORES3\n",
+    "#if CONFIG_OS_LOGGER_WORKER_WDT // not for CORES3\n#endif // CORES3\n",
     "#define CORES3 1\nint waveshare = 0;\n",
     "#if A // a comment that ends in a backslash \\\n   || WAVESHARE\n#endif\n",
     "const char *r = R\"(\n#if CORES3\n)\";\n",

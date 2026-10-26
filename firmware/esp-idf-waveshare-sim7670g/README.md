@@ -1,7 +1,7 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.9`**, with **62-column** schema
+**`idf-waveshare-parquet-v2.10`**, with **62-column** schema
 `waveshare-sim7670g-telemetry-v5` and dictionary `waveshare-sim7670g-telemetry-v6`.
 The original 52 columns retain their order and types, with four nullable H3
 location fields and, since v2.7, six battery health columns appended (raw SOC,
@@ -62,9 +62,20 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin diagnostic
 ```
 
-Keep station/config namespaces, keys and value types. Existing Arduino-era BLE
-bond compatibility requires qualification and may need phone re-pairing; do
-not erase station identity or settings. Never write eFuses or format TF.
+Keep the `parquet` station namespace, keys and value types. Since v2.10 (#93)
+settings live in the `oscfg` namespace and nothing is copied from the old one.
+It starts empty after that reflash, so the pairing mode and PIN, the display
+flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its default
+of on), the LAN sync token, the sensor identity (`sensor.vendor`,
+`sensor.model`, `sensor.serial`, `sensor.batch_candidate`), the location and
+the NTP settings must be provisioned again, as on a new board. Until the sensor
+identity is set again, Waveshare files carry no sensor identity and
+`pm25_batch_candidate_status` stays 0, disabled. Bonds survive the reflash and
+the phone may cache the old GATT table, so forget the board in the phone's
+Bluetooth settings and send `ble.clear_bonds=1` before pairing again. The old
+settings and crash log namespaces stay in flash with the old Wi-Fi password and
+LAN token, and only a full flash erase removes them. Do not erase station
+identity or settings. Never write eFuses or format TF.
 
 ## Native board ownership and qualification
 
@@ -73,7 +84,7 @@ one-bit SDMMC **CLK5 / CMD4 / D0=6** mounted at `/sd`, MAX17048 I²C
 **SDA15 / SCL16**, and RGB **GPIO38**. It keeps the explicit
 `kBatteryInstalled` setting and read-failure/null behavior. Charger state has
 no verified ESP32 signal. Modem, GNSS and camera remain outside this logger.
-AQLogger owns the 10-second monotonic sampling and sole archive worker;
+OSLogger owns the 10-second monotonic sampling and sole archive worker;
 there is no external RTC anchor. Raw PM/temperature/RH and optional sensor
 identity/batch candidate semantics retain the existing dictionary contract.
 
@@ -122,7 +133,7 @@ records and are not the current workflow; use the native tasks above.
 
 ## Historical Arduino implementation and bench record
 
-**Historical status: logger; full-image boot, SD Parquet write/serial readback, unsynced/host-UTC behavior and BLE advertising/discovery verified 2026-09-28. Encrypted BLE pairing/file transfer and Wi-Fi/LAN operation remain unverified.** Framework: Arduino-ESP32 **3.3.11**, Arduino CLI **1.5.1**, NimBLE-Arduino **2.5.1**, and LZ4 **1.10.0**, pinned in the historical trial lock retained in Git history. The trial consumes AQCommon, AQRuntime, AQConnectivity and AQLogger from `firmware/common`.
+**Historical status: logger; full-image boot, SD Parquet write/serial readback, unsynced/host-UTC behavior and BLE advertising/discovery verified 2026-09-28. Encrypted BLE pairing/file transfer and Wi-Fi/LAN operation remain unverified.** Framework: Arduino-ESP32 **3.3.11**, Arduino CLI **1.5.1**, NimBLE-Arduino **2.5.1**, and LZ4 **1.10.0**, pinned in the historical trial lock retained in Git history. The trial consumes OSCommon, OSRuntime, OSConnectivity and OSLogger from `firmware/common`.
 
 The separate trial is justified by a concrete board change: Waveshare V2 uses GPIO1/2 for PMS5003T and one-bit SDMMC storage, while CoreS3 uses M5Unified, GPIO18/17 for PMSA003 and SPI SD. PMS5003T also replaces two frame words with temperature/RH. The trial owns its build settings, partitions, measurement dictionary and board adapter; it does not include another trial.
 
@@ -167,7 +178,7 @@ The logger starts BLE without a display. On first use, shared settings generate 
 pixi run owner-pin --port <checked-port>
 ```
 
-The PIN bypasses the debug ring and has no BLE/LAN retrieval opcode. Do not retain its output in captures or artifacts. The normal phone CONFIG path configures Wi-Fi; Wi-Fi is off until enabled. To copy Wi-Fi SSID/PSK and Wi-Fi/LAN enable flags from another owner-controlled AQLogger console:
+The PIN bypasses the debug ring and has no BLE/LAN retrieval opcode. Do not retain its output in captures or artifacts. The normal phone CONFIG path configures Wi-Fi; Wi-Fi is off until enabled. To copy Wi-Fi SSID/PSK and Wi-Fi/LAN enable flags from another owner-controlled OSLogger console:
 
 ```sh
 pixi run provision-usb --source-port <source-checked-port> --port <waveshare-checked-port>

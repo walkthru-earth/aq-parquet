@@ -8,7 +8,7 @@
 #include <esp_rom_crc.h>
 #endif
 
-namespace aq {
+namespace opensensor {
 namespace sync {
 inline void put_u16(std::uint8_t *out, std::uint16_t value) {
   out[0] = value & 0xff;
@@ -100,4 +100,4 @@ inline bool parquet_complete(std::uint64_t size, const std::uint8_t *head,
          footer <= size - 12;
 }
 } // namespace sync
-} // namespace aq
+} // namespace opensensor

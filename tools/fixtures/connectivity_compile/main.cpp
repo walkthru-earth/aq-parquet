@@ -13,7 +13,7 @@ constexpr ble::Identity identity{
 } // namespace
 
 extern "C" void app_main() {
-  aqsync::begin(identity, enqueue, false);
+  ossync::begin(identity, enqueue, false);
   ble::publish_status("{}", 2);
   lan::publish_status("{}", 2);
 }

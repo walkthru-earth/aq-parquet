@@ -20,7 +20,7 @@ int inspect(const char *path, struct stat *info) {
 DIR *open(const char *path) { return ::opendir(mapped(path).c_str()); }
 int remove_file(const char *path) { return ::unlink(mapped(path).c_str()); }
 int remove_directory(const char *path) { return ::rmdir(mapped(path).c_str()); }
-const aq::logger::detail::ArchiveResetIo io{
+const opensensor::logger::detail::ArchiveResetIo io{
     inspect, open, ::readdir, ::closedir, remove_file, remove_directory};
 void write(const fs::path &path) {
   fs::create_directories(path.parent_path());
@@ -109,7 +109,7 @@ int flat_unlink(const char *) {
   return 0;
 }
 int flat_rmdir(const char *) { return 0; }
-const aq::logger::detail::ArchiveResetIo flat_io{
+const opensensor::logger::detail::ArchiveResetIo flat_io{
     flat_inspect, flat_opendir, flat_next, flat_closedir,
     flat_unlink,  flat_rmdir,   nullptr};
 
@@ -120,12 +120,12 @@ const aq::logger::detail::ArchiveResetIo flat_io{
 // comes before the directory that holds it.
 void check_depth_cap() {
   namespace fs = std::filesystem;
-  using aq::logger::detail::archive_reset::kMaximumDepth;
+  using opensensor::logger::detail::archive_reset::kMaximumDepth;
   std::uint32_t files = 0, directories = 0;
   const auto erase = [&](const char *root,
-                         const aq::logger::detail::ArchiveResetIo &x) {
-    return aq::logger::detail::erase_archive(root, root, nullptr, files,
-                                             directories, x);
+                         const opensensor::logger::detail::ArchiveResetIo &x) {
+    return opensensor::logger::detail::erase_archive(root, root, nullptr, files,
+                                                     directories, x);
   };
   fs::path deep = card / "caps";
   for (unsigned i = 0; i + 1 < kMaximumDepth; ++i)
@@ -160,24 +160,24 @@ void check_close_before_rmdir() {
   busy_io.open = tracked_open;
   busy_io.close = tracked_close;
   busy_io.remove_directory = busy_rmdir;
-  assert(aq::logger::detail::erase_archive("/sd/busy", "/sd/busy", nullptr,
-                                           files, directories, busy_io));
+  assert(opensensor::logger::detail::erase_archive(
+      "/sd/busy", "/sd/busy", nullptr, files, directories, busy_io));
   assert(files == 2 && directories == 4);
   assert(open_directories.empty() && !fs::exists(card / "busy"));
 }
 
 void check_entry_cap() {
-  using aq::logger::detail::archive_reset::kMaximumEntries;
+  using opensensor::logger::detail::archive_reset::kMaximumEntries;
   std::uint32_t files = 0, directories = 0;
   flat_files = kMaximumEntries;
   flat_removed = 0;
-  assert(!aq::logger::detail::erase_archive("/sd/flat", "/sd/flat", nullptr,
-                                            files, directories, flat_io));
+  assert(!opensensor::logger::detail::erase_archive(
+      "/sd/flat", "/sd/flat", nullptr, files, directories, flat_io));
   assert(errno == EOVERFLOW && flat_removed == 0 && flat_open == 0);
   assert(files == 0 && directories == 0);
   flat_files = kMaximumEntries - 1;
-  assert(aq::logger::detail::erase_archive("/sd/flat", "/sd/flat", nullptr,
-                                           files, directories, flat_io));
+  assert(opensensor::logger::detail::erase_archive(
+      "/sd/flat", "/sd/flat", nullptr, files, directories, flat_io));
   assert(files == kMaximumEntries - 1 && directories == 1);
   assert(flat_removed == kMaximumEntries - 1 && flat_open == 0);
 }
@@ -187,16 +187,17 @@ int main() {
   char temporary[] = "/tmp/aq-archive-reset-XXXXXX";
   assert(::mkdtemp(temporary));
   card = temporary;
-  using aq::logger::detail::archive_root_valid;
+  using opensensor::logger::detail::archive_root_valid;
   std::uint32_t files = 0, directories = 0;
   // Roots come from board config. Only the configured output root and the
   // optional configured legacy root are accepted.
   const char *output = "/sd/output", *legacy = "/sd/parquet";
-  const auto erase_archive = [&](const char *root, std::uint32_t &f,
-                                 std::uint32_t &d,
-                                 const aq::logger::detail::ArchiveResetIo &x) {
-    return aq::logger::detail::erase_archive(root, output, legacy, f, d, x);
-  };
+  const auto erase_archive =
+      [&](const char *root, std::uint32_t &f, std::uint32_t &d,
+          const opensensor::logger::detail::ArchiveResetIo &x) {
+        return opensensor::logger::detail::erase_archive(root, output, legacy,
+                                                         f, d, x);
+      };
   for (const char *path : {"/sd", "/sd/", "/sd/output/", "/sd/output/../",
                            "/sd/other", "output", "/sd/bench"}) {
     assert(!erase_archive(path, files, directories, io));
@@ -210,8 +211,8 @@ int main() {
   assert(archive_root_valid("/sd/output") && archive_root_valid("/card/a/b"));
   // Invalid configured roots never authorize anything, even on an exact match.
   for (const char *bad : {"/sd", "/", "/sd/../sd"}) {
-    assert(!aq::logger::detail::erase_archive(bad, bad, nullptr, files,
-                                              directories, io));
+    assert(!opensensor::logger::detail::erase_archive(bad, bad, nullptr, files,
+                                                      directories, io));
     assert(errno == EINVAL && files == 0 && directories == 0);
   }
   assert(erase_archive("/sd/output", files, directories, io));
@@ -267,8 +268,8 @@ int main() {
   assert(!fs::exists(card / "output"));
   assert(fs::exists(card / "parquet/legacy.parquet"));
   // A board without a legacy root never erases one, even at the old path.
-  assert(!aq::logger::detail::erase_archive("/sd/parquet", output, nullptr,
-                                            files, directories, io));
+  assert(!opensensor::logger::detail::erase_archive(
+      "/sd/parquet", output, nullptr, files, directories, io));
   assert(errno == EINVAL && files == 3 && directories == 6);
   assert(fs::exists(card / "parquet/legacy.parquet"));
   assert(erase_archive("/sd/parquet", files, directories, io));
@@ -280,13 +281,13 @@ int main() {
   // Custom configured output root without a legacy root.
   write(card / "custom/archive/station=a/x.parquet");
   write(card / "output/kept.parquet");
-  assert(aq::logger::detail::erase_archive("/sd/custom/archive",
-                                           "/sd/custom/archive", nullptr, files,
-                                           directories, io));
+  assert(opensensor::logger::detail::erase_archive(
+      "/sd/custom/archive", "/sd/custom/archive", nullptr, files, directories,
+      io));
   assert(files == 5 && directories == 9);
   assert(fs::exists(card / "custom") && !fs::exists(card / "custom/archive"));
-  assert(!aq::logger::detail::erase_archive("/sd/output", "/sd/custom/archive",
-                                            nullptr, files, directories, io));
+  assert(!opensensor::logger::detail::erase_archive(
+      "/sd/output", "/sd/custom/archive", nullptr, files, directories, io));
   assert(fs::exists(card / "output/kept.parquet"));
   fs::remove_all(card / "output");
   fs::remove_all(card / "custom");

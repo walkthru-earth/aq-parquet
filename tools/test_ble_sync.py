@@ -521,7 +521,7 @@ async def run_lan():
 
     async def serve(reader, writer):
         head = await reader.readexactly(36)
-        if head != b"AQS1" + TOKEN:
+        if head != b"OSS1" + TOKEN:
             writer.write(struct.pack("<H", 3) + bytes([ble.F_ERROR, 0, 14]))
             await writer.drain()
             writer.close()
@@ -585,7 +585,7 @@ async def run_lan_snapshot_deadlines():
             await writer.drain()
 
         try:
-            assert await reader.readexactly(36) == b"AQS1" + TOKEN
+            assert await reader.readexactly(36) == b"OSS1" + TOKEN
             await emit(bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO)
             while True:
                 (length,) = struct.unpack("<H", await reader.readexactly(2))
@@ -648,7 +648,7 @@ async def run_lan_bye():
     """BYE on the LAN read path raises the typed close, and later reads fail at once."""
     async def serve(reader, writer):
         try:
-            assert await reader.readexactly(36) == b"AQS1" + TOKEN
+            assert await reader.readexactly(36) == b"OSS1" + TOKEN
             hello = bytes([ble.F_HELLO, 3]) + struct.pack("<H", 1024) + INFO
             writer.write(struct.pack("<H", len(hello)) + hello)
             await writer.drain()

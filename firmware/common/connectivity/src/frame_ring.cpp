@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace aqsync {
+namespace ossync {
 void FrameRing::attach(std::uint8_t *storage, std::size_t capacity) {
   storage_ = storage;
   capacity_ = storage ? capacity : 0;
@@ -90,4 +90,4 @@ std::size_t FrameRing::drop_unstarted() {
   frames_ -= dropped;
   return dropped;
 }
-} // namespace aqsync
+} // namespace ossync

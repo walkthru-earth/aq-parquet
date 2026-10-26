@@ -11,8 +11,8 @@
 #include <cstdio>
 
 namespace livesample {
-inline void print(const aqlogger::Field *table, std::size_t count) {
-  aqlogger::Row row{};
+inline void print(const oslogger::Field *table, std::size_t count) {
+  oslogger::Row row{};
   for (std::size_t i = 0; i < count; ++i) {
     if (table[i].type == telemetry::PhysicalType::Int64)
       row.set(i, std::int64_t{1});
@@ -23,7 +23,7 @@ inline void print(const aqlogger::Field *table, std::size_t count) {
   }
   char json[ble::kMaxJson + 1];
   const auto used =
-      aqlogger::format_live(table, count, row, json, sizeof(json));
+      oslogger::format_live(table, count, row, json, sizeof(json));
   assert(used > 0);
   std::printf("%.*s\n", static_cast<int>(used), json);
 }

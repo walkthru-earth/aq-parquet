@@ -48,7 +48,7 @@ inline unsigned type(const char *key) {
 } // namespace fake_platform
 inline esp_err_t nvs_open(const char *name, unsigned, nvs_handle_t *handle) {
   auto &nvs = fake_platform::nvs;
-  nvs.opened = std::strcmp(name, "aqcfg") == 0 && !nvs.fail_open;
+  nvs.opened = std::strcmp(name, "oscfg") == 0 && !nvs.fail_open;
   nvs.pending = {};
   *handle = 1;
   return nvs.opened ? ESP_OK : ESP_FAIL;

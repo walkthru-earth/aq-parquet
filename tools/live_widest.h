@@ -23,10 +23,10 @@ struct Widest {
   float number = 0.0F;      // FLOAT keys
 };
 
-inline std::size_t measure(const aqlogger::Field *table, std::size_t count,
+inline std::size_t measure(const oslogger::Field *table, std::size_t count,
                            std::span<const Widest> widest) {
-  assert(aqlogger::valid_live_keys(table, count));
-  aqlogger::Row row{};
+  assert(oslogger::valid_live_keys(table, count));
+  oslogger::Row row{};
   std::size_t keys = 0;
   for (std::size_t i = 0; i < count; ++i) {
     if (!table[i].live_key)
@@ -58,20 +58,20 @@ inline std::size_t measure(const aqlogger::Field *table, std::size_t count,
   for (std::size_t i = 0; i < count; ++i) {
     if (!table[i].live_key)
       continue;
-    const auto as_value = aqlogger::live_size(table, count, row);
+    const auto as_value = oslogger::live_size(table, count, row);
     row.valid[i] = 0;
-    if (aqlogger::live_size(table, count, row) <= as_value)
+    if (oslogger::live_size(table, count, row) <= as_value)
       row.valid[i] = 1;
   }
   char json[ble::kMaxJson + 1];
   const auto used =
-      aqlogger::format_live(table, count, row, json, sizeof(json));
-  const auto needed = aqlogger::live_size(table, count, row);
+      oslogger::format_live(table, count, row, json, sizeof(json));
+  const auto needed = oslogger::live_size(table, count, row);
   assert(used == 0 || used == needed);
   // Every key must be printed, so nothing hides as an omitted value.
   if (used)
     for (const auto &entry : widest) {
-      char quoted[aqlogger::kMaxLiveKey + 4];
+      char quoted[oslogger::kMaxLiveKey + 4];
       std::snprintf(quoted, sizeof(quoted), "\"%s\":", entry.key);
       assert(std::strstr(json, quoted));
     }
@@ -80,15 +80,15 @@ inline std::size_t measure(const aqlogger::Field *table, std::size_t count,
 
 // Size of the object with every declared key null, which the logger sends
 // when a row overflows. It must fit, or an overflow would publish nothing.
-inline std::size_t all_null(const aqlogger::Field *table, std::size_t count) {
-  const aqlogger::Row none{};
+inline std::size_t all_null(const oslogger::Field *table, std::size_t count) {
+  const oslogger::Row none{};
   char json[ble::kMaxJson + 1];
   const auto used =
-      aqlogger::format_live(table, count, none, json, sizeof(json));
-  assert(used > 0 && used == aqlogger::live_size(table, count, none));
+      oslogger::format_live(table, count, none, json, sizeof(json));
+  assert(used > 0 && used == oslogger::live_size(table, count, none));
   for (std::size_t i = 0; i < count; ++i)
     if (table[i].live_key) {
-      char quoted[aqlogger::kMaxLiveKey + 8];
+      char quoted[oslogger::kMaxLiveKey + 8];
       std::snprintf(quoted, sizeof(quoted), "\"%s\":null", table[i].live_key);
       assert(std::strstr(json, quoted));
     }

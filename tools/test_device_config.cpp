@@ -74,7 +74,7 @@ void check_blob_header() {
 std::string log_text() {
   static char logs[DebugLog::kFallbackRingBytes + 1];
   std::uint32_t total = 0;
-  const auto count = aqlog.tail(logs, sizeof(logs) - 1, total);
+  const auto count = oslog.tail(logs, sizeof(logs) - 1, total);
   logs[count] = '\0';
   return logs;
 }
@@ -264,7 +264,7 @@ void credentials() {
   assert(config::build_json(truncated, sizeof(truncated), wifi) == 0);
   char logs[DebugLog::kFallbackRingBytes + 1];
   std::uint32_t total = 0;
-  const auto count = aqlog.tail(logs, sizeof(logs) - 1, total);
+  const auto count = oslog.tail(logs, sizeof(logs) - 1, total);
   logs[count] = '\0';
   assert(!std::strstr(logs, settings.psk) && !std::strstr(logs, "654321"));
   std::puts(json); // runner parses this synthetic, secret-free CONFIG document
@@ -428,7 +428,7 @@ void time_and_location() {
   auto cap_change = config::get().location;
   cap_change.resolution = 6;
   assert(!config::same_location(cap_change, config::get().location));
-  assert(aq::location::resolution(coarse) == 5 &&
+  assert(opensensor::location::resolution(coarse) == 5 &&
          coarse != 0x8928308280fffffULL);
   assert(std::string(field(kLocationAt)).find("8928308280fffff") ==
          std::string::npos);

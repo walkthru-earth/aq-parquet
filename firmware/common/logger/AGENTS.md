@@ -1,6 +1,6 @@
 # Shared opt-in logger runtime
 
-AQLogger owns the monotonic sampling deadline, command queue and single archive
+OSLogger owns the monotonic sampling deadline, command queue and single archive
 worker for consumers that opt into this native ESP-IDF component. A board supplies a measurement
 contract, acquisition callback, mounted filesystem and optional bus/RTC hooks.
 The native runtime preserves the established logger contract; board pin/peripheral
@@ -11,7 +11,7 @@ initialization and each board's schema/provenance remain in its own trial.
 - Preserve the `parquet` NVS namespace, its `station` string key and its `codec`
   u8 key (Parquet codec value, 0 or 7). A missing or unreadable `codec` boots
   LZ4_RAW and logs why. It is never erased, and only a codec command rewrites
-  it. Radio initialization belongs to AQConnectivity; retain its shared
+  it. Radio initialization belongs to OSConnectivity; retain its shared
   identity and protocol contract.
 - Only the worker accesses the filesystem after startup. Acquisition and RTC
   callbacks run only on the main task through begin/poll; a host clock command
@@ -23,14 +23,14 @@ initialization and each board's schema/provenance remain in its own trial.
   fsync after each row group; `.partial` files are preserved/quarantined rather
   than repaired or deleted. Do not imply power-cut durability from normal resets.
 - Task priorities: board task `kBoardTaskPriority` (2) < `parquet-sd` worker
-  (`Config::worker_priority`, 3) < `aq-lan` (4). The worker stack stays in
+  (`Config::worker_priority`, 3) < `os-lan` (4). The worker stack stays in
   internal RAM because it writes NVS. `poll()` prints `DIAG tasks` stack
   high-water marks and `DIAG heap` (internal, DMA, PSRAM free, minimum and
   largest block) 60 s after begin, then hourly, and at once on the serial
   `parquet mem` command, which `poll()` answers itself without the worker.
   Append new fields at the end of those lines. A task stack change updates
   `tools/stack_budget.json` (`pixi run stack-budget --write-budgets`).
-- The worker is a task watchdog user (`CONFIG_AQ_LOGGER_WORKER_WDT`, 60 s).
+- The worker is a task watchdog user (`CONFIG_OS_LOGGER_WORKER_WDT`, 60 s).
   A radio LIST runs as bounded `ArchiveSession::step()` calls from the worker
   loop, one per pass after samples and commits. Never walk a whole tree for a
   radio request in one call.
@@ -42,7 +42,7 @@ initialization and each board's schema/provenance remain in its own trial.
   task watchdog and timer interfaces. The timer callback only wraps the IDF
   calls, and every arm or panic switch it applies has an unwind path. See the README section Worker watchdog.
   The bench only `parquet bench-stall` command stays inside
-  `#if CONFIG_AQ_LOGGER_BENCH_STALL` (default n), set only by
+  `#if CONFIG_OS_LOGGER_BENCH_STALL` (default n), set only by
   `tools/idf-bench-stall-sdkconfig.defaults` through `AQ_BENCH=stall`.
 - Battery power policy stays pure in `aq_logger_power.h`,
   `aq_logger_emergency_close.h` and `firmware/common/power`.

@@ -155,15 +155,39 @@ def validate(template: dict, dictionary: dict, dictionary_uri: str) -> None:
     require(set(template["instruments"]) <= procedures, "instruments are FIELD procedures")
 
 
+# C++ comments, then string and character literals, in one pass so a quote
+# inside a comment or a comment marker inside a string is never misread.
+_CXX_NOISE = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
+# A designated initializer or a member write through . or ->, with any spacing.
+_SAMPLE_INTERVAL = re.compile(r"(?:\.|->)\s*sample_interval_ms\b")
+SAMPLE_INTERVAL_CASES = (
+    ("const oslogger::Config c{.sample_interval_ms = 30000};", True),
+    ("config . sample_interval_ms = 30000;", True),
+    ("config->sample_interval_ms = 30000;", True),
+    ("// .sample_interval_ms stays the default", False),
+    ("/* config.sample_interval_ms */ int x;", False),
+    ('const char *k = "{\\".sample_interval_ms\\":1}";', False),
+    ("std::uint32_t sample_interval_ms_hint = 1;", False),
+)
+
+
+def sets_sample_interval(source: str) -> bool:
+    """True when C++ source names Config::sample_interval_ms as a member, outside comments and literals."""
+    code = _CXX_NOISE.sub(lambda match: " " if match.group(0)[0] == "/" else '""', source)
+    return _SAMPLE_INTERVAL.search(code) is not None
+
+
 def run(executable: Path, firmware: Path, dictionary: dict, board_sources: list[Path], write_out: bool,
         regenerate: str) -> str | None:
     """Regenerate with write_out, else check and validate. Return desc."""
     import subprocess
 
-    # sample_interval_s is the aqlogger::Config default. A board that sets its
+    # sample_interval_s is the oslogger::Config default. A board that sets its
     # own interval must pass it to the generator first.
+    for sample, overrides in SAMPLE_INTERVAL_CASES:
+        require(sets_sample_interval(sample) == overrides, f"sample interval scan misread {sample!r}")
     for source in board_sources:
-        require(".sample_interval_ms" not in source.read_text(),
+        require(not sets_sample_interval(source.read_text()),
                 f"{source.name} overrides the sample interval the template assumes")
     generated = subprocess.check_output([str(executable), "template"])
     if write_out:

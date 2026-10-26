@@ -5,7 +5,7 @@
 #include <cstring>
 
 namespace {
-using namespace aqlogger::storage;
+using namespace oslogger::storage;
 constexpr std::uint64_t MiB = 1024ULL * 1024ULL;
 constexpr std::uint64_t GiB = 1024ULL * MiB;
 

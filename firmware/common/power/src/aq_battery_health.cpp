@@ -1,6 +1,6 @@
 #include "aq_battery_health.h"
 
-namespace aq::battery {
+namespace opensensor::battery {
 namespace {
 constexpr std::int64_t kMaxMinutesToEmpty = 7 * 24 * 60;
 constexpr std::uint16_t kFullRawSoc = 100 * 256;
@@ -212,4 +212,4 @@ Assessment Monitor::update(const Sample &sample) {
   return result;
 }
 
-} // namespace aq::battery
+} // namespace opensensor::battery

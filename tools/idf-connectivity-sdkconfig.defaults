@@ -1,4 +1,4 @@
-# Opt-in shared AQConnectivity settings. Include before board/fixture defaults.
+# Opt-in shared OSConnectivity settings. Include before board/fixture defaults.
 CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_LWIP_DHCP_GET_NTP_SRV=y
 # Keep packet/TCP storage in PSRAM and bound hardware DMA buffers. Static TX

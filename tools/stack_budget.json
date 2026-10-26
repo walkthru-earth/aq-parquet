@@ -87,7 +87,7 @@
     "parquet-sd": {
       "about": "Storage worker. Owns the card, the writer, control requests from BLE and LAN, and NVS writes for codec, station and config.",
       "entry": [
-        "*aqlogger::{anonymous}::storage_worker(*"
+        "*oslogger::{anonymous}::storage_worker(*"
       ],
       "indirect": [
         {
@@ -160,7 +160,7 @@
             "*lan::{anonymous}::handle_client_bytes(*"
           ],
           "to": [
-            "*aqlogger::enqueue_request(*"
+            "*oslogger::enqueue_request(*"
           ]
         },
         {
@@ -169,14 +169,14 @@
             "*WaitStep*"
           ],
           "to": [
-            "*aqlogger::{anonymous}::error_wait_step(*",
-            "*aqlogger::{anonymous}::data_wait_step(*"
+            "*oslogger::{anonymous}::error_wait_step(*",
+            "*oslogger::{anonymous}::data_wait_step(*"
           ]
         }
       ],
       "stack_sdkconfig": "CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE"
     },
-    "aq_ble_error": {
+    "os_ble_error": {
       "about": "Sends ERROR responses that NimBLE callbacks defer.",
       "entry": [
         "*ble::{anonymous}::error_task(*"
@@ -188,13 +188,13 @@
             "*WaitStep*"
           ],
           "to": [
-            "*aqlogger::{anonymous}::error_wait_step(*",
-            "*aqlogger::{anonymous}::data_wait_step(*"
+            "*oslogger::{anonymous}::error_wait_step(*",
+            "*oslogger::{anonymous}::data_wait_step(*"
           ]
         }
       ]
     },
-    "aq-lan": {
+    "os-lan": {
       "about": "LAN server task. Parses HTTP control requests and streams archive files.",
       "entry": [
         "*lan::{anonymous}::lan_task(*"
@@ -207,7 +207,7 @@
             "*lan::{anonymous}::handle_client_bytes(*"
           ],
           "to": [
-            "*aqlogger::enqueue_request(*"
+            "*oslogger::enqueue_request(*"
           ]
         },
         {
@@ -216,8 +216,8 @@
             "*WaitStep*"
           ],
           "to": [
-            "*aqlogger::{anonymous}::error_wait_step(*",
-            "*aqlogger::{anonymous}::data_wait_step(*"
+            "*oslogger::{anonymous}::error_wait_step(*",
+            "*oslogger::{anonymous}::data_wait_step(*"
           ]
         }
       ]
@@ -234,7 +234,7 @@
             "firmware/common/logger/*::*"
           ],
           "to": [
-            "*{anonymous}::collect(aqlogger::Row&*",
+            "*{anonymous}::collect(oslogger::Row&*",
             "*{anonymous}::rtc_read(int64_t&, void*)",
             "*{anonymous}::rtc_write(int64_t, void*)",
             "firmware/esp-idf-*/bringup/*::*::_FUN(*",
@@ -256,7 +256,7 @@
             "timer_process_alarm"
           ],
           "to": [
-            "*aqlogger::{anonymous}::supervise_worker(*"
+            "*oslogger::{anonymous}::supervise_worker(*"
           ]
         }
       ],
@@ -294,12 +294,12 @@
           "measured": 5840,
           "budget": 6464
         },
-        "aq_ble_error": {
+        "os_ble_error": {
           "stack_bytes": 4096,
           "measured": 2544,
           "budget": 2816
         },
-        "aq-lan": {
+        "os-lan": {
           "stack_bytes": 8192,
           "measured": 4832,
           "budget": 5376
@@ -348,18 +348,18 @@
           "measured": 5840,
           "budget": 6464
         },
-        "aq_ble_error": {
+        "os_ble_error": {
           "stack_bytes": 4096,
           "measured": 2544,
           "budget": 2816
         },
-        "aq-lan": {
+        "os-lan": {
           "stack_bytes": 8192,
           "measured": 4832,
           "budget": 5376
         },
         "board": {
-          "task_name": "aq-board",
+          "task_name": "os-board",
           "stack_bytes": 12288,
           "measured": 5072,
           "budget": 5632
@@ -394,7 +394,7 @@
       "build": "firmware/esp-idf-waveshare-sim7670g/build/diagnostic",
       "tasks": {
         "board": {
-          "task_name": "aq-diagnostic",
+          "task_name": "os-diagnostic",
           "stack_bytes": 12288,
           "measured": 3744,
           "budget": 4160

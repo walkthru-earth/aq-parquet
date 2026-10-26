@@ -10,22 +10,22 @@
 
 namespace ble::wire {
 constexpr std::array<std::uint8_t, 16> uuid(std::uint16_t selector) {
-  return {0x01,
-          0x4e,
-          0x6b,
-          0x8a,
-          0x7f,
-          0x2d,
-          0x3e,
-          0x9c,
-          0x1a,
-          0x4b,
+  return {0x80,
+          0xb6,
+          0x99,
+          0x41,
+          0x99,
+          0x59,
+          0x0d,
+          0x8e,
+          0xed,
+          0x47,
           static_cast<std::uint8_t>(selector),
           static_cast<std::uint8_t>(selector >> 8),
-          0xf0,
-          0xe9,
-          0xa5,
-          0xc0};
+          0x5e,
+          0x59,
+          0x5f,
+          0x25};
 }
 
 constexpr std::array<std::uint8_t, 31>

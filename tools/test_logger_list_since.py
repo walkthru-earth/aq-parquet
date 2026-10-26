@@ -44,7 +44,7 @@ def check_wiring(source: str) -> None:
             r"mount_epoch\.load\(\), utc_yesterday\(\), boot_ring, ring_store\); "
             r"const auto plan = list_since::plan\(in\); result = plan\.result;",
         "a widened walk reports unsynced_full":
-            r"if \(since_->widened\(\)\) result\.flags \|= aqsync::kListSinceUnsyncedFull;",
+            r"if \(since_->widened\(\)\) result\.flags \|= ossync::kListSinceUnsyncedFull;",
         "the ring knows this boot":
             r"if \(list_since::parse_boot\(boot_text, boot\)\) boot_ring\.set_current\(boot\);",
         "a remount forgets the mount epoch":

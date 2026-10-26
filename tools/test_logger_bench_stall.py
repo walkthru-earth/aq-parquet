@@ -8,12 +8,12 @@ import subprocess
 import tempfile
 from host_cxx import CXX_STD
 
-GUARD = "CONFIG_AQ_LOGGER_BENCH_STALL"
+GUARD = "CONFIG_OS_LOGGER_BENCH_STALL"
 OVERLAY = "tools/idf-bench-stall-sdkconfig.defaults"
 
 
 def guarded_lines(source: str) -> list[tuple[str, bool]]:
-    """Each line with whether it sits inside `#if CONFIG_AQ_LOGGER_BENCH_STALL`."""
+    """Each line with whether it sits inside `#if CONFIG_OS_LOGGER_BENCH_STALL`."""
     stack: list[bool] = []
     out = []
     for line in source.splitlines():
@@ -34,9 +34,9 @@ def check_wiring(root: Path) -> None:
     """The command exists only in images built with the bench overlay."""
     logger = root / "firmware/common/logger"
     kconfig = (logger / "Kconfig").read_text()
-    entry = re.search(r"config AQ_LOGGER_BENCH_STALL\n(.*?)(?=\nconfig |\nendmenu)", kconfig, re.S)
-    assert entry, "Kconfig lost AQ_LOGGER_BENCH_STALL"
-    assert re.search(r"^\s+default n$", entry.group(1), re.M), "AQ_LOGGER_BENCH_STALL must default to n"
+    entry = re.search(r"config OS_LOGGER_BENCH_STALL\n(.*?)(?=\nconfig |\nendmenu)", kconfig, re.S)
+    assert entry, "Kconfig lost OS_LOGGER_BENCH_STALL"
+    assert re.search(r"^\s+default n$", entry.group(1), re.M), "OS_LOGGER_BENCH_STALL must default to n"
 
     lines = guarded_lines((logger / "src/aq_logger.cpp").read_text())
     bench = [(line, inside) for line, inside in lines

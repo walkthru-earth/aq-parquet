@@ -8,7 +8,7 @@ pending. Historical readbacks below remain scoped to their original images.
 
 ## Controller and worker ownership
 
-The board initializes native SDMMC once with CLK GPIO5, CMD GPIO4 and DATA0 GPIO6 in one-bit mode, mounts at `/sd` without formatting, and supplies capacity callbacks to AQLogger. UART1 belongs exclusively to PMS5003T reception at GPIO1/2. The one filesystem worker owns directory enumeration, Parquet writes, flushing, quarantine and archive reads after startup. There is no display/SPI sharing assumption on this board. Card-detect GPIO46 remains un-driven; camera use needs its own pin/controller audit.
+The board initializes native SDMMC once with CLK GPIO5, CMD GPIO4 and DATA0 GPIO6 in one-bit mode, mounts at `/sd` without formatting, and supplies capacity callbacks to OSLogger. UART1 belongs exclusively to PMS5003T reception at GPIO1/2. The one filesystem worker owns directory enumeration, Parquet writes, flushing, quarantine and archive reads after startup. There is no display/SPI sharing assumption on this board. Card-detect GPIO46 remains un-driven; camera use needs its own pin/controller audit.
 
 The card is the origin of the owner's data. Serial, BLE and token-authenticated local LAN can copy finalized files to a phone/laptop archive without internet. Cellular/GNSS are not initialized and do not replace local copies. Wi-Fi stays off until configured; USB provisioning copies only Wi-Fi credentials/enable flags between checked owner-controlled consoles, leaving per-device identities, PINs and LAN tokens intact.
 

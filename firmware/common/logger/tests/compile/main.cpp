@@ -2,7 +2,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-static constexpr aqlogger::Field fields[] = {
+static constexpr oslogger::Field fields[] = {
     {"sequence", telemetry::PhysicalType::Int64, "runtime", "count", "always",
      "urn:test:sequence"},
     {"monotonic_us", telemetry::PhysicalType::Int64, "runtime", "us", "always",
@@ -12,12 +12,12 @@ static constexpr aqlogger::Field fields[] = {
     {"clock_epoch", telemetry::PhysicalType::Int32, "runtime", "count",
      "always", "urn:test:epoch"}};
 extern "C" void app_main() {
-  aqlogger::Config config;
+  oslogger::Config config;
   config.fields = fields;
   config.column_count = sizeof(fields) / sizeof(fields[0]);
   config.schema_version = 1;
   config.schema_name = "compile-fixture-v1";
-  config.firmware = "aqlogger-compile-fixture";
+  config.firmware = "oslogger-compile-fixture";
   config.dictionary_version = "compile-fixture-v1";
   config.dictionary_uri = "urn:test:dictionary";
   config.dictionary_sha256 = "test";
@@ -25,13 +25,13 @@ extern "C" void app_main() {
   config.configuration = "{}";
   config.time_semantics = "fixture";
   config.board = "generic-esp32-s3-compile-only";
-  aqlogger::Hooks hooks;
-  aqlogger::begin(config, hooks, false);
+  oslogger::Hooks hooks;
+  oslogger::begin(config, hooks, false);
   // Headless startup compiles the real fixed-mode security callback path.
   // This fixture does not execute pairing or establish a bond.
-  aqlogger::start_links(false);
+  oslogger::start_links(false);
   for (;;) {
-    aqlogger::poll();
+    oslogger::poll();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }

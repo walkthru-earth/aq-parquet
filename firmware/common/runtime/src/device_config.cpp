@@ -17,7 +17,7 @@
 
 namespace config {
 namespace {
-constexpr const char *kNamespace = "aqcfg";
+constexpr const char *kNamespace = "oscfg";
 portMUX_TYPE settings_mutex = portMUX_INITIALIZER_UNLOCKED;
 Settings current;
 Settings booted; // pair/pin the running BLE stack was started with
@@ -183,9 +183,9 @@ bool split_record(char *value, char **fields, std::size_t count) {
 
 void encode_location(char *out, std::size_t size,
                      const LocationSettings &location) {
-  char cell[aq::location::kCellTextBytes]{};
+  char cell[opensensor::location::kCellTextBytes]{};
   if (location.cell)
-    aq::location::format_cell(location.cell, cell, sizeof(cell));
+    opensensor::location::format_cell(location.cell, cell, sizeof(cell));
   std::snprintf(out, size, "%s|%u|%s", cell, unsigned(location.resolution),
                 location.country);
 }
@@ -196,12 +196,13 @@ bool decode_location(char *record, LocationSettings &location) {
   LocationSettings decoded;
   if (!split_record(record, fields, 3) ||
       !parse_uint(fields[1], 0, 15, resolution) ||
-      (*fields[0] && !aq::location::parse_cell(fields[0], decoded.cell)) ||
-      (*fields[2] && !aq::location::valid_country(fields[2])))
+      (*fields[0] &&
+       !opensensor::location::parse_cell(fields[0], decoded.cell)) ||
+      (*fields[2] && !opensensor::location::valid_country(fields[2])))
     return false;
   decoded.resolution = static_cast<std::uint8_t>(resolution);
   if (decoded.cell &&
-      !aq::location::coarsen(decoded.cell, resolution, decoded.cell))
+      !opensensor::location::coarsen(decoded.cell, resolution, decoded.cell))
     return false;
   std::snprintf(decoded.country, sizeof(decoded.country), "%s", fields[2]);
   location = decoded;
@@ -295,7 +296,8 @@ static_assert(sizeof(Settings::sensor_vendor) + sizeof(Settings::sensor_model) +
                       sizeof(Settings::sensor_serial) + 2 <=
                   kSensorRecordBytes,
               "sensor record fits its field");
-static_assert(aq::location::kCellTextBytes + 3 + 1 + 3 <= kLocationRecordBytes,
+static_assert(opensensor::location::kCellTextBytes + 3 + 1 + 3 <=
+                  kLocationRecordBytes,
               "location record fits its field");
 static_assert(kNtpServerCount * (kNtpServerMax + 1) + 16 <= kNtpRecordBytes,
               "NTP record fits its field");
@@ -395,7 +397,7 @@ void clear_sensor(Settings &settings) {
   settings.sensor_model[0] = '\0';
   settings.sensor_serial[0] = '\0';
   settings.sensor_batch_candidate = false;
-  aqlog.println("CONFIG SENSOR invalid-stored-profile=true");
+  oslog.println("CONFIG SENSOR invalid-stored-profile=true");
 }
 
 // Invalid records are disabled or unset rather than silently enabling
@@ -403,7 +405,7 @@ void clear_sensor(Settings &settings) {
 void apply_location(bool valid, char *record, Settings &settings) {
   if (!valid || !decode_location(record, settings.location)) {
     settings.location = LocationSettings{};
-    aqlog.println("CONFIG LOCATION invalid-stored-profile=true");
+    oslog.println("CONFIG LOCATION invalid-stored-profile=true");
   }
 }
 
@@ -412,7 +414,7 @@ void apply_ntp(bool valid, char *record, Settings &settings) {
     settings.ntp = NtpSettings{};
     settings.ntp.enabled = false;
     settings.ntp.public_fallback = false;
-    aqlog.println("CONFIG NTP invalid-stored-profile=true");
+    oslog.println("CONFIG NTP invalid-stored-profile=true");
   }
 }
 
@@ -543,7 +545,7 @@ bool load(bool display_detected) {
   persistent = false;
   nvs_handle_t store;
   if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK) {
-    aqlog.println("CONFIG ERROR operation=nvs-open persistent=false");
+    oslog.println("CONFIG ERROR operation=nvs-open persistent=false");
     settings.display = display_detected;
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
     settings.pin = random_pin();
@@ -558,7 +560,7 @@ bool load(bool display_detected) {
   const bool from_blob =
       blob_result == ESP_OK && blob_intact(readback_blob, blob_size);
   if (blob_result != ESP_ERR_NVS_NOT_FOUND && !from_blob)
-    aqlog.println("CONFIG BLOB invalid=true fallback=legacy");
+    oslog.println("CONFIG BLOB invalid=true fallback=legacy");
   std::uint8_t stored_pair;
   const bool first_boot =
       !from_blob &&
@@ -577,15 +579,15 @@ bool load(bool display_detected) {
   if (!first_boot && settings.pin == kLegacyDefaultPin) {
     settings.pin = random_pin();
     migrated_pin = true;
-    aqlog.println("CONFIG SECURITY legacy_pin_rotated=true");
+    oslog.println("CONFIG SECURITY legacy_pin_rotated=true");
   }
   nvs_close(store);
   persistent = true;
   if ((first_boot || migrated_pin) && !save_locked(settings))
-    aqlog.println("CONFIG ERROR operation=nvs-seed-or-migrate");
+    oslog.println("CONFIG ERROR operation=nvs-seed-or-migrate");
   publish(settings);
   booted = settings;
-  aqlog.printf("CONFIG LOADED first_boot=%s display=%s pair=%s pin_default=%s "
+  oslog.printf("CONFIG LOADED first_boot=%s display=%s pair=%s pin_default=%s "
                "wifi_on=%s ssid_set=%s lan_on=%s\n",
                first_boot ? "true" : "false",
                settings.display ? "true" : "false", pair_name(settings.pair),
@@ -731,7 +733,8 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
                     "%s", value);
     } else if (std::strcmp(key, "location.cell") == 0) {
       next.location.cell = 0;
-      if (*value && !aq::location::parse_cell(value, next.location.cell))
+      if (*value &&
+          !opensensor::location::parse_cell(value, next.location.cell))
         return reject();
     } else if (std::strcmp(key, "location.resolution") == 0) {
       std::uint32_t resolution;
@@ -739,7 +742,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
         return reject();
       next.location.resolution = static_cast<std::uint8_t>(resolution);
     } else if (std::strcmp(key, "location.country") == 0) {
-      if (*value && !aq::location::valid_country(value))
+      if (*value && !opensensor::location::valid_country(value))
         return reject();
       std::snprintf(next.location.country, sizeof(next.location.country), "%s",
                     value);
@@ -799,8 +802,8 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
     return false;
   }
   if (next.location.cell &&
-      !aq::location::coarsen(next.location.cell, next.location.resolution,
-                             next.location.cell)) {
+      !opensensor::location::coarsen(
+          next.location.cell, next.location.resolution, next.location.cell)) {
     std::snprintf(bad_key, bad_key_size, "location.cell");
     return false;
   }
@@ -814,7 +817,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
   }
   publish(next);
   actions = pending;
-  aqlog.printf(
+  oslog.printf(
       "CONFIG SET pair=%s pin_default=%s wifi_on=%s ssid_set=%s "
       "lan_on=%s clear_bonds=%s rotate_token=%s reboot_required=%s\n",
       pair_name(next.pair), next.pin == kLegacyDefaultPin ? "true" : "false",
@@ -865,17 +868,18 @@ std::size_t build_page(char *out, std::size_t size, std::uint8_t page) {
   const Settings settings = get();
   int written = -1;
   if (page == 1) {
-    char cell[aq::location::kCellTextBytes]{};
+    char cell[opensensor::location::kCellTextBytes]{};
     char center[128] = "\"cell_resolution\":null,\"lat\":null,\"lon\":null";
     double latitude, longitude;
     if (settings.location.cell &&
-        aq::location::format_cell(settings.location.cell, cell, sizeof(cell)) &&
-        aq::location::center_degrees(settings.location.cell, latitude,
-                                     longitude))
+        opensensor::location::format_cell(settings.location.cell, cell,
+                                          sizeof(cell)) &&
+        opensensor::location::center_degrees(settings.location.cell, latitude,
+                                             longitude))
       std::snprintf(center, sizeof(center),
                     "\"cell_resolution\":%d,\"lat\":%.7f,\"lon\":%.7f",
-                    aq::location::resolution(settings.location.cell), latitude,
-                    longitude);
+                    opensensor::location::resolution(settings.location.cell),
+                    latitude, longitude);
     written = std::snprintf(out, size,
                             "{\"location\":{\"cell\":\"%s\",\"resolution\":%u,%"
                             "s,\"country\":\"%s\"}}",

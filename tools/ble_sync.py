@@ -29,7 +29,7 @@ Every command also runs over the LAN transport once a token is held:
 
 macOS pairs through a system passkey dialog on first encrypted access; type the
 six digits shown on the CoreS3 screen (or the fixed PIN on a screenless
-board). Bleak cannot drive pairing itself. `dns-sd -B _aqsync._tcp` browses
+board). Bleak cannot drive pairing itself. `dns-sd -B _ossync._tcp` browses
 the LAN for devices.
 """
 import argparse
@@ -49,7 +49,7 @@ from bleak import BleakClient, BleakScanner
 
 import parquet_device as device
 
-BASE = "c0a5e9f0-{:04x}-4b1a-9c3e-2d7f8a6b4e01"
+BASE = "255f595e-{:04x}-47ed-8e0d-59994199b680"
 SERVICE = BASE.format(1)
 INFO, STATUS, LIVE, CONTROL, RESPONSE = (BASE.format(i) for i in range(2, 7))
 
@@ -124,7 +124,7 @@ class LanLink:
     async def connect(self):
         self.reader, self.writer = await asyncio.wait_for(
             asyncio.open_connection(self.host, self.port), self.timeout)
-        self.writer.write(b"AQS1" + self.token)
+        self.writer.write(b"OSS1" + self.token)
         await self.writer.drain()
         hello = await self._read_frame()
         if hello[0] == F_BYE:
@@ -581,7 +581,7 @@ async def find(args):
         and (name is None or d.name == name or ad.local_name == name),
         timeout=args.timeout)
     if not found:
-        raise SystemExit("no device advertising the AQ sync service; is it powered and unpaired-or-bonded to this host?")
+        raise SystemExit("no device advertising the OpenSensor Sync service; is it powered and unpaired-or-bonded to this host?")
     print(f"BLE FOUND name={found.name} address={found.address}", flush=True)
     return found
 

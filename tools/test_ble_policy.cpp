@@ -14,7 +14,6 @@
 #include <string_view>
 #include <utility>
 
-using aqsync::EnqueueResult;
 using ble::AdvertWindow;
 using ble::CloseStart;
 using ble::ConnParams;
@@ -27,6 +26,7 @@ using ble::ResponseQueue;
 using ble::StallClose;
 using ble::StreamChange;
 using ble::TxSlot;
+using ossync::EnqueueResult;
 
 namespace {
 constexpr std::int64_t kMs = 1000;

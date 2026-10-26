@@ -21,7 +21,9 @@ struct FakeIo {
     registers[0x86] = 0x92;
     registers[0x87] = 0x05;
   }
-  aq::Ltr553Io callbacks() { return {this, read, write, delay_ms, millis}; }
+  opensensor::Ltr553Io callbacks() {
+    return {this, read, write, delay_ms, millis};
+  }
   static bool read(void *context, std::uint8_t address, std::uint8_t reg,
                    std::uint8_t *data, std::size_t size) {
     auto &io = *static_cast<FakeIo *>(context);
@@ -54,7 +56,7 @@ void test_setup() {
       {0x80, 0x00}, {0x81, 0x00}, {0x8f, 0x00}, {0x82, 0x2a}, {0x83, 0x01},
       {0x84, 0x05}, {0x85, 0x04}, {0x80, 0x01}, {0x81, 0x23}};
   FakeIo io;
-  aq::Ltr553 sensor(io.callbacks());
+  opensensor::Ltr553 sensor(io.callbacks());
   assert(!sensor.available());
   assert(!sensor.read().io_error && io.reads.empty());
   assert(sensor.begin() && sensor.available());
@@ -68,7 +70,7 @@ void test_setup() {
   for (std::size_t index = 0; index < expected.size(); ++index) {
     FakeIo failing;
     failing.fail_write_index = static_cast<int>(index);
-    aq::Ltr553 broken(failing.callbacks());
+    opensensor::Ltr553 broken(failing.callbacks());
     assert(!broken.begin() && !broken.available());
     assert(failing.writes.size() == index + 3);
     assert(failing.writes[index] == expected[index]);
@@ -78,21 +80,22 @@ void test_setup() {
   for (int reg : {0x86, 0x87}) {
     FakeIo wrong_id;
     wrong_id.registers[reg] ^= 1;
-    aq::Ltr553 broken(wrong_id.callbacks());
+    opensensor::Ltr553 broken(wrong_id.callbacks());
     assert(!broken.begin() && wrong_id.writes.empty());
   }
   FakeIo failed_id;
   failed_id.fail_read = 0x86;
-  aq::Ltr553 broken(failed_id.callbacks());
+  opensensor::Ltr553 broken(failed_id.callbacks());
   assert(!broken.begin() && failed_id.writes.empty());
-  aq::Ltr553 disconnected({nullptr, nullptr, nullptr, nullptr, nullptr});
+  opensensor::Ltr553 disconnected(
+      {nullptr, nullptr, nullptr, nullptr, nullptr});
   assert(!disconnected.begin() && !disconnected.read().als_valid);
 }
 
 void test_readings() {
   FakeIo io;
   io.clock = std::numeric_limits<std::uint32_t>::max() - 150;
-  aq::Ltr553 sensor(io.callbacks());
+  opensensor::Ltr553 sensor(io.callbacks());
   assert(sensor.begin());
   io.clock += 1100; // A wraparound is a normal warmup deadline.
   io.registers[0x88] = 0x34;

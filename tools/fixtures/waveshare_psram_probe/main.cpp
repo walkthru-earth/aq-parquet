@@ -37,14 +37,14 @@ bool probe() {
 } // namespace
 
 extern "C" void app_main() {
-  aq::console::begin();
+  opensensor::console::begin();
   vTaskDelay(pdMS_TO_TICKS(500));
   esp_chip_info_t chip{};
   esp_chip_info(&chip);
   std::uint32_t flash_bytes = 0;
   esp_flash_get_size(nullptr, &flash_bytes);
-  aq::console::printf(
-      "AQ PSRAM chip=%s revision=%u flash_bytes=%lu initialized=%u "
+  opensensor::console::printf(
+      "OS PSRAM chip=%s revision=%u flash_bytes=%lu initialized=%u "
       "physical_bytes=%lu heap_bytes=%lu free_bytes=%lu\n",
       "ESP32-S3", unsigned(chip.revision),
       static_cast<unsigned long>(flash_bytes), esp_psram_is_initialized(),
@@ -53,11 +53,11 @@ extern "C" void app_main() {
       static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
   memory_ok = esp_psram_is_initialized() &&
               esp_psram_get_size() == 8 * 1024 * 1024 && probe();
-  aq::console::printf("AQ PSRAM probe_bytes=%u patterns=4 ok=%u\n",
-                      unsigned(kProbeBytes), memory_ok);
+  opensensor::console::printf("OS PSRAM probe_bytes=%u patterns=4 ok=%u\n",
+                              unsigned(kProbeBytes), memory_ok);
   for (;;) {
-    aq::console::printf(
-        "AQ PSRAM alive=1 ok=%u free_bytes=%lu\n", memory_ok,
+    opensensor::console::printf(
+        "OS PSRAM alive=1 ok=%u free_bytes=%lu\n", memory_ok,
         static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     vTaskDelay(pdMS_TO_TICKS(5000));
   }

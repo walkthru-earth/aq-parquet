@@ -5,8 +5,8 @@
 #include <cstring>
 
 namespace {
-using aq::battery::State;
-using aqlogger::power::Tracker;
+using opensensor::battery::State;
+using oslogger::power::Tracker;
 
 void tracker() {
   Tracker tracker;
@@ -60,31 +60,31 @@ void tracker() {
 void lines() {
   char out[64];
   auto n =
-      aqlogger::power::format_line(out, sizeof(out), State::Low, 3480, false);
+      oslogger::power::format_line(out, sizeof(out), State::Low, 3480, false);
   assert(n == std::strlen(out));
   assert(std::strcmp(out, "POWER STATE state=low mv=3480") == 0);
-  n = aqlogger::power::format_line(out, sizeof(out), State::Critical, 3301,
+  n = oslogger::power::format_line(out, sizeof(out), State::Critical, 3301,
                                    true);
   assert(std::strcmp(out, "POWER STATE state=critical mv=3301 "
                           "action=finalize") == 0 &&
          n == std::strlen(out));
-  aqlogger::power::format_line(out, sizeof(out), State::Unknown, -1, false);
+  oslogger::power::format_line(out, sizeof(out), State::Unknown, -1, false);
   assert(std::strcmp(out, "POWER STATE state=unknown mv=null") == 0);
-  aqlogger::power::format_line(out, sizeof(out), State::ExternalPowerLikely,
+  oslogger::power::format_line(out, sizeof(out), State::ExternalPowerLikely,
                                4267, false);
   assert(std::strcmp(out, "POWER STATE state=external_power_likely "
                           "mv=4267") == 0);
   // Too small never reports a truncated line.
   char tiny[12];
-  assert(aqlogger::power::format_line(tiny, sizeof(tiny), State::Ok, 3900,
+  assert(oslogger::power::format_line(tiny, sizeof(tiny), State::Ok, 3900,
                                       false) == 0 &&
          tiny[0] == '\0');
-  assert(aqlogger::power::format_line(nullptr, 10, State::Ok, 1, false) == 0);
+  assert(oslogger::power::format_line(nullptr, 10, State::Ok, 1, false) == 0);
   constexpr std::size_t exact = sizeof("POWER STATE state=ok mv=3900") - 1;
   char fit[exact + 1];
-  assert(aqlogger::power::format_line(fit, sizeof(fit), State::Ok, 3900,
+  assert(oslogger::power::format_line(fit, sizeof(fit), State::Ok, 3900,
                                       false) == exact);
-  assert(aqlogger::power::format_line(fit, exact, State::Ok, 3900, false) == 0);
+  assert(oslogger::power::format_line(fit, exact, State::Ok, 3900, false) == 0);
 }
 
 // Fake card for attempt_close. Counts calls so the tests can prove a busy
@@ -108,11 +108,11 @@ struct FakeStorage {
   }
 };
 
-using aqlogger::power::attempt_close;
-using aqlogger::power::CloseOutcome;
-using aqlogger::power::EmergencyClose;
-using aqlogger::power::Next;
-using aqlogger::power::RetryPolicy;
+using oslogger::power::attempt_close;
+using oslogger::power::CloseOutcome;
+using oslogger::power::EmergencyClose;
+using oslogger::power::Next;
+using oslogger::power::RetryPolicy;
 
 void outcomes() {
   FakeStorage empty;
@@ -128,13 +128,13 @@ void outcomes() {
   assert(attempt_close(broken) == CloseOutcome::Failed);
   FakeStorage good;
   assert(attempt_close(good) == CloseOutcome::Closed && good.writes == 1);
-  assert(std::strcmp(aqlogger::power::outcome_name(CloseOutcome::Closed),
+  assert(std::strcmp(oslogger::power::outcome_name(CloseOutcome::Closed),
                      "closed") == 0);
-  assert(std::strcmp(aqlogger::power::outcome_name(CloseOutcome::NothingOpen),
+  assert(std::strcmp(oslogger::power::outcome_name(CloseOutcome::NothingOpen),
                      "nothing-open") == 0);
-  assert(std::strcmp(aqlogger::power::outcome_name(CloseOutcome::BusyRetry),
+  assert(std::strcmp(oslogger::power::outcome_name(CloseOutcome::BusyRetry),
                      "busy-retry") == 0);
-  assert(std::strcmp(aqlogger::power::outcome_name(CloseOutcome::Failed),
+  assert(std::strcmp(oslogger::power::outcome_name(CloseOutcome::Failed),
                      "failed") == 0);
 }
 
@@ -246,30 +246,30 @@ void report_wakes_worker() {
   EmergencyClose close;
   int wakes = 0;
   const auto wake = [&] { ++wakes; };
-  assert(!aqlogger::power::report(tracker, close, State::Ok, wake).finalize);
+  assert(!oslogger::power::report(tracker, close, State::Ok, wake).finalize);
   assert(wakes == 0 && !close.preempt(0));
   assert(
-      aqlogger::power::report(tracker, close, State::Critical, wake).finalize);
+      oslogger::power::report(tracker, close, State::Critical, wake).finalize);
   assert(wakes == 1 && close.preempt(0));
   assert(
-      !aqlogger::power::report(tracker, close, State::Critical, wake).finalize);
+      !oslogger::power::report(tracker, close, State::Critical, wake).finalize);
   assert(wakes == 1);
   assert(close.due(0) && close.finish(CloseOutcome::Closed, 0) == Next::Done);
   // Settling never re-arms, Ok does.
-  aqlogger::power::report(tracker, close, State::Settling, wake);
-  aqlogger::power::report(tracker, close, State::Critical, wake);
+  oslogger::power::report(tracker, close, State::Settling, wake);
+  oslogger::power::report(tracker, close, State::Critical, wake);
   assert(wakes == 1 && !close.preempt(1));
-  aqlogger::power::report(tracker, close, State::Ok, wake);
-  aqlogger::power::report(tracker, close, State::Critical, wake);
+  oslogger::power::report(tracker, close, State::Ok, wake);
+  oslogger::power::report(tracker, close, State::Critical, wake);
   assert(wakes == 2 && close.preempt(1));
 }
 
 // The worker pass and its serial line, as service_emergency_close() runs it.
 // files counts telemetry files finalized during the attempt.
 void pass_lines() {
-  using aqlogger::power::format_pass;
-  using aqlogger::power::Pass;
-  using aqlogger::power::service;
+  using oslogger::power::format_pass;
+  using oslogger::power::Pass;
+  using oslogger::power::service;
   char line[160];
   EmergencyClose close;
   FakeStorage card;

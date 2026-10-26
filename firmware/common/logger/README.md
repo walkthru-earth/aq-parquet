@@ -1,4 +1,4 @@
-# AQLogger
+# OSLogger
 
 Opt-in native ESP-IDF logger engine shared by ESP32-S3 board adapters. Add the
 common component directories to the board CMake project and declare
@@ -7,7 +7,7 @@ versions are pinned by the shared toolchain lock and component manifests.
 
 ## Adapter contract
 
-Include `aq_logger.h`. Define a static `aqlogger::Field[]` dictionary and fill
+Include `aq_logger.h`. Define a static `oslogger::Field[]` dictionary and fill
 `Config` with its schema/dictionary identity, digest, acquisition configuration,
 board identity and optional board metadata. The runtime requires `sequence`,
 `monotonic_us` and `event_time_utc_us` as INT64, and `clock_epoch` as INT32. Other
@@ -45,7 +45,7 @@ host is that name in lower case. `begin()` refuses a period, id or
 prefix that does not pass these checks. The shared caps a new board must check
 are listed in [`firmware/common/README.md`](../README.md#shared-caps-a-new-board-must-check).
 
-Battery health is optional. A board that runs `aq::battery::Monitor` from
+Battery health is optional. A board that runs `opensensor::battery::Monitor` from
 `firmware/common/power` calls `report_battery(state, mv)` from its collect
 hook. The runtime prints `POWER STATE state=<name> mv=<n>` once per change and,
 on a critical entry while armed, appends ` action=finalize` and raises the
@@ -118,7 +118,7 @@ footerless completed row groups need explicit host recovery. fsync is not proof
 of power-cut durability.
 
 The optional [location component](../location/README.md) supplies validated H3
-cells and their grid centers. AQLogger snapshots cell, maximum resolution and
+cells and their grid centers. OSLogger snapshots cell, maximum resolution and
 optional declared country at acquisition, copies them through the queue and
 uses the first row's snapshot for file metadata. Changing any of those settings
 closes the previous file before adding new-location rows, including while a RAM
@@ -157,19 +157,19 @@ No filesystem ownership, retention or sampling-clock policy changes with this
 output choice.
 
 `parquet owner-pin` is a physical serial-only owner command for a headless
-fixed-PIN device. It emits `AQ OWNER_PIN` directly to the physical console, bypassing the
+fixed-PIN device. It emits `OS OWNER_PIN` directly to the physical console, bypassing the
 shared debug ring and BLE/LAN LOG_TAIL. Random pairing mode instead asks the
 owner to use the pairing display. There is no corresponding radio opcode,
 CONFIG secret field, or boot PIN print. Host tooling must consume/redact the
 response rather than save it in captures or repository artifacts.
 
 The physical serial `parquet wifi-profile` command exports only SSID/PSK bytes
-as hex plus Wi-Fi/LAN enable flags in one raw `AQ WIFI_PROFILE` line. It bypasses
+as hex plus Wi-Fi/LAN enable flags in one raw `OS WIFI_PROFILE` line. It bypasses
 DebugLog and has no network opcode. `parquet config-hex <hex>` imports up to 511
 bytes of whole `key=value` lines through the real shared SET_CONFIG handler:
 existing validation, NVS persistence, bond clearing, token-session dropping and
 Wi-Fi reconfiguration all keep their established behavior. Its reply is a
-secret-free `AQ CONFIG ok=1 reboot_required=<0/1>` acknowledgement. Errors expose
+secret-free `OS CONFIG ok=1 reboot_required=<0/1>` acknowledgement. Errors expose
 only allowlisted key identifiers. Embedded NULs, invalid hex, oversize input and
 invalid settings are rejected. Hosts must handle credential output in memory and
 exclude it from captures and artifacts.
@@ -286,12 +286,12 @@ writes nothing looking alive.
 - `poll()` keeps the passive warning. After 5 s without a stamp it logs
   `PARQUET ERROR operation=worker-stall seconds=N state=... stack_free=...
   watchdog=armed|warn|off`, at most every 30 s.
-- With `CONFIG_AQ_LOGGER_WORKER_WDT=y` (default) `begin()` registers the worker
+- With `CONFIG_OS_LOGGER_WORKER_WDT=y` (default) `begin()` registers the worker
   with the ESP-IDF task watchdog through `esp_task_wdt_add_user("parquet-sd")`.
   The task watchdog has one period for all users and the idle tasks
   (`CONFIG_ESP_TASK_WDT_TIMEOUT_S`, 5 s), so a 1 s `esp_timer` supervisor also
   feeds the user on the worker's behalf while the heartbeat is younger than
-  `CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S` (default 60 s). A single SD call
+  `CONFIG_OS_LOGGER_WORKER_WDT_TIMEOUT_S` (default 60 s). A single SD call
   between two stamps, such as a first FAT free-cluster count or a remount, may
   therefore take up to that timeout without a false reset.
 - When the heartbeat is older than the timeout, the supervisor stops feeding,
@@ -333,7 +333,7 @@ writes nothing looking alive.
   timeout_s=... consecutive=... max_consecutive=3 healthy_s=... supervised=1`.
   After three stall resets without a healthy period in between, the worker is
   warn-only: no reset, only the `worker-stall` warnings. A plain reboot does not
-  clear the count. `CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S` (default 3600 s) of
+  clear the count. `CONFIG_OS_LOGGER_WORKER_WDT_HEALTHY_S` (default 3600 s) of
   continuous liveness clears it, re-arms a warn-only worker and logs
   `PARQUET WATCHDOG mode=armed consecutive=0 reason=healthy`. Power loss also
   clears the RTC record.
@@ -357,7 +357,7 @@ write the board.
 
 ### Bench stall command
 
-`CONFIG_AQ_LOGGER_BENCH_STALL` (default n) adds one serial command to the
+`CONFIG_OS_LOGGER_BENCH_STALL` (default n) adds one serial command to the
 worker, `parquet bench-stall <s>`. It prints `PARQUET BENCH stall_s=<s>` and
 then sleeps in 100 ms steps without stamping the heartbeat, so the supervisor
 sees a real stall. `0` blocks forever, which ends in the task watchdog reset
@@ -368,7 +368,7 @@ and core dump above. `1` to `3600` is a returning stall that prints
 pure in `aq_logger_bench_stall.h`, and `pixi run logger-bench-stall-test` runs
 them with sanitizers. It also fails when the Kconfig default is not n, when
 any shipped `sdkconfig.defaults` sets the option, or when bench code in
-`aq_logger.cpp` sits outside `#if CONFIG_AQ_LOGGER_BENCH_STALL`. With the
+`aq_logger.cpp` sits outside `#if CONFIG_OS_LOGGER_BENCH_STALL`. With the
 option off the compiled `aq_logger.cpp` object is the same as before the
 command existed.
 

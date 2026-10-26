@@ -8,10 +8,10 @@
 
 namespace ble {
 namespace {
-using aq::sync::get_u16;
-using aq::sync::get_u32;
-using aq::sync::put_u16;
-using aq::sync::put_u32;
+using opensensor::sync::get_u16;
+using opensensor::sync::get_u32;
+using opensensor::sync::put_u16;
+using opensensor::sync::put_u32;
 
 constexpr std::uint8_t kFrameByeType = 0x4b;
 constexpr std::uint8_t kFrameDiagType = 0x4c;
@@ -135,10 +135,10 @@ DisconnectEvent record_disconnect(DisconnectReason reason, std::uint8_t link,
   event.link = link;
   event.err = err;
   event.queued_frames = queued_frames;
-  event.boot_seq = aqlog.boot_seq();
+  event.boot_seq = oslog.boot_seq();
   std::uint8_t bytes[DebugLog::kEventBytes];
   encode_event(event, bytes);
-  aqlog.record_event(bytes, event.reason);
+  oslog.record_event(bytes, event.reason);
   last_reason.store(event.reason, std::memory_order_relaxed);
   disconnects.fetch_add(1, std::memory_order_release);
   return event;
@@ -161,13 +161,13 @@ std::size_t encode_diag_snapshot(std::uint8_t *out, std::size_t capacity) {
   // The ring stores the wire layout, so the newest `fit` events copy straight
   // into the frame.
   const std::size_t n =
-      aqlog.events(reinterpret_cast<std::uint8_t (*)[DebugLog::kEventBytes]>(
+      oslog.events(reinterpret_cast<std::uint8_t (*)[DebugLog::kEventBytes]>(
                        out + kDiagHeaderBytes),
                    fit);
   out[0] = kFrameDiagType;
-  put_u16(out + 1, aqlog.boot_seq());
+  put_u16(out + 1, oslog.boot_seq());
   for (std::size_t i = 0; i < kDisconnectReasons; ++i)
-    put_u16(out + 3 + 2 * i, aqlog.counter(i));
+    put_u16(out + 3 + 2 * i, oslog.counter(i));
   out[kDiagHeaderBytes - 1] = static_cast<std::uint8_t>(n);
   return kDiagHeaderBytes + n * kEventBytes;
 }

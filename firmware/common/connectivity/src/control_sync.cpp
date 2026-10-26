@@ -9,9 +9,9 @@
 #include <cstdio>
 #include <cstring>
 
-namespace aqsync {
+namespace ossync {
 namespace {
-using namespace aq::sync;
+using namespace opensensor::sync;
 constexpr std::size_t kPayloadCapacity = 1024;
 
 void send_config(ble::Link link, ble::Op op, const ControlReplies &replies,
@@ -26,7 +26,7 @@ void send_config(ble::Link link, ble::Op op, const ControlReplies &replies,
            : config::build_json(reinterpret_cast<char *>(frame + 2),
                                 ble::kMaxJson, view);
   if (page == 2 && length >= 2) {
-    const auto time = aq::network_time::status();
+    const auto time = opensensor::network_time::status();
     char age[24] = "null";
     if (time.has_anchor)
       std::snprintf(age, sizeof(age), "%llu",
@@ -98,7 +98,7 @@ void send_log_tail(const ble::ControlRequest &request, std::uint16_t max_bytes,
     abort::note_stopped(request, ble::kOpLogTail);
   };
   std::uint32_t total = 0;
-  auto cursor = aqlog.tail_cursor(max_bytes, total);
+  auto cursor = oslog.tail_cursor(max_bytes, total);
   const std::size_t payload_max = reply_cap(link, replies);
   std::uint8_t frame[1 + kPayloadCapacity];
   std::size_t sent = 0;
@@ -110,7 +110,7 @@ void send_log_tail(const ble::ControlRequest &request, std::uint16_t max_bytes,
         return;
       }
       const std::size_t slice =
-          aqlog.read(cursor, reinterpret_cast<char *>(frame + 1), slice_max);
+          oslog.read(cursor, reinterpret_cast<char *>(frame + 1), slice_max);
       if (!slice)
         break;
       frame[0] = ble::kFrameLog;
@@ -220,7 +220,7 @@ bool handle_common_control(const ble::ControlRequest &request,
     put_u16(frame + 1, config::kLanPort);
     std::memcpy(frame + 3, settings.token, config::kTokenBytes);
     replies.respond(replies.context, request.link, frame, sizeof(frame));
-    aqlog.println("LAN TOKEN issued=ble");
+    oslog.println("LAN TOKEN issued=ble");
     return true;
   }
   case ble::kOpWifiScan:
@@ -233,4 +233,4 @@ bool handle_common_control(const ble::ControlRequest &request,
     return false;
   }
 }
-} // namespace aqsync
+} // namespace ossync

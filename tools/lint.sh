@@ -24,6 +24,15 @@ case "${prefix_rc}" in
   1) exit 1 ;;
   *) printf '!!! name prefix check failed to run (exit %s)\n' "${prefix_rc}" >&2; exit 1 ;;
 esac
+# Retired AQ wire, NVS, Kconfig and serial names stay out of every tracked
+# file but the dated history (#93). Same exit code contract.
+retired_rc=0
+python tools/check_retired_names.py || retired_rc=$?
+case "${retired_rc}" in
+  0) ;;
+  1) exit 1 ;;
+  *) printf '!!! retired name check failed to run (exit %s)\n' "${retired_rc}" >&2; exit 1 ;;
+esac
 # No path under secrets/ and no PEM private key may be tracked by git (#45).
 # The app signing key stays on the owner machine. Same exit code contract.
 secrets_rc=0
@@ -67,6 +76,6 @@ cppcheck "${options[@]}" \
 cppcheck "${options[@]}" -DCONFIG_SPIRAM=1 \
   firmware/esp-idf-waveshare-sim7670g/logger/main.cpp
 # The bench only parquet bench-stall branch is off in every shipped image, so
-# check aq_logger.cpp once more with it on (CONFIG_AQ_LOGGER_BENCH_STALL).
-cppcheck "${options[@]}" -DCONFIG_AQ_LOGGER_BENCH_STALL=1 \
+# check aq_logger.cpp once more with it on (CONFIG_OS_LOGGER_BENCH_STALL).
+cppcheck "${options[@]}" -DCONFIG_OS_LOGGER_BENCH_STALL=1 \
   firmware/common/logger/src/aq_logger.cpp

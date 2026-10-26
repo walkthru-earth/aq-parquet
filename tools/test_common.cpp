@@ -18,9 +18,9 @@ void sample_contract() {
     std::array<std::int64_t, 77> data{};
     std::array<std::uint8_t, 77> valid{};
   };
-  static_assert(sizeof(aq::NumericSample<77>) == sizeof(PreviousLayout),
+  static_assert(sizeof(opensensor::NumericSample<77>) == sizeof(PreviousLayout),
                 "Extraction must preserve row stride");
-  aq::NumericSample<5> row;
+  opensensor::NumericSample<5> row;
   for (const auto validity : row.valid)
     assert(validity == 0);
   row.integer(0, -42);
@@ -41,7 +41,7 @@ void sample_contract() {
 }
 
 void clock_contract() {
-  using namespace aq::utc;
+  using namespace opensensor::utc;
   static_assert(days_from_civil(1970, 1, 1) == 0);
   static_assert(days_from_civil(1969, 12, 31) == -1);
   static_assert(days_from_civil(2000, 1, 1) == 10957);
@@ -92,7 +92,7 @@ void clock_contract() {
 }
 
 void wire_contract() {
-  using namespace aq::sync;
+  using namespace opensensor::sync;
   std::uint8_t request_bytes[12]{};
   put_i64(request_bytes, 1800000000LL);
   put_u32(request_bytes + 8, 123456);
@@ -156,14 +156,14 @@ std::uint32_t crc_of(const std::uint8_t *data, std::size_t size,
   std::uint32_t crc = 0xffffffffU;
   for (std::size_t done = 0; done < size;) {
     const std::size_t part = size - done < block ? size - done : block;
-    crc = aq::sync::crc32_update(crc, data + done, part);
+    crc = opensensor::sync::crc32_update(crc, data + done, part);
     done += part;
   }
   return crc ^ 0xffffffffU;
 }
 
 void crc_contract() {
-  using aq::sync::crc_update;
+  using opensensor::sync::crc_update;
   assert(crc_of(nullptr, 0, 4096) == 0);
   const auto *check = reinterpret_cast<const std::uint8_t *>("123456789");
   assert(crc_of(check, 9, 4096) == 0xcbf43926U);
@@ -185,7 +185,7 @@ void crc_contract() {
 }
 
 void archive_contract() {
-  using namespace aq::sync;
+  using namespace opensensor::sync;
   assert(safe_parquet_name("station=a/year=2026/part-01.parquet"));
   assert(safe_parquet_name("legacy-parquet/a.parquet"));
   assert(!safe_parquet_name(nullptr));

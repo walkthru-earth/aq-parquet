@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <utility>
 
-namespace aq::coredump {
+namespace opensensor::coredump {
 namespace {
 
 // Room for the longest field text plus its NUL.
@@ -164,4 +164,4 @@ Report report(const Source &source, const Store &store,
           .length = finish(written, line.size())};
 }
 
-} // namespace aq::coredump
+} // namespace opensensor::coredump

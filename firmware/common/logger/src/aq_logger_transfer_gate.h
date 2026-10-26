@@ -9,7 +9,7 @@
 // How a due emergency close stops a BLE or LAN LIST or READ in flight. Only the
 // storage worker calls these, between frames it is about to send. No IO and
 // no clocks, so the host tests drive the same code as the firmware.
-namespace aqlogger::power {
+namespace oslogger::power {
 
 // CHUNK and FILE frames carry transfer data. A terminal frame (READ_END,
 // LIST_END, ERROR) is never refused or cut short, so a stopped transfer
@@ -39,4 +39,4 @@ inline bool keep_waiting(const EmergencyClose &close, bool abort_pending,
   return !abort_pending && !(data && close.preempt(now_ms));
 }
 
-} // namespace aqlogger::power
+} // namespace oslogger::power

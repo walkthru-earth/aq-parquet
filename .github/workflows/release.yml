@@ -49,12 +49,12 @@ jobs:
             task: cores3-build
             project: firmware/esp-idf-cores3
             variant: bringup
-            app: aq_cores3
+            app: opensensor_cores3
           - name: waveshare-logger
             task: waveshare-build logger
             project: firmware/esp-idf-waveshare-sim7670g
             variant: logger
-            app: aq_waveshare
+            app: opensensor_waveshare
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

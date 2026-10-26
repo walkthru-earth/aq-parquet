@@ -5,7 +5,7 @@
 
 // Sampling cadence and RAM batch bounds shared by the logger runtime and its
 // footer. Pure, so the host tests check the same decisions the device makes.
-namespace aqlogger::cadence {
+namespace oslogger::cadence {
 // Default sample period. Both released boards sample every 10 s and write
 // footer sample_interval_ms "10000".
 inline constexpr std::uint32_t kDefaultSampleIntervalMs = 10000;
@@ -34,4 +34,34 @@ inline constexpr std::uint32_t kMinSampleIntervalMs = 1000;
          : rows < kMaxBatchRows ? static_cast<std::size_t>(rows)
                                 : kMaxBatchRows;
 }
-} // namespace aqlogger::cadence
+
+// The sampling deadline period. begin() derives it once from
+// Config::sample_interval_ms, and poll() and the footer read the same value.
+[[nodiscard]] constexpr std::int64_t period_us(std::uint32_t sample_ms) {
+  return std::int64_t{sample_ms} * 1000;
+}
+
+// One poll of the monotonic sampling deadline. Not due before next. Once due,
+// whole periods that passed unsampled are skipped and counted, the sample is
+// stamped with the latest deadline at or before now, and the following
+// deadline is one period later. A period of 0 or less is never due.
+struct Step {
+  bool due;
+  std::int64_t skipped;
+  std::int64_t deadline_us;
+  std::int64_t next_us;
+};
+
+[[nodiscard]] constexpr Step advance(std::int64_t now_us, std::int64_t next_us,
+                                     std::int64_t period) {
+  if (period <= 0 || now_us < next_us)
+    return {
+        .due = false, .skipped = 0, .deadline_us = next_us, .next_us = next_us};
+  const auto skipped = (now_us - next_us) / period;
+  const auto deadline = next_us + skipped * period;
+  return {.due = true,
+          .skipped = skipped,
+          .deadline_us = deadline,
+          .next_us = deadline + period};
+}
+} // namespace oslogger::cadence

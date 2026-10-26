@@ -8,7 +8,7 @@
 #include <string>
 #include <string_view>
 
-namespace bench = aqlogger::bench;
+namespace bench = oslogger::bench;
 using bench::StallError;
 
 namespace {

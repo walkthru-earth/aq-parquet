@@ -61,7 +61,7 @@ firmware deployment. Retain the exact deployed app/image identity and a
 baseline result from the previous image. Never rotate the token, change radio
 settings, flush, delete or rewrite sensor archives for a speed comparison.
 
-1. Stop all other collectors. Use a discovered `_aqsync._tcp` endpoint and an
+1. Stop all other collectors. Use a discovered `_ossync._tcp` endpoint and an
    already enrolled token file in ignored private artifacts. Pass only its file
    path, never a literal token in a shell command or retained report. Run
    `pixi run ble-sync --lan <discovered-host> --token-file <private-path> info`

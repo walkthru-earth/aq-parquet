@@ -16,8 +16,8 @@
 #include <string>
 #include <sys/stat.h>
 
-namespace ls = aq::logger::list_since;
-using aq::logger::detail::DirectoryWalk;
+namespace ls = opensensor::logger::list_since;
+using opensensor::logger::detail::DirectoryWalk;
 
 namespace {
 
@@ -144,10 +144,10 @@ void check_names_and_dates() {
   static_assert(ls::cursor_day(21010101) == 21001231);
   static_assert(ls::cursor_day(20260101) == 20260101);
   static_assert(
-      aqsync::valid_list_day(20240229) && !aqsync::valid_list_day(20230229) &&
-      !aqsync::valid_list_day(20191231) && aqsync::valid_list_day(21001231) &&
-      !aqsync::valid_list_day(21010101) && !aqsync::valid_list_day(20260431) &&
-      !aqsync::valid_list_day(20261301));
+      ossync::valid_list_day(20240229) && !ossync::valid_list_day(20230229) &&
+      !ossync::valid_list_day(20191231) && ossync::valid_list_day(21001231) &&
+      !ossync::valid_list_day(21010101) && !ossync::valid_list_day(20260431) &&
+      !ossync::valid_list_day(20261301));
 
   static_assert(ls::enter_dated("station=a/unsynced", 0) == false);
   static_assert(ls::enter_dated("station=a/unsynced/boot=x", 20260101) ==
@@ -187,16 +187,16 @@ void check_names_and_dates() {
   assert(!ls::parse_boot("00112233445566778899aabbccddeeff0", boot));
   assert(!ls::parse_boot("0011223344556677889-aabbccddeeff0", boot));
 
-  aqsync::ListCursor cursor{.mount_epoch = 0x01020304,
+  ossync::ListCursor cursor{.mount_epoch = 0x01020304,
                             .day = 20260315,
                             .boot = boot,
                             .seq = 0x1122334455667788ULL};
-  std::array<std::uint8_t, aqsync::kListCursorBytes> wire{};
-  aqsync::encode_cursor(cursor, wire);
+  std::array<std::uint8_t, ossync::kListCursorBytes> wire{};
+  ossync::encode_cursor(cursor, wire);
   assert(wire[0] == 0x04 && wire[3] == 0x01);
   assert(wire[8] == 0x00 && wire[9] == 0x11 && wire[23] == 0xff);
   assert(wire[24] == 0x88 && wire[31] == 0x11);
-  const auto back = aqsync::decode_cursor(wire);
+  const auto back = ossync::decode_cursor(wire);
   assert(back.mount_epoch == cursor.mount_epoch && back.day == cursor.day &&
          back.boot == cursor.boot && back.seq == cursor.seq);
 }
@@ -301,7 +301,7 @@ void check_keeper() {
         .current_last_seq = 9};
     const auto plan = ls::plan(in);
     assert(!plan.full && plan.unsynced_full);
-    assert(plan.result.flags == aqsync::kListSinceUnsyncedFull);
+    assert(plan.result.flags == ossync::kListSinceUnsyncedFull);
     assert(plan.result.next.boot == ls::kUnknownBoot &&
            plan.result.next.seq == ls::kSeqDone);
     nvs.fail_save = false;
@@ -407,7 +407,7 @@ void check_tracker() {
   ls::RingKeeper keeper;
   keeper.set_current(boot_of(6));
   keeper.note_unsynced(nvs.store());
-  const aqsync::ListCursor cursor{
+  const ossync::ListCursor cursor{
       .mount_epoch = 5, .day = 20260316, .boot = boot_of(6), .seq = 30};
   const auto in = tracker.inputs(cursor, 5, 20260317, keeper, nvs.store());
   assert(in.cursor.day == 20260316 && in.cursor.seq == 30);
@@ -421,7 +421,7 @@ void check_tracker() {
   assert(plan.result.next.boot == boot_of(6) && plan.result.next.seq == 45);
 }
 
-ls::Inputs inputs(const aqsync::ListCursor &cursor, const ls::Ring *ring,
+ls::Inputs inputs(const ossync::ListCursor &cursor, const ls::Ring *ring,
                   const ls::BootId &current) {
   return {.cursor = cursor,
           .mount_epoch = 0xcafe,
@@ -437,7 +437,7 @@ void check_plan() {
   ls::Ring ring;
   ring.append(boot_of(1));
   ring.append(boot_of(2));
-  const aqsync::ListCursor zero{};
+  const ossync::ListCursor zero{};
   // Epoch 0 never matches, so the first request is a full listing.
   auto in = inputs(zero, &ring, boot_of(2));
   in.mount_epoch = 0;
@@ -447,7 +447,7 @@ void check_plan() {
       {.mount_epoch = 0xbeef, .day = 20260310, .boot = boot_of(1), .seq = 3},
       &ring, boot_of(2));
   auto plan = ls::plan(in);
-  assert(plan.full && plan.result.flags == aqsync::kListSinceFull);
+  assert(plan.full && plan.result.flags == ossync::kListSinceFull);
   assert(plan.result.next.mount_epoch == 0xcafe);
   assert(plan.result.next.day == 20260314);
   assert(plan.result.next.boot == boot_of(2) && plan.result.next.seq == 0);
@@ -485,7 +485,7 @@ void check_plan() {
   in.cursor.boot = boot_of(7);
   plan = ls::plan(in);
   assert(plan.unsynced_full &&
-         plan.result.flags == aqsync::kListSinceUnsyncedFull);
+         plan.result.flags == ossync::kListSinceUnsyncedFull);
   // A zero boot came from an empty ring, so every ring boot is new.
   in.cursor.boot = {};
   plan = ls::plan(in);

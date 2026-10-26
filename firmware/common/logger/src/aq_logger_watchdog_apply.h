@@ -15,7 +15,7 @@
 //   void delete_user()          esp_task_wdt_delete_user, drops the handle
 // Timer wraps the periodic esp_timer that runs tick().
 //   bool create()  bool start()  void destroy()
-namespace aqlogger::watchdog {
+namespace oslogger::watchdog {
 
 // Applies one decision of supervise(). Returns false when the task watchdog
 // refused it, so the caller can unwind with failed(). default_panic is the
@@ -102,4 +102,4 @@ void launch(Boot &boot, Supervisor &state, Twdt &twdt, Timer &timer) {
     state.armed = false;
   }
 }
-} // namespace aqlogger::watchdog
+} // namespace oslogger::watchdog

@@ -10,48 +10,48 @@ int main() {
 
   // A command arriving between idle queue inspection and the wait wakes it.
   before_idle_wait = [&] {
-    assert(aqlogger::work::enqueue(&commands, &item, &wakeup));
+    assert(oslogger::work::enqueue(&commands, &item, &wakeup));
   };
-  aqlogger::work::wait_if_idle(&samples, &wakeup);
+  oslogger::work::wait_if_idle(&samples, &wakeup);
   assert(commands.depth == 1 && wakeup.blocked == 0 && !wakeup.pending);
   commands.depth = 0;
 
   // A producer can enqueue before the task exists; its signal is retained.
-  assert(aqlogger::work::enqueue(&commands, &item, &wakeup));
-  aqlogger::work::wait_if_idle(&samples, &wakeup);
+  assert(oslogger::work::enqueue(&commands, &item, &wakeup));
+  oslogger::work::wait_if_idle(&samples, &wakeup);
   assert(commands.depth == 1 && wakeup.blocked == 0);
   commands.depth = 0;
 
   // Binary signals coalesce, while every successfully copied item survives.
   for (unsigned i = 0; i < commands.capacity; ++i)
-    assert(aqlogger::work::enqueue(&commands, &item, &wakeup));
-  assert(!aqlogger::work::enqueue(&commands, &item, &wakeup));
+    assert(oslogger::work::enqueue(&commands, &item, &wakeup));
+  assert(!oslogger::work::enqueue(&commands, &item, &wakeup));
   assert(commands.depth == commands.capacity && wakeup.pending);
-  aqlogger::work::wait_if_idle(&samples, &wakeup);
+  oslogger::work::wait_if_idle(&samples, &wakeup);
   assert(commands.depth == commands.capacity && wakeup.blocked == 0);
   commands.depth = 0;
 
   // Samples queued behind a processed command keep their priority next pass.
-  assert(aqlogger::work::enqueue(&samples, &item, &wakeup));
+  assert(oslogger::work::enqueue(&samples, &item, &wakeup));
   const auto waits = wakeup.waits;
-  aqlogger::work::wait_if_idle(&samples, &wakeup);
+  oslogger::work::wait_if_idle(&samples, &wakeup);
   assert(wakeup.waits == waits && samples.depth == 1);
   samples.depth = 0;
-  aqlogger::work::wait_if_idle(&samples,
+  oslogger::work::wait_if_idle(&samples,
                                &wakeup); // consume the retained signal
   assert(wakeup.blocked == 0);
-  aqlogger::work::wait_if_idle(&samples, &wakeup); // truly idle, bounded wait
+  oslogger::work::wait_if_idle(&samples, &wakeup); // truly idle, bounded wait
   assert(wakeup.blocked == 1);
 
   // A rejected enqueue must not create a wakeup or a phantom item.
   commands.capacity = 0;
-  assert(!aqlogger::work::enqueue(&commands, &item, &wakeup));
+  assert(!oslogger::work::enqueue(&commands, &item, &wakeup));
   assert(!wakeup.pending && commands.depth == 0);
 
   // Worker stall liveness: passive warnings after 5 s with 30 s cooldown, and
   // opt-in active watchdog restart when worker_stall_restart_s is configured.
-  using aqlogger::work::check_stall;
-  using aqlogger::work::StallAction;
+  using oslogger::work::check_stall;
+  using oslogger::work::StallAction;
   std::int64_t last_warn = 0;
   assert(check_stall(10000000LL, 0, last_warn, 0) == StallAction::None);
   assert(check_stall(5000000LL, 1000000LL, last_warn, 0) == StallAction::None);
@@ -87,7 +87,7 @@ int main() {
          StallAction::Restart);
   // Supervisor expiry: none before the first heartbeat or with timeout 0,
   // strictly after the (>= 5 s) timeout, independent of the warn cooldown.
-  using aqlogger::work::stall_expired;
+  using oslogger::work::stall_expired;
   assert(!stall_expired(100000000LL, 0, 60));
   assert(!stall_expired(100000000LL, 1000000LL, 0));
   assert(!stall_expired(61000000LL, 1000000LL, 60));
@@ -100,7 +100,7 @@ int main() {
          StallAction::Warn);
 
   // Boot-loop guard kept in RTC no-init memory.
-  namespace wd = aqlogger::watchdog;
+  namespace wd = oslogger::watchdog;
   wd::Guard guard{0xdeadbeef, 7, 9, 1}; // power-on garbage
   assert(!wd::valid(guard));
   assert(wd::on_boot(guard, true) == wd::Mode::Armed);

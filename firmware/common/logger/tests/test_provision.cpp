@@ -17,8 +17,8 @@ std::string hex(const std::string &value) {
   }
   return result;
 }
-aqlogger::ProvisionResult apply(const std::string &lines) {
-  return aqlogger::apply_config_hex(hex(lines).c_str());
+oslogger::ProvisionResult apply(const std::string &lines) {
+  return oslogger::apply_config_hex(hex(lines).c_str());
 }
 } // namespace
 namespace ble {
@@ -52,13 +52,13 @@ int main() {
   assert(std::memcmp(token.token, settings.token, config::kTokenBytes) != 0);
   char profile[256]{};
   auto length =
-      aqlogger::format_wifi_profile(settings, profile, sizeof(profile));
+      oslogger::format_wifi_profile(settings, profile, sizeof(profile));
   assert(length == std::strlen(profile));
-  const auto expected = "AQ WIFI_PROFILE ssid=" + hex(ssid) +
+  const auto expected = "OS WIFI_PROFILE ssid=" + hex(ssid) +
                         " psk=" + hex(psk) + " wifi_on=1 lan_on=1\n";
   assert(profile == expected);
-  assert(aqlogger::format_wifi_profile(settings, profile, length) == 0);
-  assert(aqlogger::format_wifi_profile(settings, profile, length + 1) ==
+  assert(oslogger::format_wifi_profile(settings, profile, length) == 0);
+  assert(oslogger::format_wifi_profile(settings, profile, length + 1) ==
          length);
   assert(std::strstr(profile, "pin=") == nullptr &&
          std::strstr(profile, "token=") == nullptr);
@@ -74,8 +74,8 @@ int main() {
   result = apply(psk); // malformed key content must not become an error log
   assert(!result.ok && std::strcmp(result.bad_key, "invalid-key") == 0);
   for (const auto *value : {"", "1", "0x", "gg"})
-    assert(!aqlogger::apply_config_hex(value).ok);
-  assert(!aqlogger::apply_config_hex(
+    assert(!oslogger::apply_config_hex(value).ok);
+  assert(!oslogger::apply_config_hex(
               std::string(2 * ble::kMaxControlBytes, '0').c_str())
               .ok);
   std::string boundary = "lan.on=1\n";
@@ -88,18 +88,18 @@ int main() {
   assert(result.ok && result.reboot_required);
   std::strcpy(settings.ssid, std::string(config::kSsidMax, 's').c_str());
   std::strcpy(settings.psk, std::string(config::kPskMax, 'p').c_str());
-  assert(aqlogger::format_wifi_profile(settings, profile, sizeof(profile)) > 0);
+  assert(oslogger::format_wifi_profile(settings, profile, sizeof(profile)) > 0);
   char logs[DebugLog::kFallbackRingBytes + 1]{};
   std::uint32_t total = 0;
-  const auto count = aqlog.tail(logs, sizeof(logs) - 1, total);
+  const auto count = oslog.tail(logs, sizeof(logs) - 1, total);
   logs[count] = '\0';
   assert(std::strstr(logs, ssid.c_str()) == nullptr);
   assert(std::strstr(logs, psk.c_str()) == nullptr);
   assert(std::strstr(logs, hex(psk).c_str()) == nullptr);
   assert(std::strstr(logs, "000001") == nullptr);
-  assert(std::strstr(logs, "AQ WIFI_PROFILE") == nullptr);
+  assert(std::strstr(logs, "OS WIFI_PROFILE") == nullptr);
 }
 
-namespace aq::network_time {
+namespace opensensor::network_time {
 Status status() { return Status{}; }
-} // namespace aq::network_time
+} // namespace opensensor::network_time

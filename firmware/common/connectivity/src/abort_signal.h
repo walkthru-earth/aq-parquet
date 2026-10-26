@@ -13,7 +13,7 @@
 #include <atomic>
 #include <cstdint>
 
-namespace aqsync::abort {
+namespace ossync::abort {
 constexpr std::size_t kSlots = 1 + ble::kMaxLanClients;
 
 struct Stopped {
@@ -92,4 +92,4 @@ inline std::uint8_t take_stopped(const ble::ControlRequest &request) {
   entry = Stopped{};
   return op;
 }
-} // namespace aqsync::abort
+} // namespace ossync::abort

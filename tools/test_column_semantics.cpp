@@ -22,15 +22,15 @@ constexpr Name kCores3Fields[] = {
 #include "../firmware/esp-idf-cores3/bringup/telemetry_fields.inc"
 #undef FIELD
 };
-constexpr aq::semantics::Column kCores3Semantics[] = {
+constexpr opensensor::semantics::Column kCores3Semantics[] = {
 #define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
             plausible_max, settle_s, valid_when, property, sensor_vendor,      \
             sensor_model)                                                      \
   {#name,                                                                      \
    ucum,                                                                       \
-   aq::semantics::Role::role,                                                  \
+   opensensor::semantics::Role::role,                                          \
    cf_standard_name,                                                           \
-   aq::semantics::Aggregate::aggregate,                                        \
+   opensensor::semantics::Aggregate::aggregate,                                \
    #plausible_min,                                                             \
    #plausible_max,                                                             \
    settle_s,                                                                   \
@@ -47,15 +47,15 @@ constexpr Name kWaveshareFields[] = {
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc"
 #undef FIELD
 };
-constexpr aq::semantics::Column kWaveshareSemantics[] = {
+constexpr opensensor::semantics::Column kWaveshareSemantics[] = {
 #define SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,      \
             plausible_max, settle_s, valid_when, property, sensor_vendor,      \
             sensor_model)                                                      \
   {#name,                                                                      \
    ucum,                                                                       \
-   aq::semantics::Role::role,                                                  \
+   opensensor::semantics::Role::role,                                          \
    cf_standard_name,                                                           \
-   aq::semantics::Aggregate::aggregate,                                        \
+   opensensor::semantics::Aggregate::aggregate,                                \
    #plausible_min,                                                             \
    #plausible_max,                                                             \
    settle_s,                                                                   \
@@ -69,20 +69,23 @@ constexpr aq::semantics::Column kWaveshareSemantics[] = {
 
 static_assert(std::size(kCores3Semantics) == 81);
 static_assert(std::size(kWaveshareSemantics) == 62);
-static_assert(aq::semantics::aligned(kCores3Fields, kCores3Semantics));
-static_assert(aq::semantics::aligned(kWaveshareFields, kWaveshareSemantics));
-static_assert(aq::semantics::well_formed(kCores3Fields, kCores3Semantics));
-static_assert(aq::semantics::well_formed(kWaveshareFields,
-                                         kWaveshareSemantics));
+static_assert(opensensor::semantics::aligned(kCores3Fields, kCores3Semantics));
+static_assert(opensensor::semantics::aligned(kWaveshareFields,
+                                             kWaveshareSemantics));
+static_assert(opensensor::semantics::well_formed(kCores3Fields,
+                                                 kCores3Semantics));
+static_assert(opensensor::semantics::well_formed(kWaveshareFields,
+                                                 kWaveshareSemantics));
 
-constexpr const aq::semantics::Column &
-row(std::span<const aq::semantics::Column> rows, std::string_view name) {
+constexpr const opensensor::semantics::Column &
+row(std::span<const opensensor::semantics::Column> rows,
+    std::string_view name) {
   for (const auto &r : rows)
     if (r.name == name)
       return r;
   return rows.front();
 }
-constexpr bool has(std::span<const aq::semantics::Column> rows,
+constexpr bool has(std::span<const opensensor::semantics::Column> rows,
                    std::string_view name) {
   for (const auto &r : rows)
     if (r.name == name)
@@ -107,13 +110,13 @@ static_assert(shared_columns_agree());
 // BMI270 datasheet -40 where the template example says -20.
 struct TemplateColumn {
   std::string_view name, unit, property, valid_when, min, max;
-  aq::semantics::Role role;
-  aq::semantics::Aggregate aggregate;
+  opensensor::semantics::Role role;
+  opensensor::semantics::Aggregate aggregate;
   std::uint32_t settle_s;
   bool has_aggregate = true;
 };
-using enum aq::semantics::Role;
-using enum aq::semantics::Aggregate;
+using enum opensensor::semantics::Role;
+using enum opensensor::semantics::Aggregate;
 constexpr TemplateColumn kTemplate[] = {
     {"event_time_utc_us", "us", "", "", "", "", coordinate, point, 0, false},
     {"pm1_atmospheric_ug_m3", "ug/m3",
@@ -189,8 +192,9 @@ constexpr KotlinValue kKotlinWaveshare[] = {
      180, 106},
 };
 template <std::size_t N>
-constexpr int kotlin_mismatch(std::span<const aq::semantics::Column> rows,
-                              const KotlinValue (&values)[N]) {
+constexpr int
+kotlin_mismatch(std::span<const opensensor::semantics::Column> rows,
+                const KotlinValue (&values)[N]) {
   for (const auto &k : values) {
     if (!has(rows, k.column))
       continue;
@@ -208,7 +212,7 @@ static_assert(kotlin_mismatch(kWaveshareSemantics, kKotlinWaveshare) == 0);
 // PMS_SETTLE_S is 180 (Metrics.kt:90), so the other bins and CF=1 columns
 // carry the same gate and settle.
 constexpr bool
-particle_rows_follow_pms(std::span<const aq::semantics::Column> rows) {
+particle_rows_follow_pms(std::span<const opensensor::semantics::Column> rows) {
   for (const auto &r : rows)
     if (r.ucum == "ug/m3" || r.ucum == "{particles}/dL")
       if (r.role == physicalMeasurement &&
@@ -231,9 +235,9 @@ void expect(bool condition, const char *what) {
 }
 
 template <std::size_t N>
-std::array<aq::semantics::Column, N>
-copy(const aq::semantics::Column (&rows)[N]) {
-  std::array<aq::semantics::Column, N> out{};
+std::array<opensensor::semantics::Column, N>
+copy(const opensensor::semantics::Column (&rows)[N]) {
+  std::array<opensensor::semantics::Column, N> out{};
   for (std::size_t i = 0; i < N; ++i)
     out[i] = rows[i];
   return out;
@@ -241,9 +245,9 @@ copy(const aq::semantics::Column (&rows)[N]) {
 
 template <typename Fields, std::size_t N>
 void check_board(const char *board, const Fields &fields,
-                 const aq::semantics::Column (&rows)[N]) {
-  using aq::semantics::aligned;
-  using aq::semantics::well_formed;
+                 const opensensor::semantics::Column (&rows)[N]) {
+  using opensensor::semantics::aligned;
+  using opensensor::semantics::well_formed;
   std::printf("board %s, %zu rows\n", board, N);
   expect(aligned(fields, std::span{rows}), "real table aligned");
   expect(well_formed(fields, std::span{rows}), "real table well formed");
@@ -350,10 +354,11 @@ void check_board(const char *board, const Fields &fields,
     expect(!well_formed(fields, std::span{broken}),
            "non snake case quantity is caught");
   }
-  expect(aq::semantics::property_of(std::span{rows}, rows[12].name) ==
+  expect(opensensor::semantics::property_of(std::span{rows}, rows[12].name) ==
              rows[12].property.data(),
          "property_of returns the row property");
-  expect(aq::semantics::property_of(std::span{rows}, "not_a_column") == nullptr,
+  expect(opensensor::semantics::property_of(std::span{rows}, "not_a_column") ==
+             nullptr,
          "property_of returns nullptr for an unknown column");
   {
     auto broken = copy(rows);
@@ -374,9 +379,9 @@ constexpr Procedure kMiniFields[] = {{"status", "sensor"},
                                      {"mask", "sensor"},
                                      {"count", "sensor"},
                                      {"model", "fit_v1"}};
-using aq::semantics::Aggregate;
-using aq::semantics::Role;
-constexpr aq::semantics::Column kMini[] = {
+using opensensor::semantics::Aggregate;
+using opensensor::semantics::Role;
+constexpr opensensor::semantics::Column kMini[] = {
     {"status", "{code}", Role::qualityInformation, "", Aggregate::mode, "", "",
      0, "", "urn:walkthru-earth:property:status", "", ""},
     {"flag", "{boolean}", Role::auxiliaryInformation, "", Aggregate::mode, "",
@@ -388,7 +393,7 @@ constexpr aq::semantics::Column kMini[] = {
     {"model", "ug/m3", Role::modelResult, "", Aggregate::mean, "", "", 0,
      "finite", "urn:walkthru-earth:property:model", "", ""},
 };
-constexpr aq::semantics::Class kMiniClasses[] = {
+constexpr opensensor::semantics::Class kMiniClasses[] = {
     {"status", 0, "missing", true},
     {"status", 1, "valid", false},
     {"flag", 0, "off", false},
@@ -396,18 +401,18 @@ constexpr aq::semantics::Class kMiniClasses[] = {
 };
 constexpr std::string_view kMiniClassless[] = {"mask"};
 constexpr std::string_view kMiniSources[] = {"count"};
-constexpr aq::semantics::Derived kMiniDerived[] = {
+constexpr opensensor::semantics::Derived kMiniDerived[] = {
     {"model", kMiniSources, "urn:walkthru-earth:method:fit_v1"}};
 
 void check_classes_and_derived() {
-  using aq::semantics::classes_complete;
-  using aq::semantics::derived_complete;
-  using aq::semantics::matches_legend;
-  const std::span<const aq::semantics::Column> rows{kMini};
+  using opensensor::semantics::classes_complete;
+  using opensensor::semantics::derived_complete;
+  using opensensor::semantics::matches_legend;
+  const std::span<const opensensor::semantics::Column> rows{kMini};
   expect(classes_complete(rows, kMiniClasses, kMiniClassless),
          "real classes complete");
   const auto classes = [] {
-    std::array<aq::semantics::Class, std::size(kMiniClasses)> out{};
+    std::array<opensensor::semantics::Class, std::size(kMiniClasses)> out{};
     for (std::size_t i = 0; i < out.size(); ++i)
       out[i] = kMiniClasses[i];
     return out;
@@ -455,8 +460,8 @@ void check_classes_and_derived() {
       !classes_complete(rows, std::span{kMiniClasses}.first(3), kMiniClassless),
       "boolean column with only its 0 row is caught");
   {
-    const aq::semantics::Class one_flag[] = {kMiniClasses[0], kMiniClasses[1],
-                                             kMiniClasses[3]};
+    const opensensor::semantics::Class one_flag[] = {
+        kMiniClasses[0], kMiniClasses[1], kMiniClasses[3]};
     expect(!classes_complete(rows, one_flag, kMiniClassless),
            "boolean column with only its 1 row is caught");
   }
@@ -496,7 +501,7 @@ void check_classes_and_derived() {
                          "0=missing,1=valid"),
          "class row missing from a legend column is caught");
   {
-    using aq::semantics::matches_codes;
+    using opensensor::semantics::matches_codes;
     const auto name_of = [](std::int64_t code) {
       return code == 0 ? "missing" : code == 1 ? "valid" : "other";
     };
@@ -529,39 +534,39 @@ void check_classes_and_derived() {
   expect(!derived_complete(kMiniFields, rows, {}),
          "modelResult without derived is caught");
   {
-    constexpr aq::semantics::Derived twice[] = {kMiniDerived[0],
-                                                kMiniDerived[0]};
+    constexpr opensensor::semantics::Derived twice[] = {kMiniDerived[0],
+                                                        kMiniDerived[0]};
     expect(!derived_complete(kMiniFields, rows, twice),
            "two derived entries for one column are caught");
   }
   {
-    constexpr aq::semantics::Derived wrong[] = {
+    constexpr opensensor::semantics::Derived wrong[] = {
         {"count", kMiniSources, "urn:walkthru-earth:method:sensor"}};
     expect(!derived_complete(kMiniFields, rows, wrong),
            "derived on a measurement is caught");
   }
   {
     static constexpr std::string_view sources[] = {"gone"};
-    constexpr aq::semantics::Derived wrong[] = {
+    constexpr opensensor::semantics::Derived wrong[] = {
         {"model", sources, "urn:walkthru-earth:method:fit_v1"}};
     expect(!derived_complete(kMiniFields, rows, wrong),
            "unknown source column is caught");
   }
   {
     static constexpr std::string_view sources[] = {"model"};
-    constexpr aq::semantics::Derived wrong[] = {
+    constexpr opensensor::semantics::Derived wrong[] = {
         {"model", sources, "urn:walkthru-earth:method:fit_v1"}};
     expect(!derived_complete(kMiniFields, rows, wrong),
            "column derived from itself is caught");
   }
   {
-    constexpr aq::semantics::Derived wrong[] = {
+    constexpr opensensor::semantics::Derived wrong[] = {
         {"model", {}, "urn:walkthru-earth:method:fit_v1"}};
     expect(!derived_complete(kMiniFields, rows, wrong),
            "empty source list is caught");
   }
   {
-    constexpr aq::semantics::Derived wrong[] = {
+    constexpr opensensor::semantics::Derived wrong[] = {
         {"model", kMiniSources, "urn:walkthru-earth:method:fit_v2"}};
     expect(!derived_complete(kMiniFields, rows, wrong),
            "method that is not the FIELD procedure is caught");
@@ -572,10 +577,11 @@ void check_classes_and_derived() {
 
 int main() {
   check_classes_and_derived();
-  expect(aq::semantics::is_decimal("-12.5"), "decimal with sign");
-  expect(!aq::semantics::is_decimal("1."), "trailing point rejected");
-  expect(!aq::semantics::is_decimal(""), "empty rejected");
-  expect(aq::semantics::decimal_value("-12.5") == -12.5, "decimal value");
+  expect(opensensor::semantics::is_decimal("-12.5"), "decimal with sign");
+  expect(!opensensor::semantics::is_decimal("1."), "trailing point rejected");
+  expect(!opensensor::semantics::is_decimal(""), "empty rejected");
+  expect(opensensor::semantics::decimal_value("-12.5") == -12.5,
+         "decimal value");
   check_board("cores3", kCores3Fields, kCores3Semantics);
   check_board("waveshare-sim7670g", kWaveshareFields, kWaveshareSemantics);
   if (failures != 0)

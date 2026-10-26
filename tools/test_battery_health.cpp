@@ -5,11 +5,11 @@
 #include <cstring>
 
 namespace {
-using aq::battery::Assessment;
-using aq::battery::Monitor;
-using aq::battery::Sample;
-using aq::battery::State;
-using aq::battery::Thresholds;
+using opensensor::battery::Assessment;
+using opensensor::battery::Monitor;
+using opensensor::battery::Sample;
+using opensensor::battery::State;
+using opensensor::battery::Thresholds;
 
 constexpr std::int64_t kTick = 10'000;
 constexpr std::int64_t kMinute = 60'000;
@@ -48,16 +48,18 @@ void names_and_codes() {
   static_assert(static_cast<int>(State::Low) == 3);
   static_assert(static_cast<int>(State::Critical) == 4);
   static_assert(static_cast<int>(State::Settling) == 5);
-  assert(std::strcmp(aq::battery::state_name(State::Unknown), "unknown") == 0);
-  assert(std::strcmp(aq::battery::state_name(State::ExternalPowerLikely),
-                     "external_power_likely") == 0);
-  assert(std::strcmp(aq::battery::state_name(State::Ok), "ok") == 0);
-  assert(std::strcmp(aq::battery::state_name(State::Low), "low") == 0);
-  assert(std::strcmp(aq::battery::state_name(State::Critical), "critical") ==
-         0);
-  assert(std::strcmp(aq::battery::state_name(State::Settling), "settling") ==
-         0);
-  assert(std::strcmp(aq::battery::state_name(static_cast<State>(99)),
+  assert(std::strcmp(opensensor::battery::state_name(State::Unknown),
+                     "unknown") == 0);
+  assert(
+      std::strcmp(opensensor::battery::state_name(State::ExternalPowerLikely),
+                  "external_power_likely") == 0);
+  assert(std::strcmp(opensensor::battery::state_name(State::Ok), "ok") == 0);
+  assert(std::strcmp(opensensor::battery::state_name(State::Low), "low") == 0);
+  assert(std::strcmp(opensensor::battery::state_name(State::Critical),
+                     "critical") == 0);
+  assert(std::strcmp(opensensor::battery::state_name(State::Settling),
+                     "settling") == 0);
+  assert(std::strcmp(opensensor::battery::state_name(static_cast<State>(99)),
                      "unknown") == 0);
 }
 

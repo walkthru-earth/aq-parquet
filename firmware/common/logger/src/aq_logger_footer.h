@@ -13,7 +13,7 @@
 // The fixed board neutral part of every telemetry footer, in file order.
 // finalize_file appends location, anchor and board metadata after it. Pure,
 // so a host test checks the exact keys and values a board writes.
-namespace aqlogger::footer {
+namespace oslogger::footer {
 inline constexpr std::size_t kFixedEntries = 22;
 
 struct Ids {
@@ -80,4 +80,4 @@ inline void fill(std::span<telemetry::KeyValue, kFixedEntries> out,
       "RAM batch; unfinished rows lost on reset; each row group "
       "fsynced; footer at finalization; completed files retained");
 }
-} // namespace aqlogger::footer
+} // namespace oslogger::footer

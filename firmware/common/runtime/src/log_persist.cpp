@@ -16,10 +16,10 @@
 #include <nvs.h>
 
 namespace {
-namespace cd = aq::coredump;
+namespace cd = opensensor::coredump;
 
 // Own namespace and key, so no existing NVS namespace, key or type changes.
-constexpr const char *kDumpNamespace = "aqdump";
+constexpr const char *kDumpNamespace = "osdump";
 constexpr const char *kDumpKey = "reported";
 
 std::expected<cd::Identity, cd::SourceError> dump_identity(void *) {
@@ -125,8 +125,8 @@ record_save(void *, std::span<const std::uint8_t, cd::kRecordBytes> record) {
 #include <hal/cache_hal.h>
 
 namespace {
-constexpr DebugLog::Layout kReserved{CONFIG_AQ_LOG_PERSIST_RING_BYTES,
-                                     CONFIG_AQ_LOG_PERSIST_EVENT_SLOTS};
+constexpr DebugLog::Layout kReserved{CONFIG_OS_LOG_PERSIST_RING_BYTES,
+                                     CONFIG_OS_LOG_PERSIST_EVENT_SLOTS};
 // PSRAM init on the ESP32-S3 (quad and octal) writes a probe word to
 // physical address 0 on every boot, which is where the no-init segment
 // starts. Keep the block one cache line past that.
@@ -147,21 +147,21 @@ void writeback(const void *address, std::size_t bytes) {
 } // namespace
 #endif
 
-namespace aq::log {
+namespace opensensor::log {
 DebugLog::Layout default_layout() {
-  return {CONFIG_AQ_LOG_PERSIST_RING_BYTES, CONFIG_AQ_LOG_PERSIST_EVENT_SLOTS};
+  return {CONFIG_OS_LOG_PERSIST_RING_BYTES, CONFIG_OS_LOG_PERSIST_EVENT_SLOTS};
 }
 
 bool attach_persistent(const DebugLog::Layout &layout) {
 #if CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY
   if (!esp_psram_is_initialized()) {
-    aqlog.printf("LOG ring=internal bytes=%u reason=no-psram\n",
-                 unsigned(aqlog.ring_bytes()));
+    oslog.printf("LOG ring=internal bytes=%u reason=no-psram\n",
+                 unsigned(oslog.ring_bytes()));
     return false;
   }
   if (DebugLog::persistent_bytes(layout) > kPersistentBytes) {
-    aqlog.printf("LOG ring=internal bytes=%u reason=layout-too-large\n",
-                 unsigned(aqlog.ring_bytes()));
+    oslog.printf("LOG ring=internal bytes=%u reason=layout-too-large\n",
+                 unsigned(oslog.ring_bytes()));
     return false;
   }
   const esp_reset_reason_t reset = esp_reset_reason();
@@ -169,17 +169,17 @@ bool attach_persistent(const DebugLog::Layout &layout) {
   const bool cold = reset == ESP_RST_POWERON || reset == ESP_RST_BROWNOUT ||
                     reset == ESP_RST_UNKNOWN;
   const bool kept =
-      aqlog.attach(persistent_block, kPersistentBytes, layout, cold, writeback);
-  aqlog.printf("LOG ring=psram bytes=%u events=%u boot_seq=%u kept=%d "
+      oslog.attach(persistent_block, kPersistentBytes, layout, cold, writeback);
+  oslog.printf("LOG ring=psram bytes=%u events=%u boot_seq=%u kept=%d "
                "retained=%u reset=%d\n",
-               unsigned(aqlog.ring_bytes()), unsigned(layout.event_slots),
-               unsigned(aqlog.boot_seq()), kept ? 1 : 0,
-               unsigned(aqlog.retained()), int(reset));
-  return aqlog.persistent();
+               unsigned(oslog.ring_bytes()), unsigned(layout.event_slots),
+               unsigned(oslog.boot_seq()), kept ? 1 : 0,
+               unsigned(oslog.retained()), int(reset));
+  return oslog.persistent();
 #else
   (void)layout;
-  aqlog.printf("LOG ring=internal bytes=%u reason=no-noinit\n",
-               unsigned(aqlog.ring_bytes()));
+  oslog.printf("LOG ring=internal bytes=%u reason=no-noinit\n",
+               unsigned(oslog.ring_bytes()));
   return false;
 #endif
 }
@@ -195,7 +195,7 @@ void report_coredump() {
   std::array<char, cd::kLineBytes> line{};
   const cd::Report result = cd::report(source, store, line);
   if (result.length > 0)
-    aqlog.printf("%s", line.data());
+    oslog.printf("%s", line.data());
 #endif
 }
-} // namespace aq::log
+} // namespace opensensor::log

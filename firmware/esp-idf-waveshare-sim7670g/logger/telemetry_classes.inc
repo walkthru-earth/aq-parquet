@@ -11,7 +11,7 @@
 //
 // Sources.
 //   clock_status rows are exactly kClockSources in telemetry_contract.h, the
-//   sources this board writes, named by aq::utc::source_name.
+//   sources this board writes, named by opensensor::utc::source_name.
 //   pms_status, pm25_batch_candidate_status, gauge_status and
 //   battery_health_state names are the footer legends in
 //   telemetry_contract.h, which apply_pms, apply_gauge and
@@ -42,10 +42,10 @@ CLASS(gauge_status, kGaugeReadError, "read-error-or-implausible", false)
 CLASS(gauge_status, kGaugeValid, "valid", false)
 CLASS(gauge_hibernating, false, "active", false)
 CLASS(gauge_hibernating, true, "hibernating", false)
-CLASS(battery_health_state, aq::battery::State::Unknown, "unknown", true)
-CLASS(battery_health_state, aq::battery::State::ExternalPowerLikely,
+CLASS(battery_health_state, opensensor::battery::State::Unknown, "unknown", true)
+CLASS(battery_health_state, opensensor::battery::State::ExternalPowerLikely,
       "external-power-likely", false)
-CLASS(battery_health_state, aq::battery::State::Ok, "ok", false)
-CLASS(battery_health_state, aq::battery::State::Low, "low", false)
-CLASS(battery_health_state, aq::battery::State::Critical, "critical", false)
-CLASS(battery_health_state, aq::battery::State::Settling, "settling", false)
+CLASS(battery_health_state, opensensor::battery::State::Ok, "ok", false)
+CLASS(battery_health_state, opensensor::battery::State::Low, "low", false)
+CLASS(battery_health_state, opensensor::battery::State::Critical, "critical", false)
+CLASS(battery_health_state, opensensor::battery::State::Settling, "settling", false)

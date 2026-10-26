@@ -8,13 +8,15 @@
 
 namespace telemetry {
 
-using Ltr553Reading = aq::Ltr553Reading;
+using Ltr553Reading = opensensor::Ltr553Reading;
 
 // The CoreS3 adapter borrows M5Unified's initialized internal I2C controller.
 // Call from the task that owns M5.update(), after M5.begin().
-class Ltr553 : public aq::Ltr553 {
+class Ltr553 : public opensensor::Ltr553 {
 public:
-  Ltr553() : aq::Ltr553({nullptr, read_register, write_register, wait, now}) {}
+  Ltr553()
+      : opensensor::Ltr553(
+            {nullptr, read_register, write_register, wait, now}) {}
 
 private:
   static bool read_register(void *, std::uint8_t address, std::uint8_t reg,

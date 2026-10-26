@@ -36,7 +36,7 @@ void ble_store_config_init(void);
 namespace ble {
 namespace {
 static_assert(BLE_HS_ERR_HCI_BASE == kHciStatusBase, "NimBLE HCI status base");
-constexpr const char *kServiceUuid = "c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01";
+constexpr const char *kServiceUuid = "255f595e-0001-47ed-8e0d-59994199b680";
 constexpr std::int64_t kPairingWindowUs = 60LL * 1000000LL;
 // send_response() from tasks other than the worker keeps the prior 4 s budget.
 constexpr std::int64_t kSendBudgetUs = 4LL * 1000000LL;
@@ -184,7 +184,7 @@ bool may_send_frame(std::uint16_t handle, const std::uint8_t *data,
       subscribed[Response].load(),
       [&] { return may_send_frame(handle, data, length); });
   if (refusal_is_fault(refusal) && refusal_logged.exchange(session) != session)
-    aqlog.printf("BLE REFUSE reason=%s\n", refusal_name(refusal));
+    oslog.printf("BLE REFUSE reason=%s\n", refusal_name(refusal));
   return refusal;
 }
 
@@ -208,12 +208,12 @@ void speed_up_advertising();
 void refresh_advert(ble_npl_event *) {
   if (desired_advert.load() != applied_advert.load()) {
     if (!apply_advert_data()) {
-      aqlog.println("BLE ERROR operation=advert-refresh");
+      oslog.println("BLE ERROR operation=advert-refresh");
       return;
     }
     touch_ui();
     const auto word = applied_advert.load();
-    aqlog.printf("BLE ADV flags=0x%02x fin=%lu\n", unsigned(word & 0xffU),
+    oslog.printf("BLE ADV flags=0x%02x fin=%lu\n", unsigned(word & 0xffU),
                  static_cast<unsigned long>(word >> 8));
   }
   // A scanner filtering on the flag byte must see a flip within a minute, so
@@ -245,14 +245,14 @@ bool start_advertising() {
   advertising = rc == 0;
   touch_ui();
   if (rc != 0) {
-    aqlog.printf("BLE ERROR operation=advertise rc=%d\n", rc);
+    oslog.printf("BLE ERROR operation=advertise rc=%d\n", rc);
     // A transient failure must not leave the device invisible until the next
     // disconnect: try again in a second.
     ble_npl_callout_reset(&advertise_callout, ble_npl_time_ms_to_ticks32(1000));
     return false;
   }
   if (adv_fast.exchange(fast) != fast || fast)
-    aqlog.record_only().printf(
+    oslog.record_only().printf(
         "BLE ADV mode=%s itvl=%u-%u ms=%ld\n", fast ? "fast" : "slow",
         unsigned(params.itvl_min), unsigned(params.itvl_max),
         static_cast<long>(fast ? duration : 0));
@@ -396,7 +396,7 @@ void drain_responses(ble_npl_event *) {
     }
     if (status == NotifyStatus::Failed) {
       xSemaphoreGive(space_event);
-      aqlog.printf("BLE ERROR operation=notify rc=%d\n", rc);
+      oslog.printf("BLE ERROR operation=notify rc=%d\n", rc);
       if (connected.load() && conn_handle.load() == slot.handle)
         terminate(slot.handle, DisconnectReason::SendError);
       return;
@@ -408,7 +408,7 @@ void drain_responses(ble_npl_event *) {
     auto action = stall.on_refused(slot.session, outcome.stalled);
     if (action == StallClose::Action::Close) {
       if (stall.log(slot.session))
-        aqlog.printf("BLE SLOW timeout_ms=%lu\n",
+        oslog.printf("BLE SLOW timeout_ms=%lu\n",
                      static_cast<unsigned long>(options.progress_timeout_ms));
       action = stall.on_close(
           slot.session, terminate(slot.handle, DisconnectReason::SlowPeer));
@@ -425,18 +425,18 @@ void drain_responses(ble_npl_event *) {
 
 // Producer side, serialised by response_mutex. Ok queued the frame, Full has
 // no credit now, Closed never will for this session.
-aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
+ossync::EnqueueResult enqueue_response(const std::uint8_t *data,
                                        std::size_t length,
                                        std::uint32_t session) {
   if (!data || !length || length > kMaxFrame || length > payload_max())
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   const auto handle = conn_handle.load();
   if (response_gate(session, handle, data, length) != GateRefusal::None)
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   portENTER_CRITICAL(&tx_lock);
   const auto reservation = responses.reserve(session, esp_timer_get_time());
   portEXIT_CRITICAL(&tx_lock);
-  if (reservation.result != aqsync::EnqueueResult::Ok)
+  if (reservation.result != ossync::EnqueueResult::Ok)
     return reservation.result;
   // The credit keeps this slot outside the queued range until it is published,
   // so the host never reads it while it is filled. A stream that closed or
@@ -448,9 +448,9 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
       reservation, session, static_cast<std::uint16_t>(length), handle);
   portEXIT_CRITICAL(&tx_lock);
   if (!open)
-    return aqsync::EnqueueResult::Closed;
+    return ossync::EnqueueResult::Closed;
   ble_npl_eventq_put(nimble_port_get_dflt_eventq(), &response_event);
-  return aqsync::EnqueueResult::Ok;
+  return ossync::EnqueueResult::Ok;
 }
 
 // A link command NimBLE refused or the controller failed. rc 19
@@ -459,7 +459,7 @@ aqsync::EnqueueResult enqueue_response(const std::uint8_t *data,
 void log_hci_fail(const char *command, std::uint16_t opcode, int rc) {
   if (rc == 0)
     return;
-  aqlog.printf("BLE HCI fail cmd=%s op=0x%04x rc=%d timeout=%u\n", command,
+  oslog.printf("BLE HCI fail cmd=%s op=0x%04x rc=%d timeout=%u\n", command,
                unsigned(opcode), rc, unsigned(rc == BLE_HS_ETIMEOUT_HCI));
 }
 
@@ -471,7 +471,7 @@ int request_conn_params(std::uint16_t handle, const ConnParams &p,
   params.latency = p.latency;
   params.supervision_timeout = p.supervision_timeout;
   const int rc = ble_gap_update_params(handle, &params);
-  aqlog.record_only().printf(
+  oslog.record_only().printf(
       "BLE CONN request=%s itvl=%u-%u lat=%u to=%u rc=%d\n", label,
       unsigned(p.itvl_min), unsigned(p.itvl_max), unsigned(p.latency),
       unsigned(p.supervision_timeout), rc);
@@ -533,13 +533,13 @@ void link_on_host(ble_npl_event *) {
     if (dle_request_needed(dle_tx_octets, options.data_len_octets)) {
       const int rc = ble_gap_set_data_len(handle, options.data_len_octets,
                                           options.data_len_time_us);
-      aqlog.record_only().printf("BLE LINK request dle=%u/%u rc=%d\n",
+      oslog.record_only().printf("BLE LINK request dle=%u/%u rc=%d\n",
                                  unsigned(options.data_len_octets),
                                  unsigned(options.data_len_time_us), rc);
       log_hci_fail("dle",
                    BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_SET_DATA_LEN), rc);
     } else
-      aqlog.record_only().printf("BLE LINK dle=%u by central\n",
+      oslog.record_only().printf("BLE LINK dle=%u by central\n",
                                  unsigned(dle_tx_octets));
     ble_npl_callout_reset(&link_callout,
                           ble_npl_time_ms_to_ticks32(kLinkSettleMs));
@@ -553,12 +553,12 @@ void link_on_host(ble_npl_event *) {
     log_hci_fail("read_phy", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_RD_PHY),
                  read);
     if (options.prefer_2m_phy && !phy_request_needed(read == 0, tx, rx)) {
-      aqlog.record_only().println("BLE LINK phy=2m by central");
+      oslog.record_only().println("BLE LINK phy=2m by central");
     } else if (options.prefer_2m_phy) {
       const int rc = ble_gap_set_prefered_le_phy(handle, BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_2M_MASK,
                                                  BLE_GAP_LE_PHY_CODED_ANY);
-      aqlog.record_only().printf("BLE LINK request phy=2m rc=%d\n", rc);
+      oslog.record_only().printf("BLE LINK request phy=2m rc=%d\n", rc);
       log_hci_fail("phy", BLE_HCI_OP(BLE_HCI_OGF_LE, BLE_HCI_OCF_LE_SET_PHY),
                    rc);
       if (rc == 0) {
@@ -600,7 +600,7 @@ void defer_link_step(std::uint16_t handle, const char *after) {
     return;
   ble_npl_callout_reset(&link_callout,
                         ble_npl_time_ms_to_ticks32(kLinkSettleMs));
-  aqlog.record_only().printf("BLE LINK wait phy after=%s\n", after);
+  oslog.record_only().printf("BLE LINK wait phy after=%s\n", after);
 }
 
 // Host task only. Reads NimBLE's security state for `handle` and, the first
@@ -617,7 +617,7 @@ bool confirm_secure(std::uint16_t handle, const char *via) {
   passkey = 0;
   update_bonds();
   touch_ui();
-  aqlog.printf("BLE BONDED authenticated=true bonds=%lu via=%s\n",
+  oslog.printf("BLE BONDED authenticated=true bonds=%lu via=%s\n",
                static_cast<unsigned long>(bonds.load()), via);
   start_link_sequence();
   return true;
@@ -700,7 +700,7 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
   }
   if (os_mbuf_copydata(ctxt->om, 0, length, request.bytes) != 0)
     return BLE_ATT_ERR_UNLIKELY;
-  aqlog.record_only().printf("BLE CMD op=0x%02x bytes=%u\n",
+  oslog.record_only().printf("BLE CMD op=0x%02x bytes=%u\n",
                              unsigned(request.bytes[0]),
                              unsigned(request.length));
   // Any request brings a relaxed link back to the active interval.
@@ -712,9 +712,9 @@ int access(std::uint16_t handle, std::uint16_t, ble_gatt_access_ctxt *ctxt,
     ble_npl_callout_reset(&relax_callout,
                           ble_npl_time_ms_to_ticks32(options.relax_after_ms));
   }
-  aqsync::abort::stamp(request);
+  ossync::abort::stamp(request);
   if (request_handler(request)) {
-    aqsync::abort::commit(request);
+    ossync::abort::commit(request);
     return 0;
   }
   // The link is secure here, so the only refusal left is the full queue.
@@ -745,7 +745,7 @@ void apply_subscribe(Characteristic which, bool notify, bool closing) {
     portENTER_CRITICAL(&tx_lock);
     responses.open(session, esp_timer_get_time());
     portEXIT_CRITICAL(&tx_lock);
-    aqlog.record_only().println("BLE STREAM reopen");
+    oslog.record_only().println("BLE STREAM reopen");
   }
 }
 
@@ -784,14 +784,14 @@ int gap_event(ble_gap_event *event, void *) {
                             ble_npl_time_ms_to_ticks32(options.relax_after_ms));
     }
     touch_ui();
-    aqlog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
+    oslog.printf("BLE CONNECT mtu=%u\n", unsigned(mtu.load()));
     // Subscriptions NimBLE restored or the client wrote before this event
     // count exactly like a CCCD write after it.
     if (const auto held = early_cccd.replay(
             event->connect.conn_handle, [](unsigned i, bool notify) {
               apply_subscribe(static_cast<Characteristic>(i), notify, false);
             }))
-      aqlog.printf("BLE SUBSCRIBE early=%u response=%u\n", held,
+      oslog.printf("BLE SUBSCRIBE early=%u response=%u\n", held,
                    unsigned(subscribed[Response].load()));
     // Already secure at connect, which ENC_CHANGE would never report.
     confirm_secure(event->connect.conn_handle, "connect");
@@ -820,7 +820,7 @@ int gap_event(ble_gap_event *event, void *) {
     close_responses();
     ble_npl_callout_stop(&relax_callout);
     ble_npl_callout_stop(&link_callout);
-    aqlog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
+    oslog.printf("BLE DISCONNECT reason=%s hci=0x%02x\n",
                  disconnect_reason_name(reason), unsigned(hci & 0xff));
     // A phone that just lost the link reconnects fastest from a fast advert.
     adv_window.extend(esp_timer_get_time(), options.fast_window_ms);
@@ -837,7 +837,7 @@ int gap_event(ble_gap_event *event, void *) {
     if (event->mtu.conn_handle == conn_handle.load()) {
       mtu = event->mtu.value;
       touch_ui();
-      aqlog.printf("BLE MTU mtu=%u\n", unsigned(event->mtu.value));
+      oslog.printf("BLE MTU mtu=%u\n", unsigned(event->mtu.value));
     }
     return 0;
   case BLE_GAP_EVENT_SUBSCRIBE: {
@@ -877,10 +877,10 @@ int gap_event(ble_gap_event *event, void *) {
     update_bonds();
     touch_ui();
     if (!authenticated.load()) {
-      aqlog.println("BLE AUTH result=failed action=disconnect");
+      oslog.println("BLE AUTH result=failed action=disconnect");
       terminate(event->enc_change.conn_handle, DisconnectReason::AuthFailed);
     } else if (enc_change_announces(was, true)) {
-      aqlog.printf("BLE BONDED authenticated=true bonds=%lu\n",
+      oslog.printf("BLE BONDED authenticated=true bonds=%lu\n",
                    static_cast<unsigned long>(bonds.load()));
       start_link_sequence();
     }
@@ -899,9 +899,9 @@ int gap_event(ble_gap_event *event, void *) {
     pairing_active = true;
     touch_ui();
     if (mode == config::PairMode::Fixed)
-      aqlog.println("BLE PAIR passkey=fixed");
+      oslog.println("BLE PAIR passkey=fixed");
     else
-      aqlog.record_only().println("BLE PAIR passkey=random");
+      oslog.record_only().println("BLE PAIR passkey=random");
     return ble_sm_inject_io(event->passkey.conn_handle, &io);
   }
   case BLE_GAP_EVENT_REPEAT_PAIRING: {
@@ -932,7 +932,7 @@ int gap_event(ble_gap_event *event, void *) {
     ble_gap_conn_desc desc{};
     if (event->conn_update.conn_handle == conn_handle.load() &&
         ble_gap_conn_find(event->conn_update.conn_handle, &desc) == 0)
-      aqlog.record_only().printf(
+      oslog.record_only().printf(
           "BLE CONN itvl=%u lat=%u to=%u status=%d\n", unsigned(desc.conn_itvl),
           unsigned(desc.conn_latency), unsigned(desc.supervision_timeout),
           event->conn_update.status);
@@ -945,7 +945,7 @@ int gap_event(ble_gap_event *event, void *) {
         link_step == LinkStep::Interval)
       ble_npl_callout_reset(&link_callout, ble_npl_time_ms_to_ticks32(200));
     if (event->phy_updated.conn_handle == conn_handle.load())
-      aqlog.record_only().printf("BLE PHY tx=%u rx=%u status=%d\n",
+      oslog.record_only().printf("BLE PHY tx=%u rx=%u status=%d\n",
                                  unsigned(event->phy_updated.tx_phy),
                                  unsigned(event->phy_updated.rx_phy),
                                  event->phy_updated.status);
@@ -955,7 +955,7 @@ int gap_event(ble_gap_event *event, void *) {
       return 0;
     // The Dle step skips a length the central already set.
     dle_tx_octets = event->data_len_chg.max_tx_octets;
-    aqlog.record_only().printf("BLE DLE tx=%u/%u rx=%u/%u\n",
+    oslog.record_only().printf("BLE DLE tx=%u/%u rx=%u/%u\n",
                                unsigned(event->data_len_chg.max_tx_octets),
                                unsigned(event->data_len_chg.max_tx_time),
                                unsigned(event->data_len_chg.max_rx_octets),
@@ -970,7 +970,7 @@ void clear_bonds_on_host(ble_npl_event *) {
   const int rc = ble_store_clear();
   update_bonds();
   touch_ui();
-  aqlog.printf("BLE BONDS CLEARED bonds=%lu rc=%d\n",
+  oslog.printf("BLE BONDS CLEARED bonds=%lu rc=%d\n",
                static_cast<unsigned long>(bonds.load()), rc);
   xSemaphoreGive(clear_done);
 }
@@ -992,7 +992,7 @@ void on_reset(int reason) {
   ble_npl_callout_stop(&relax_callout);
   ble_npl_callout_stop(&link_callout);
   touch_ui();
-  aqlog.printf("BLE RESET reason=%d\n", reason);
+  oslog.printf("BLE RESET reason=%d\n", reason);
 }
 
 void on_sync() {
@@ -1027,7 +1027,7 @@ void on_sync() {
   }
   startup_ok = ok;
   if (!ok)
-    aqlog.println("BLE ERROR operation=sync");
+    oslog.println("BLE ERROR operation=sync");
   xSemaphoreGive(startup_done);
 }
 
@@ -1091,7 +1091,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   // config::load() owns NVS initialization. Do not erase settings on failure.
   const auto rc = nimble_port_init();
   if (rc != ESP_OK) {
-    aqlog.printf("BLE ERROR operation=init rc=%d\n", int(rc));
+    oslog.printf("BLE ERROR operation=init rc=%d\n", int(rc));
     return false;
   }
   ble_hs_cfg.reset_cb = on_reset;
@@ -1152,7 +1152,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
                        advertise_on_host, nullptr);
   ble_npl_callout_init(&link_callout, nimble_port_get_dflt_eventq(),
                        link_on_host, nullptr);
-  if (xTaskCreate(error_task, "aq_ble_error", 4096, nullptr, 4, nullptr) !=
+  if (xTaskCreate(error_task, "os_ble_error", 4096, nullptr, 4, nullptr) !=
       pdPASS)
     return false;
   host_requested = true;
@@ -1166,10 +1166,10 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
       terminate(conn_handle.load(), DisconnectReason::ServerStop);
     }
     advertising = false;
-    aqlog.println("BLE ERROR operation=host-start");
+    oslog.println("BLE ERROR operation=host-start");
     return false;
   }
-  aqlog.printf("BLE BEGIN name=%s service=%s mtu_max=%u bonds=%lu pair=%s "
+  oslog.printf("BLE BEGIN name=%s service=%s mtu_max=%u bonds=%lu pair=%s "
                "adv_ver=%u boot16=%04x credits=%u\n",
                name_text, kServiceUuid, unsigned(kMaxMtu),
                static_cast<unsigned long>(bonds.load()),
@@ -1264,7 +1264,7 @@ bool deliver_frame(const std::uint8_t *frame, std::size_t length,
     if (xSemaphoreTake(response_mutex, 0) != pdTRUE)
       return false;
     const bool ok =
-        enqueue_response(frame, length, session) == aqsync::EnqueueResult::Ok;
+        enqueue_response(frame, length, session) == ossync::EnqueueResult::Ok;
     xSemaphoreGive(response_mutex);
     return ok;
   }
@@ -1282,8 +1282,8 @@ bool deliver_frame(const std::uint8_t *frame, std::size_t length,
     // still ends the wait below.
     xSemaphoreTake(space_event, 0);
     const auto result = enqueue_response(frame, length, session);
-    if (result != aqsync::EnqueueResult::Full) {
-      ok = result == aqsync::EnqueueResult::Ok;
+    if (result != ossync::EnqueueResult::Full) {
+      ok = result == ossync::EnqueueResult::Ok;
       break;
     }
     if (xSemaphoreTake(space_event, step) == pdTRUE)
@@ -1309,7 +1309,7 @@ std::size_t encode_error(std::uint8_t (&frame)[3 + 64], Op op, Error code,
     std::memcpy(frame + 3, detail, copy);
     length += copy;
   }
-  aqlog.printf("BLE ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
+  oslog.printf("BLE ERROR op=0x%02x code=%u\n", unsigned(op), unsigned(code));
   return length;
 }
 } // namespace

@@ -1,7 +1,7 @@
 # Device and phone sync over BLE and LAN
 
 
-> **Board scope:** AQCommon, AQRuntime, AQConnectivity and AQLogger implement this shared contract for the CoreS3 and Waveshare V2 logger adapters. `info` identifies the board-owned schema, dictionary and firmware; a `cores3-*` identity or CoreS3 measurement must not be relabeled as Waveshare evidence. The retained Waveshare UART/TF diagnostic does not start these services.
+> **Board scope:** OSCommon, OSRuntime, OSConnectivity and OSLogger implement this shared contract for the CoreS3 and Waveshare V2 logger adapters. `info` identifies the board-owned schema, dictionary and firmware; a `cores3-*` identity or CoreS3 measurement must not be relabeled as Waveshare evidence. The retained Waveshare UART/TF diagnostic does not start these services.
 
 Load when implementing or debugging BLE, the local Wi-Fi/TCP server, or a phone
 client. Current firmware reports **proto 3** on BLE info, LAN HELLO and mDNS.
@@ -68,7 +68,20 @@ The device **never** deletes, rewrites or renames a finalized file because of th
 | `fixed` | `ble.pin`, random **per-device** 6-digit value at first boot | no display is detected at first boot (bare ESP32-S3 PCB) | Same phone UX (Android asks for six digits). The owner obtains it with physical serial `parquet owner-pin` (or an attached pairing display), or configures another value before deployment. This owner reply is excluded from LOG_TAIL and is not printed at boot. Firmware does not ship a universal PIN. Existing installations that still stored legacy `123456` rotate it once at boot. |
 | `none` | Just Works | never by default | Encrypted, unauthenticated, no prompt. For lab benches only; must be enabled deliberately. Characteristics drop the `AUTHEN` requirement in this mode so reads succeed. |
 
-The mode and PIN are stored in NVS (`aqcfg` namespace) and are **applied at the next boot**, because the NimBLE security parameters are fixed at stack start; `SET_CONFIG` answers with `reboot_required` set and the phone offers `REBOOT`. The first-boot auto-detection result is stored, so removing the display later does not silently change the mode (again like Meshtastic — change the mode before removing the screen). A lost phone is handled by re-pairing or by `ble.clear_bonds=1`.
+The mode and PIN are stored in NVS (`oscfg` namespace) and are **applied at the next boot**, because the NimBLE security parameters are fixed at stack start; `SET_CONFIG` answers with `reboot_required` set and the phone offers `REBOOT`. The first-boot auto-detection result is stored, so removing the display later does not silently change the mode (again like Meshtastic — change the mode before removing the screen). A lost phone is handled by re-pairing or by `ble.clear_bonds=1`.
+
+The `oscfg` namespace replaced the old settings namespace in #93 with no
+migration. It starts empty after that reflash, so the pairing mode and PIN, the
+display flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its
+default of on), the LAN sync token, the sensor identity (`sensor.vendor`,
+`sensor.model`, `sensor.serial`, `sensor.batch_candidate`), the location and
+the NTP settings must be provisioned again, as on a new board. Until the sensor
+identity is set again, Waveshare files carry no sensor identity. Bonds survive
+the reflash and the phone may cache the old GATT table, so forget the board in
+the phone's Bluetooth settings and send `ble.clear_bonds=1` before pairing
+again. The old settings and crash log namespaces stay in flash with the old
+Wi-Fi password and LAN token, and only a full flash erase removes them. The
+`parquet` namespace with the station UUID stays.
 
 The native server handles `BLE_GAP_EVENT_PASSKEY_ACTION` and supplies display
 passkeys with `ble_sm_inject_io`: random mode generates per-attempt digits,
@@ -82,7 +95,7 @@ older fixed-PIN bench/debug notes and is not a current API requirement.
 
 ### Advertising payload (v2.1)
 
-Service data AD (type `0x21`) under the service UUID `c0a5e9f0-0001-…`, in the ADV PDU, refreshed in place (one HCI command) whenever a field changes — at most once per sample tick, in practice a few times per file window. A phone never has to connect to learn any of it, and a phone's offloaded scan filter (`deviceAddress` **and** `serviceData` with a mask on byte 1) can wake its app on a bit flip while it sleeps. Everything here is public to anyone in range: presence, counters, health bits — nothing more.
+Service data AD (type `0x21`) under the service UUID `255f595e-0001-…`, in the ADV PDU, refreshed in place (one HCI command) whenever a field changes — at most once per sample tick, in practice a few times per file window. A phone never has to connect to learn any of it, and a phone's offloaded scan filter (`deviceAddress` **and** `serviceData` with a mask on byte 1) can wake its app on a bit flip while it sleeps. Everything here is public to anyone in range: presence, counters, health bits — nothing more.
 
 | Offset | Field | Meaning |
 | --- | --- | --- |
@@ -96,7 +109,7 @@ Rules: `new_files` is set when a window closes or a `FLUSH` finalizes a file and
 
 ### Link parameters and notify flow
 
-These are `ble::Options` defaults, set per board through `aqsync::ServiceConfig::ble`.
+These are `ble::Options` defaults, set per board through `ossync::ServiceConfig::ble`.
 
 | Item | Device behavior |
 | --- | --- |
@@ -115,11 +128,11 @@ The serial log records the requests (`BLE LINK request`, `BLE CONN request`) and
 
 ## Service and characteristics
 
-Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the attribute.
+Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the attribute.
 
 | Attribute | UUID | Props | Payload |
 | --- | --- | --- | --- |
-| **Service** AQ Sync | `c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01` | — | — |
+| **Service** OpenSensor Sync | `255f595e-0001-47ed-8e0d-59994199b680` | — | — |
 | `info` | `…-0002-…` | read | JSON, ≤ 400 bytes, static for a boot |
 | `status` | `…-0003-…` | read, notify | JSON, ≤ 480 bytes |
 | `live` | `…-0004-…` | read, notify | JSON, ≤ 480 bytes |
@@ -131,7 +144,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.15","schema":"cores3-telemetry-v5","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.16","schema":"cores3-telemetry-v5","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
@@ -139,7 +152,7 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
 `waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
-and firmware `idf-waveshare-parquet-v2.9`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+and firmware `idf-waveshare-parquet-v2.10`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -387,7 +400,7 @@ wifi.on=1
 
 Changing Wi-Fi settings over a LAN session is allowed but will usually drop that session; the phone should do provisioning over BLE. `REBOOT` attempts to finalize pending rows first when storage is healthy; failures remain visible in the logger counters and do not establish durability. It answers `REBOOTING` with the delay before restart (≈ 500 ms) so the phone can disconnect cleanly.
 
-`LOG_TAIL` returns the newest `max_bytes` (at most 65535) of the diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies, the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API. The ring is in PSRAM (64 KiB by default, `CONFIG_AQ_LOG_PERSIST_RING_BYTES`) when the board image provides a persistent block, otherwise a 4 KiB internal ring (see [persistent log](#persistent-log)). The reply streams in `LOG` slices of at most 512 bytes over BLE or 1024 over LAN, also bounded by `payload_max`. A tail can contain lines from the previous boot after a warm reboot.
+`LOG_TAIL` returns the newest `max_bytes` (at most 65535) of the diagnostic ring that mirrors DebugLog output, excluding raw physical-owner command replies, the same `PARQUET …` / `BLE …` / `WIFI …` lines a bench log shows. It exists so an advanced user can see why something failed without a USB cable. It is text for humans, not a stable API. The ring is in PSRAM (64 KiB by default, `CONFIG_OS_LOG_PERSIST_RING_BYTES`) when the board image provides a persistent block, otherwise a 4 KiB internal ring (see [persistent log](#persistent-log)). The reply streams in `LOG` slices of at most 512 bytes over BLE or 1024 over LAN, also bounded by `payload_max`. A tail can contain lines from the previous boot after a warm reboot.
 
 `WIFI_SCAN` runs on the Wi-Fi task, not on the storage worker, and takes 2–4 s; the phone should show progress. The scan is asynchronous. Other LAN sessions keep reading and receiving frames while it runs, and a scan that does not finish within 15 s ends with `WIFI_SCAN_END` status 15 (unavailable). Hidden networks are omitted; duplicate SSIDs (several access points) are reported once with the strongest RSSI.
 
@@ -398,9 +411,9 @@ on the existing command worker and require access to the checked board port.
 
 | Command | Reply and scope |
 | --- | --- |
-| `parquet owner-pin` | Fixed mode: raw `AQ OWNER_PIN <six digits>`. Random/none mode returns a nonsecret mode/display error. No boot PIN print or log-ring copy |
-| `parquet wifi-profile` | One raw `AQ WIFI_PROFILE ssid=<hex UTF-8> psk=<hex UTF-8> wifi_on=<0/1> lan_on=<0/1>` line. No PIN or token |
-| `parquet config-hex <hex>` | Up to 511 decoded bytes of complete `key=value` lines, validated through the shared SET_CONFIG handler. Returns secret-free `AQ CONFIG ok=1 reboot_required=<0/1>`, or an allowlisted invalid-key error |
+| `parquet owner-pin` | Fixed mode: raw `OS OWNER_PIN <six digits>`. Random/none mode returns a nonsecret mode/display error. No boot PIN print or log-ring copy |
+| `parquet wifi-profile` | One raw `OS WIFI_PROFILE ssid=<hex UTF-8> psk=<hex UTF-8> wifi_on=<0/1> lan_on=<0/1>` line. No PIN or token |
+| `parquet config-hex <hex>` | Up to 511 decoded bytes of complete `key=value` lines, validated through the shared SET_CONFIG handler. Returns secret-free `OS CONFIG ok=1 reboot_required=<0/1>`, or an allowlisted invalid-key error |
 
 The profile and PIN responses bypass DebugLog and cannot appear in LOG_TAIL or
 network replies. Hex is transport encoding, not encryption. Hosts must consume
@@ -422,7 +435,7 @@ firmware encoders and checked by `pixi run disconnect-test`.
 | --- | --- | --- |
 | 0 | `unknown` | BLE controller reason without a mapping. `err` carries the HCI code |
 | 1 | `idle-timeout` | LAN, no bytes from the phone for 300 s |
-| 2 | `handshake-timeout` | LAN, no complete `AQS1` + token within 5 s |
+| 2 | `handshake-timeout` | LAN, no complete `OSS1` + token within 5 s |
 | 3 | `auth-failed` | LAN token mismatch, or BLE encryption failed |
 | 4 | `sessions-full` | LAN, three slots taken. Sent after `ERROR` op=0 code 7, with `generation` 0 |
 | 5 | `slow-peer` | LAN peer accepted no byte for `slow_peer_ms` (15 s) while frames were queued, `err` is `EAGAIN`. BLE host accepted no `response` notification for `progress_timeout_ms` (15 s) while one was queued, `err` is 0 |
@@ -689,10 +702,10 @@ The same request bodies and response frames as BLE, carried over **one TCP conne
 
 | Item | Value |
 | --- | --- |
-| Discovery | mDNS/DNS-SD service **`_aqsync._tcp.local.`**, instance = BLE local name (`OS-xxxx`), host `os-xxxx.local`, TXT records `proto=3`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
+| Discovery | mDNS/DNS-SD service **`_ossync._tcp.local.`**, instance = BLE local name (`OS-xxxx`), host `os-xxxx.local`, TXT records `proto=3`, `station=<uuid>`, `dev=<12 hex>`, `fw=<firmware id>`. Present only while Wi-Fi is connected and `lan.on`. |
 | Port | **47390** (unassigned at IANA; deliberately not Meshtastic's 4403). |
 | Framing | Every message in both directions is `len` u16 LE followed by exactly `len` bytes. Phone → device: a control request body (first byte = opcode), ≤ 512 bytes. Device → phone: one response or push frame, ≤ `payload_max` = **1024** bytes, so `CHUNK` carries up to 1017 bytes. |
-| Handshake | Within 5 s of connecting the phone sends `"AQS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `AQS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
+| Handshake | Within 5 s of connecting the phone sends `"OSS1"` (4 bytes) + `token` (32 bytes), **unframed**. Device answers a framed `HELLO` (proto, `payload_max`, info JSON). A wrong `OSS1` prefix or token receives a framed `ERROR` op=0 code 14, then a [BYE](#bye) with reason `auth-failed` (3), then the socket closes. No complete handshake within 5 s receives a BYE with reason `handshake-timeout` (2), then the socket closes. Each BYE is best effort. |
 | Sessions | Up to **three authenticated LAN clients per sensor**, plus the single BLE connection. Each socket has its own handshake/parser, generation, file handle and idle deadline. New connections never evict active peers; a full three-slot pool receives `ERROR` op=0 code 7 and closes. Pending unauthenticated handshakes count toward the pool and expire after 5 s. Idle limit: no bytes from that phone for 300 s closes only its session; `STATUS` (0x07) is the cheap ping. Disconnect, malformed framing and send failure affect only the originating socket. Token rotation, Wi-Fi loss and disabling LAN close every LAN session. Device-initiated closes on usable sockets attempt a [BYE](#bye) naming the reason. Peer close, receive/send failure and failed keepalive do not send BYE. |
 | Pushes | `STATUS` (0x48) and `LIVE` (0x49) frames are pushed to every authenticated socket whenever the device would notify `status`/`live` over BLE. They may arrive **between any two response frames** (the sampling loop does not wait for a transfer); the phone dispatches on the type byte and must not assume `CHUNK`s are contiguous on the wire. Frames are never interleaved within a frame because each peer has one transmit ring. A peer holds at most one queued `STATUS` and one queued `LIVE`, and a newer snapshot waits until the older one was sent. |
 | Transmit | Each peer has a `ring_bytes` (24 KiB, PSRAM when present) ring of whole frames. Only the LAN task writes to sockets, with non-blocking sends, so other phones keep receiving what is queued for them while one phone stalls. While a session is open the task wakes at least every 10 ms, so a queued reply leaves within that. The worker waits in `wait_step_ms` (200 ms) steps while a ring is full and keeps taking samples between steps. A peer that accepts no byte for `slow_peer_ms` (15 s) while frames are queued is closed with `slow-peer`, which bounds that wait. That rule runs in the LAN task, so the worker also gives up a frame after twice `slow_peer_ms` (30 s) with no space wake from the LAN task and logs `LAN ERROR operation=deliver slot=N waited_ms=N`. The request then ends as after any failed send. Requests from other phones run after it, because the worker is serial, so a phone should allow at least 30 s for a reply. These are sync service settings with shared defaults. |
@@ -707,8 +720,8 @@ sequenceDiagram
     participant D as Device
     P->>D: (BLE, once) GET_TOKEN
     D-->>P: TOKEN port, token
-    P->>P: mDNS browse _aqsync._tcp, match TXT station to a known device
-    P->>D: TCP connect :47390, "AQS1" + token
+    P->>P: mDNS browse _ossync._tcp, match TXT station to a known device
+    P->>D: TCP connect :47390, "OSS1" + token
     D-->>P: HELLO proto, payload_max, info JSON
     P->>D: LIST / OPEN / READ / CLOSE exactly as over BLE (len-prefixed)
     D-->>P: frames (len-prefixed), STATUS/LIVE pushes interleaved
@@ -721,7 +734,7 @@ Ownership rules are unchanged: the LAN task never touches the SD card or the dis
 ## Ownership on the device
 
 BLE callbacks run on the NimBLE host task and never touch the card or display.
-A `control` write copies a request to AQLogger's bounded command queue. The
+A `control` write copies a request to OSLogger's bounded command queue. The
 storage worker executes it, publishes cached snapshots and queues `response`
 frames. Only the NimBLE host sends BLE notifications. Samples also cross a
 bounded queue, with visible drops when full. Queue depth is a buffer bound,

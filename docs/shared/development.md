@@ -3,7 +3,7 @@
 This repository targets ESP32-S3 with native **ESP-IDF 6.1**. Application source
 uses no Arduino APIs or Arduino component. Board pins, PSRAM mode, power
 sequencing, storage mounting and hardware evidence belong to the board adapter;
-the five opt-in components (AQCommon, AQRuntime, AQConnectivity, AQLogger and AQLocation)
+the five opt-in components (OSCommon, OSRuntime, OSConnectivity, OSLogger and OSLocation)
 belong to [`firmware/common`](../../firmware/common/README.md).
 
 ## Host and toolchain
@@ -124,6 +124,14 @@ and stays allowed. Lint passes only on exit 0, so a check that cannot run
 fails it. `board-conditionals-test` covers the rule. Shared code takes board
 capabilities from hooks, `ServiceConfig` and sdkconfig defaults instead.
 
+`tools/check_retired_names.py` then fails on any tracked file that still names
+a retired AQ wire, NVS, Kconfig or serial name from before #93, such as the old
+mDNS service, LAN handshake, GATT base UUID, NVS namespaces, `AQ_` Kconfig
+symbols or `AQ <WORD>` serial tags. The dated bench records, the migration log
+and the #93 audit are history and stay exempt. No `sdkconfig.rename` shim maps
+the old Kconfig names, so a saved sdkconfig value under an old name is dropped.
+`retired-names-test` covers the rule.
+
 ### Source paths
 
 Two checkouts of one commit build the same image. Every repo-owned component
@@ -168,7 +176,7 @@ identity and generated dependency resolution; document any older compatibility
 choice with evidence. Do not silently track floating `latest`/`master` or add
 Arduino APIs/components. SDK and host-tool environments remain separate.
 
-AQCommon, AQRuntime, AQConnectivity, AQLogger and AQLocation stay board-neutral and reusable.
+OSCommon, OSRuntime, OSConnectivity, OSLogger and OSLocation stay board-neutral and reusable.
 Each board owns pin maps, controller initialization, power/display/sensor/RTC
 capabilities, filesystem mounting and its measurement/provenance dictionary.
 Reuse board-neutral interfaces with borrowed IO callbacks rather than copying
@@ -409,7 +417,7 @@ directory outside `secrets/`.
 
 ```sh
 pixi run release-sign --out exports/signed \
-  firmware/esp-idf-waveshare-sim7670g/build/logger/aq_waveshare.bin
+  firmware/esp-idf-waveshare-sim7670g/build/logger/opensensor_waveshare.bin
 ```
 
 For each input it runs `espsecure sign-data --version 2` to
@@ -436,7 +444,7 @@ CoreS3 and Waveshare logger images with the same pinned SDK and build tasks as
 CI, with no cache. It then creates a **draft** release that holds the unsigned
 app images, one SPDX SBOM per image from `esp-idf-sbom`, `SHA256SUMS` and a
 build provenance attestation for every file in `SHA256SUMS`. Assets are named
-`aq_cores3-bringup-<tag>.bin` and `aq_waveshare-logger-<tag>.bin`. CI never
+`opensensor_cores3-bringup-<tag>.bin` and `opensensor_waveshare-logger-<tag>.bin`. CI never
 holds the signing key and never publishes. A manual run from the Actions tab
 on any branch is a dry run. It builds and uploads the same files as the
 `release-files` artifact and creates no release. A re-run for a tag that

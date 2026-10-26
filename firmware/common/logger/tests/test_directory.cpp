@@ -66,7 +66,7 @@ bool check(Scenario value) {
   scenario = value;
   inspections = creations = 0;
   errno = ERANGE; // Successful stat/mkdir need not clear a prior errno.
-  return aq::logger::detail::ensure_directory("/sd", inspect, create);
+  return opensensor::logger::detail::ensure_directory("/sd", inspect, create);
 }
 
 struct FakeArchiveIO {
@@ -128,7 +128,7 @@ struct FakeArchiveIO {
 };
 
 void check_archive_walk() {
-  using aq::logger::detail::walk_directory;
+  using opensensor::logger::detail::walk_directory;
   for (unsigned failure = 0; failure < 6; ++failure) {
     FakeArchiveIO io;
     switch (failure) {
@@ -267,8 +267,8 @@ struct TreeIO {
 // A walk resumed in bounded steps visits exactly what one unbounded walk
 // does, and no step reads more entries than its budget.
 void check_resumable_walk() {
-  using aq::logger::detail::DirectoryWalk;
-  using aq::logger::detail::walk_directory;
+  using opensensor::logger::detail::DirectoryWalk;
+  using opensensor::logger::detail::walk_directory;
   using Status = DirectoryWalk<TreeIO>::Status;
   const Tree tree(10000);
   std::vector<std::string> whole;
@@ -340,7 +340,7 @@ void check_resumable_walk() {
   }
 }
 void check_quarantine_names() {
-  using aq::logger::detail::quarantine_target;
+  using opensensor::logger::detail::quarantine_target;
   char directory[416], path[416];
   assert(quarantine_target(
       "/sd/output",
@@ -416,8 +416,8 @@ void check_same_boot_quarantine() {
   }
   PosixQuarantineIO io;
   char moved[416];
-  assert(aq::logger::detail::quarantine_partial(io, root.c_str(), relative,
-                                                "b1", 0, moved, sizeof(moved)));
+  assert(opensensor::logger::detail::quarantine_partial(
+      io, root.c_str(), relative, "b1", 0, moved, sizeof(moved)));
   assert(!fs::exists(root / relative));
   assert(fs::exists(root / "station=abc/year=2026/month=10/day=11"));
   const fs::path expected = root / "quarantine/station=abc/"
@@ -428,15 +428,15 @@ void check_same_boot_quarantine() {
   {
     std::ofstream(root / relative) << "second";
   }
-  assert(!aq::logger::detail::quarantine_partial(
+  assert(!opensensor::logger::detail::quarantine_partial(
       io, root.c_str(), relative, "b1", 0, moved, sizeof(moved)));
   assert(errno == EEXIST && fs::exists(root / relative));
   assert(fs::file_size(expected) == 13);
-  assert(aq::logger::detail::quarantine_partial(io, root.c_str(), relative,
-                                                "b1", 1, moved, sizeof(moved)));
+  assert(opensensor::logger::detail::quarantine_partial(
+      io, root.c_str(), relative, "b1", 1, moved, sizeof(moved)));
   assert(!fs::exists(root / relative));
   // A missing source fails and creates nothing beyond the directory.
-  assert(!aq::logger::detail::quarantine_partial(
+  assert(!opensensor::logger::detail::quarantine_partial(
       io, root.c_str(), relative, "b1", 2, moved, sizeof(moved)));
   fs::remove_all(temporary);
 }
@@ -455,8 +455,8 @@ struct PosixDirectoryIO {
 // and reports a deeper directory instead of skipping it silently.
 void check_find_partials() {
   namespace fs = std::filesystem;
-  using aq::logger::detail::DirectoryWalk;
-  using aq::logger::detail::find_partials;
+  using opensensor::logger::detail::DirectoryWalk;
+  using opensensor::logger::detail::find_partials;
   char temporary[] = "/tmp/aq-find-partials-XXXXXX";
   assert(::mkdtemp(temporary));
   const fs::path root = fs::path(temporary) / "output";
@@ -482,9 +482,9 @@ void check_find_partials() {
   std::uint32_t counter = 0;
   auto move = [&](const char *name) {
     char destination[416];
-    assert(aq::logger::detail::quarantine_partial(mover, root.c_str(), name,
-                                                  "b1", counter++, destination,
-                                                  sizeof(destination)));
+    assert(opensensor::logger::detail::quarantine_partial(
+        mover, root.c_str(), name, "b1", counter++, destination,
+        sizeof(destination)));
     moved.emplace_back(name);
   };
   auto too_deep = [&](const char *name) { reported.emplace_back(name); };
@@ -543,8 +543,8 @@ struct FakeListing {
 };
 
 void check_crosslink_guard() {
-  using aq::logger::detail::crosslink_pair;
-  using aq::logger::detail::crosslink_suspect;
+  using opensensor::logger::detail::crosslink_pair;
+  using opensensor::logger::detail::crosslink_suspect;
   assert(crosslink_pair("data_1200_b1_42-3.partial",
                         "data_1200_b1_42-131-3.parquet"));
   assert(crosslink_pair("data_unsynced_b1_0-12.partial",
@@ -617,7 +617,7 @@ struct FaultyDirectoryIO : PosixDirectoryIO {
 // walk and is reported as a failed walk, never as a complete one.
 void check_find_partials_failures() {
   namespace fs = std::filesystem;
-  using aq::logger::detail::find_partials;
+  using opensensor::logger::detail::find_partials;
   char temporary[] = "/tmp/aq-find-faults-XXXXXX";
   assert(::mkdtemp(temporary));
   const fs::path root = fs::path(temporary) / "output";

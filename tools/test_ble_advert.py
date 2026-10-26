@@ -77,7 +77,7 @@ def main() -> None:
             assert decoded == {"ver": 1, "flags": [],
                                "fin": 0 if index == 6 else 0xffffffff,
                                "boot16": "ffff"}
-        # A platform receiving ADV without SCAN_RSP can still discover AQ.
+        # A platform receiving ADV without SCAN_RSP can still discover the board.
         assert client.advertises_sync_service(SimpleNamespace(
             service_uuids=[], service_data={service: payload}))
     for packet, name in zip(packets[14:], ["OS-6b40", "12345678901"]):

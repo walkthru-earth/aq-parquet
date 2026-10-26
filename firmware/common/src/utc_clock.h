@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace aq {
+namespace opensensor {
 namespace utc {
 // Codes shared by sync/status consumers. The board supplies any RTC adapter;
 // these helpers neither invent an anchor nor change a captured row's epoch.
@@ -71,4 +71,4 @@ constexpr std::int64_t days_from_civil(int year, unsigned month, unsigned day) {
   return era * 146097 + static_cast<std::int64_t>(doe) - 719468;
 }
 } // namespace utc
-} // namespace aq
+} // namespace opensensor

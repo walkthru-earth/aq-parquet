@@ -21,7 +21,7 @@ int main() {
   assert(!ble::snapshot_notification_fits(481, 517));
   assert(!ble::snapshot_notification_fits(
       std::numeric_limits<std::size_t>::max(), 517));
-  aqlogger::StatusSnapshot view;
+  oslogger::StatusSnapshot view;
   const auto maximum = std::numeric_limits<std::uint32_t>::max();
   view.uptime_seconds = view.interval_seconds = view.buffered = view.finalized =
       view.dropped = view.errors = view.total_kib = view.used_kib =
@@ -38,13 +38,13 @@ int main() {
   view.utc_ms = view.clock_age_seconds =
       std::numeric_limits<std::int64_t>::max();
   view.failed = view.utc = view.storage_ok = true;
-  view.sd_state = aqlogger::storage::State::Retry;
+  view.sd_state = oslogger::storage::State::Retry;
   std::array<char, ble::kMaxJson + 16> buffer{};
   for (const auto codec :
        {telemetry::Codec::Uncompressed, telemetry::Codec::Lz4Raw}) {
     view.codec = codec;
     const auto length =
-        aqlogger::format_status(view, buffer.data(), buffer.size());
+        oslogger::format_status(view, buffer.data(), buffer.size());
     // Keep room for a small key without crossing the 480-byte bound.
     constexpr std::size_t kHeadroom = 10;
     assert(length && length + kHeadroom <= ble::kMaxJson);
@@ -55,18 +55,18 @@ int main() {
     assert(buffer[length - 1] == '}');
     std::cout << buffer.data() << '\n';
     const auto original = buffer;
-    assert(aqlogger::format_status(view, buffer.data(), length) == 0);
+    assert(oslogger::format_status(view, buffer.data(), length) == 0);
     assert(buffer[length - 1] == '\0');
-    assert(aqlogger::format_status(view, buffer.data(), length + 1) == length);
+    assert(oslogger::format_status(view, buffer.data(), length + 1) == length);
     assert(buffer == original);
-    assert(aqlogger::format_status(view, buffer.data(), 1) == 0);
+    assert(oslogger::format_status(view, buffer.data(), 1) == 0);
     assert(buffer[0] == '\0');
-    assert(aqlogger::format_status(view, nullptr, 0) == 0);
+    assert(oslogger::format_status(view, nullptr, 0) == 0);
   }
   view.utc = false;
   view.disconnects = 0;
   const auto length =
-      aqlogger::format_status(view, buffer.data(), buffer.size());
+      oslogger::format_status(view, buffer.data(), buffer.size());
   assert(length && length <= ble::kMaxJson);
   assert(std::strstr(buffer.data(), "\"utc_ms\":null,\"clk_age_s\":null}"));
   assert(std::strstr(buffer.data(), "\"dc\":0,\"dr\":null,"));
@@ -74,24 +74,24 @@ int main() {
   view.utc = true;
   view.missed = view.utc_ms = view.clock_age_seconds = -5;
   view.mount_epoch = 0x1234abcdU;
-  assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
+  assert(oslogger::format_status(view, buffer.data(), buffer.size()));
   assert(std::strstr(buffer.data(), "\"miss\":0,"));
   assert(std::strstr(buffer.data(),
                      "\"ls\":305441741,\"utc_ms\":0,\"clk_age_s\":0}"));
   view.utc = false;
   view.mount_epoch = maximum;
-  assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
+  assert(oslogger::format_status(view, buffer.data(), buffer.size()));
   std::cout << buffer.data() << '\n';
   // sd_state is the documented wire number: 0 ready, 1 degraded, 2 full,
   // 3 retry.
-  using aqlogger::storage::State;
+  using oslogger::storage::State;
   const char *const wire[] = {"\"sd_state\":0,", "\"sd_state\":1,",
                               "\"sd_state\":2,", "\"sd_state\":3,"};
   const State states[] = {State::Ready, State::Degraded, State::Full,
                           State::Retry};
   for (std::size_t i = 0; i < 4; ++i) {
     view.sd_state = states[i];
-    assert(aqlogger::format_status(view, buffer.data(), buffer.size()));
+    assert(oslogger::format_status(view, buffer.data(), buffer.size()));
     assert(std::strstr(buffer.data(), wire[i]));
   }
 }

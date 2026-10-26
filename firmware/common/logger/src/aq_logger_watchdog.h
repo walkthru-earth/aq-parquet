@@ -6,7 +6,7 @@
 // tests can drive it with a fake clock. The board side in aq_logger.cpp owns
 // the task-watchdog user, the supervisor timer and the RTC record, and only
 // applies the actions decided here.
-namespace aqlogger::watchdog {
+namespace oslogger::watchdog {
 constexpr std::uint32_t kMagic = 0x41515744; // "AQWD"
 // After this many stall resets without a healthy period between them the
 // watchdog stops resetting and only warns.
@@ -189,4 +189,4 @@ inline void failed(Supervisor &state, Guard &guard, Action action) {
     break;
   }
 }
-} // namespace aqlogger::watchdog
+} // namespace oslogger::watchdog

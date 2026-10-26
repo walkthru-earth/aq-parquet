@@ -2,7 +2,7 @@
 
 // Owner-editable device settings, protocol v2
 // (docs/shared/ble-sync-protocol.md, "Device configuration"). Stored in the NVS
-// namespace `aqcfg`, separate from the `parquet` namespace that holds the
+// namespace `oscfg`, separate from the `parquet` namespace that holds the
 // station identity. Loaded once at boot on the main task; later reads and
 // writes come from the storage worker (the only task that executes control
 // requests), so the copy handed out by get() is guarded by a spinlock and

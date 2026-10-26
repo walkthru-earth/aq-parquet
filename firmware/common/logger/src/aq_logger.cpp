@@ -64,11 +64,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 // After the ESP-IDF headers, which bring in sdkconfig.h.
-#if CONFIG_AQ_LOGGER_BENCH_STALL
+#if CONFIG_OS_LOGGER_BENCH_STALL
 #include "aq_logger_bench_stall.h"
 #endif
 
-namespace aqlogger {
+namespace oslogger {
 namespace {
 using namespace telemetry;
 using Sample = LocationSample<Row>;
@@ -77,20 +77,20 @@ Hooks hooks;
 std::size_t field_count = 0;
 std::size_t sequence = 0, event_time_utc_us = 0, clock_epoch = 0;
 std::size_t monotonic_field = 0;
-constexpr std::int32_t kClockNone = aq::utc::None;
-constexpr std::int32_t kClockHost = aq::utc::Host;
-constexpr std::int32_t kClockRtc = aq::utc::Rtc;
-using aq::sync::crc32_update;
-using aq::sync::get_i64;
-using aq::sync::get_u16;
-using aq::sync::get_u32;
-using aq::sync::put_i64;
-using aq::sync::put_u16;
-using aq::sync::put_u32;
-using aq::utc::days_from_civil;
+constexpr std::int32_t kClockNone = opensensor::utc::None;
+constexpr std::int32_t kClockHost = opensensor::utc::Host;
+constexpr std::int32_t kClockRtc = opensensor::utc::Rtc;
+using opensensor::sync::crc32_update;
+using opensensor::sync::get_i64;
+using opensensor::sync::get_u16;
+using opensensor::sync::get_u32;
+using opensensor::sync::put_i64;
+using opensensor::sync::put_u16;
+using opensensor::sync::put_u32;
+using opensensor::utc::days_from_civil;
 constexpr std::size_t kMaxRows = cadence::kMaxBatchRows;
 // Config::sample_interval_ms in microseconds, set once by begin().
-std::int64_t sample_us = std::int64_t{cadence::kDefaultSampleIntervalMs} * 1000;
+std::int64_t sample_us = cadence::period_us(cadence::kDefaultSampleIntervalMs);
 const char *kDirectory = "/sd/output";
 const char *kBenchDirectory = "/sd/bench";
 // Footer key/value budget. finalize_file fills a fixed array in this order.
@@ -131,8 +131,8 @@ struct OutputFile {
 };
 constexpr std::size_t kCrcCacheEntries = 64;
 constexpr std::size_t kCrcScratchBytes = 4096;
-static_assert(aqsync::ArchiveSession::kReadHandles <=
-                  aq::storage::kArchiveReadHandles,
+static_assert(ossync::ArchiveSession::kReadHandles <=
+                  opensensor::storage::kArchiveReadHandles,
               "mount max_files must cover every archive read handle");
 struct WriterState {
   Sample rows[kMaxRows];
@@ -144,10 +144,10 @@ struct WriterState {
   Lz4Workspace lz4{};
   // Archive reads. Finalize-time CRCs for OPEN, the CRC read block and one
   // stdio buffer per persistent archive read handle. Worker only.
-  aq::storage::CrcCache<kCrcCacheEntries> crc_cache;
+  opensensor::storage::CrcCache<kCrcCacheEntries> crc_cache;
   std::uint8_t crc_scratch[kCrcScratchBytes]{};
-  char read_buffers[aqsync::ArchiveSession::kReadHandles]
-                   [aqsync::ArchiveSession::kReadBufferBytes]{};
+  char read_buffers[ossync::ArchiveSession::kReadHandles]
+                   [ossync::ArchiveSession::kReadBufferBytes]{};
 };
 // Telemetry stdio staging stays in internal RAM, distinct from the PSRAM row
 // buffer. codec-test staging is PSRAM, allocated only while the test runs.
@@ -169,7 +169,7 @@ SemaphoreHandle_t worker_wakeup = nullptr;
 // Raised by report_battery() on the main loop, run only by the storage worker.
 power::EmergencyClose emergency_close;
 std::int64_t uptime_ms() { return esp_timer_get_time() / 1000; }
-aqsync::ServiceConfig sync_config{};
+ossync::ServiceConfig sync_config{};
 std::atomic<std::uint32_t> dropped{0}, errors{0}, finalized{0}, buffered{0};
 std::atomic<std::uint32_t> write_us{0}, sync_us{0}, queue_peak{0};
 std::atomic<std::uint32_t> total_kib{0}, used_kib{0}, rotation_seconds{900};
@@ -194,7 +194,7 @@ std::atomic<bool> unlisted_files{false};
 // LIST_SINCE state (aq_logger_list_since.h). Storage worker only, except
 // mount_epoch, which STATUS reads. The FAT volume serial of this mount, 0
 // when unknown.
-namespace list_since = aq::logger::list_since;
+namespace list_since = opensensor::logger::list_since;
 std::atomic<std::uint32_t> mount_epoch{0};
 list_since::RingKeeper boot_ring;
 // The lowest dated day and the last unsynced sequence of this boot.
@@ -204,10 +204,10 @@ std::int64_t sample_sequence = 0;
 std::atomic<std::int64_t> missed_deadlines{0};
 // Worker liveness: the loop and every long walk stamp this; poll warns when
 // it stops moving for 5 s, and the watchdog supervisor resets the chip when
-// it stops for CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S. begin() seeds it before
+// it stops for CONFIG_OS_LOGGER_WORKER_WDT_TIMEOUT_S. begin() seeds it before
 // the worker starts, so a worker that never stamps still ages out.
 std::atomic<std::int64_t> worker_heartbeat_us{0};
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
 // Survives the task-watchdog panic reset, lost on power-on.
 RTC_NOINIT_ATTR watchdog::Guard stall_guard;
 std::atomic<esp_task_wdt_user_handle_t> worker_wdt{nullptr};
@@ -215,7 +215,7 @@ std::atomic<esp_task_wdt_user_handle_t> worker_wdt{nullptr};
 // The single heartbeat stamp. It also feeds the worker's task-watchdog user.
 void stamp_heartbeat() {
   worker_heartbeat_us = esp_timer_get_time();
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
   if (auto *user = worker_wdt.load())
     esp_task_wdt_reset_user(user);
 #endif
@@ -223,9 +223,9 @@ void stamp_heartbeat() {
 TaskHandle_t worker_task = nullptr;
 // The longest the worker waits for begin() to print PARQUET BEGIN.
 constexpr std::uint32_t kWorkerStartWaitMs = 5000;
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
 static_assert(kWorkerStartWaitMs <
-                  CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S * 1000U,
+                  CONFIG_OS_LOGGER_WORKER_WDT_TIMEOUT_S * 1000U,
               "the start wait must end before the worker watchdog trips");
 #endif
 char boot_text[33]{};
@@ -279,16 +279,16 @@ bool sink(void *context, const std::uint8_t *data, std::size_t size) {
 }
 
 // Cache key of a finalized file (crc_cache.h) under the bus lock.
-bool crc_key(const char *path, aq::storage::CrcKey &key) {
+bool crc_key(const char *path, opensensor::storage::CrcKey &key) {
   BusLock lock;
-  return aq::storage::crc_stat_key(path, key);
+  return opensensor::storage::crc_stat_key(path, key);
 }
 
 // Structural completion check and CRC-32 of `file`, an open stream. PyArrow +
 // DuckDB perform conformance. With use_cache, an entry matching path, size
 // and mtime replaces the full read, and a computed CRC is remembered. A
 // failed seek or a short read sets check.io_error.
-bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
+bool check_file(const char *path, FILE *file, ossync::FileCheck &check,
                 bool use_cache) {
   std::uint8_t magic[4]{}, tail[8]{};
   bool ok = false;
@@ -304,7 +304,8 @@ bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
                           std::fread(magic, 1, 4, file) == 4 &&
                           std::fseek(file, -8, SEEK_END) == 0 &&
                           std::fread(tail, 1, 8, file) == 8;
-        ok = read && aq::sync::parquet_complete(check.size, magic, tail);
+        ok =
+            read && opensensor::sync::parquet_complete(check.size, magic, tail);
         check.io_error = !read || (ok && std::fseek(file, 0, SEEK_SET) != 0);
         ok = ok && !check.io_error;
       }
@@ -312,7 +313,7 @@ bool check_file(const char *path, FILE *file, aqsync::FileCheck &check,
   }
   if (!ok)
     return false;
-  aq::storage::CrcKey key;
+  opensensor::storage::CrcKey key;
   const bool keyed = use_cache && crc_key(path, key) && key.size == check.size;
   auto &cache = writer_state->crc_cache;
   check.cached = keyed && cache.lookup(key, check.crc);
@@ -349,7 +350,7 @@ bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
   }
   if (!file)
     return false;
-  aqsync::FileCheck check;
+  ossync::FileCheck check;
   bool ok = check_file(path, file, check, false);
   {
     BusLock lock;
@@ -363,7 +364,7 @@ bool finalized_file(const char *path, std::uint32_t &size, std::uint32_t &crc) {
 // Called once a file is finalized under its ready name, so the first OPEN
 // skips the full CRC read.
 void remember_crc(const char *path, std::uint32_t size, std::uint32_t crc) {
-  aq::storage::CrcKey key;
+  opensensor::storage::CrcKey key;
   if (crc_key(path, key) && key.size == size)
     writer_state->crc_cache.insert(key, crc);
 }
@@ -380,7 +381,7 @@ void prepare_columns() {
         field.name, field.type, &writer_state->rows[0].data[i], sizeof(Sample),
         &writer_state->rows[0].valid[i], sizeof(Sample), logical,
         // 1-based dictionary position, see
-        // aqlogger::Config::fields.
+        // oslogger::Config::fields.
         static_cast<std::int32_t>(i + 1)};
   }
 }
@@ -438,7 +439,7 @@ bool make_directories(const char *path) {
     bool ok;
     {
       BusLock lock;
-      ok = aq::logger::detail::ensure_directory(copy);
+      ok = opensensor::logger::detail::ensure_directory(copy);
     }
     *part = saved;
     if (!ok)
@@ -501,7 +502,7 @@ struct ArchiveDirectoryIO {
 // Adds the quarantine moves, one bus lock per call.
 struct StorageIO : ArchiveDirectoryIO {
   static bool make_directories(const char *path) {
-    return aqlogger::make_directories(path);
+    return oslogger::make_directories(path);
   }
   static bool exists(const char *path) {
     BusLock lock;
@@ -528,12 +529,12 @@ bool quarantine_one(const char *root, const char *relative,
                           static_cast<int>(base - relative - 1), relative);
   if (length < 0 || static_cast<std::size_t>(length) >= sizeof(directory)) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine reason=path-too-long\n");
+    oslog.printf("PARQUET ERROR operation=quarantine reason=path-too-long\n");
     return false;
   }
   StorageIO io;
-  if (aq::logger::detail::crosslink_suspect(io, directory, base)) {
-    aqlog.printf("PARQUET RECOVERY crosslink-suspect file=%s action=none\n",
+  if (opensensor::logger::detail::crosslink_suspect(io, directory, base)) {
+    oslog.printf("PARQUET RECOVERY crosslink-suspect file=%s action=none\n",
                  relative);
     return false;
   }
@@ -543,16 +544,16 @@ bool quarantine_one(const char *root, const char *relative,
   if (io.inspect(source, &info) != 0)
     info.st_size = 0;
   char destination[416];
-  const bool ok = aq::logger::detail::quarantine_partial(
+  const bool ok = opensensor::logger::detail::quarantine_partial(
       io, root, relative, boot_text, quarantine_counter++, destination,
       sizeof(destination));
   if (!ok) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine file=%s errno=%d\n",
+    oslog.printf("PARQUET ERROR operation=quarantine file=%s errno=%d\n",
                  relative, errno);
     return false;
   }
-  aqlog.printf("PARQUET QUARANTINE source=%s target=%s bytes=%llu origin=%s\n",
+  oslog.printf("PARQUET QUARANTINE source=%s target=%s bytes=%llu origin=%s\n",
                relative, destination + std::strlen(root) + 1,
                static_cast<unsigned long long>(info.st_size), origin);
   return true;
@@ -561,7 +562,7 @@ bool quarantine_one(const char *root, const char *relative,
 void close_failed(OutputFile &target, const char *operation,
                   const char *reason) {
   ++errors;
-  aqlog.printf("PARQUET ERROR operation=%s file=%s reason=%s errno=%d "
+  oslog.printf("PARQUET ERROR operation=%s file=%s reason=%s errno=%d "
                "rows_on_card=%lu\n",
                operation, target.stem, reason ? reason : "io-or-validation",
                errno, static_cast<unsigned long>(target.rows));
@@ -573,7 +574,7 @@ void close_failed(OutputFile &target, const char *operation,
     }
     if (!closed) {
       ++errors;
-      aqlog.printf("PARQUET ERROR operation=close file=%s errno=%d\n",
+      oslog.printf("PARQUET ERROR operation=close file=%s errno=%d\n",
                    target.stem, errno);
     }
   }
@@ -639,7 +640,7 @@ void note_unsynced_boot() {
       list_since::marker_path(marker, kDirectory, station_text, boot_text);
   if (boot_ring.appended()) {
     const auto *ring = boot_ring.ring(ring_store);
-    aqlog.printf("PARQUET BOOT_RING appended=%lu\n",
+    oslog.printf("PARQUET BOOT_RING appended=%lu\n",
                  static_cast<unsigned long>(ring ? ring->appended() : 0));
     if (!boot_ring.stale_marker())
       return;
@@ -654,13 +655,13 @@ void note_unsynced_boot() {
       failure = ENAMETOOLONG;
     }
     if (failure)
-      aqlog.printf("PARQUET WARN operation=boot-ring-marker-remove errno=%d\n",
+      oslog.printf("PARQUET WARN operation=boot-ring-marker-remove errno=%d\n",
                    failure);
     else
       boot_ring.marker_removed();
     return;
   }
-  aqlog.println("PARQUET WARN operation=boot-ring list_since=unsynced-full");
+  oslog.println("PARQUET WARN operation=boot-ring list_since=unsynced-full");
   if (!boot_ring.needs_marker())
     return;
   // A later boot's ring will not name this boot, so its LIST_SINCE finds
@@ -668,7 +669,7 @@ void note_unsynced_boot() {
   if (named && make_directories(marker))
     boot_ring.marker_made();
   else
-    aqlog.println("PARQUET ERROR operation=boot-ring-marker");
+    oslog.println("PARQUET ERROR operation=boot-ring-marker");
 }
 
 // Creates `<partition>/<prefix>_<boot>_<first>-<attempt>.partial` from the
@@ -719,12 +720,12 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
       directory_length < 0 ||
       static_cast<std::size_t>(directory_length) >= sizeof(directory)) {
     ++errors;
-    aqlog.println("PARQUET ERROR operation=create reason=path-too-long");
+    oslog.println("PARQUET ERROR operation=create reason=path-too-long");
     return false;
   }
   if (!make_directories(directory)) {
     ++errors;
-    aqlog.println("PARQUET ERROR operation=mkdir");
+    oslog.println("PARQUET ERROR operation=mkdir");
     return false;
   }
   target.benchmark = benchmark;
@@ -747,7 +748,7 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
       partial_length < 0 ||
       static_cast<std::size_t>(partial_length) >= sizeof(target.partial)) {
     ++errors;
-    aqlog.println("PARQUET ERROR operation=create reason=path-too-long");
+    oslog.println("PARQUET ERROR operation=create reason=path-too-long");
     return false;
   }
   {
@@ -761,7 +762,7 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
   }
   if (!target.file) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=create errno=%d file=%s\n", errno,
+    oslog.printf("PARQUET ERROR operation=create errno=%d file=%s\n", errno,
                  target.stem);
     return false;
   }
@@ -817,7 +818,7 @@ bool append_group(OutputFile &target, std::size_t count) {
     open_rows = target.rows;
     open_groups = target.writer.row_groups();
   }
-  aqlog.printf("PARQUET GROUP file=%s ordinal=%u rows=%u first=%lld last=%lld "
+  oslog.printf("PARQUET GROUP file=%s ordinal=%u rows=%u first=%lld last=%lld "
                "bytes=%llu writer_us=%lld codec=%s codec_us=%llu\n",
                target.stem, unsigned(target.writer.row_groups() - 1),
                unsigned(count), static_cast<long long>(target.first),
@@ -916,7 +917,7 @@ bool finalize_file(OutputFile &target) {
   since_state.finalized(target.benchmark, target.dated, target.last);
   if (!target.benchmark)
     remember_crc(ready, size, crc);
-  aqlog.printf(
+  oslog.printf(
       "PARQUET READY name=%s-%lld-%lu.parquet rows=%u row_groups=%u "
       "first=%lld last=%lld bytes=%lu crc32=%08lx write_us=%lu sync_us=%llu "
       "heap_free=%lu psram_free=%lu stack_free=%u codec=%s codec_us=%llu "
@@ -977,14 +978,16 @@ bool write_benchmark(std::size_t count, Codec codec) {
          finalize_file(target);
 }
 
-bool safe_name(const char *name) { return aq::sync::safe_parquet_name(name); }
+bool safe_name(const char *name) {
+  return opensensor::sync::safe_parquet_name(name);
+}
 
 // One finalized-file entry from a listing. `name` already carries the export
 // prefix ("legacy-parquet/" for the pre-Hive directory). False stops the walk.
-using FileEmitter = aqsync::FileEmitter;
+using FileEmitter = ossync::FileEmitter;
 
 bool emit_file_serial(void *, const char *name, std::uint32_t bytes) {
-  aqlog.printf("PARQUET FILE name=%s bytes=%lu\n", name,
+  oslog.printf("PARQUET FILE name=%s bytes=%lu\n", name,
                static_cast<unsigned long>(bytes));
   return true;
 }
@@ -1002,7 +1005,7 @@ std::uint32_t utc_yesterday() {
   if (!generation)
     return 0;
   return list_since::day_before(
-      aq::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000);
+      opensensor::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000);
 }
 
 // Emits each finalized file as `<prefix><name>` and counts the .partial
@@ -1052,7 +1055,7 @@ public:
       list_since::IncrementalWalk<ArchiveDirectoryIO> *since = nullptr)
       : since_(since) {}
 
-  aqsync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
+  ossync::ListStatus step(bool start, unsigned budget, FileEmitter emit,
                           void *context, unsigned &partials) {
     if (start) {
       cancel();
@@ -1065,15 +1068,15 @@ public:
                       .emit = emit,
                       .context = context,
                       .partials = &partials};
-    using Walk = aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>;
+    using Walk = opensensor::logger::detail::DirectoryWalk<ArchiveDirectoryIO>;
     const auto status = walk_.step(budget, visit);
     if (status == Walk::Status::More)
-      return aqsync::ListStatus::More;
+      return ossync::ListStatus::More;
     if (status == Walk::Status::Failed || visit.bad_entry)
       return fail();
     if (status == Walk::Status::Stopped) {
       cancel();
-      return aqsync::ListStatus::Stopped;
+      return ossync::ListStatus::Stopped;
     }
     if (!legacy_ && config.legacy_directory) {
       legacy_ = true;
@@ -1093,7 +1096,7 @@ public:
         // The legacy tree starts on the next step.
         if (!walk_.begin(io_, config.legacy_directory))
           return fail();
-        return aqsync::ListStatus::More;
+        return ossync::ListStatus::More;
       }
       if (stat_error != ENOENT) {
         errno = stat_error;
@@ -1102,13 +1105,13 @@ public:
     }
     cancel();
     partials_seen = partials;
-    return aqsync::ListStatus::Complete;
+    return ossync::ListStatus::Complete;
   }
 
   // LIST_SINCE. The plan picks the plain walk when the cursor does not
   // match this mount, or the incremental walk of this station.
-  aqsync::ListStatus step_since(bool start, const aqsync::ListCursor &cursor,
-                                aqsync::ListSinceResult &result,
+  ossync::ListStatus step_since(bool start, const ossync::ListCursor &cursor,
+                                ossync::ListSinceResult &result,
                                 unsigned budget, FileEmitter emit,
                                 void *context, unsigned &partials) {
     if (start) {
@@ -1121,7 +1124,7 @@ public:
           cursor, mount_epoch.load(), utc_yesterday(), boot_ring, ring_store);
       const auto plan = list_since::plan(in);
       result = plan.result;
-      aqlog.printf("LIST_SINCE plan full=%u floor=%lu unsynced_full=%u "
+      oslog.printf("LIST_SINCE plan full=%u floor=%lu unsynced_full=%u "
                    "first_age=%u boots=%u next_day=%lu\n",
                    plan.full ? 1U : 0U, static_cast<unsigned long>(plan.floor),
                    plan.unsynced_full ? 1U : 0U, unsigned(plan.first_age),
@@ -1142,20 +1145,20 @@ public:
     using Walk = list_since::IncrementalWalk<ArchiveDirectoryIO>;
     const auto status = since_->step(budget, visit);
     if (status == Walk::Status::More)
-      return aqsync::ListStatus::More;
+      return ossync::ListStatus::More;
     if (status == Walk::Status::Failed || visit.bad_entry)
       return fail();
     if (status == Walk::Status::Stopped) {
       cancel();
-      return aqsync::ListStatus::Stopped;
+      return ossync::ListStatus::Stopped;
     }
     // Ringless markers past kMaxRingless made it walk the whole unsynced
     // tree. Its partials count covers only the folders it read, so STATUS
     // keeps the count of the last full walk.
     if (since_->widened())
-      result.flags |= aqsync::kListSinceUnsyncedFull;
+      result.flags |= ossync::kListSinceUnsyncedFull;
     cancel();
-    return aqsync::ListStatus::Complete;
+    return ossync::ListStatus::Complete;
   }
 
   void cancel() {
@@ -1172,15 +1175,15 @@ public:
   }
 
 private:
-  aqsync::ListStatus fail() {
+  ossync::ListStatus fail() {
     const int failure = errno;
     cancel();
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=list errno=%d\n", failure);
-    return aqsync::ListStatus::Failed;
+    oslog.printf("PARQUET ERROR operation=list errno=%d\n", failure);
+    return ossync::ListStatus::Failed;
   }
 
-  aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO> walk_;
+  opensensor::logger::detail::DirectoryWalk<ArchiveDirectoryIO> walk_;
   list_since::IncrementalWalk<ArchiveDirectoryIO> *since_;
   ArchiveDirectoryIO io_;
   std::uint32_t finalized_at_start_ = 0;
@@ -1211,20 +1214,21 @@ void quarantine_directory(unsigned &quarantined) {
   };
   auto too_deep = [](const char *name) {
     ++errors;
-    aqlog.printf(
-        "PARQUET ERROR operation=quarantine-depth dir=%s "
-        "max_depth=%u\n",
-        name, aq::logger::detail::DirectoryWalk<ArchiveDirectoryIO>::kMaxDepth);
+    oslog.printf("PARQUET ERROR operation=quarantine-depth dir=%s "
+                 "max_depth=%u\n",
+                 name,
+                 opensensor::logger::detail::DirectoryWalk<
+                     ArchiveDirectoryIO>::kMaxDepth);
   };
   auto unreadable = [](const char *name, int error) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine-entry name=%s errno=%d\n",
+    oslog.printf("PARQUET ERROR operation=quarantine-entry name=%s errno=%d\n",
                  name, error);
   };
-  if (!aq::logger::detail::find_partials(io, kDirectory, move, too_deep,
-                                         unreadable)) {
+  if (!opensensor::logger::detail::find_partials(io, kDirectory, move, too_deep,
+                                                 unreadable)) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine-walk errno=%d\n", errno);
+    oslog.printf("PARQUET ERROR operation=quarantine-walk errno=%d\n", errno);
   }
 }
 
@@ -1242,10 +1246,10 @@ void count_quarantine(unsigned &count, std::uint64_t &bytes) {
     bytes = UINT64_MAX - bytes < file_bytes ? UINT64_MAX : bytes + file_bytes;
     return true;
   };
-  if (!aq::logger::detail::walk_directory(io, root, "", 0, visit) &&
+  if (!opensensor::logger::detail::walk_directory(io, root, "", 0, visit) &&
       errno != ENOENT) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine-count errno=%d\n", errno);
+    oslog.printf("PARQUET ERROR operation=quarantine-count errno=%d\n", errno);
   }
 }
 
@@ -1254,7 +1258,7 @@ unsigned quarantine_partials() {
   std::snprintf(directory, sizeof(directory), "%s/quarantine", kDirectory);
   if (!make_directories(directory)) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=quarantine-mkdir errno=%d\n", errno);
+    oslog.printf("PARQUET ERROR operation=quarantine-mkdir errno=%d\n", errno);
     return 0;
   }
   unsigned quarantined = 0;
@@ -1273,9 +1277,9 @@ bool list_all(FileEmitter emit, void *context, unsigned &partials) {
   ArchiveList list;
   constexpr unsigned kBudget = 1024;
   auto status = list.step(true, kBudget, emit, context, partials);
-  while (status == aqsync::ListStatus::More)
+  while (status == ossync::ListStatus::More)
     status = list.step(false, kBudget, emit, context, partials);
-  return status == aqsync::ListStatus::Complete;
+  return status == ossync::ListStatus::Complete;
 }
 
 void list_files(bool emit_serial = true) {
@@ -1294,19 +1298,19 @@ void list_files(bool emit_serial = true) {
   if (!emit_serial) {
     // Startup must not wait for a USB reader to drain an archive-sized dump.
     // Enumeration/stats still run on this worker with the same bus ownership.
-    aqlog.printf("PARQUET SCAN files=%lu retained_partials=%u "
+    oslog.printf("PARQUET SCAN files=%lu retained_partials=%u "
                  "quarantine_files=%lu quarantine_bytes=%llu\n",
                  static_cast<unsigned long>(count), partials,
                  static_cast<unsigned long>(partials_quarantined.load()),
                  static_cast<unsigned long long>(quarantine_bytes.load()));
     return;
   }
-  aqlog.printf("PARQUET PARTIAL retained=%u quarantine_files=%lu "
+  oslog.printf("PARQUET PARTIAL retained=%u quarantine_files=%lu "
                "quarantine_bytes=%llu recovery=host-only\n",
                partials,
                static_cast<unsigned long>(partials_quarantined.load()),
                static_cast<unsigned long long>(quarantine_bytes.load()));
-  aqlog.println("PARQUET LIST END");
+  oslog.println("PARQUET LIST END");
 }
 
 bool resolve_path(const char *name, char *path, std::size_t size) {
@@ -1325,7 +1329,7 @@ bool resolve_path(const char *name, char *path, std::size_t size) {
 void send_file(const char *name) {
   char path[416];
   if (!resolve_path(name, path, sizeof(path))) {
-    aqlog.println("PARQUET ERROR operation=get reason=invalid-name");
+    oslog.println("PARQUET ERROR operation=get reason=invalid-name");
     return;
   }
   FILE *file;
@@ -1334,10 +1338,10 @@ void send_file(const char *name) {
     file = std::fopen(path, "rb");
   }
   if (!file) {
-    aqlog.println("PARQUET ERROR operation=get reason=open");
+    oslog.println("PARQUET ERROR operation=get reason=open");
     return;
   }
-  aqsync::FileCheck check;
+  ossync::FileCheck check;
   bool rewound = check_file(path, file, check, true);
   if (rewound) {
     BusLock lock;
@@ -1348,11 +1352,11 @@ void send_file(const char *name) {
       BusLock lock;
       std::fclose(file);
     }
-    aqlog.println("PARQUET ERROR operation=get reason=invalid-file");
+    oslog.println("PARQUET ERROR operation=get reason=invalid-file");
     return;
   }
   const std::uint32_t size = check.size, expected_crc = check.crc;
-  aqlog.printf("PARQUET DATA BEGIN name=%s bytes=%lu\n", name,
+  oslog.printf("PARQUET DATA BEGIN name=%s bytes=%lu\n", name,
                static_cast<unsigned long>(size));
   std::uint8_t block[256];
   char hex[513];
@@ -1378,7 +1382,7 @@ void send_file(const char *name) {
       hex[2 * i + 1] = digits[block[i] & 15];
     }
     hex[2 * count] = '\0';
-    aqlog.printf("PARQUET DATA offset=%lu hex=%s\n",
+    oslog.printf("PARQUET DATA offset=%lu hex=%s\n",
                  static_cast<unsigned long>(offset), hex);
     offset += count;
     // A 1 MiB file is about 3 minutes of hex at 115200 baud, longer than the
@@ -1391,18 +1395,18 @@ void send_file(const char *name) {
     std::fclose(file);
   }
   if (preempted) {
-    aqlog.printf("PARQUET ERROR operation=get reason=power-critical "
+    oslog.printf("PARQUET ERROR operation=get reason=power-critical "
                  "offset=%lu\n",
                  static_cast<unsigned long>(offset));
     return;
   }
-  aqlog.printf("PARQUET DATA END name=%s bytes=%lu crc32=%08lx\n", name,
+  oslog.printf("PARQUET DATA END name=%s bytes=%lu crc32=%08lx\n", name,
                static_cast<unsigned long>(offset),
                static_cast<unsigned long>(expected_crc));
 }
 
 const char *clock_source_name(std::int32_t source) {
-  return aq::utc::source_name(source);
+  return opensensor::utc::source_name(source);
 }
 
 // Shared by `parquet time`, the BLE/LAN SET_TIME op and the boot-time RTC
@@ -1416,15 +1420,15 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
                std::int64_t *skew_ns = nullptr,
                std::int32_t *previous = nullptr,
                std::uint32_t subsecond_us = 0) {
-  if (!aq::utc::supported_anchor(seconds, subsecond_us))
+  if (!opensensor::utc::supported_anchor(seconds, subsecond_us))
     return false;
-  const std::int64_t utc_ns = aq::utc::anchor_ns(seconds, subsecond_us);
+  const std::int64_t utc_ns = opensensor::utc::anchor_ns(seconds, subsecond_us);
   portENTER_CRITICAL(&clock_mutex);
   const auto previous_source = clock_generation ? clock_source : kClockNone;
-  const auto skew =
-      clock_generation
-          ? utc_ns - aq::utc::estimate_ns(mono, anchor_mono_us, anchor_utc_ns)
-          : 0;
+  const auto skew = clock_generation
+                        ? utc_ns - opensensor::utc::estimate_ns(
+                                       mono, anchor_mono_us, anchor_utc_ns)
+                        : 0;
   if (previous)
     *previous = previous_source;
   if (skew_ns)
@@ -1432,10 +1436,10 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
   anchor_mono_us = mono;
   anchor_utc_ns = utc_ns;
   clock_source = source;
-  if (aq::utc::starts_new_epoch(previous_source, source, skew))
+  if (opensensor::utc::starts_new_epoch(previous_source, source, skew))
     ++clock_generation;
   portEXIT_CRITICAL(&clock_mutex);
-  if (source == kClockHost || source == aq::utc::Network) {
+  if (source == kClockHost || source == opensensor::utc::Network) {
     rtc_write_requested_us = mono;
     rtc_write_pending = true;
   }
@@ -1448,10 +1452,10 @@ bool set_clock(std::int64_t seconds, std::int64_t mono, std::int32_t source,
 void report_host_clock(const char *transport, std::int64_t seconds,
                        std::int64_t mono, std::int32_t previous,
                        std::int64_t skew_ns) {
-  aqlog.printf("PARQUET TIME epoch_s=%lld source=host monotonic_us=%lld\n",
+  oslog.printf("PARQUET TIME epoch_s=%lld source=host monotonic_us=%lld\n",
                static_cast<long long>(seconds), static_cast<long long>(mono));
   if (previous != kClockNone)
-    aqlog.printf("PARQUET CLOCK transport=%s previous=%s skew_ms=%lld\n",
+    oslog.printf("PARQUET CLOCK transport=%s previous=%s skew_ms=%lld\n",
                  transport, clock_source_name(previous),
                  static_cast<long long>(skew_ns / 1000000));
 }
@@ -1464,11 +1468,11 @@ void seed_clock_from_rtc() {
   const auto mono = esp_timer_get_time();
   if (!read_ok || !set_clock(seconds, mono, kClockRtc)) {
     rtc_state = 2;
-    aqlog.println("PARQUET RTC state=unusable-or-absent");
+    oslog.println("PARQUET RTC state=unusable-or-absent");
     return;
   }
   rtc_state = 1;
-  aqlog.printf("PARQUET TIME epoch_s=%lld source=rtc monotonic_us=%lld\n",
+  oslog.printf("PARQUET TIME epoch_s=%lld source=rtc monotonic_us=%lld\n",
                static_cast<long long>(seconds), static_cast<long long>(mono));
 }
 
@@ -1485,20 +1489,20 @@ void service_rtc_write(std::int64_t now) {
   mono_anchor = anchor_mono_us;
   portEXIT_CRITICAL(&clock_mutex);
   const std::int64_t utc_ns =
-      aq::utc::estimate_ns(now, mono_anchor, utc_anchor);
+      opensensor::utc::estimate_ns(now, mono_anchor, utc_anchor);
   const std::int64_t fraction_ns = utc_ns % 1000000000;
   const bool overdue = now - rtc_write_requested_us.load() > 5000000LL;
   if (fraction_ns >= 60000000LL && !overdue)
     return;
   rtc_write_pending = false;
   if (!hooks.rtc_write) {
-    aqlog.println("PARQUET RTC write=skipped reason=absent");
+    oslog.println("PARQUET RTC write=skipped reason=absent");
     return;
   }
   const auto seconds = (utc_ns + 500000000) / 1000000000;
   const bool ok = hooks.rtc_write(seconds, hooks.context);
   rtc_state = ok ? 1 : 2;
-  aqlog.printf("PARQUET RTC write=%s epoch_s=%lld late_ms=%lld%s\n",
+  oslog.printf("PARQUET RTC write=%s epoch_s=%lld late_ms=%lld%s\n",
                ok ? "ok" : "readback-mismatch", static_cast<long long>(seconds),
                static_cast<long long>(fraction_ns / 1000000),
                overdue ? " overdue=true" : "");
@@ -1533,7 +1537,8 @@ std::size_t build_status_json(char *out, std::size_t size) {
       static_cast<std::uint8_t>(generation ? source : kClockNone);
   view.rtc_state = static_cast<std::uint8_t>(rtc_state.load());
   if (generation) {
-    view.utc_ms = aq::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000;
+    view.utc_ms =
+        opensensor::utc::estimate_ns(now, mono_anchor, utc_anchor) / 1000000;
     view.clock_age_seconds = (now - mono_anchor) / 1000000;
   }
   view.storage_ok = storage_ok.load();
@@ -1603,7 +1608,7 @@ void publish_live(const Sample &row, std::int64_t now) {
   if (live.log) {
     char line[64];
     if (format_live_overflow(line, sizeof(line), live.needed, ble::kMaxJson))
-      aqlog.print(line);
+      oslog.print(line);
   }
   if (live.length && live.length <= ble::kMaxJson) {
     ble::publish_live(json, live.length);
@@ -1615,7 +1620,7 @@ void publish_live(const Sample &row, std::int64_t now) {
 const ble::ControlRequest *current_request = nullptr;
 // The ABORT stamp of the request or LIST step being executed, or nullptr. A
 // LIST step has no request, only the job's stamp.
-const aqsync::abort::Tag *current_abort = nullptr;
+const ossync::abort::Tag *current_abort = nullptr;
 
 std::uint32_t link_generation(ble::Link link, std::uint8_t peer = 0) {
   return link == ble::Link::Lan ? lan::connection_generation(peer)
@@ -1649,7 +1654,7 @@ void *wait_context(const std::uint8_t *frame, std::size_t length) {
 bool data_wait_step(void *context) {
   error_wait_step(context);
   return power::keep_waiting(
-      emergency_close, current_abort && aqsync::abort::pending(*current_abort),
+      emergency_close, current_abort && ossync::abort::pending(*current_abort),
       context != nullptr, uptime_ms());
 }
 bool lan_deliver(const std::uint8_t *frame, std::size_t length,
@@ -1687,16 +1692,16 @@ bool respond_error(ble::Op op, ble::Error code, const char *detail) {
 }
 // Archive policy stays with the board worker; file-transfer sessions and wire
 // frames are shared across boards and BLE/LAN transports.
-aqsync::ArchiveSession archive_session(
+ossync::ArchiveSession archive_session(
     {nullptr,
-     [](void *, bool start, unsigned budget, aqsync::FileEmitter emit,
+     [](void *, bool start, unsigned budget, ossync::FileEmitter emit,
         void *context, unsigned &partials) {
        return archive_list.step(start, budget, emit, context, partials);
      },
      [](void *, const char *name, char *path, std::size_t size) {
        return resolve_path(name, path, size);
      },
-     [](void *, const char *path, FILE *file, aqsync::FileCheck &check) {
+     [](void *, const char *path, FILE *file, ossync::FileCheck &check) {
        return check_file(path, file, check, true);
      },
      [](void *) { return total_kib.load(); },
@@ -1709,7 +1714,7 @@ aqsync::ArchiveSession archive_session(
        publish_advert();
      },
      [](void *) { lock_bus(); }, [](void *) { unlock_bus(); },
-     [](void *, const char *line) { aqlog.record_only().print(line); },
+     [](void *, const char *line) { oslog.record_only().print(line); },
      [](void *, std::size_t slot) -> void * {
        return writer_state->read_buffers[slot];
      },
@@ -1719,9 +1724,9 @@ aqsync::ArchiveSession archive_session(
      // FILE. CHUNK frames and ring waits stop through the transfer gate,
      // which reads the same close (aq_logger_transfer_gate.h).
      [](void *) { return emergency_close.preempt(uptime_ms()); },
-     [](void *, bool start, const aqsync::ListCursor &cursor,
-        aqsync::ListSinceResult &result, unsigned budget,
-        aqsync::FileEmitter emit, void *context, unsigned &partials) {
+     [](void *, bool start, const ossync::ListCursor &cursor,
+        ossync::ListSinceResult &result, unsigned budget,
+        ossync::FileEmitter emit, void *context, unsigned &partials) {
        return archive_list.step_since(start, cursor, result, budget, emit,
                                       context, partials);
      }},
@@ -1754,7 +1759,7 @@ aqsync::ArchiveSession archive_session(
      },
      [](void *) { stamp_heartbeat(); }});
 
-const aqsync::ControlReplies control_replies{
+const ossync::ControlReplies control_replies{
     nullptr, [](void *, ble::Link) { return link_payload_max(); },
     [](void *, ble::Link, const std::uint8_t *frame, std::size_t length) {
       return respond(frame, length);
@@ -1805,7 +1810,7 @@ bool measure_volume() {
   used_kib = static_cast<std::uint32_t>(used / 1024);
   std::uint64_t free_bytes = 0;
   const bool ok = total != 0 && measure_free(free_bytes);
-  aqlog.printf(
+  oslog.printf(
       "PARQUET STORAGE mount cluster_bytes=%lu total_kib=%llu "
       "free_kib=%llu reserve_kib=%llu high_kib=%llu mount_epoch=%08lx\n",
       static_cast<unsigned long>(cluster),
@@ -1838,12 +1843,12 @@ void publish_storage(storage::State previous) {
     return;
   const auto free_kib =
       static_cast<unsigned long long>(governor.free_bytes() / 1024);
-  aqlog.printf("PARQUET STORAGE state=%s previous=%s free_kib=%llu "
+  oslog.printf("PARQUET STORAGE state=%s previous=%s free_kib=%llu "
                "retry_attempts=%lu\n",
                storage::state_name(current), storage::state_name(previous),
                free_kib, static_cast<unsigned long>(governor.retry_attempts()));
   if (current == storage::State::Full)
-    aqlog.printf("PARQUET ALARM storage=full free_kib=%llu action=paused "
+    oslog.printf("PARQUET ALARM storage=full free_kib=%llu action=paused "
                  "deleted=0\n",
                  free_kib);
   publish_status();
@@ -1936,7 +1941,7 @@ void probe_storage(std::size_t &count, bool &storage_ready,
     {
       BusLock lock;
       ok = hooks.storage_remount(hooks.context) &&
-           aq::logger::detail::ensure_directory(kDirectory);
+           opensensor::logger::detail::ensure_directory(kDirectory);
     }
     stamp_heartbeat();
     mounted_again = ok;
@@ -1955,7 +1960,7 @@ void probe_storage(std::size_t &count, bool &storage_ready,
       storage::remount_scans_partials(previous, free_bytes,
                                       governor.limits())) {
     const unsigned quarantined = quarantine_partials();
-    aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0 "
+    oslog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0 "
                  "origin=remount\n",
                  quarantined);
   }
@@ -2047,9 +2052,9 @@ void flush_batch(std::size_t &count, bool &storage_ready) {
   CloseStorage storage{count, storage_ready};
   const auto outcome = power::attempt_close(storage);
   if (outcome == power::CloseOutcome::NothingOpen)
-    aqlog.println("PARQUET ERROR operation=flush reason=empty");
+    oslog.println("PARQUET ERROR operation=flush reason=empty");
   else if (outcome == power::CloseOutcome::BusyRetry)
-    aqlog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
+    oslog.printf("PARQUET ERROR operation=flush reason=storage-%s\n",
                  storage::state_name(governor.state()));
 }
 
@@ -2072,7 +2077,7 @@ void service_emergency_close(std::size_t &count, bool &storage_ready) {
   if (power::format_pass(line, sizeof(line), pass, emergency_close,
                          storage::state_name(governor.state()),
                          unsigned(finalized.load() - finalized_before), now))
-    aqlog.println(line);
+    oslog.println(line);
 }
 
 struct WorkerState {
@@ -2128,17 +2133,17 @@ void handle_control_request(const ble::ControlRequest &request,
       request.link_generation != link_generation(request.link, request.peer))
     return;
   if (archive_session.handle(request, state.storage_ready) ||
-      aqsync::handle_common_control(request, control_replies))
+      ossync::handle_common_control(request, control_replies))
     return;
   const std::size_t body_length = request.length - 1;
   switch (request.bytes[0]) {
   case ble::kOpSetTime: {
-    aq::sync::TimeRequest time;
-    const auto decoded =
-        aq::sync::decode_time_request(request.bytes + 1, body_length, time);
-    if (decoded != aq::sync::TimeRequestResult::Ok) {
+    opensensor::sync::TimeRequest time;
+    const auto decoded = opensensor::sync::decode_time_request(
+        request.bytes + 1, body_length, time);
+    if (decoded != opensensor::sync::TimeRequestResult::Ok) {
       respond_error(ble::kOpSetTime,
-                    decoded == aq::sync::TimeRequestResult::Malformed
+                    decoded == opensensor::sync::TimeRequestResult::Malformed
                         ? ble::kErrMalformed
                         : ble::kErrInvalidEpoch,
                     nullptr);
@@ -2158,8 +2163,8 @@ void handle_control_request(const ble::ControlRequest &request,
     // transition closes the previous file when its next sample arrives.
     std::uint8_t frame[21];
     frame[0] = ble::kFrameTimeSet;
-    const auto length =
-        aq::sync::encode_time_ack(frame + 1, time, request.received_mono_us);
+    const auto length = opensensor::sync::encode_time_ack(
+        frame + 1, time, request.received_mono_us);
     respond(frame, length + 1);
     publish_status();
     return;
@@ -2205,12 +2210,12 @@ void handle_control_request(const ble::ControlRequest &request,
     frame[0] = ble::kFrameRebooting;
     put_u16(frame + 1, kDelayMs);
     respond(frame, sizeof(frame));
-    aqlog.printf("PARQUET REBOOT source=%s delay_ms=%u\n",
+    oslog.printf("PARQUET REBOOT source=%s delay_ms=%u\n",
                  request.link == ble::Link::Lan ? "lan" : "ble",
                  unsigned(kDelayMs));
     // LAN sessions hear BYE reboot before their sockets vanish.
     lan::drop_session(ble::DisconnectReason::Reboot);
-    aq::console::flush();
+    opensensor::console::flush();
     vTaskDelay(pdMS_TO_TICKS(kDelayMs));
     // After the delay REBOOTING has left; a BLE peer gets a recorded close too.
     ble::disconnect_and_wait(ble::DisconnectReason::Reboot, 1000);
@@ -2233,7 +2238,7 @@ ParkedRequest parked;
 void serve_control(const ble::ControlRequest &request, std::size_t &count,
                    bool &storage_ready) {
   WorkerState state{count, storage_ready};
-  const auto stamp = aqsync::abort::tag(request);
+  const auto stamp = ossync::abort::tag(request);
   current_request = &request;
   current_abort = &stamp;
   active_state = &state;
@@ -2243,22 +2248,22 @@ void serve_control(const ble::ControlRequest &request, std::size_t &count,
   current_request = nullptr;
 }
 
-#if CONFIG_AQ_LOGGER_BENCH_STALL
+#if CONFIG_OS_LOGGER_BENCH_STALL
 // Bench only. Blocks the worker without stamping its heartbeat, so the
 // watchdog sees a real stall. 0 never returns.
 void bench_stall(const char *text) {
   const auto seconds = bench::parse_stall_seconds(text);
   if (!seconds) {
-    aqlog.printf("PARQUET ERROR operation=bench-stall reason=%s\n",
+    oslog.printf("PARQUET ERROR operation=bench-stall reason=%s\n",
                  bench::stall_error_name(seconds.error()));
     return;
   }
-  aqlog.printf("PARQUET BENCH stall_s=%lu\n",
+  oslog.printf("PARQUET BENCH stall_s=%lu\n",
                static_cast<unsigned long>(*seconds));
   const std::int64_t start = esp_timer_get_time();
   while (bench::stall_continues(*seconds, start, esp_timer_get_time()))
     vTaskDelay(pdMS_TO_TICKS(100));
-  aqlog.println("PARQUET BENCH stall-end");
+  oslog.println("PARQUET BENCH stall-end");
 }
 #endif
 void storage_worker(void *) {
@@ -2275,7 +2280,7 @@ void storage_worker(void *) {
       ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kWorkerStartWaitMs)) != 0;
   if (!released) {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=worker-start-wait waited_ms=%lu "
+    oslog.printf("PARQUET ERROR operation=worker-start-wait waited_ms=%lu "
                  "order=unordered\n",
                  static_cast<unsigned long>(kWorkerStartWaitMs));
   }
@@ -2284,7 +2289,8 @@ void storage_worker(void *) {
   bool storage_ready;
   {
     BusLock lock;
-    storage_ready = mounted && aq::logger::detail::ensure_directory(kDirectory);
+    storage_ready =
+        mounted && opensensor::logger::detail::ensure_directory(kDirectory);
   }
   storage_ok = storage_ready;
   if (storage_ready) {
@@ -2292,12 +2298,12 @@ void storage_worker(void *) {
       governor.write_failed(uptime_seconds());
     publish_storage(storage::State::Retry);
     const unsigned quarantined = quarantine_partials();
-    aqlog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0\n",
+    oslog.printf("PARQUET RECOVERY quarantined=%u repaired=0 deleted=0\n",
                  quarantined);
     list_files(false);
   } else {
     ++errors;
-    aqlog.printf("PARQUET ERROR operation=mount-or-directory "
+    oslog.printf("PARQUET ERROR operation=mount-or-directory "
                  "samples_will_be_dropped=true remount=%s\n",
                  hooks.storage_remount ? "retry" : "none");
     if (hooks.storage_remount)
@@ -2384,9 +2390,10 @@ void storage_worker(void *) {
     xQueueReceive(commands, &command, 0);
     if (command.source == Command::Source::Network) {
       const auto &anchor = command.network_time;
-      if (set_clock(anchor.seconds, anchor.monotonic_us, aq::utc::Network,
-                    nullptr, nullptr, anchor.subsecond_us)) {
-        aqlog.printf(
+      if (set_clock(anchor.seconds, anchor.monotonic_us,
+                    opensensor::utc::Network, nullptr, nullptr,
+                    anchor.subsecond_us)) {
+        oslog.printf(
             "PARQUET TIME epoch_s=%lld source=network monotonic_us=%lld\n",
             static_cast<long long>(anchor.seconds),
             static_cast<long long>(anchor.monotonic_us));
@@ -2403,7 +2410,8 @@ void storage_worker(void *) {
       // Pause acquisition before closing files or deleting the archive. Stay
       // paused even on failure so a reset cannot be undone by a queued command.
       if (!storage_ready) {
-        aq::console::printf("PARQUET ERASE_ARCHIVE ok=0 reason=no-storage\n");
+        opensensor::console::printf(
+            "PARQUET ERASE_ARCHIVE ok=0 reason=no-storage\n");
         continue;
       }
       archive_reset = true;
@@ -2424,15 +2432,15 @@ void storage_worker(void *) {
         // Only the configured archive roots. The benchmark root is not
         // archive data and stays untouched. Every visited entry stamps the
         // heartbeat, so a large archive is not mistaken for a stall.
-        aq::logger::detail::ArchiveResetIo io;
+        opensensor::logger::detail::ArchiveResetIo io;
         io.progress = stamp_heartbeat;
         erased =
             closed &&
-            aq::logger::detail::erase_archive(
+            opensensor::logger::detail::erase_archive(
                 kDirectory, kDirectory, config.legacy_directory, files_removed,
                 directories_removed, io) &&
             (!config.legacy_directory ||
-             aq::logger::detail::erase_archive(
+             opensensor::logger::detail::erase_archive(
                  config.legacy_directory, kDirectory, config.legacy_directory,
                  files_removed, directories_removed, io));
       }
@@ -2449,27 +2457,27 @@ void storage_worker(void *) {
         unlisted_files = false;
       } else
         ++errors;
-      aq::console::printf("PARQUET ERASE_ARCHIVE ok=%u files=%lu "
-                          "directories=%lu reboot_required=1\n",
-                          erased ? 1U : 0U,
-                          static_cast<unsigned long>(files_removed),
-                          static_cast<unsigned long>(directories_removed));
+      opensensor::console::printf(
+          "PARQUET ERASE_ARCHIVE ok=%u files=%lu "
+          "directories=%lu reboot_required=1\n",
+          erased ? 1U : 0U, static_cast<unsigned long>(files_removed),
+          static_cast<unsigned long>(directories_removed));
       publish_status();
       for (;;) {
         stamp_heartbeat();
         vTaskDelay(pdMS_TO_TICKS(1000));
       }
     } else if (std::strcmp(command.text, "parquet owner-pin") == 0) {
-      // Physical serial only. Bypass aqlog so the PIN never enters LOG_TAIL.
+      // Physical serial only. Bypass oslog so the PIN never enters LOG_TAIL.
       // Control requests use a separate opcode dispatcher above and cannot
       // reach this command. No PIN is printed at boot.
       const auto settings = ::config::get();
       if (settings.pair == ::config::PairMode::Fixed)
-        aq::console::printf("AQ OWNER_PIN %06lu\n",
-                            static_cast<unsigned long>(settings.pin));
+        opensensor::console::printf("OS OWNER_PIN %06lu\n",
+                                    static_cast<unsigned long>(settings.pin));
       else
-        aq::console::printf(
-            "AQ OWNER_PIN ERROR mode=%s reason=use-pairing-display\n",
+        opensensor::console::printf(
+            "OS OWNER_PIN ERROR mode=%s reason=use-pairing-display\n",
             ::config::pair_name(settings.pair));
     } else if (std::strcmp(command.text, "parquet wifi-profile") == 0) {
       // Credential-bearing output never passes through the log ring.
@@ -2477,20 +2485,20 @@ void storage_worker(void *) {
       const auto length =
           format_wifi_profile(::config::get(), profile, sizeof(profile));
       if (length)
-        aq::console::write(reinterpret_cast<const std::uint8_t *>(profile),
-                           length);
+        opensensor::console::write(
+            reinterpret_cast<const std::uint8_t *>(profile), length);
       else
-        aqlog.println("AQ WIFI_PROFILE ERROR reason=capacity");
+        oslog.println("OS WIFI_PROFILE ERROR reason=capacity");
     } else if (std::strncmp(command.text, "parquet config-hex ", 19) == 0) {
       const auto result = apply_config_hex(command.text + 19);
       if (result.ok)
-        aq::console::printf("AQ CONFIG ok=1 reboot_required=%u\n",
-                            result.reboot_required ? 1U : 0U);
+        opensensor::console::printf("OS CONFIG ok=1 reboot_required=%u\n",
+                                    result.reboot_required ? 1U : 0U);
       else
-        aqlog.printf("AQ CONFIG ok=0 key=%s\n", result.bad_key);
+        oslog.printf("OS CONFIG ok=0 key=%s\n", result.bad_key);
       std::memset(command.text, 0, sizeof(command.text));
     } else if (std::strcmp(command.text, "parquet status") == 0) {
-      aqlog.printf(
+      oslog.printf(
           "PARQUET STATUS interval_s=%lu buffered=%u open_rows=%lu "
           "open_groups=%lu finalized=%lu "
           "dropped=%lu errors=%lu queue_peak=%lu failed=%s sd_state=%s "
@@ -2510,29 +2518,29 @@ void storage_worker(void *) {
           station_text, codec_name(selected_codec), config.schema_name,
           config.configuration_id);
     } else if (std::strcmp(command.text, "parquet schema") == 0) {
-      aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s "
+      oslog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s "
                    "desc=%s desc_bytes=%u\n",
                    config.schema_name, unsigned(field_count),
                    config.dictionary_sha256, config.descriptor_sha256,
                    unsigned(config.descriptor_bytes));
       for (std::size_t i = 0; i < field_count; ++i) {
         const auto &field = config.fields[i];
-        aqlog.printf("PARQUET FIELD name=%s type=%u procedure=%s unit=%s "
+        oslog.printf("PARQUET FIELD name=%s type=%u procedure=%s unit=%s "
                      "validity=%s property=%s\n",
                      field.name, unsigned(field.type), field.procedure,
                      field.unit, field.validity, field.property_uri);
         vTaskDelay(pdMS_TO_TICKS(1) > 0 ? pdMS_TO_TICKS(1) : 1);
       }
-      aqlog.println("PARQUET SCHEMA END");
+      oslog.println("PARQUET SCHEMA END");
     } else if (std::strcmp(command.text, "parquet codec-test") == 0) {
       // Diagnostic copies only spend space a Ready card does not need.
       if (!count || !storage_writable(count, storage_ready) ||
           governor.state() != storage::State::Ready) {
-        aqlog.printf("PARQUET ERROR operation=codec-test reason=%s\n",
+        oslog.printf("PARQUET ERROR operation=codec-test reason=%s\n",
                      count ? storage::state_name(governor.state()) : "empty");
       } else if (!alloc_benchmark()) {
         ++errors;
-        aqlog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
+        oslog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
                      "purpose=codec-test\n",
                      unsigned(sizeof(OutputFile) + kStagingBytes));
       } else {
@@ -2549,7 +2557,7 @@ void storage_worker(void *) {
         // Keep the original batch for normal telemetry rotation. Benchmark
         // copies live under the bench root, outside the synced archive.
         if (ok)
-          aqlog.printf(
+          oslog.printf(
               "PARQUET BENCH END rows=%u retained_for_telemetry=true\n",
               unsigned(count));
       }
@@ -2559,7 +2567,7 @@ void storage_worker(void *) {
       if ((count || writer_state->telemetry.open()) &&
           (!storage_writable(count, storage_ready) ||
            !governed_commit(count, true))) {
-        aqlog.printf("PARQUET ERROR operation=codec reason=storage-%s\n",
+        oslog.printf("PARQUET ERROR operation=codec reason=storage-%s\n",
                      storage::state_name(governor.state()));
         continue;
       }
@@ -2567,13 +2575,13 @@ void storage_worker(void *) {
           command.text[14] == 'l' ? Codec::Lz4Raw : Codec::Uncompressed;
       const auto saved = codec_store::select(selected_codec, requested);
       if (!saved)
-        aqlog.printf("PARQUET ERROR operation=codec-store reason=%s\n",
+        oslog.printf("PARQUET ERROR operation=codec-store reason=%s\n",
                      codec_store::error_name(saved.error()));
-      aqlog.printf("PARQUET CONFIG codec=%s persistent=%s\n",
+      oslog.printf("PARQUET CONFIG codec=%s persistent=%s\n",
                    codec_name(selected_codec), saved ? "true" : "false");
     } else if (std::strcmp(command.text, "parquet flush") == 0) {
       flush_batch(count, storage_ready);
-#if CONFIG_AQ_LOGGER_BENCH_STALL
+#if CONFIG_OS_LOGGER_BENCH_STALL
     } else if (bench::is_stall_command(command.text)) {
       bench_stall(command.text);
 #endif
@@ -2586,13 +2594,13 @@ void storage_worker(void *) {
       if ((count || writer_state->telemetry.open()) &&
           (!storage_writable(count, storage_ready) ||
            !governed_commit(count, true))) {
-        aqlog.printf("PARQUET ERROR operation=interval reason=storage-%s\n",
+        oslog.printf("PARQUET ERROR operation=interval reason=storage-%s\n",
                      storage::state_name(governor.state()));
         continue;
       }
       rotation_seconds = static_cast<std::uint32_t>(
           std::strtoul(command.text + 17, nullptr, 10));
-      aqlog.printf("PARQUET CONFIG interval_s=%lu persistent=false\n",
+      oslog.printf("PARQUET CONFIG interval_s=%lu persistent=false\n",
                    static_cast<unsigned long>(rotation_seconds.load()));
     } else if (std::strncmp(command.text, "parquet time ", 13) == 0) {
       char *end = nullptr;
@@ -2602,7 +2610,7 @@ void storage_worker(void *) {
       std::int32_t previous = kClockNone;
       if (!end || *end ||
           !set_clock(seconds, mono, kClockHost, &skew_ns, &previous)) {
-        aqlog.println("PARQUET ERROR operation=time reason=invalid-epoch");
+        oslog.println("PARQUET ERROR operation=time reason=invalid-epoch");
         continue;
       }
       report_host_clock("serial", seconds, mono, previous, skew_ns);
@@ -2610,13 +2618,13 @@ void storage_worker(void *) {
     } else if (listjob::serial_walks_archive(command.text) &&
                archive_session.listing()) {
       // A second walk would need a second set of directory handles.
-      aqlog.println("PARQUET ERROR operation=list reason=busy-list");
+      oslog.println("PARQUET ERROR operation=list reason=busy-list");
     } else if (std::strcmp(command.text, "parquet list") == 0)
       list_files();
     else if (std::strncmp(command.text, "parquet get ", 12) == 0)
       send_file(command.text + 12);
     else
-      aqlog.println("PARQUET ERROR operation=command reason=unknown-command");
+      oslog.println("PARQUET ERROR operation=command reason=unknown-command");
   }
 }
 
@@ -2654,9 +2662,9 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   integer(row, "clock_epoch", generation);
   if (generation) {
     counter(row, "event_time_utc_us",
-            aq::utc::estimate_us(now, mono_anchor, utc_anchor));
+            opensensor::utc::estimate_us(now, mono_anchor, utc_anchor));
     counter(row, "clock_anchor_mono_us", mono_anchor);
-    counter(row, "clock_anchor_utc_us", aq::utc::ns_to_us(utc_anchor));
+    counter(row, "clock_anchor_utc_us", opensensor::utc::ns_to_us(utc_anchor));
   }
   counter(row, "heap_free_bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   counter(row, "heap_min_free_bytes",
@@ -2682,7 +2690,7 @@ void collect(std::int64_t now, std::int64_t scheduled) {
     queue_peak = depth;
   publish_live(row, now);
   publish_status();
-  aqlog.printf("PARQUET ROW sequence=%lld monotonic_us=%lld jitter_us=%lld "
+  oslog.printf("PARQUET ROW sequence=%lld monotonic_us=%lld jitter_us=%lld "
                "buffered=%lu dropped=%lu\n",
                static_cast<long long>(row.data[sequence]),
                static_cast<long long>(now),
@@ -2708,18 +2716,18 @@ void report_runtime(std::int64_t now, bool force = false) {
     TaskHandle_t task = xTaskGetHandle(name);
     return task ? long(uxTaskGetStackHighWaterMark(task)) : -1L;
   };
-  aqlog.printf(
-      "DIAG tasks %s=%u parquet-sd=%ld aq-lan=%ld aq_ble_error=%ld "
+  oslog.printf(
+      "DIAG tasks %s=%u parquet-sd=%ld os-lan=%ld os_ble_error=%ld "
       "nimble_host=%ld tcpip=%ld uptime_s=%lld esp_timer=%ld sys_evt=%ld\n",
       pcTaskGetName(nullptr), unsigned(uxTaskGetStackHighWaterMark(nullptr)),
       worker_task ? long(uxTaskGetStackHighWaterMark(worker_task)) : -1L,
-      stack_free("aq-lan"), stack_free("aq_ble_error"),
+      stack_free("os-lan"), stack_free("os_ble_error"),
       stack_free("nimble_host"), stack_free("tcpip"),
       static_cast<long long>(now / 1000000), stack_free("esp_timer"),
       stack_free("sys_evt"));
   constexpr auto kInternal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   constexpr auto kDma = MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL;
-  aqlog.printf(
+  oslog.printf(
       "DIAG heap internal_free=%lu internal_min=%lu internal_largest=%lu "
       "dma_free=%lu dma_min=%lu dma_largest=%lu psram_free=%lu "
       "psram_min=%lu psram_largest=%lu\n",
@@ -2792,7 +2800,7 @@ bool sha256_hex(const char *text) {
          });
 }
 
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
 // Watchdog state shared by begin(), poll() and the supervisor timer. The
 // supervisor state belongs to start_worker_watchdog() until the timer starts
 // and to the timer after that.
@@ -2854,7 +2862,7 @@ struct IdfSupervisorTimer {
   esp_timer_handle_t handle = nullptr;
   bool create() {
     static const esp_timer_create_args_t args{supervise_worker, nullptr,
-                                              ESP_TIMER_TASK, "aq-wdt", true};
+                                              ESP_TIMER_TASK, "os-wdt", true};
     return esp_timer_create(&args, &handle) == ESP_OK;
   }
   bool start() {
@@ -2880,8 +2888,8 @@ void supervise_worker(void *) {
   IdfTaskWdt twdt;
   const auto result = watchdog::tick(
       wdt_supervisor, stall_guard, twdt, esp_timer_get_time(),
-      worker_heartbeat_us.load(), CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S,
-      CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S, kTaskWdtPanic);
+      worker_heartbeat_us.load(), CONFIG_OS_LOGGER_WORKER_WDT_TIMEOUT_S,
+      CONFIG_OS_LOGGER_WORKER_WDT_HEALTHY_S, kTaskWdtPanic);
   wdt_consecutive = stall_guard.consecutive;
   if (result.cleared)
     wdt_cleared = true;
@@ -2903,19 +2911,19 @@ void start_worker_watchdog() {
   wdt_consecutive = consecutive;
   wdt_armed = boot.armed;
   if (boot.stall_reset)
-    aqlog.printf("PARQUET ERROR operation=worker-watchdog-reset "
+    oslog.printf("PARQUET ERROR operation=worker-watchdog-reset "
                  "consecutive=%lu\n",
                  static_cast<unsigned long>(consecutive));
   watchdog::launch(boot, wdt_supervisor, twdt, timer);
   if (!boot.supervised)
     wdt_armed = false;
-  aqlog.printf("PARQUET WATCHDOG mode=%s timeout_s=%u consecutive=%lu "
+  oslog.printf("PARQUET WATCHDOG mode=%s timeout_s=%u consecutive=%lu "
                "max_consecutive=%lu healthy_s=%u supervised=%u\n",
                boot.armed ? "armed" : "warn",
-               unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_TIMEOUT_S),
+               unsigned(CONFIG_OS_LOGGER_WORKER_WDT_TIMEOUT_S),
                static_cast<unsigned long>(consecutive),
                static_cast<unsigned long>(watchdog::kMaxConsecutive),
-               unsigned(CONFIG_AQ_LOGGER_WORKER_WDT_HEALTHY_S),
+               unsigned(CONFIG_OS_LOGGER_WORKER_WDT_HEALTHY_S),
                boot.supervised ? 1U : 0U);
 }
 #else
@@ -2955,7 +2963,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       std::strlen(config.descriptor) != config.descriptor_bytes ||
       !sha256_hex(config.descriptor_sha256))
     return false;
-  sample_us = std::int64_t{config.sample_interval_ms} * 1000;
+  sample_us = cadence::period_us(config.sample_interval_ms);
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = config.fields[i];
     if (!field.name || !field.unit || !field.procedure || !field.validity ||
@@ -2983,22 +2991,22 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   kBenchDirectory = config.benchmark_directory;
   mounted = sd_mounted;
   if (!station_identity()) {
-    aqlog.println("PARQUET ERROR operation=station-identity logging=false");
+    oslog.println("PARQUET ERROR operation=station-identity logging=false");
     return false;
   }
   // A failed read never stops logging. It falls back to the default codec and
   // says why, and the stored value is left for the owner to replace.
   const auto boot_codec = codec_store::apply_boot(selected_codec);
   if (boot_codec.fallback)
-    aqlog.printf("PARQUET CODEC codec=%s source=default reason=%s\n",
+    oslog.printf("PARQUET CODEC codec=%s source=default reason=%s\n",
                  codec_name(boot_codec.codec),
                  codec_store::error_name(*boot_codec.fallback));
   else
-    aqlog.printf("PARQUET CODEC codec=%s source=nvs\n",
+    oslog.printf("PARQUET CODEC codec=%s source=nvs\n",
                  codec_name(boot_codec.codec));
   std::uint8_t mac[6]{};
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
-    aqlog.println("PARQUET ERROR operation=identity");
+    oslog.println("PARQUET ERROR operation=identity");
     return false;
   }
   device = std::accumulate(std::begin(mac), std::end(mac), std::int64_t{0},
@@ -3020,7 +3028,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       boot_ring.set_current(boot);
   }
   spi_mutex = xSemaphoreCreateMutex();
-  sync_config = config.sync ? *config.sync : aqsync::ServiceConfig{};
+  sync_config = config.sync ? *config.sync : ossync::ServiceConfig{};
   samples = xQueueCreate(sync_config.sample_queue_depth, sizeof(Sample));
   commands = xQueueCreate(sync_config.command_queue_depth, sizeof(Command));
   // Created before the worker: wakeups do not depend on task-handle
@@ -3030,11 +3038,11 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       1, sizeof(WriterState), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!spi_mutex || !samples || !commands || !worker_wakeup || !writer_state) {
     if (!writer_state)
-      aqlog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
+      oslog.printf("PARQUET ERROR operation=allocate mem=psram bytes=%u "
                    "purpose=writer-state logging=false\n",
                    unsigned(sizeof(WriterState)));
     else
-      aqlog.println("PARQUET ERROR operation=allocate logging=false");
+      oslog.println("PARQUET ERROR operation=allocate logging=false");
     return false;
   }
   new (writer_state) WriterState{};
@@ -3050,13 +3058,13 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   if (xTaskCreate(storage_worker, "parquet-sd",
                   static_cast<std::uint32_t>(config.worker_stack_bytes),
                   nullptr, config.worker_priority, &worker_task) != pdPASS) {
-    aqlog.println("PARQUET ERROR operation=task logging=false");
+    oslog.println("PARQUET ERROR operation=task logging=false");
     return false;
   }
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
   start_worker_watchdog();
 #else
-  aqlog.println("PARQUET WATCHDOG mode=off");
+  oslog.println("PARQUET WATCHDOG mode=off");
 #endif
   accepting = true;
   // The CRC-32 check value through the ROM routine OPEN uses on the device.
@@ -3065,7 +3073,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       (crc32_update(0xffffffffU, check_bytes, 9) ^ 0xffffffffU) == 0xcbf43926U
           ? "ok"
           : "bad";
-  aqlog.printf(
+  oslog.printf(
       "PARQUET BEGIN schema=%s columns=%u sample_s=10 "
       "interval_s=900 max_rows=90 max_row_groups=%u psram_workspace_bytes=%u "
       "row_bytes=%u boot=%s station=%s "
@@ -3125,28 +3133,27 @@ void poll() {
           static_cast<long long>((now - heartbeat) / 1000000);
       const unsigned stack_free =
           worker_task ? unsigned(uxTaskGetStackHighWaterMark(worker_task)) : 0U;
-      aqlog.printf("PARQUET ERROR operation=worker-stall seconds=%lld "
+      oslog.printf("PARQUET ERROR operation=worker-stall seconds=%lld "
                    "state=%s stack_free=%u watchdog=%s\n",
                    elapsed_s, state_name, stack_free, watchdog_mode_name());
     }
   }
-#if CONFIG_AQ_LOGGER_WORKER_WDT
+#if CONFIG_OS_LOGGER_WORKER_WDT
   if (wdt_recovered.exchange(false))
-    aqlog.printf("PARQUET WATCHDOG mode=%s consecutive=%lu reason=recovered\n",
+    oslog.printf("PARQUET WATCHDOG mode=%s consecutive=%lu reason=recovered\n",
                  watchdog_mode_name(),
                  static_cast<unsigned long>(wdt_consecutive.load()));
   if (wdt_cleared.exchange(false))
-    aqlog.printf("PARQUET WATCHDOG mode=%s consecutive=0 reason=healthy\n",
+    oslog.printf("PARQUET WATCHDOG mode=%s consecutive=0 reason=healthy\n",
                  watchdog_mode_name());
 #endif
   report_runtime(now);
-  if (now >= next_sample_us) {
-    const auto skipped = (now - next_sample_us) / sample_us;
-    missed_deadlines += skipped;
-    sample_sequence += skipped;
-    next_sample_us += skipped * sample_us;
-    collect(now, next_sample_us);
-    next_sample_us += sample_us;
+  if (const auto step = cadence::advance(now, next_sample_us, sample_us);
+      step.due) {
+    missed_deadlines += step.skipped;
+    sample_sequence += step.skipped;
+    collect(now, step.deadline_us);
+    next_sample_us = step.next_us;
   }
   service_rtc_write(esp_timer_get_time());
   static Command input{};
@@ -3154,7 +3161,7 @@ void poll() {
   static bool overflow = false;
   input.source = Command::Source::Serial;
   for (unsigned limit = 0; limit < 128; ++limit) {
-    const int byte = aq::console::read();
+    const int byte = opensensor::console::read();
     if (byte < 0)
       break;
     if (byte == '\r')
@@ -3166,7 +3173,7 @@ void poll() {
       if (!overflow && std::strcmp(input.text, "parquet mem") == 0)
         report_runtime(input.received_mono_us, true);
       else if (overflow || !work::enqueue(commands, &input, worker_wakeup))
-        aqlog.println(
+        oslog.println(
             "PARQUET ERROR operation=command reason=too-long-or-busy");
       length = 0;
       overflow = false;
@@ -3190,7 +3197,7 @@ bool start_links(bool display_detected) {
                                           config.dictionary_sha256,
                                       .firmware = config.firmware,
                                       .name_prefix = config.ble_name_prefix};
-  return aqsync::begin(identity, enqueue_request, display_detected, sync_config)
+  return ossync::begin(identity, enqueue_request, display_detected, sync_config)
       .ble_started;
 }
 
@@ -3206,7 +3213,7 @@ bool enqueue_request(const ble::ControlRequest &request) {
   return work::enqueue(commands, &command, worker_wakeup);
 }
 
-void report_battery(aq::battery::State state, std::int32_t millivolts) {
+void report_battery(opensensor::battery::State state, std::int32_t millivolts) {
   // The worker owns the close. Raising the intent never touches the card.
   const auto change = power::report(power_tracker, emergency_close, state, [] {
     if (worker_wakeup)
@@ -3217,7 +3224,7 @@ void report_battery(aq::battery::State state, std::int32_t millivolts) {
   char line[80];
   if (power::format_line(line, sizeof(line), state, millivolts,
                          change.finalize))
-    aqlog.println(line);
+    oslog.println(line);
   if (hooks.power_shed)
     hooks.power_shed(state, hooks.context);
 }
@@ -3244,4 +3251,4 @@ ClockView clock_view() {
     view.utc_ns = utc_anchor + (esp_timer_get_time() - mono_anchor) * 1000;
   return view;
 }
-} // namespace aqlogger
+} // namespace oslogger

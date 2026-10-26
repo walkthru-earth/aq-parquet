@@ -9,6 +9,73 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. AQ wire, NVS and internal names move to OpenSensor (fix/93-renames, issue #93)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that knows the new names. An app on the old names finds no board on LAN and
+no service on BLE.
+
+**What changed.** Every name the app, the host tools or a stored blob depends
+on moves from its AQ form to an OpenSensor form, with no backward
+compatibility. Port 47390, the mDNS TXT keys, the GATT attribute order and
+payloads, the `parquet` NVS namespace and every key inside a namespace are
+unchanged. Schema names, property ids, URNs, columns, footer keys, LIVE keys
+and both `info.dict` digests are unchanged too, so files and LIVE profiles
+keep working. The firmware identity moves to `idf-cores3-parquet-v6.16` and
+`idf-waveshare-parquet-v2.10`. Both `desc` digests are unchanged.
+
+| What | Old | New |
+| --- | --- | --- |
+| mDNS service type | `_aqsync._tcp` | `_ossync._tcp` |
+| LAN handshake magic | `AQS1` | `OSS1` |
+| GATT base UUID | `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-XXXX-47ed-8e0d-59994199b680` |
+| GATT service (0001) | `c0a5e9f0-0001-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0001-47ed-8e0d-59994199b680` |
+| GATT `info` (0002) | `c0a5e9f0-0002-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0002-47ed-8e0d-59994199b680` |
+| GATT `status` (0003) | `c0a5e9f0-0003-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0003-47ed-8e0d-59994199b680` |
+| GATT `live` (0004) | `c0a5e9f0-0004-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0004-47ed-8e0d-59994199b680` |
+| GATT `control` (0005) | `c0a5e9f0-0005-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0005-47ed-8e0d-59994199b680` |
+| GATT `response` (0006) | `c0a5e9f0-0006-4b1a-9c3e-2d7f8a6b4e01` | `255f595e-0006-47ed-8e0d-59994199b680` |
+| Advert service data UUID | `c0a5e9f0-0001-…` | `255f595e-0001-…` |
+| GATT service name | `AQ Sync` | `OpenSensor Sync` |
+| NVS config namespace | `aqcfg` | `oscfg` |
+| NVS coredump namespace | `aqdump` | `osdump` |
+| Serial and LOG_TAIL tags | `AQ BOARD`, `AQ CONFIG`, `AQ DIAG`, `AQ ERROR`, `AQ GAUGE`, `AQ MEMORY`, `AQ OWNER_PIN`, `AQ PMS`, `AQ READY`, `AQ TF`, `AQ WIFI_PROFILE` | `OS BOARD`, `OS CONFIG`, `OS DIAG`, `OS ERROR`, `OS GAUGE`, `OS MEMORY`, `OS OWNER_PIN`, `OS PMS`, `OS READY`, `OS TF`, `OS WIFI_PROFILE` |
+| DIAG task names | `aq-lan`, `aq-board`, `aq-wdt`, `aq-diagnostic` | `os-lan`, `os-board`, `os-wdt`, `os-diagnostic` |
+| DIAG BLE error key | `aq_ble_error` | `os_ble_error` |
+| Kconfig symbols | `CONFIG_AQ_LOGGER_WORKER_WDT*`, `CONFIG_AQ_LOGGER_BENCH_STALL`, `CONFIG_AQ_LOG_PERSIST_*`, `CONFIG_AQ_PM_DFS_*` | `CONFIG_OS_` with the same suffix, no rename shim, an old saved value is dropped and the default applies |
+| Release image names | `aq_cores3-bringup-<tag>.bin`, `aq_waveshare-logger-<tag>.bin` | `opensensor_cores3-bringup-<tag>.bin`, `opensensor_waveshare-logger-<tag>.bin` |
+| Firmware identity | `idf-cores3-parquet-v6.15`, `idf-waveshare-parquet-v2.9` | `idf-cores3-parquet-v6.16`, `idf-waveshare-parquet-v2.10` |
+
+`PARQUET ...` serial lines keep their names.
+
+**The `oscfg` namespace starts empty.** Nothing is copied from `aqcfg`, so
+after the reflash the board loses every stored setting, the pairing mode and
+PIN, the display flag, Wi-Fi on, the SSID and password, the `lan.on` switch
+(back to its default of on), the LAN sync token, the sensor identity
+(`sensor.vendor`, `sensor.model`, `sensor.serial`, `sensor.batch_candidate`),
+the location and the NTP settings. The pairing mode, PIN and display flag go
+back to the first boot default. Until the sensor identity is set again,
+Waveshare files carry no sensor identity and `pm25_batch_candidate_status`
+stays 0, disabled. Provision all of them again and pair again, as on a new
+board. The station UUID and the saved codec live in `parquet` and stay.
+
+**Pair again cleanly.** Bonds survive the reflash and the phone may cache the
+old GATT table, so forget the board in the phone's Bluetooth settings and send
+`ble.clear_bonds=1` before pairing again.
+
+**The old namespaces stay in flash.** The firmware never reads or erases
+`aqcfg` and `aqdump`, so they still hold the old Wi-Fi password and LAN token.
+Only a full flash erase removes them, and that also erases the station UUID.
+
+**Why.** The product is OpenSensor. The owner dropped backward compatibility on
+2026-10-26, so the wire and stored names move now instead of carrying two
+names.
+
+**What the app must do.** Browse `_ossync._tcp`, send `OSS1` in the LAN
+handshake, use the new GATT UUIDs for the service, every characteristic and the
+advert service data filter, match the `OS ` tags when it parses LOG_TAIL lines,
+and run first time provisioning again after the reflash.
+
 ## Board template and desc digest in the firmware (fix/85-template-generator, issue #85)
 
 **No app update needed yet.** A matched reflash brings the template, nothing
@@ -74,7 +141,9 @@ resolution of the finer sensors.
 **What the app must do.** Map the two new digests to the CoreS3 and Waveshare
 LIVE profiles. Parse LIVE values as numbers, never by text width, and keep the
 app's own display rounding. Drop the previous digests `e5060fb7…` and
-`67688d0f…` with the reflash.
+`67688d0f…` with the reflash. A board that reports an unknown or retired digest
+still syncs its files but shows no LIVE readings, there is no key fallback
+(opensensor-space-mobile #184).
 
 ## LIVE sends every declared key, null for no reading (fix/91-live-overflow, issue #91)
 
@@ -193,9 +262,11 @@ firmware, key, digest or identity string changes.
 to stop live readings on every app that did not know it yet.
 
 **What the app must do.** Keep mapping known digests to their reviewed
-profiles. For an unknown digest, read only the keys in the LIVE table, by
-name, and ignore the rest. `imu_t` stays board temperature and `t` stays
-ambient air.
+profiles. `imu_t` stays board temperature and `t` stays ambient air.
+
+**History.** This entry first asked the app to read the LIVE table keys by
+name for an unknown digest. That fallback never shipped. Since #91 an unknown
+or retired digest syncs files but shows no LIVE (opensensor-space-mobile #184).
 
 ## Longer DIAG tasks and DIAG heap lines (fix-37-stack-budgets, issue #37)
 
@@ -464,9 +535,9 @@ needs no app change.
   change without a new digest, or when a new digest has no fixture.
 - The digest is the SHA-256 of the raw `telemetry_fields.inc` bytes, so a
   comment, whitespace or line ending edit also moves it and needs an app
-  release until the unknown digest fallback ships (opensensor-space-mobile
-  #153). The LIVE key stability rule above supersedes this for apps that have
-  the fallback.
+  release. History, the unknown digest fallback planned in
+  opensensor-space-mobile #153 never shipped, an unknown digest shows no LIVE
+  (#184).
 - Phone side code may break freely. Firmware keeps every released wire contract
   readable, and any new LIVE key set gets a new dictionary digest.
 

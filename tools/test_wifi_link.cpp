@@ -13,9 +13,9 @@
 #include <thread>
 #include <vector>
 
-namespace aq::console {
+namespace opensensor::console {
 std::size_t write(const std::uint8_t *, std::size_t length) { return length; }
-} // namespace aq::console
+} // namespace opensensor::console
 
 namespace {
 config::Settings fixture_settings;
@@ -51,31 +51,31 @@ int connect_phone() {
 // as the logger's does, so deliver gives up within one wait step and the
 // job ends with ERROR aborted after one directory entry.
 struct ListJobProbe {
-  aqsync::ArchiveSession *session = nullptr;
+  ossync::ArchiveSession *session = nullptr;
   unsigned waits = 0, reads = 0;
   std::vector<ble::Error> errors;
 };
 ListJobProbe list_probe;
 
 void list_job_abort_on_full_ring() {
-  const std::uint32_t sequence = aqsync::abort::sequences[1].load();
+  const std::uint32_t sequence = ossync::abort::sequences[1].load();
   list_probe = ListJobProbe{};
   // Fill what the bulk frames left, down to a FILE frame's size.
   const std::uint8_t filler[14] = {ble::kFrameFile};
   while (lan::enqueue_response(filler, sizeof(filler), 0) ==
-         aqsync::EnqueueResult::Ok) {
+         ossync::EnqueueResult::Ok) {
   }
-  aqsync::ArchiveHooks hooks{};
-  hooks.list = [](void *, bool, unsigned budget, aqsync::FileEmitter emit,
+  ossync::ArchiveHooks hooks{};
+  hooks.list = [](void *, bool, unsigned budget, ossync::FileEmitter emit,
                   void *out, unsigned &) {
     for (unsigned read = 0; read < budget; ++read) {
       ++list_probe.reads;
       if (!emit(out, "a.parquet", 1))
-        return aqsync::ListStatus::Stopped;
+        return ossync::ListStatus::Stopped;
     }
-    return aqsync::ListStatus::More;
+    return ossync::ListStatus::More;
   };
-  aqsync::ArchiveTransport transport{};
+  ossync::ArchiveTransport transport{};
   transport.generation = [](void *, ble::Link, std::uint8_t peer) {
     return lan::connection_generation(peer);
   };
@@ -94,11 +94,11 @@ void list_job_abort_on_full_ring() {
             marker.peer = 0;
             marker.bytes[0] = ble::kOpAbort;
             marker.length = 1;
-            aqsync::abort::stamp(marker);
-            aqsync::abort::commit(marker);
+            ossync::abort::stamp(marker);
+            ossync::abort::commit(marker);
           }
           const auto *tag = list_probe.session->list_tag();
-          return !(tag && aqsync::abort::pending(*tag));
+          return !(tag && ossync::abort::pending(*tag));
         },
         nullptr);
   };
@@ -108,7 +108,7 @@ void list_job_abort_on_full_ring() {
     list_probe.errors.push_back(code);
     return true;
   };
-  aqsync::ArchiveSession session(hooks, transport);
+  ossync::ArchiveSession session(hooks, transport);
   list_probe.session = &session;
   ble::ControlRequest list;
   list.link = ble::Link::Lan;
@@ -116,7 +116,7 @@ void list_job_abort_on_full_ring() {
   list.link_generation = lan::connection_generation(0);
   list.bytes[0] = ble::kOpList;
   list.length = 1;
-  aqsync::abort::stamp(list);
+  ossync::abort::stamp(list);
   assert(session.handle(list, true) && session.listing());
   const auto started = std::chrono::steady_clock::now();
   session.step(true);
@@ -128,8 +128,8 @@ void list_job_abort_on_full_ring() {
   ble::ControlRequest marker;
   marker.link = ble::Link::Lan;
   marker.link_generation = list.link_generation;
-  assert(aqsync::abort::take_stopped(marker) == ble::kOpList);
-  aqsync::abort::sequences[1].store(sequence);
+  assert(ossync::abort::take_stopped(marker) == ble::kOpList);
+  ossync::abort::sequences[1].store(sequence);
 }
 
 // Client sockets are non-blocking, as the LAN task's select loop expects, so
@@ -179,7 +179,7 @@ std::vector<std::uint8_t> read_frame(int fd) {
 
 void authenticate(int fd, std::uint8_t peer, bool fragmented = false) {
   std::uint8_t bytes[lan::kHandshakeBytes];
-  std::memcpy(bytes, "AQS1", 4);
+  std::memcpy(bytes, "OSS1", 4);
   std::memcpy(bytes + 4, fixture_settings.token, config::kTokenBytes);
   if (fragmented) {
     write_bytes(fd, bytes, 7);
@@ -262,7 +262,7 @@ int socket_option(int fd, int level, int name) {
 ble::DisconnectEvent expect_event(ble::DisconnectReason reason,
                                   std::uint8_t link) {
   std::uint8_t raw[DebugLog::kFallbackEventSlots][DebugLog::kEventBytes];
-  const auto count = aqlog.events(raw, DebugLog::kFallbackEventSlots);
+  const auto count = oslog.events(raw, DebugLog::kFallbackEventSlots);
   assert(count > 0);
   const auto event = ble::decode_event(raw[count - 1]);
   assert(event.reason == static_cast<std::uint8_t>(reason));
@@ -322,7 +322,7 @@ int main() {
   // Shared defaults: the LAN task outranks the storage worker (3).
   assert(fake_task_priority == 4 && fake_task_stack == 8192);
   fake_pm_create_result = ESP_OK;
-  assert(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "aq-lan",
+  assert(esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "os-lan",
                             &lan::active_lock) == ESP_OK);
   assert(fake_wifi_storage == WIFI_STORAGE_RAM);
   assert(!fake_wifi_started);
@@ -334,7 +334,7 @@ int main() {
                  std::strerror(errno));
   assert(lan::listen_fd >= 0);
   assert(fake_mdns_started && fake_mdns_host == "os-fixture" &&
-         fake_mdns_instance == "OS-fixture" && fake_mdns_service == "_aqsync" &&
+         fake_mdns_instance == "OS-fixture" && fake_mdns_service == "_ossync" &&
          fake_mdns_transport == "_tcp" && fake_mdns_port == config::kLanPort);
   assert(fake_mdns_txt ==
          (std::map<std::string, std::string>{{"proto", "3"},
@@ -373,7 +373,7 @@ int main() {
     const std::uint8_t frame[] = {ble::kFrameStatus, peer};
     assert(lan::enqueue_response(frame, sizeof(frame), peer,
                                  requests.back().link_generation) ==
-           aqsync::EnqueueResult::Ok);
+           ossync::EnqueueResult::Ok);
     assert(read_frame(phones[peer]) ==
            std::vector<std::uint8_t>(frame, frame + 2));
   }
@@ -441,10 +441,10 @@ int main() {
   write_bytes(phones[2], abort_bytes, sizeof(abort_bytes));
   handle_bytes(2);
   assert(requests.back().bytes[0] == ble::kOpAbort &&
-         aqsync::abort::pending(before_abort) &&
-         !aqsync::abort::pending(requests.back()));
+         ossync::abort::pending(before_abort) &&
+         !ossync::abort::pending(requests.back()));
   request_status(phones[0], 0);
-  assert(!aqsync::abort::pending(requests.back()));
+  assert(!ossync::abort::pending(requests.back()));
 
   lan::publish_status("{}", 2);
   lan::publish_live("{\"x\":1}", 7);
@@ -466,12 +466,12 @@ int main() {
   authenticate(phones[1], 1);
   const std::uint8_t response[] = {ble::kFrameClosed, 42};
   assert(lan::enqueue_response(response, sizeof(response), 1, old_generation) ==
-         aqsync::EnqueueResult::Closed);
+         ossync::EnqueueResult::Closed);
   assert(lan::enqueue_error(ble::kOpClose, ble::kErrBusy, "stale", 1,
-                            old_generation) == aqsync::EnqueueResult::Closed);
+                            old_generation) == ossync::EnqueueResult::Closed);
   assert(lan::enqueue_response(response, sizeof(response), 1,
                                lan::connection_generation(1)) ==
-         aqsync::EnqueueResult::Ok);
+         ossync::EnqueueResult::Ok);
   assert(read_frame(phones[1]) ==
          std::vector<std::uint8_t>(response, response + 2));
   // An oversize frame is refused without dropping a healthy client, even with
@@ -482,14 +482,14 @@ int main() {
     errno = EPIPE;
     assert(lan::enqueue_response(oversize.data(), oversize.size(), 1,
                                  lan::connection_generation(1)) ==
-           aqsync::EnqueueResult::Rejected);
+           ossync::EnqueueResult::Rejected);
     assert(
         lan::enqueue_response(response, 0, 1, lan::connection_generation(1)) ==
-        aqsync::EnqueueResult::Rejected);
+        ossync::EnqueueResult::Rejected);
     assert(lan::status().clients == clients && !lan::clients[1].drop.load());
     assert(lan::enqueue_response(response, sizeof(response), 1,
                                  lan::connection_generation(1)) ==
-           aqsync::EnqueueResult::Ok);
+           ossync::EnqueueResult::Ok);
     assert(read_frame(phones[1]) ==
            std::vector<std::uint8_t>(response, response + 2));
   }
@@ -550,7 +550,7 @@ int main() {
   assert(expect_event(ble::DisconnectReason::SendError, 2).err != 0);
   lan::drop_session();
   assert(lan::enqueue_response(response, sizeof(response), 2) ==
-         aqsync::EnqueueResult::Closed);
+         ossync::EnqueueResult::Closed);
   assert(lan::payload_max(2) == 0);
   lan::poll_server();
   expect_bye(phones[2], ble::DisconnectReason::TokenRotated, 2);
@@ -571,8 +571,8 @@ int main() {
   const auto bye = expect_bye(idle, ble::DisconnectReason::IdleTimeout, 0);
   assert(!lan::status().client &&
          lan::connection_generation(0) != idle_generation);
-  assert(aq::sync::get_u32(bye.data() + 2) == idle_generation);
-  assert(aq::sync::get_u32(bye.data() + 10) == fake_now_us / 1000000);
+  assert(opensensor::sync::get_u32(bye.data() + 2) == idle_generation);
+  assert(opensensor::sync::get_u32(bye.data() + 10) == fake_now_us / 1000000);
   assert(expect_event(ble::DisconnectReason::IdleTimeout, 1).generation ==
          idle_generation);
 
@@ -580,25 +580,25 @@ int main() {
   // its peer as tx-overflow instead of leaving the worker waiting.
   const int oversized = connect_phone();
   authenticate(oversized, 0);
-  const aqsync::FrameRing full_ring = lan::clients[0].tx;
+  const ossync::FrameRing full_ring = lan::clients[0].tx;
   std::uint8_t tiny[64];
   lan::clients[0].tx.attach(tiny, sizeof(tiny));
   std::vector<std::uint8_t> large(lan::kPayloadMax, 0x11);
   assert(lan::enqueue_response(large.data(), large.size(), 0) ==
-         aqsync::EnqueueResult::Closed);
+         ossync::EnqueueResult::Closed);
   assert(lan::payload_max(0) == 0);
   lan::poll_server();
   expect_bye(oversized, ble::DisconnectReason::TxOverflow, 0);
   expect_event(ble::DisconnectReason::TxOverflow, 1);
   lan::clients[0].tx = full_ring;
 
-  // A LAN scan runs on aq-lan, the only sender. A full ring is flushed once
+  // A LAN scan runs on os-lan, the only sender. A full ring is flushed once
   // and the reply retried. A ring the socket cannot drain closes the peer as
   // tx-overflow instead of stalling the scan.
   {
     const int scanner = connect_phone();
     authenticate(scanner, 0);
-    const aqsync::FrameRing scan_ring = lan::clients[0].tx;
+    const ossync::FrameRing scan_ring = lan::clients[0].tx;
     std::uint8_t small_ring[24];
     lan::clients[0].tx.attach(small_ring, sizeof(small_ring));
     std::uint8_t filler[20] = {ble::kFrameLive};
@@ -611,10 +611,10 @@ int main() {
     // and cannot refill the space the scan's flush frees.
     lan::clients[0].scan_reserve = true;
     assert(lan::enqueue_response(filler, sizeof(filler), 0) ==
-           aqsync::EnqueueResult::Full);
+           ossync::EnqueueResult::Full);
     lan::clients[0].scan_reserve = false;
     assert(lan::enqueue_response(filler, sizeof(filler), 0) ==
-           aqsync::EnqueueResult::Ok);
+           ossync::EnqueueResult::Ok);
     fake_scan_records = {record};
     assert(lan::request_scan(ble::Link::Lan, lan::connection_generation(0), 0));
     scan_now();
@@ -640,7 +640,7 @@ int main() {
     for (unsigned round = 0, stable = 0; stable < 3; ++round) {
       assert(round < 100000);
       while (lan::enqueue_response(same_size, sizeof(same_size), 0) ==
-             aqsync::EnqueueResult::Ok) {
+             ossync::EnqueueResult::Ok) {
       }
       const auto sent = lan::clients[0].tx.consumed_total();
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -682,7 +682,7 @@ int main() {
   for (unsigned attempt = 0; attempt < 4096 && slow_ring.used() < 4096;
        ++attempt) {
     assert(lan::enqueue_response(bulk.data(), bulk.size(), 0) ==
-           aqsync::EnqueueResult::Ok);
+           ossync::EnqueueResult::Ok);
     lan::poll_server();
   }
   assert(slow_ring.used() >= 4096);
@@ -699,7 +699,7 @@ int main() {
   // Keep the ring full until the kernel buffers stop taking bytes too.
   auto top_up = [&] {
     while (lan::enqueue_response(bulk.data(), bulk.size(), 0) ==
-           aqsync::EnqueueResult::Ok) {
+           ossync::EnqueueResult::Ok) {
     }
   };
   for (int quiet = 0, round = 0; quiet < 3 && round < 400; ++round) {
@@ -710,7 +710,7 @@ int main() {
   }
   top_up();
   assert(lan::enqueue_response(bulk.data(), bulk.size(), 0) ==
-         aqsync::EnqueueResult::Full);
+         ossync::EnqueueResult::Full);
   // One worker wait step is bounded by wait_step_ms; the hook runs between
   // steps and can stop the wait (ABORT).
   unsigned steps = 0;
@@ -748,7 +748,7 @@ int main() {
   // the logger's own gate, long before the slow peer bound, while the peer
   // still never drains.
   struct CloseWait {
-    aqlogger::power::EmergencyClose close;
+    oslogger::power::EmergencyClose close;
     const std::vector<std::uint8_t> *frame = nullptr;
     unsigned steps = 0;
     unsigned raise_at = 0;
@@ -760,9 +760,9 @@ int main() {
     if (++wait.steps == wait.raise_at)
       wait.close.request();
     const auto &frame = *wait.frame;
-    return aqlogger::power::keep_waiting(
+    return oslogger::power::keep_waiting(
         wait.close, false,
-        aqlogger::power::data_frame(frame.data(), frame.size()),
+        oslogger::power::data_frame(frame.data(), frame.size()),
         fake_now_us / 1000);
   };
   for (const unsigned raise_at : {1u, 2u}) {
@@ -786,14 +786,14 @@ int main() {
     end_frame[0] = ble::kFrameReadEnd;
     wait.frame = &end_frame;
     wait.close.request();
-    assert(aqlogger::power::keep_waiting(
+    assert(oslogger::power::keep_waiting(
         wait.close, false,
-        aqlogger::power::data_frame(end_frame.data(), end_frame.size()), 0));
-    assert(!aqlogger::power::keep_waiting(wait.close, true, false, 0));
+        oslogger::power::data_frame(end_frame.data(), end_frame.size()), 0));
+    assert(!oslogger::power::keep_waiting(wait.close, true, false, 0));
   }
   const std::uint8_t to_fast[] = {ble::kFrameClosed, 7};
   assert(lan::enqueue_response(to_fast, sizeof(to_fast), 1) ==
-         aqsync::EnqueueResult::Ok);
+         ossync::EnqueueResult::Ok);
   lan::poll_server();
   auto fast_frame = read_frame(fast);
   while (fast_frame[0] == ble::kFrameStatus || fast_frame[0] == ble::kFrameLive)
@@ -890,7 +890,7 @@ int main() {
   // The new peer learns the rotation, not a generic send error.
   const int racing = connect_phone();
   std::uint8_t handshake[lan::kHandshakeBytes];
-  std::memcpy(handshake, "AQS1", 4);
+  std::memcpy(handshake, "OSS1", 4);
   std::memcpy(handshake + 4, fixture_settings.token, config::kTokenBytes);
   write_bytes(racing, handshake, sizeof(handshake));
   lan::drop_session();
@@ -939,10 +939,10 @@ int main() {
   fixture_settings.ntp.enabled = false;
   lan::apply_time_settings();
   lan::poll_radio();
-  assert(lan::connected &&
-         fake_wifi_connects == connects_before_time_settings &&
-         !fake_time_callback && aq::network_time::status().has_anchor &&
-         std::strcmp(aq::network_time::status().state, "disabled") == 0);
+  assert(
+      lan::connected && fake_wifi_connects == connects_before_time_settings &&
+      !fake_time_callback && opensensor::network_time::status().has_anchor &&
+      std::strcmp(opensensor::network_time::status().state, "disabled") == 0);
   fixture_settings.ntp.enabled = true;
   lan::apply_time_settings();
   lan::poll_radio();
@@ -993,7 +993,7 @@ int main() {
                                   static_cast<std::uint8_t>(round)};
     assert(lan::enqueue_response(reply, sizeof(reply), 1,
                                  requests.back().link_generation) ==
-           aqsync::EnqueueResult::Ok);
+           ossync::EnqueueResult::Ok);
     auto frame = read_frame(second);
     while (frame[0] == ble::kFrameStatus || frame[0] == ble::kFrameLive)
       frame = read_frame(second);
@@ -1193,7 +1193,7 @@ int main() {
          fake_wifi_config.sta.password[config::kPskMax] == 0);
   char log[DebugLog::kFallbackRingBytes];
   std::uint32_t logged;
-  const auto length = aqlog.tail(log, sizeof(log), logged);
+  const auto length = oslog.tail(log, sizeof(log), logged);
   assert(std::string(log, length).find(fixture_settings.psk) ==
          std::string::npos);
   fixture_settings.wifi_on = false;

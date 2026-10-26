@@ -320,15 +320,15 @@ def check_internal_stacks(root: Path) -> None:
 
     # The scan reads names and stacks, a constant expression or a member default.
     source.write_text("struct O { std::uint32_t task_stack_bytes = 8192; };\n"
-                      "void a(O o) {\n  xTaskCreate(lan_task, \"aq-lan\",\n    o.task_stack_bytes, nullptr, 1, nullptr);\n"
+                      "void a(O o) {\n  xTaskCreate(lan_task, \"os-lan\",\n    o.task_stack_bytes, nullptr, 1, nullptr);\n"
                       "  xTaskCreate(board_task, \"board\", 16 * 1024, nullptr, 1, nullptr);\n"
                       "  // xTaskCreate(old_task, \"old\", 1024, nullptr, 1, nullptr);\n"
                       "  xTaskCreate(w, \"w\", static_cast<std::uint32_t>(c.worker_stack_bytes), nullptr, 1, 0);\n}\n"
                       "struct C { std::size_t worker_stack_bytes = 2048; };\nvoid b(C c) { c.worker_stack_bytes = 4096; }\n")
     sites = {item.name: item for item in sb.scan_sources(root).sites}
-    assert set(sites) == {"aq-lan", "board", "w"}, sites
-    assert sites["aq-lan"].stack == 8192 and sites["aq-lan"].where == "firmware/common/x.cpp:3"
-    assert sites["aq-lan"].entry == "lan_task"
+    assert set(sites) == {"os-lan", "board", "w"}, sites
+    assert sites["os-lan"].stack == 8192 and sites["os-lan"].where == "firmware/common/x.cpp:3"
+    assert sites["os-lan"].entry == "lan_task"
     assert sites["board"].stack == 16384
     assert sites["w"].stack is None, "two values for one member are ambiguous"
     assert all(item.parsed for item in sites.values())
@@ -437,7 +437,7 @@ def check_runtime_report() -> None:
     assert '"psram_min=%lu psram_largest=%lu\\n"' in code
 
     import parquet_device
-    tasks = "DIAG tasks aq-board=5000 parquet-sd=12000 aq-lan=-1 aq_ble_error=900"
+    tasks = "DIAG tasks os-board=5000 parquet-sd=12000 os-lan=-1 os_ble_error=900"
     heap = "DIAG heap internal_free=1 internal_min=1 internal_largest=1 psram_largest=1"
     printed: list[str] = []
     with patch.object(parquet_device, "send_command") as send, \

@@ -4,7 +4,7 @@ Shared code takes board capabilities from hooks, ServiceConfig and sdkconfig
 defaults, never from a board name (AGENTS.md, code boundaries). This check
 fails on an #if, #ifdef, #ifndef, #elif, #elifdef or #elifndef whose condition
 names a board, a modem or a chip target, also inside a longer macro name such
-as CONFIG_AQ_BOARD_CORES3. CONFIG_IDF_TARGET_ARCH_* names a CPU family, not a
+as CONFIG_OS_BOARD_CORES3. CONFIG_IDF_TARGET_ARCH_* names a CPU family, not a
 chip, and stays allowed. Third-party vendor code is skipped.
 
 The condition is read the way the preprocessor reads it. CRLF line ends count

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aqlogger {
+namespace oslogger {
 // Dated rows use UTC seconds / rotation. Unsynced rows have no UTC, so they
 // rotate on monotonic seconds / rotation within one boot and clock epoch.
 constexpr std::int64_t rotation_window(std::int64_t seconds,
@@ -27,4 +27,4 @@ constexpr bool finalize_after_group(bool explicit_finalize,
                                     std::size_t maximum_row_groups) {
   return explicit_finalize || row_groups >= maximum_row_groups;
 }
-} // namespace aqlogger
+} // namespace oslogger

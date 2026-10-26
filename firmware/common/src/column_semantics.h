@@ -16,7 +16,7 @@
 #include <span>
 #include <string_view>
 
-namespace aq::semantics {
+namespace opensensor::semantics {
 
 // ACDD coverage_content_type values allowed by the stac-opensensor profile.
 // Enumerator spelling equals the published value, so `#role` in a SEM row is
@@ -443,4 +443,4 @@ constexpr bool derived_complete(const Fields &fields,
   return true;
 }
 
-} // namespace aq::semantics
+} // namespace opensensor::semantics
