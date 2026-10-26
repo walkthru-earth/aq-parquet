@@ -1,5 +1,7 @@
 #include "parquet_writer.h"
 
+#include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <string.h>
@@ -20,8 +22,17 @@ namespace {
 static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
               "Parquet FLOAT requires IEEE 754 binary32");
 
-constexpr uint8_t kTrue = 1, kFalse = 2, kI16 = 4, kI32 = 5, kI64 = 6,
-                  kBinary = 8, kList = 9, kStruct = 12;
+static_assert(sizeof(double) == 8 && std::numeric_limits<double>::is_iec559,
+              "WKB and BoundingBox require IEEE 754 binary64");
+
+constexpr uint8_t kTrue = 1, kFalse = 2, kByte = 3, kI16 = 4, kI32 = 5,
+                  kI64 = 6, kDouble = 7, kBinary = 8, kList = 9, kStruct = 12;
+// GEOMETRY, GeospatialStatistics and INTEGER(8, unsigned) follow
+// parquet-format 2.12.0 parquet.thrift and Geospatial.md (checked 2026-10-26).
+// A 2D WKB Point is the byte order, a uint32 type, then x and y as doubles.
+constexpr size_t kWkbPointBytes = 1 + 4 + 8 + 8;
+constexpr uint32_t kWkbPoint = 1;        // ISO WKB and Geospatial.md type code
+constexpr uint64_t kConvertedUint8 = 11; // ConvertedType UINT_8
 constexpr const char *kLegacyCreatedBy = "m5stack-aq-parquet version 0.2";
 
 class Output {
@@ -132,6 +143,16 @@ public:
     field(id, kBinary);
     out_.string(value);
   }
+  // Compact protocol writes an i8 as one raw byte.
+  void byte(uint8_t id, uint8_t value) {
+    field(id, kByte);
+    out_.byte(value);
+  }
+  // Compact protocol writes a double as its IEEE 754 bits, little endian.
+  void real(uint8_t id, double value) {
+    field(id, kDouble);
+    out_.little_endian(std::bit_cast<uint64_t>(value), 8);
+  }
   void binary(uint8_t id, uint64_t bits, size_t width) {
     field(id, kBinary);
     out_.varint(width);
@@ -148,7 +169,17 @@ private:
   uint8_t previous_ = 0;
 };
 
-size_t width(PhysicalType type) { return type == PhysicalType::Int64 ? 8 : 4; }
+// Bytes each row takes in the caller's buffer. A geometry row is the int64
+// slot that pack_point_e7 fills.
+size_t width(PhysicalType type) {
+  return type == PhysicalType::Int64 || type == PhysicalType::ByteArray ? 8 : 4;
+}
+// Bytes each present value takes in a PLAIN page, BYTE_ARRAY length included.
+size_t plain_width(PhysicalType type) {
+  return type == PhysicalType::ByteArray ? 4 + kWkbPointBytes : width(type);
+}
+
+double degrees(int32_t e7) { return static_cast<double>(e7) / 1e7; }
 
 bool present(const Column &column, size_t row) {
   return !column.valid || column.valid[row * column.valid_stride] != 0;
@@ -194,13 +225,13 @@ size_t definition_levels(const Column &column, size_t rows,
 }
 
 size_t payload_size(const Column &column, size_t rows) {
-  return present_count(column, rows) * width(column.type) +
+  return present_count(column, rows) * plain_width(column.type) +
          (column.valid ? 4 + definition_levels(column, rows) : 0);
 }
 
 uint64_t value_bits(const Column &column, size_t row) {
   const auto *values = static_cast<const uint8_t *>(column.values);
-  if (column.type == PhysicalType::Int64) {
+  if (width(column.type) == 8) {
     uint64_t value;
     memcpy(&value, values + row * column.stride, sizeof(value));
     return value;
@@ -216,9 +247,23 @@ void payload_bytes(Output &out, const Column &column, size_t rows) {
     definition_levels(column, rows, &out);
   }
   for (size_t row = 0; row < rows && out.ok(); ++row) {
+    if (!present(column, row))
+      continue;
     // memcpy avoids alignment/aliasing assumptions; emit explicitly LE.
-    if (present(column, row))
-      out.little_endian(value_bits(column, row), width(column.type));
+    const uint64_t bits = value_bits(column, row);
+    if (column.type != PhysicalType::ByteArray) {
+      out.little_endian(bits, width(column.type));
+      continue;
+    }
+    // BYTE_ARRAY length, then a little endian 2D WKB Point, x lon and y lat.
+    const auto slot = static_cast<int64_t>(bits);
+    out.little_endian(kWkbPointBytes, 4);
+    out.byte(1);
+    out.little_endian(kWkbPoint, 4);
+    out.little_endian(
+        std::bit_cast<uint64_t>(degrees(point_longitude_e7(slot))), 8);
+    out.little_endian(std::bit_cast<uint64_t>(degrees(point_latitude_e7(slot))),
+                      8);
   }
 }
 
@@ -228,13 +273,45 @@ uint32_t float_bits(float value) {
   return bits;
 }
 
+// A Geometry chunk's bounding box, packed as ChunkRecord documents. False
+// when a point lies outside longitude -180..180 or latitude -90..90.
+bool point_statistics(const Column &column, size_t rows, ChunkRecord &record) {
+  int32_t xmin = 0, ymin = 0, xmax = 0, ymax = 0;
+  for (size_t row = 0; row < rows; ++row) {
+    if (!present(column, row))
+      continue;
+    const auto slot = static_cast<int64_t>(value_bits(column, row));
+    const int32_t x = point_longitude_e7(slot);
+    const int32_t y = point_latitude_e7(slot);
+    if (x < -kMaxLongitudeE7 || x > kMaxLongitudeE7 || y < -kMaxLatitudeE7 ||
+        y > kMaxLatitudeE7)
+      return false;
+    if (!record.has_bounds || x < xmin)
+      xmin = x;
+    if (!record.has_bounds || x > xmax)
+      xmax = x;
+    if (!record.has_bounds || y < ymin)
+      ymin = y;
+    if (!record.has_bounds || y > ymax)
+      ymax = y;
+    record.has_bounds = true;
+  }
+  record.min = static_cast<uint64_t>(pack_point_e7(xmin, ymin));
+  record.max = static_cast<uint64_t>(pack_point_e7(xmax, ymax));
+  return true;
+}
+
 // Bounds use the column's TYPE_ORDER: signed integers; floats compared as
-// values with NaN excluded, then zero signs normalized for the footer.
-void statistics(const Column &column, size_t rows, ChunkRecord &record) {
+// values with NaN excluded, then zero signs normalized for the footer. A
+// Uint8 column holds 0..255, where signed and unsigned order agree. False
+// when a value lies outside its logical type's range.
+bool statistics(const Column &column, size_t rows, ChunkRecord &record) {
   record.null_count = rows - present_count(column, rows);
   record.nan_count = 0;
   record.has_bounds = false;
   record.min = record.max = 0;
+  if (column.logical == LogicalType::Geometry)
+    return point_statistics(column, rows, record);
   int32_t min32 = 0, max32 = 0;
   int64_t min64 = 0, max64 = 0;
   float minf = 0, maxf = 0;
@@ -265,6 +342,8 @@ void statistics(const Column &column, size_t rows, ChunkRecord &record) {
       int32_t value;
       const uint32_t narrow = static_cast<uint32_t>(bits);
       memcpy(&value, &narrow, sizeof(value));
+      if (column.logical == LogicalType::Uint8 && (value < 0 || value > 255))
+        return false;
       if (!record.has_bounds || value < min32)
         min32 = value;
       if (!record.has_bounds || value > max32)
@@ -273,7 +352,7 @@ void statistics(const Column &column, size_t rows, ChunkRecord &record) {
     record.has_bounds = true;
   }
   if (!record.has_bounds)
-    return;
+    return true;
   if (column.type == PhysicalType::Float) {
     // Signed zeros compare equal; the footer must show -0.0 low, +0.0 high.
     record.min = minf == 0.0F ? float_bits(-0.0F) : float_bits(minf);
@@ -288,6 +367,7 @@ void statistics(const Column &column, size_t rows, ChunkRecord &record) {
     memcpy(&bits, &max32, sizeof(bits));
     record.max = bits;
   }
+  return true;
 }
 
 struct MemorySink {
@@ -306,9 +386,7 @@ bool memory_sink(void *context, const uint8_t *data, size_t size) {
 
 bool page(Output &out, const Column &column, size_t rows, Workspace &workspace,
           const Compression *compression, ChunkRecord &record) {
-  const size_t definitions = column.valid ? definition_levels(column, rows) : 0;
-  const size_t payload = present_count(column, rows) * width(column.type) +
-                         (column.valid ? 4 + definitions : 0);
+  const size_t payload = payload_size(column, rows);
   size_t compressed = payload;
   if (compression) {
     // Both Outputs reuse the staging buffer, never while the other has bytes.
@@ -356,8 +434,27 @@ void schema_element(Output &out, const Column &column) {
   leaf.number(1, kI32, static_cast<uint8_t>(column.type));
   leaf.number(3, kI32, column.valid ? 1 : 0);
   leaf.string(4, column.name);
+  // Readers that predate LogicalType know UINT_8 only as a ConvertedType.
+  if (column.logical == LogicalType::Uint8)
+    leaf.number(6, kI32, kConvertedUint8);
   leaf.number(9, kI32, static_cast<uint64_t>(column.field_id));
-  if (column.logical == LogicalType::TimestampMicrosUtc) {
+  if (column.logical == LogicalType::Uint8) {
+    leaf.field(10, kStruct); // LogicalType union
+    Struct logical(out);
+    logical.field(10, kStruct); // INTEGER
+    Struct integer(out);
+    integer.byte(1, 8);        // bitWidth
+    integer.boolean(2, false); // isSigned
+    integer.end();
+    logical.end();
+  } else if (column.logical == LogicalType::Geometry) {
+    leaf.field(10, kStruct); // LogicalType union
+    Struct logical(out);
+    logical.field(17, kStruct); // GEOMETRY, no crs means OGC:CRS84
+    Struct geometry(out);
+    geometry.end();
+    logical.end();
+  } else if (column.logical == LogicalType::TimestampMicrosUtc) {
     leaf.field(10, kStruct); // LogicalType union
     Struct logical(out);
     logical.field(8, kStruct); // TIMESTAMP
@@ -395,7 +492,9 @@ void column_chunk(Output &out, const Column &column, const ChunkRecord &record,
   meta.field(12, kStruct);
   Struct stats(out);
   stats.number(3, kI64, record.null_count);
-  if (record.has_bounds) {
+  const bool geometry = column.logical == LogicalType::Geometry;
+  // GEOMETRY has no sort order, so its bounds go in GeospatialStatistics.
+  if (record.has_bounds && !geometry) {
     const size_t bytes = width(column.type);
     stats.binary(5, record.max, bytes);
     stats.binary(6, record.min, bytes);
@@ -405,6 +504,22 @@ void column_chunk(Output &out, const Column &column, const ChunkRecord &record,
   if (column.type == PhysicalType::Float)
     stats.number(9, kI64, record.nan_count);
   stats.end();
+  if (geometry && record.has_bounds) {
+    const auto low = static_cast<int64_t>(record.min);
+    const auto high = static_cast<int64_t>(record.max);
+    meta.field(17, kStruct); // GeospatialStatistics
+    Struct geo(out);
+    geo.field(1, kStruct); // BoundingBox, 2D
+    Struct box(out);
+    box.real(1, degrees(point_longitude_e7(low)));  // xmin
+    box.real(2, degrees(point_longitude_e7(high))); // xmax
+    box.real(3, degrees(point_latitude_e7(low)));   // ymin
+    box.real(4, degrees(point_latitude_e7(high)));  // ymax
+    box.end();
+    geo.list(2, kI32, 1); // geospatial_types
+    out.integer(kWkbPoint);
+    geo.end();
+  }
   meta.end();
   chunk.end();
 }
@@ -514,14 +629,28 @@ Result Writer::begin(Sink sink, void *context, Workspace &workspace,
     if (!bounded_string(column.name, 255) ||
         (column.type != PhysicalType::Int32 &&
          column.type != PhysicalType::Int64 &&
-         column.type != PhysicalType::Float)) {
+         column.type != PhysicalType::Float &&
+         column.type != PhysicalType::ByteArray)) {
       return {false, 0, "invalid column name or type"};
     }
     if (column.field_id <= 0)
       return {false, 0, "invalid column field_id"};
-    if (column.logical != LogicalType::None &&
-        (column.logical != LogicalType::TimestampMicrosUtc ||
-         column.type != PhysicalType::Int64))
+    bool matches = false;
+    switch (column.logical) {
+    case LogicalType::None:
+      matches = column.type != PhysicalType::ByteArray;
+      break;
+    case LogicalType::TimestampMicrosUtc:
+      matches = column.type == PhysicalType::Int64;
+      break;
+    case LogicalType::Uint8:
+      matches = column.type == PhysicalType::Int32;
+      break;
+    case LogicalType::Geometry:
+      matches = column.type == PhysicalType::ByteArray;
+      break;
+    }
+    if (!matches)
       return {false, 0, "logical type does not match physical type"};
     for (size_t j = 0; j < i; ++j) {
       if (!strcmp(column.name, columns[j].name))
@@ -569,7 +698,8 @@ Result Writer::row_group(size_t row_count, int sorted_by) {
   group = GroupRecord{row_count, out.position(), 0, 0, sorted_by};
   for (size_t i = 0; i < column_count_ && out.ok(); ++i) {
     ChunkRecord &record = chunks[i];
-    statistics(columns_[i], row_count, record);
+    if (!statistics(columns_[i], row_count, record))
+      return fail("value outside its logical type range");
     record.offset = out.position();
     if (!page(out, columns_[i], row_count, *workspace_,
               compressed_ ? &compression_ : nullptr, record))
@@ -584,6 +714,35 @@ Result Writer::row_group(size_t row_count, int sorted_by) {
   ++groups_;
   rows_ += row_count;
   return {true, accepted_, nullptr};
+}
+
+std::optional<PointBounds> Writer::point_bounds(size_t column) const {
+  if (!workspace_ || column >= column_count_ ||
+      columns_[column].logical != LogicalType::Geometry)
+    return std::nullopt;
+  std::optional<PointBounds> bounds;
+  for (size_t g = 0; g < groups_; ++g) {
+    const ChunkRecord &record = workspace_->chunks[g][column];
+    if (!record.has_bounds)
+      continue;
+    const auto low = static_cast<int64_t>(record.min);
+    const auto high = static_cast<int64_t>(record.max);
+    const PointBounds chunk{
+        .xmin_e7 = point_longitude_e7(low),
+        .ymin_e7 = point_latitude_e7(low),
+        .xmax_e7 = point_longitude_e7(high),
+        .ymax_e7 = point_latitude_e7(high),
+    };
+    if (!bounds) {
+      bounds = chunk;
+      continue;
+    }
+    bounds->xmin_e7 = std::min(bounds->xmin_e7, chunk.xmin_e7);
+    bounds->ymin_e7 = std::min(bounds->ymin_e7, chunk.ymin_e7);
+    bounds->xmax_e7 = std::max(bounds->xmax_e7, chunk.xmax_e7);
+    bounds->ymax_e7 = std::max(bounds->ymax_e7, chunk.ymax_e7);
+  }
+  return bounds;
 }
 
 Result Writer::finish(const KeyValue *metadata, size_t metadata_count,

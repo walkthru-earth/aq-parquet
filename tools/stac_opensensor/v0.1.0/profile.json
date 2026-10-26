@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/profile.json#",
-  "title": "OpenSensor Station Profile",
-  "description": "Rules on top of STAC core and the OpenSensor extension for station Collections and day Items.",
+  "title": "OpenSensor Thing Profile",
+  "description": "Rules on top of STAC core and the OpenSensor extension for Thing Collections and file Items.",
   "type": "object",
   "required": [
     "type"
@@ -23,13 +23,13 @@
     }
   },
   "then": {
-    "$ref": "#/definitions/stationCollection"
+    "$ref": "#/definitions/thingCollection"
   },
   "else": {
-    "$ref": "#/definitions/dayItem"
+    "$ref": "#/definitions/fileItem"
   },
   "definitions": {
-    "stationCollection": {
+    "thingCollection": {
       "type": "object",
       "required": [
         "type",
@@ -38,6 +38,7 @@
         "keywords",
         "instruments",
         "opensensor:sample_interval_s",
+        "opensensor:mobility",
         "item_assets",
         "links"
       ],
@@ -85,7 +86,7 @@
         }
       }
     },
-    "dayItem": {
+    "fileItem": {
       "type": "object",
       "required": [
         "type",
@@ -126,7 +127,7 @@
           "required": [
             "start_datetime",
             "end_datetime",
-            "grid:code",
+            "opensensor:mobility",
             "anon:size",
             "anon:warning"
           ],
@@ -135,6 +136,18 @@
               "type": "string",
               "pattern": "^H3-[0-9a-f]{15}$"
             }
+          },
+          "if": {
+            "properties": {
+              "opensensor:mobility": {
+                "const": "fixed"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "grid:code"
+            ]
           }
         },
         "assets": {
@@ -193,7 +206,7 @@
       }
     },
     "dataAsset": {
-      "$comment": "The data asset of a station. Also used by board templates.",
+      "$comment": "The data asset of a Thing. Also used by board templates.",
       "type": "object",
       "required": [
         "type",

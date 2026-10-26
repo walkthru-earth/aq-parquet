@@ -2,21 +2,22 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/footer.json#",
   "title": "OpenSensor Parquet footer",
-  "description": "Value of the single `opensensor` key in a Parquet file's key-value metadata, as compact UTF-8 JSON. Modelled on the GeoParquet `geo` key. Not a STAC document.",
+  "description": "Value of the single `opensensor` key in a Parquet file's key-value metadata, as compact UTF-8 JSON. Modelled on the GeoParquet `geo` key. Holds no location, the rows and the standard `geo` key carry it. Not a STAC document.",
   "type": "object",
-  "required": ["version", "station", "firmware", "dictionary", "template", "acquisition", "file"],
+  "required": ["version", "thing", "firmware", "dictionary", "template", "acquisition", "file"],
   "properties": {
     "version": {
       "const": "0.1.0"
     },
-    "station": {
+    "thing": {
       "type": "object",
-      "required": ["id", "device_id", "board"],
+      "required": ["id", "device_id", "board", "mobility"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "device_id": { "type": "string", "minLength": 1 },
         "board": { "type": "string", "minLength": 1 },
-        "deployment_id": { "type": "string", "minLength": 1 }
+        "deployment_id": { "type": "string", "minLength": 1 },
+        "mobility": { "enum": ["fixed", "moving"] }
       }
     },
     "firmware": {

@@ -1,12 +1,22 @@
-"""The `opensensor` Parquet footer (#88) checks shared by the footer tests.
+"""The `opensensor` and `geo` Parquet footer (#88, #83) checks shared by the
+footer tests.
 
-Every telemetry file carries exactly one key-value entry, `opensensor`, whose
-value is compact UTF-8 JSON valid against the pinned stac-opensensor
-json-schema/footer.json v0.1.0 (a56dfb0) in tools/stac_opensensor/v0.1.0. The
+A telemetry file with a `geometry` column carries exactly two key-value
+entries, `opensensor` then `geo`. A file without one, such as the soil fixture,
+carries only `opensensor`.
+
+`opensensor` is compact UTF-8 JSON valid against the pinned stac-opensensor
+json-schema/footer.json v0.1.0 (2f32104) in tools/stac_opensensor/v0.1.0. The
 schema sets no additionalProperties, so problems() also holds every object to
 the schema's members in the schema's order, with at least the members of the
 pinned example footers/cores3-telemetry-v5.json. dict and desc come from the
 caller, read from the board digest headers, never hardcoded here.
+
+`geo` is GeoParquet 2.0.0 file metadata valid against the GeoParquet
+schema.json pinned in tools/geoparquet/v2.0.0 (opengeospatial/geoparquet
+1edd56f, blob 99b8312), for the one native GEOMETRY column `geometry` with
+2D Points, no crs (OGC:CRS84) and a bbox only when a row has a location.
+
 mutation_proof() shows each rule fails on a broken footer.
 """
 
@@ -23,8 +33,15 @@ import pyarrow.parquet as pq
 PINNED = Path(__file__).resolve().parent / "stac_opensensor"
 SCHEMA = PINNED / "v0.1.0/footer.json"
 EXAMPLE = PINNED / "footers/cores3-telemetry-v5.json"
-SPEC = "https://github.com/walkthru-earth/stac-opensensor (a56dfb0)"
+SPEC = "https://github.com/walkthru-earth/stac-opensensor (2f32104)"
 KEY = "opensensor"
+GEO_KEY = "geo"
+GEO_SCHEMA = PINNED.parent / "geoparquet/v2.0.0/schema.json"
+GEO_SPEC = "https://github.com/opengeospatial/geoparquet (1edd56f, schema.json 2.0.0)"
+GEOMETRY = "geometry"
+# The `geo` value a board writes before any row has a location.
+GEO_NO_BBOX = ('{"version":"2.0.0","primary_column":"geometry","columns":'
+               '{"geometry":{"encoding":"WKB","geometry_types":["Point"]}}}')
 # telemetry::Writer::finish caps one value at 4096 bytes, NUL not counted.
 MAX_JSON_BYTES = 4096
 
@@ -45,6 +62,39 @@ def example() -> dict:
 def validator() -> Draft7Validator:
     require("uri" in FormatChecker().checkers, "format uri is enforced (rfc3986-validator)")
     return Draft7Validator(schema(), format_checker=FormatChecker())
+
+
+def geo_validator() -> Draft7Validator:
+    return Draft7Validator(json.loads(GEO_SCHEMA.read_text()))
+
+
+def geo_problems(text: str, bbox: list[float] | None = None) -> list[str]:
+    """Every reason a `geo` value breaks GeoParquet 2.0.0 or the board profile.
+    `bbox`, when given, is the bbox the rows imply."""
+    try:
+        document = json.loads(text)
+    except ValueError as error:
+        return [f"geo not JSON: {error}"]
+    found = [f"geo schema {'/'.join(map(str, e.path)) or '/'}: {e.message}"
+             for e in sorted(geo_validator().iter_errors(document), key=lambda e: list(e.path))]
+    if not isinstance(document, dict) or found:
+        return found or ["geo is not an object"]
+    if json.dumps(document, separators=(",", ":"), ensure_ascii=False) != text:
+        found.append("geo is not compact JSON, or has a duplicate member")
+    if document.get("primary_column") != GEOMETRY or list(document["columns"]) != [GEOMETRY]:
+        found.append(f"geo describes {list(document['columns'])}, want only {GEOMETRY!r}")
+    column = document["columns"].get(GEOMETRY, {})
+    if sorted(column) not in (["encoding", "geometry_types"], ["bbox", "encoding", "geometry_types"]):
+        found.append(f"geo column members {sorted(column)}, want encoding, geometry_types, optional bbox")
+    if column.get("geometry_types") != ["Point"]:
+        found.append("geometry_types is not exactly 2D Point")
+    box = column.get("bbox")
+    if box is not None:
+        if len(box) != 4 or not (-180 <= box[0] <= box[2] <= 180 and -90 <= box[1] <= box[3] <= 90):
+            found.append(f"bbox {box} is not 2D [xmin, ymin, xmax, ymax] in CRS84 range")
+    if (bbox is not None or box is not None) and box != bbox:
+        found.append(f"bbox {box} is not the rows' bbox {bbox}")
+    return found
 
 
 def digest_of(header: Path, name: str) -> str:
@@ -98,11 +148,17 @@ def problems(text: str, *, dict_sha: str, desc: str) -> list[str]:
     return found
 
 
-def kv_problems(kv: dict[str, str], *, dict_sha: str, desc: str) -> list[str]:
-    """The whole key-value metadata, exactly one key named opensensor."""
-    if list(kv) != [KEY]:
-        return [f"footer keys {sorted(kv)}, want exactly [{KEY!r}]"]
-    return problems(kv[KEY], dict_sha=dict_sha, desc=desc)
+def kv_problems(kv: dict[str, str], *, dict_sha: str, desc: str, geometry: bool = True,
+                bbox: list[float] | None = None) -> list[str]:
+    """The whole key-value metadata, exactly opensensor then geo when the file
+    has a geometry column, else exactly opensensor."""
+    want = [KEY, GEO_KEY] if geometry else [KEY]
+    if list(kv) != want:
+        return [f"footer keys {list(kv)}, want exactly {want}"]
+    found = problems(kv[KEY], dict_sha=dict_sha, desc=desc)
+    if geometry:
+        found += geo_problems(kv[GEO_KEY], bbox)
+    return found
 
 
 def read_kv(path: Path) -> dict[str, str]:
@@ -110,18 +166,21 @@ def read_kv(path: Path) -> dict[str, str]:
     return {k.decode(): v.decode() for k, v in raw.items()}
 
 
-def check_file(path: Path, *, dict_sha: str, desc: str) -> dict:
-    """Validate a real file's footer and return the parsed JSON."""
+def check_file(path: Path, *, dict_sha: str, desc: str, geometry: bool = True,
+               bbox: list[float] | None = None) -> dict:
+    """Validate a real file's footer and return the parsed opensensor JSON."""
     kv = read_kv(path)
-    found = kv_problems(kv, dict_sha=dict_sha, desc=desc)
+    found = kv_problems(kv, dict_sha=dict_sha, desc=desc, geometry=geometry, bbox=bbox)
     require(not found, f"{path.name} footer: " + "; ".join(found))
     return json.loads(kv[KEY])
 
 
-def mutation_proof(text: str, *, dict_sha: str, desc: str) -> list[str]:
+def mutation_proof(text: str, *, dict_sha: str, desc: str, geo: str = GEO_NO_BBOX) -> list[str]:
     """Break a valid footer one rule at a time and require each to fail."""
-    require(not kv_problems({KEY: text}, dict_sha=dict_sha, desc=desc), "baseline footer is valid")
+    require(not kv_problems({KEY: text, GEO_KEY: geo}, dict_sha=dict_sha, desc=desc),
+            "baseline footer is valid")
     good = json.loads(text)
+    good_geo = json.loads(geo)
 
     def mutated(change) -> str:
         document = copy.deepcopy(good)
@@ -141,15 +200,55 @@ def mutation_proof(text: str, *, dict_sha: str, desc: str) -> list[str]:
         d["file"]["rotation_interval_s"] = 3601
 
     def extra_member(d: dict) -> None:
-        d["station"]["country_iso3166_1_alpha2"] = "EG"
+        d["thing"]["country_iso3166_1_alpha2"] = "EG"
+
+    def bad_mobility(d: dict) -> None:
+        d["thing"]["mobility"] = "parked"
+
+    def no_mobility(d: dict) -> None:
+        del d["thing"]["mobility"]
+
+    def geo_mutated(change) -> str:
+        document = copy.deepcopy(good_geo)
+        change(document)
+        return json.dumps(document, separators=(",", ":"), ensure_ascii=False)
+
+    def with_crs(d: dict) -> None:
+        d["columns"][GEOMETRY]["crs"] = None
+
+    def polygon(d: dict) -> None:
+        d["columns"][GEOMETRY]["geometry_types"] = ["Polygon"]
+
+    def three_d(d: dict) -> None:
+        d["columns"][GEOMETRY]["bbox"] = [31.0, 30.0, 0.0, 31.5, 30.5, 0.0]
+
+    def outside(d: dict) -> None:
+        d["columns"][GEOMETRY]["bbox"] = [181.0, 30.0, 182.0, 30.5]
+
+    def second_column(d: dict) -> None:
+        d["columns"]["other"] = d["columns"][GEOMETRY]
+
+    def old_version(d: dict) -> None:
+        d["version"] = "1.1.0"
 
     cases = {
-        "stray second footer key": {KEY: text, "schema_version": good["firmware"]["schema"]},
-        "number written as a string": {KEY: mutated(string_number)},
-        "wrong template.sha256": {KEY: mutated(wrong_desc)},
-        "missing required field": {KEY: mutated(missing)},
-        "rotation_interval_s over 3600": {KEY: mutated(long_rotation)},
-        "unspecified extra JSON member": {KEY: mutated(extra_member)},
+        "stray third footer key": {KEY: text, GEO_KEY: geo,
+                                   "schema_version": good["firmware"]["schema"]},
+        "geo key missing": {KEY: text},
+        "geo before opensensor": {GEO_KEY: geo, KEY: text},
+        "number written as a string": {KEY: mutated(string_number), GEO_KEY: geo},
+        "wrong template.sha256": {KEY: mutated(wrong_desc), GEO_KEY: geo},
+        "missing required field": {KEY: mutated(missing), GEO_KEY: geo},
+        "rotation_interval_s over 3600": {KEY: mutated(long_rotation), GEO_KEY: geo},
+        "unspecified extra JSON member": {KEY: mutated(extra_member), GEO_KEY: geo},
+        "thing.mobility outside the enum": {KEY: mutated(bad_mobility), GEO_KEY: geo},
+        "thing.mobility missing": {KEY: mutated(no_mobility), GEO_KEY: geo},
+        "geo version 1.1.0": {KEY: text, GEO_KEY: geo_mutated(old_version)},
+        "geo with a crs member": {KEY: text, GEO_KEY: geo_mutated(with_crs)},
+        "geo geometry_types Polygon": {KEY: text, GEO_KEY: geo_mutated(polygon)},
+        "geo 3D bbox": {KEY: text, GEO_KEY: geo_mutated(three_d)},
+        "geo bbox outside CRS84": {KEY: text, GEO_KEY: geo_mutated(outside)},
+        "geo second column": {KEY: text, GEO_KEY: geo_mutated(second_column)},
     }
     results = []
     for name, kv in cases.items():
@@ -182,8 +281,9 @@ def check_document(document: dict, dictionary: dict, templates: str, *, compress
                          document["template"]["href"]) is not None,
             "template.href is the published template of dict at a full commit")
     require(document["template"]["sha256"] == dictionary["descriptor_sha256"], "template.sha256 is desc")
-    require(document["station"]["deployment_id"] == document["acquisition"]["calibration_id"] == "unknown",
+    require(document["thing"]["deployment_id"] == document["acquisition"]["calibration_id"] == "unknown",
             "no fabricated deployment or calibration")
+    require(document["thing"]["mobility"] == "fixed", "a board Thing defaults to fixed")
     require(document["acquisition"]["sample_interval_ms"] == 10000, "sample interval")
     require(document["acquisition"]["time_semantics"] != "", "time semantics")
     require(json.loads(document["acquisition"]["config"])["sample_interval_ms"] == 10000,
@@ -203,7 +303,7 @@ def check_board(executable: Path, firmware: Path, dictionary: dict, templates: s
     require((dict_sha, desc) == (dictionary["sha256"], dictionary["descriptor_sha256"]),
             "compiled digests equal the digest headers")
     text = subprocess.check_output([str(executable), "footer"], text=True)
-    found = kv_problems({KEY: text}, dict_sha=dict_sha, desc=desc)
+    found = kv_problems({KEY: text, GEO_KEY: GEO_NO_BBOX}, dict_sha=dict_sha, desc=desc)
     require(not found, "board footer: " + "; ".join(found))
     check_document(json.loads(text), dictionary, templates, compressed=True, rotation=3600, row_groups=4)
     # template.href names the file #86 publishes, whose SHA-256 is desc.

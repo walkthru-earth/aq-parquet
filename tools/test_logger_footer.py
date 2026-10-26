@@ -114,15 +114,15 @@ def main() -> None:
         assert result.stdout.split() == ["SL-89ab", "sl-89ab"], result.stdout
 
         parquet = pq.ParquetFile(output)
-        footer = footer_contract.check_file(output, dict_sha=DICT_SHA, desc=DESC_SHA)
+        footer = footer_contract.check_file(output, dict_sha=DICT_SHA, desc=DESC_SHA, geometry=False)
         acquisition, file = footer["acquisition"], footer["file"]
         assert acquisition["sample_interval_ms"] == 30000
         assert file == {"rotation_interval_s": 3600, "row_groups": 2, "row_group_rows_max": 90,
                         "compression": "UNCOMPRESSED", "purpose": "telemetry"}, file
-        assert footer["station"]["deployment_id"] == "fixture-plot-7"
+        assert footer["thing"]["deployment_id"] == "fixture-plot-7"
         assert acquisition["calibration_id"] == "soil-cal-2026-10"
         assert footer["firmware"]["schema"] == "soil-fixture-v1"
-        assert footer["station"]["board"] == "fixture soil board"
+        assert footer["thing"]["board"] == "fixture soil board"
 
         groups = [parquet.metadata.row_group(i).num_rows
                   for i in range(parquet.metadata.num_row_groups)]
