@@ -28,12 +28,12 @@ today's `aq_` name shown where code is cited.
 | FIELD X-macro dictionary, one row of name, type, procedure, unit, validity, LIVE key and decimals | Board `telemetry_fields.inc`, expanded in [CoreS3 `telemetry_contract.h`](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 |
 | `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`aq_logger.h`](../../firmware/common/logger/src/aq_logger.h) (`os_logger.h` after Phase 2) lines 35 to 119 |
 | `ossync::ServiceConfig`, board sdkconfig defaults, bus agnostic drivers | `Config::sync`, each board app, [`firmware/common/sensors/`](../../firmware/common/sensors/) |
-| A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 445 |
+| A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 530 |
 
 | Still leaks | Where and effect |
 | --- | --- |
 | No circular mean, no counter delta | `enum class Aggregate` in [`column_semantics.h`](../../firmware/common/src/column_semantics.h) lines 34 to 41 mirrors the stac-opensensor enum. Both `telemetry_semantics.inc` files say at lines 78 to 80 that counters use `point` for this reason (#83, bridge open question 17) |
-| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 113, Waveshare [`main.cpp`](../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
+| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 115, Waveshare [`main.cpp`](../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
 | Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
 | Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
 | One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
@@ -64,8 +64,8 @@ the vendored stac-opensensor schemas into a `referencing` registry, so a
 | module_version | `"0.1.0"` | **REQUIRED**. Plugin schema version |
 | stac_opensensor | `"0.1.0"` | **REQUIRED**. stac-opensensor version whose vocabulary the columns use |
 | id | string | **REQUIRED**. Module id, `^[a-z][a-z0-9_]{0,31}$` |
-| procedure | string | **REQUIRED**. `$ref` to stac-opensensor `opensensor:procedure`. Written to every FIELD row of the module |
-| vendor, model | string | Sensor identity, written to SEM rows |
+| procedure | string | **REQUIRED**. `$ref` to stac-opensensor `opensensor:procedure`. Default FIELD procedure for every column of the module |
+| vendor, model | string | Default SEM `sensor_vendor` and `sensor_model`, copied to every SEM row of the module. Absent means `""`, as on the system rows |
 | buses | \[string] | **REQUIRED**. `i2c`, `spi`, `uart`, `adc`, `pcnt`, `gpio` or `onewire` |
 | requires | object | Capabilities the board must grant, such as `i2c_address`, `pcnt_units`, `adc_channels`, `uart_baud` |
 | settle_s | number | `$ref` to `opensensor:settle_s`. Warm-up for the whole sensor |
@@ -79,13 +79,23 @@ A Column object is a stac-opensensor column plus a `firmware` member.
 | --- | --- | --- |
 | name, unit (UCUM), roles, `cf:standard_name`, `classification:classes` | Table and classification vocabularies | Template column, SEM `ucum`, `role` and `cf_standard_name`, CLASS rows |
 | `opensensor:property`, `opensensor:aggregate`, `opensensor:plausible_range`, `opensensor:valid_when`, `opensensor:settle_s` | `$ref` to stac-opensensor `schema.json#/definitions/column` | SEM `property`, `aggregate`, `plausible_min`, `plausible_max`, `valid_when`, `settle_s` |
+| `opensensor:procedure`, optional | Same `$ref` | FIELD `procedure` when it differs from the module default |
+| `opensensor:derived`, optional | Same `$ref` | The board `kDerived` entry for a `modelResult` column, such as Waveshare `pm25_batch_candidate_ug_m3` in `telemetry_contract.h` line 437 |
 | `firmware.type`, `firmware.unit`, `firmware.validity`, `firmware.live_key`, `firmware.decimals` | Plugin schema. `live_key` uses the stac-opensensor template `live_keys` pattern | FIELD `physical_type`, `unit`, `validity`, `live_key`, `decimals` |
+| `firmware.vendor`, `firmware.model`, optional | Plugin schema | SEM `sensor_vendor` and `sensor_model` when they differ from the module default. `""` clears them |
 
-`opensensor:field_id` and per column `opensensor:procedure` are forbidden in a
-manifest, as `template.json` forbids `title`. The board position sets the id
-and the module sets the procedure. So a manifest column maps 1:1 onto a
-template `table:columns` entry, and the board template stays the place where
-the profile role rules are checked.
+The module procedure is a default. A column overrides it with its own
+`opensensor:procedure`, because today's segments mix procedures. Examples are
+`system.head` (`logger`, `identity`, `clock`), `system.location` (`h3_grid`,
+`h3_grid_center`) and CoreS3 rows 37 to 39 (`m5_imu_aux` inside `m5_imu`).
+The template already carries a procedure per column, and
+`tools/board_template.py` line 151 checks it per column against FIELD, so the
+mapping stays one to one.
+
+`opensensor:field_id`, `opensensor:scale` and `title` are forbidden in a
+manifest column, matching `template.json`. The board position sets the id. So
+a manifest column maps one to one onto a template `table:columns` entry, and
+the board template stays the place where the profile role rules are checked.
 
 The schema reuses rather than redefines.
 
@@ -112,7 +122,7 @@ The schema reuses rather than redefines.
       "allOf": [
         {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column"},
         {"required": ["name", "roles", "firmware"],
-         "not": {"anyOf": [{"required": ["opensensor:field_id"]}, {"required": ["opensensor:procedure"]}]},
+         "not": {"anyOf": [{"required": ["opensensor:field_id"]}, {"required": ["opensensor:scale"]}, {"required": ["title"]}]},
          "properties": {"firmware": {"$ref": "#/definitions/firmware"}}}
       ]
     },
@@ -121,6 +131,10 @@ The schema reuses rather than redefines.
       "required": ["type", "unit", "validity", "live_key", "decimals"],
       "properties": {
         "type": {"enum": ["Int32", "Int64", "Float", "ByteArray"]},
+        "unit": {"type": "string", "minLength": 1},
+        "validity": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
+        "vendor": {"type": "string"},
+        "model": {"type": "string"},
         "live_key": {"anyOf": [
           {"const": ""},
           {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/template.json#/properties/firmware/properties/live_keys/additionalProperties"}
@@ -146,7 +160,7 @@ The excerpt leaves out `id`, `buses`, `requires`, `status` and the
 | schema | string | **REQUIRED**. Firmware schema name, the template `id` |
 | sample_interval_s | number | **REQUIRED**. Written to the template `opensensor:sample_interval_s`, must equal the `oslogger::Config` value |
 | title, keywords | string, \[string] | Template title and keywords. CoreS3 and Waveshare keep "air quality" |
-| local_modules | \[path] | Module manifests that live in the board app, such as the CoreS3 M5 IMU, AXP2101, BM8563 and FT6336 |
+| local_modules | \[path] | Manifests that live in the board app, such as the CoreS3 M5 IMU, AXP2101, BM8563 and FT6336 and the Waveshare `pms_identity` segment |
 | segments | \[\{module, segment\}] | **REQUIRED**. Ordered segment list. `module` is a module id or `system` |
 
 Segments, not one block per module, because field ids are append only. A
@@ -157,7 +171,7 @@ decompose this way.
 | --- | --- | --- | --- |
 | 1 to 10 | `system.head` | 1 to 10 | `system.head` |
 | 11 to 29 | `pmsa003.core` | 11 to 22 | `pms5003t.core` |
-| 30 to 58 | `m5_imu`, `ltr553`, `axp2101`, `bm8563`, `ft6336` `.core` | 23 to 25 | `pms_identity.core` |
+| 30 to 58 | `m5_imu`, `ltr553`, `axp2101`, `bm8563`, `ft6336` `.core` | 23 to 25 | `waveshare.pms_identity`, board local |
 | 59 to 70 | `system.runtime` | 26 to 32 | `pms5003t.tail` |
 | 71 to 72 | `sht20.core` | 33 to 35 | `max17048.core` |
 | 73 to 74 | `system.clock_close` | 36 to 49 | `system.runtime`, `system.clock_close` |
@@ -167,6 +181,10 @@ decompose this way.
 
 The `system` segments belong to the logger, which fills those columns by name,
 so their manifest lives at `firmware/common/logger/system.module.json`.
+`waveshare.pms_identity` is not a sensor. It is a board local segment with
+three procedures (`owner_provisioned_identity`,
+`airgradient_20260408_count_candidate_v1`, `batch_candidate_gate`), declared
+in the Waveshare app with per column procedures.
 
 ## 5. Generated or gated artifacts
 
@@ -176,15 +194,15 @@ so their manifest lives at `firmware/common/logger/system.module.json`.
 2. Check cross rules a schema cannot express. Column names are unique on a
    board, LIVE keys keep one key to one column across boards
    (`tools/live_key_fixture.py`), the board stays within `kMaxColumns` 96 and
-   the 480 byte LIVE cap, and a segment shipped on any board never changes its
-   FIELD rows.
+   the 480 byte LIVE cap, and the board file matches its `shipped.lock`
+   (below).
 3. Expand each board's segment list into FIELD, SEM and CLASS rows and the
    per module C++ column tables and status codes.
 4. Generate or byte-check, as below.
 
 | Option | What the firmware compiles | Gate |
 | --- | --- | --- |
-| A. Gate | The checked-in board `telemetry_fields.inc`, `telemetry_semantics.inc` and `telemetry_classes.inc`, unchanged | The generated rows equal the board file rows in order, comment and blank lines ignored. A new board gets its files written once, then they are frozen like any other |
+| A. Gate | The checked-in board `telemetry_fields.inc`, `telemetry_semantics.inc` and `telemetry_classes.inc`, unchanged | The generated rows equal the board file rows in order, and the whole `telemetry_fields.inc` is hashed against the lock. A new board gets its files written once, then they are frozen like any other |
 | B. Generate | Rows generated from manifests at build time | The generated table equals a frozen `.inc` copy byte for byte |
 
 **Recommendation, Option A.** The pinned `kDictionaryUri` exists so that the
@@ -194,10 +212,52 @@ host only PR. Option B makes the hashed file a copy of what the image really
 compiles, and the board comment prose, which is hashed into `dict`, cannot
 come from manifests without a special case.
 
+### The append only baseline, `shipped.lock`
+
+Rows equal to manifests prove nothing about history. Someone could edit a
+shipped segment in both the manifest and the `.inc`. So each board variant
+keeps a checked-in `shipped.lock` next to its `telemetry_fields.inc`, with
+one entry per released `dict`.
+
+```json
+{
+  "board": "m5stack-cores3",
+  "releases": [
+    {"dict": "<SHA-256 of the raw telemetry_fields.inc, equal to dict>",
+     "rows": 81,
+     "segments": [
+       {"module": "system", "segment": "head", "first": 1, "rows": 10, "sha256": "<SHA-256 of these FIELD rows as written>"},
+       {"module": "pmsa003", "segment": "core", "first": 11, "rows": 19, "sha256": "..."}
+     ]}
+  ]
+}
+```
+
+The gate enforces four rules.
+
+- The SHA-256 of the current `telemetry_fields.inc` equals the newest
+  release `dict`. Any byte change fails, a comment only edit included,
+  because the file hash moves.
+- A new release keeps every segment of the previous one at the same `first`,
+  `rows` and `sha256`, and adds segments only after the last row. A reorder,
+  a removal or an edit inside a shipped segment fails.
+- A new release lands with a newest first entry in
+  [mobile migration notes](mobile-migration.md) that names the new `dict`.
+- Releases are append only. An old entry never changes.
+
+Two existing checks already catch an inconsistent `dict` move today.
+`tools/build-idf-board.sh` lines 20 to 23 fails when the digest header and the
+file disagree, and `pixi run pinned-uris-test` fails when the pinned commit
+does not hold bytes that hash to `dict`. Neither knows what shipped, so an
+edit with a regenerated header and a fresh pin passes both. The lock is the
+missing baseline. `pixi run plugin-contract-test` without it would not guard
+`dict` at all.
+
 What stays fixed under either option.
 
 - `dict` stays the SHA-256 of the raw board `.inc` bytes, checked by
-  `tools/build-idf-board.sh` lines 20 to 24 and the contract test.
+  `tools/build-idf-board.sh` lines 20 to 23, the contract test and now the
+  lock.
 - `desc` stays the SHA-256 of the template bytes `tools/board_template.h`
   builds from those same files.
 - `field_id` stays the 1-based position, append only from the Thing baseline.
@@ -237,9 +297,9 @@ third board ships with a dated bench record, Stable by owner decision.
 
 | Change | `dict` | `desc` | Plugin schema |
 | --- | --- | --- | --- |
-| A FIELD value in a shipped segment (name, type, unit label, validity, LIVE key, decimals) | Forbidden by the gate. Add a new segment instead | | |
-| A new segment appended to a board | New on that board | New, the template carries `dict` | No change |
-| Board `.inc` comment prose | New, comments are hashed | New | No change |
+| A FIELD value in a shipped segment (name, type, unit label, validity, LIVE key, decimals) | Forbidden by the lock. Add a new segment instead | | |
+| A new segment appended to a board | New on that board, plus a lock release | New, the template carries `dict` | No change |
+| Board `.inc` comment prose | New, comments are hashed, plus a lock release | New | No change |
 | SEM or class values (property, aggregate, range, `valid_when`, settle, roles, vendor) | Same | New on every board using that segment, the gate lists them | No change |
 | A new optional manifest field or extension kind | Same | Same | Patch |
 | A new stac-opensensor version adopted | Same until a board uses a new value | Same until then | Minor, following upstream |
@@ -266,7 +326,7 @@ wind vane and a tipping bucket rain gauge, plus the existing MAX17048 module.
 ```json
 {
   "type": "OpenSensorBoard",
-  "board_version": "0.2.0",
+  "board_version": "0.1.0",
   "board": "example-weather-s3",
   "schema": "example-weather-s3-telemetry-v1",
   "sample_interval_s": 10,
@@ -286,9 +346,10 @@ wind vane and a tipping bucket rain gauge, plus the existing MAX17048 module.
 }
 ```
 
-The anemometer module needs the two new aggregates, so it validates only
-against a plugin schema that follows a stac-opensensor release with them.
-`0.2.0` below marks that future version.
+The board manifest stays at plugin schema `0.1.0`. Only the anemometer
+module needs the two new aggregates, so it validates only against a module
+schema that follows a stac-opensensor release with them. `0.2.0` below marks
+that future version.
 
 ```json
 {
@@ -297,6 +358,8 @@ against a plugin schema that follows a stac-opensensor release with them.
   "stac_opensensor": "0.2.0",
   "id": "cup_anemometer",
   "procedure": "cup_anemometer",
+  "vendor": "Generic",
+  "model": "reed cup anemometer and vane",
   "buses": ["pcnt", "adc"],
   "requires": {"pcnt_units": 1, "adc_channels": 1},
   "init_errors": ["pcnt_unavailable", "adc_unavailable"],
@@ -316,6 +379,12 @@ against a plugin schema that follows a stac-opensensor release with them.
      "opensensor:aggregate": "mean", "opensensor:plausible_range": [0, 75],
      "opensensor:valid_when": {"column": "anemometer_status", "equals": 0},
      "firmware": {"type": "Float", "unit": "m/s", "validity": "anemometer_ok", "live_key": "ws", "decimals": 1}},
+    {"name": "wind_gust_m_s", "unit": "m/s", "roles": ["physicalMeasurement"],
+     "cf:standard_name": "wind_speed_of_gust",
+     "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/wind_speed_of_gust/",
+     "opensensor:aggregate": "maximum", "opensensor:plausible_range": [0, 100],
+     "opensensor:valid_when": {"column": "anemometer_status", "equals": 0},
+     "firmware": {"type": "Float", "unit": "m/s", "validity": "anemometer_ok", "live_key": "wg", "decimals": 1}},
     {"name": "wind_direction_deg", "unit": "deg", "roles": ["physicalMeasurement"],
      "cf:standard_name": "wind_from_direction",
      "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/wind_from_direction/",
@@ -330,24 +399,29 @@ against a plugin schema that follows a stac-opensensor release with them.
 }
 ```
 
-The gate expands that segment into these rows of the new board's files.
+The gate expands that segment into these rows of the new board's files. The
+module `vendor` and `model` are copied to every SEM row.
 
 ```text
 FIELD(anemometer_status, Int32, cup_anemometer, "code", always, "", 0)
 FIELD(wind_speed_m_s, Float, cup_anemometer, "m/s", anemometer_ok, "ws", 1)
+FIELD(wind_gust_m_s, Float, cup_anemometer, "m/s", anemometer_ok, "wg", 1)
 FIELD(wind_direction_deg, Float, cup_anemometer, "deg", anemometer_ok, "wd", 0)
 FIELD(wind_pulses_total, Int64, cup_anemometer, "count", always, "", 0)
 
-SEM(anemometer_status, "{code}", qualityInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:anemometer_status", "", "")
-SEM(wind_speed_m_s, "m/s", physicalMeasurement, "wind_speed", mean, 0, 75, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_speed/", "", "")
-SEM(wind_direction_deg, "deg", physicalMeasurement, "wind_from_direction", circular_mean, 0, 360, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_from_direction/", "", "")
-SEM(wind_pulses_total, "{count}", qualityInformation, "", delta, , , 0, "", "urn:walkthru-earth:property:anemometer_pulse_count", "", "")
+SEM(anemometer_status, "{code}", qualityInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:anemometer_status", "Generic", "reed cup anemometer and vane")
+SEM(wind_speed_m_s, "m/s", physicalMeasurement, "wind_speed", mean, 0, 75, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_speed/", "Generic", "reed cup anemometer and vane")
+SEM(wind_gust_m_s, "m/s", physicalMeasurement, "wind_speed_of_gust", maximum, 0, 100, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_speed_of_gust/", "Generic", "reed cup anemometer and vane")
+SEM(wind_direction_deg, "deg", physicalMeasurement, "wind_from_direction", circular_mean, 0, 360, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_from_direction/", "Generic", "reed cup anemometer and vane")
+SEM(wind_pulses_total, "{count}", qualityInformation, "", delta, , , 0, "", "urn:walkthru-earth:property:anemometer_pulse_count", "Generic", "reed cup anemometer and vane")
 ```
 
-The board comes to about 44 columns and 12 LIVE keys, well inside the caps. It
-gets its own `dict`, `desc`, template, pinned URIs, LIVE fixture, sync protocol
-LIVE rows (`hpa`, `ws`, `wg`, `wd`, `rain`), mobile migration entry and bench
-record. CoreS3 and Waveshare files and digests do not change.
+The BME280 and rain gauge manifests follow the same shape and are not shown.
+The board gets its own `dict`, `desc`, `shipped.lock`, template, pinned URIs,
+LIVE fixture, sync protocol LIVE rows (`ws`, `wg`, `wd` and whatever keys
+the other modules declare), mobile migration entry and bench record. The gate
+checks the column count and LIVE size against the caps. CoreS3 and Waveshare
+files and digests do not change.
 
 ## 10. What the generator emits in C++
 
@@ -360,9 +434,9 @@ manifest, or checks when the header already exists. It follows the root
 // GENERATED from firmware/common/sensors/modules/cup_anemometer/module.json
 namespace ossensor::cup_anemometer {
 enum class [[nodiscard]] InitError : std::uint8_t { pcnt_unavailable, adc_unavailable };
-enum class Column : std::uint8_t { status, wind_speed, wind_direction, pulses_total };
-inline constexpr std::array<std::string_view, 4> kColumns{
-    "anemometer_status", "wind_speed_m_s", "wind_direction_deg", "wind_pulses_total"};
+enum class Column : std::uint8_t { status, wind_speed, wind_gust, wind_direction, pulses_total };
+inline constexpr std::array<std::string_view, 5> kColumns{
+    "anemometer_status", "wind_speed_m_s", "wind_gust_m_s", "wind_direction_deg", "wind_pulses_total"};
 inline constexpr std::int32_t kStatusOk = 0;
 inline constexpr std::int32_t kStatusVaneOutOfRange = 1;
 inline constexpr std::int32_t kStatusMissing = 2;
@@ -410,8 +484,8 @@ or file format, `dict` or `desc`.
 | Step | PR | Proof |
 | --- | --- | --- |
 | 1 | `docs/shared/plugins/` README, CHANGELOG, v0.1.0 schemas, examples, `plugin_contract.py` and its pixi task | Validates examples only, no firmware file touched |
-| 2 | `system.module.json` | Both boards contain its FIELD and SEM rows verbatim |
-| 3 | Sensor and board local module manifests, `board.json` for both boards | Full FIELD, SEM and CLASS reproduction, status constants match |
+| 2 | `system.module.json`, and a `shipped.lock` for each board at today's `dict` | Both boards contain its FIELD and SEM rows verbatim, both locks match the current files |
+| 3 | Sensor and board local manifests, `board.json` for both boards | Full FIELD, SEM and CLASS reproduction including per column procedures, status constants match |
 | 4 | Generated module headers and `os_sensor_module.h`, with a host test | No board source changes |
 | 5 | Waveshare `collect` moves to modules | Row equality fixture for the same inputs, both boards build |
 | 6 | CoreS3 `collect` moves to modules | Same |
@@ -430,8 +504,9 @@ flowchart LR
   BM["Board manifest"] --> V
   S["Plugin schemas v0.1.0, refs to vendored stac-opensensor"] --> V
   V{{"plugin_contract.py validates"}} --> X["Expand ordered segments"]
-  X -- "byte check, Option A" --> INC["Board telemetry_fields.inc, semantics and classes .inc"]
+  X -- "rows equal, Option A" --> INC["Board telemetry_fields.inc, semantics and classes .inc"]
   X -- "generate" --> HDR["Module C++ column tables"]
+  LOCK["shipped.lock, append only"] -- "whole file and segment hashes" --> INC
   INC --> DICT["dict SHA-256"]
   INC --> KF["kFields and kSemantics, constexpr"]
   HDR --> MOD["Module collect"]
