@@ -1,15 +1,15 @@
 # CoreS3 native ESP-IDF logger
 
 The current source is a pure **ESP-IDF 6.1** application, firmware identity
-**`idf-cores3-parquet-v6.20`**, with an **81-column** CoreS3 schema
-`cores3-telemetry-v5` and dictionary `cores3-telemetry-v6`. The original 77
-columns retain their order and types; four nullable H3 location fields are
-appended. Since v6.12 the two UTC instants are `event_time_utc_us` and
+**`idf-cores3-parquet-v6.21`**, with an **81-column** CoreS3 schema
+`cores3-telemetry-v6` and dictionary `cores3-telemetry-v7`. The original 77
+columns retain their order and types. Four nullable location fields follow,
+`h3_cell_id`, `h3_resolution`, `location_source` and the WKB Point `geometry`. Since v6.12 the two UTC instants are `event_time_utc_us` and
 `clock_anchor_utc_us`, INT64 microseconds annotated `TIMESTAMP(MICROS, UTC)`,
 and every leaf carries Parquet `field_id` = its 1-based dictionary position
 (see [mobile migration](../../docs/shared/mobile-migration.md)). Each `FIELD`
 row ends with its LIVE key and its LIVE float decimals, so the dictionary
-SHA-256 `4f80c26c…` covers the LIVE key map and precision. `bringup/main.cpp` owns board setup, sensors, display and native
+SHA-256 `3b4d8500…` covers the LIVE key map and precision. `bringup/main.cpp` owns board setup, sensors, display and native
 UART; `bringup/telemetry_logger.cpp` supplies the OSLogger adapter. M5Unified
 **0.2.26** and M5GFX **0.2.33** are native IDF components; there are no Arduino
 APIs or Arduino component in the application. Location uses the optional shared
@@ -19,9 +19,11 @@ were checked on **2026-10-16**; LZ4 remains vendored **1.10.0**. The
 [development guide](../../docs/shared/development.md#host-and-toolchain) records
 the latest-release pin policy and qualification scope.
 
-**A short native v6.9 run passed on 2026-10-09:** 20 MHz SD mount/write/USB readback,
-RTC/network UTC, valid sensors, retained station/settings/bonds and zero
-logger health errors. See the [dated image and limits](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback).
+**The newest dated native readback is the 2026-10-26 reflash of main 689bb61**,
+with the Thing id, null location columns and the `geo` footer key. See the
+[dated image and limits](../../docs/boards/m5stack-cores3/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26).
+The first native v6.9 run on 2026-10-09 is in the
+[same record](../../docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback).
 Phone transfers, sustained display/card arbitration and power-cut durability
 remain unqualified. Earlier measurements below retain their Arduino identities.
 

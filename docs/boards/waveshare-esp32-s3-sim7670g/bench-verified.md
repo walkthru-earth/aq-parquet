@@ -425,3 +425,47 @@ Limits. No phone transfer, LAN or Wi-Fi run, no endurance run. The USB fetch
 reset the board through the CH343 bridge, so a few buffered rows after the
 fetch were lost. Logs, image and readback are in ignored
 `firmware/esp-idf-waveshare-sim7670g/artifacts/install-20261018/`.
+
+## Main 689bb61 USB reflash, Thing id and first `geo` footer (2026-10-26)
+
+Board ESP32-S3 QFN56 rev v0.2, MAC a4:cb:8f:d7:75:00, flash manufacturer 85
+device 2018 at 16 MB, 8 MB AP_3v3 PSRAM, WCH bridge 1A86:55D3 on
+`/dev/cu.wchusbserial5B901533371`. `pixi run ports`, `chip`, `flash-id` and
+`efuse` showed `SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0` and
+`DIS_DOWNLOAD_MODE=False`. The owner waived a new backup. The flash helper
+still needs a backup path for its NVS layout check, so
+`backup/waveshare-sim7670g-v2-flash-20261025T220345Z.bin` from 2026-10-25 was
+passed only to satisfy that check.
+
+`pixi run waveshare-build logger` on `main` at `689bb61` (#108, the Thing
+rename, the `geometry` column and the `geo` footer key). App BIN SHA-256
+`7f60460ff03d10120ce101e516a2aeac57e7013f66302326a40e4f498bf3d369`.
+`pixi run waveshare-flash` wrote only bootloader, partition table, otadata and
+app0, and esptool verified every region hash. No eFuse write, NVS erase, full
+chip erase or card format.
+
+| Check | Result |
+| :--- | :--- |
+| Image | `OS BOARD waveshare-sim7670g-v2 firmware=idf-waveshare-parquet-v2.15 sensor=PMS5003T battery=installed display=absent rtc=absent`, app version `689bb61`, compiled Oct 26 2026 19:53:09, ESP-IDF v6.1. `PARQUET BEGIN schema=waveshare-sim7670g-telemetry-v6 columns=62 ... psram_workspace_bytes=169824 row_bytes=880 ... codec=LZ4_RAW crc32_check=ok`. The file footer names dictionary `waveshare-sim7670g-telemetry-v7` with dictionary SHA-256 `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` |
+| Memory and TF | `OS MEMORY flash_bytes=16777216 ... psram_physical_bytes=8388608 psram_heap_bytes=8321872 psram_ok=1`, `OS TF mounted=1 size_bytes=31457280000 ... format_attempted=false` |
+| Settings | `CONFIG LOADED first_boot=false display=false pair=fixed pin_default=false wifi_on=false ssid_set=false lan_on=true`, `BLE BEGIN name=OS-7500 ... bonds=0 pair=fixed` |
+| Thing id | Three captured boots (the boot after the flash, the boot before the archive reset and the boot after it) and every `parquet status` print the same Thing id, which differs from the station id in the 2026-10-18 entry. The id itself is left out of this record |
+| Time | `PARQUET RTC state=unusable-or-absent`. No host time was sent, so the first file is unsynced |
+| Watchdog | `PARQUET WATCHDOG mode=armed timeout_s=60 consecutive=0 max_consecutive=3 healthy_s=3600 supervised=1` |
+| Core dump | Every boot printed `Core dump data checksum is correct` and `Found core dump 24992 bytes in flash @ 0xc10000`. That is the size of the dump the 2026-10-17 temporary stall build left in the partition. It was not decoded in this run |
+| Archive reset (owner requested) | Before the reset `PARQUET SCAN files=15`. `parquet erase-archive CONFIRM` returned `PARQUET ERASE_ARCHIVE ok=1 files=15 directories=5 reboot_required=1`. The capture tool refuses that command, so a one-off pyserial script sent it and then pulsed reset. The next boot printed `PARQUET SCAN files=0 retained_partials=0 quarantine_files=0` |
+
+| First file | Result |
+| :--- | :--- |
+| File | `data_unsynced_0b79eddb..._0-88-0.parquet`, 89 rows, 1 row group, 62 columns, 17,056 bytes, CRC-32 `ed716990`, SHA-256 `d1cfbfa056c505ac4ca5d6476d40540d54dcff5aa8ddeb150c936a0ed7018b17`. `parquet get` ended with `PARQUET DATA END ... bytes=17056 crc32=ed716990`, matching `PARQUET READY`. A later `parquet status` reported `finalized=1 dropped=0 errors=0 queue_peak=0` |
+| Cadence | `sequence` 0 to 88. `scheduled_us` steps exactly 10,000,000 us. `monotonic_us` intervals 9,999,087 to 10,000,913 us, at most 913 us from ten seconds. `rows_dropped`, `storage_errors` and `sample_deadlines_missed` are 0. `clock_status=0` and `event_time_utc_us` is null in every row |
+| Footer key order | The raw thrift `key_value_metadata` holds `opensensor` before `geo`. PyArrow 25 returns the keys in a different order, so the raw bytes are the evidence |
+| `geo` key | `{"version": "2.0.0", "primary_column": "geometry", "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}}}` |
+| Location columns | Column 56 `geometry` is BYTE_ARRAY with the Parquet `Geometry` logical type (PyArrow 25 prints `Geometry(crs=)`). Column 53 `h3_cell_id`, column 54 `h3_resolution` and column 55 `location_source` (UINT8) are present. Location is unset, so all four location columns are null in all 89 rows, and the `geometry` chunk statistics carry only `null_count=89` with no bounds |
+
+Limits. Location was unset, so a non-null `geometry` value and geospatial
+statistics with bounds are not proven on hardware. No BLE, LAN or phone sync
+was run, and no UTC reached the board. This short USB readback does not
+establish endurance, SD or power-cut durability, and host tests do not prove
+those either. Logs, image hashes, the erase script and the fetched file are in
+ignored `firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261026/`.

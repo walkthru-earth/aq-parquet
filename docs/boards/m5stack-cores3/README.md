@@ -4,7 +4,10 @@ The current [CoreS3 application](../../../firmware/esp-idf-cores3/README.md)
 uses native **ESP-IDF 6.1** with M5Unified **0.2.26** and M5GFX **0.2.33**
 components. A [short native run](bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
 verified 20 MHz SD logging/readback, sensors, RTC/network time and retained
-settings/bonds. Phone transfers and durability remain unqualified. Earlier
+settings/bonds. The newest dated record is the
+[2026-10-26 reflash of main 689bb61](bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26),
+with the Thing id, a null `geometry` column and the `geo` footer key on the
+first file. Phone transfers and durability remain unqualified. Earlier
 results belong to their identified historical Arduino images. The optional M134 contains
 PMSA003; its wiring is distinct from Waveshare/PMS5003T.
 

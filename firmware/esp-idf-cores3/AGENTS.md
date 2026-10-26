@@ -8,8 +8,9 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
 - Use `pixi run idf-setup`, `pixi run cores3-build` and, after the safety
   sequence, `pixi run cores3-flash <checked-port> <full-backup>`. M5Unified and
   M5GFX are native IDF components; never add Arduino APIs or another SPI owner.
-- Native v6.9 has a dated short USB Parquet readback in the board bench record:
-  SD at 20 MHz, network UTC, retained identity/settings and zero health errors.
+- Native v6.9 (2026-10-09) and v6.21 (2026-10-26) have dated USB Parquet
+  readbacks in the board bench record. v6.9 showed SD at 20 MHz, network UTC,
+  retained identity/settings and zero health errors.
   Retained Arduino measurements remain historical. Phone reconnect/transfers,
   display stress, sustained arbitration and power-cut durability remain unqualified.
 - CoreS3 has 16 MB flash and **Quad** PSRAM. Do not copy Waveshare GPIO,
@@ -19,7 +20,7 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
   `OSCommon` own their services; never add a second owner for a bus/radio.
 - M134/PMSA003 is optional. Preserve missing sensor values as null, and keep
   RTC writes on the main task rather than the storage worker.
-- Current firmware is `idf-cores3-parquet-v6.20`, schema v5/dictionary v6 with
+- Current firmware is `idf-cores3-parquet-v6.21`, schema v6/dictionary v7 with
   81 fields. Each `FIELD` row ends with its LIVE key and decimals, so changing
   either changes the digest and needs a new entry in `tools/fixtures/live_keys/cores3.json`.
   Preserve the original 77-field order. Field ids are the 1-based
