@@ -735,7 +735,7 @@ def decode_list_since_end(frame: bytes) -> dict:
 
 
 def read_cursors(path: Path) -> dict:
-    """Every saved cursor by station. A missing file is empty. A corrupt one
+    """Every saved cursor by thing. A missing file is empty. A corrupt one
     warns and is treated as empty, so the next listing is a full one."""
     try:
         saved = json.loads(path.read_text())
@@ -752,24 +752,24 @@ def read_cursors(path: Path) -> dict:
     return saved
 
 
-def load_cursor(path: Path, station: str) -> dict:
-    """The saved cursor for `station`, or the zero cursor, which lists everything."""
-    cursor = read_cursors(path).get(station)
+def load_cursor(path: Path, thing: str) -> dict:
+    """The saved cursor for `thing`, or the zero cursor, which lists everything."""
+    cursor = read_cursors(path).get(thing)
     if cursor is None:
         return dict(ZERO_CURSOR)
     try:
         encode_cursor(cursor)
     except (TypeError, KeyError, ValueError, struct.error) as error:
-        print(f"warning: ignoring bad cursor for station {station} in {path} ({error!r}), listing everything",
+        print(f"warning: ignoring bad cursor for thing {thing} in {path} ({error!r}), listing everything",
               file=sys.stderr)
         return dict(ZERO_CURSOR)
     return dict(cursor)
 
 
-def save_cursor(path: Path, station: str, cursor: dict) -> None:
-    """Keeps one cursor per station. The cursor carries its mount epoch."""
+def save_cursor(path: Path, thing: str, cursor: dict) -> None:
+    """Keeps one cursor per thing. The cursor carries its mount epoch."""
     saved = read_cursors(path)
-    saved[station] = cursor
+    saved[thing] = cursor
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(saved, indent=1, sort_keys=True) + "\n")
     temporary.replace(path)
@@ -863,15 +863,15 @@ async def cmd_list(args):
     client, session = await connect(args)
     try:
         if args.since:
-            station = (await session.info()).get("station", "")
-            cursor = load_cursor(args.since, station)
+            thing = (await session.info()).get("thing", "")
+            cursor = load_cursor(args.since, thing)
             try:
                 listed, end = await session.list_since(cursor)
             except ListSinceUnsupported:
                 print("BLE LIST_SINCE unsupported, falling back to LIST", flush=True)
                 listed, end = await session.list_files()
             else:
-                save_cursor(args.since, station, end["cursor"])
+                save_cursor(args.since, thing, end["cursor"])
         else:
             listed, end = await session.list_files()
         for name, size in sorted(listed.items()):
@@ -887,7 +887,7 @@ def publish(payload: bytes, name: str, out: Path, transfer: dict, source_info: d
     return {"path": relative, "source": source_info.get("_transport", "ble") + "-readback", "bytes": len(payload), "rows": summary["rows"],
             "crc32": summary["crc32"], "sha256": hashlib.sha256(payload).hexdigest(),
             "readers_match": summary["readers_match"], "transfer": transfer,
-            "station": source_info.get("station"), "device": source_info.get("dev")}
+            "thing": source_info.get("thing"), "device": source_info.get("dev")}
 
 
 async def cmd_fetch(args):
@@ -1092,8 +1092,8 @@ def main():
     live.set_defaults(run=cmd_live)
     listing = sub.add_parser("list")
     listing.add_argument("--since", type=Path, metavar="CURSOR_FILE",
-                         help="list with LIST_SINCE from the station's cursor in this JSON file, then save "
-                              "the new one. A missing file or station lists everything")
+                         help="list with LIST_SINCE from the thing's cursor in this JSON file, then save "
+                              "the new one. A missing file or thing lists everything")
     listing.set_defaults(run=cmd_list)
     fetch = sub.add_parser("fetch")
     fetch.add_argument("name")

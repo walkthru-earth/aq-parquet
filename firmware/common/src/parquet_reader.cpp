@@ -12,6 +12,7 @@ constexpr uint8_t kStop = 0, kTrue = 1, kFalse = 2, kByte = 3, kI16 = 4,
 // Parquet nests at most a few levels; anything deeper is hostile input.
 constexpr size_t kMaxDepth = 16;
 constexpr int32_t kTimestampMicros = 10; // legacy ConvertedType
+constexpr int32_t kUint8 = 11;           // legacy ConvertedType UINT_8
 
 Result fail(const char *error) { return {false, 0, error}; }
 
@@ -261,9 +262,73 @@ private:
   size_t pos_ = 0;
 };
 
-// LogicalType union. Only TIMESTAMP(MICROS, isAdjustedToUTC=true) maps to an
-// Iceberg type this reader reports; any other annotation is refused rather
-// than silently read as a plain number.
+// TIMESTAMP struct. True only for MICROS with isAdjustedToUTC=true.
+bool decode_timestamp(Decoder &in) {
+  bool utc = false, micros = false, has_utc = false, has_unit = false;
+  int16_t ts_last = 0, ts_id = 0;
+  for (uint8_t ts_type = 0;;) {
+    if (!in.field(ts_last, ts_id, ts_type))
+      return false;
+    if (ts_type == kStop)
+      break;
+    if (ts_id == 1 && (ts_type == kTrue || ts_type == kFalse) && !has_utc) {
+      utc = ts_type == kTrue;
+      has_utc = true;
+    } else if (ts_id == 2 && ts_type == kStruct && !has_unit) {
+      int16_t unit_last = 0, unit_id = 0;
+      uint8_t unit_type = 0;
+      if (!in.field(unit_last, unit_id, unit_type) || unit_type != kStruct)
+        return false;
+      micros = unit_id == 2;
+      int16_t end_last = 0, end_id = 0;
+      uint8_t end = 0;
+      if (!in.skip(kStruct, 1) || !in.field(end_last, end_id, end) ||
+          end != kStop)
+        return false;
+      has_unit = true;
+    } else if (!in.skip(ts_type, 1)) {
+      return false;
+    }
+  }
+  return has_utc && has_unit && utc && micros;
+}
+
+// INTEGER struct. True only for bitWidth 8 with isSigned=false.
+bool decode_integer(Decoder &in) {
+  bool has_width = false, has_signed = false, is_signed = true;
+  uint8_t width = 0;
+  int16_t last = 0, id = 0;
+  for (uint8_t type = 0;;) {
+    if (!in.field(last, id, type))
+      return false;
+    if (type == kStop)
+      break;
+    if (id == 1 && type == kByte && !has_width) {
+      if (!in.byte(width))
+        return false;
+      has_width = true;
+    } else if (id == 2 && (type == kTrue || type == kFalse) && !has_signed) {
+      is_signed = type == kTrue;
+      has_signed = true;
+    } else {
+      return false;
+    }
+  }
+  return has_width && has_signed && width == 8 && !is_signed;
+}
+
+// GEOMETRY struct. True only without a crs, which means OGC:CRS84, the one
+// CRS the writer emits. A named crs is refused rather than assumed.
+bool decode_geometry(Decoder &in) {
+  int16_t last = 0, id = 0;
+  uint8_t type = 0;
+  return in.field(last, id, type) && type == kStop;
+}
+
+// LogicalType union. TIMESTAMP(MICROS, isAdjustedToUTC=true), INTEGER(8,
+// unsigned) and GEOMETRY without a crs, the annotations parquet_writer.h
+// emits, are reported. Any other annotation is refused rather than silently
+// read as a plain number.
 bool decode_logical(Decoder &in, LogicalType &logical) {
   int16_t last = 0, id = 0;
   uint8_t type = 0;
@@ -273,37 +338,16 @@ bool decode_logical(Decoder &in, LogicalType &logical) {
       return false;
     if (type == kStop)
       return decoded;
-    if (decoded || id != 8 || type != kStruct)
+    if (decoded || type != kStruct)
       return false;
-    bool utc = false, micros = false, has_utc = false, has_unit = false;
-    int16_t ts_last = 0, ts_id = 0;
-    for (uint8_t ts_type = 0;;) {
-      if (!in.field(ts_last, ts_id, ts_type))
-        return false;
-      if (ts_type == kStop)
-        break;
-      if (ts_id == 1 && (ts_type == kTrue || ts_type == kFalse) && !has_utc) {
-        utc = ts_type == kTrue;
-        has_utc = true;
-      } else if (ts_id == 2 && ts_type == kStruct && !has_unit) {
-        int16_t unit_last = 0, unit_id = 0;
-        uint8_t unit_type = 0;
-        if (!in.field(unit_last, unit_id, unit_type) || unit_type != kStruct)
-          return false;
-        micros = unit_id == 2;
-        int16_t end_last = 0, end_id = 0;
-        uint8_t end = 0;
-        if (!in.skip(kStruct, 1) || !in.field(end_last, end_id, end) ||
-            end != kStop)
-          return false;
-        has_unit = true;
-      } else if (!in.skip(ts_type, 1)) {
-        return false;
-      }
-    }
-    if (!has_utc || !has_unit || !utc || !micros)
+    if (id == 8 && decode_timestamp(in))
+      logical = LogicalType::TimestampMicrosUtc;
+    else if (id == 10 && decode_integer(in))
+      logical = LogicalType::Uint8;
+    else if (id == 17 && decode_geometry(in))
+      logical = LogicalType::Geometry;
+    else
       return false;
-    logical = LogicalType::TimestampMicrosUtc;
     decoded = true;
   }
 }
@@ -352,7 +396,8 @@ bool decode_leaf(Decoder &in, SchemaColumn &column) {
       return false;
     int32_t value = 0;
     if (id == 1 && type == kI32) {
-      if (!in.i32(value) || (value != 1 && value != 2 && value != 4))
+      if (!in.i32(value) ||
+          (value != 1 && value != 2 && value != 4 && value != 6))
         return false;
       column.type = static_cast<PhysicalType>(value);
       has_type = true;
@@ -386,12 +431,19 @@ bool decode_leaf(Decoder &in, SchemaColumn &column) {
     }
   }
   const bool timestamp = column.logical == LogicalType::TimestampMicrosUtc;
+  const bool uint8 = column.logical == LogicalType::Uint8;
+  const bool geometry = column.logical == LogicalType::Geometry;
+  // Each annotation sits on the one physical type the writer pairs it with,
+  // and BYTE_ARRAY is read only as GEOMETRY.
   if (!has_type || !has_repetition || !has_name ||
-      (timestamp && column.type != PhysicalType::Int64))
+      (timestamp && column.type != PhysicalType::Int64) ||
+      (uint8 && column.type != PhysicalType::Int32) ||
+      (geometry != (column.type == PhysicalType::ByteArray)))
     return false;
-  // A legacy ConvertedType alone has no UTC flag; accept only the one that
-  // matches the logical type already decoded.
-  return converted < 0 || (converted == kTimestampMicros && timestamp);
+  // A legacy ConvertedType alone has no UTC flag or width; accept only the one
+  // that matches the logical type already decoded.
+  return converted < 0 || (converted == kTimestampMicros && timestamp) ||
+         (converted == kUint8 && uint8);
 }
 
 bool decode_statistics(Decoder &in, PhysicalType physical,
@@ -415,10 +467,13 @@ bool decode_statistics(Decoder &in, PhysicalType physical,
       chunk.has_null_count = true;
     } else if ((id == 5 || id == 6) && type == kBinary) {
       // min_value/max_value; deprecated min/max (1, 2) use a signed byte
-      // order on some writers and are skipped.
+      // order on some writers and are skipped. GEOMETRY has no sort order,
+      // its bounds live in GeospatialStatistics, so a BYTE_ARRAY bound is
+      // refused.
       const uint8_t *bytes = nullptr;
       size_t length = 0;
-      if (!in.binary(bytes, length) || length != width)
+      if (physical == PhysicalType::ByteArray || !in.binary(bytes, length) ||
+          length != width)
         return false;
       (id == 5 ? chunk.max : chunk.min) = load_le(bytes, width);
       (id == 5 ? has_max : has_min) = true;

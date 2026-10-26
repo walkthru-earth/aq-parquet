@@ -11,6 +11,7 @@
 
 #include <column_semantics.h>
 #include <parquet_writer.h>
+#include <telemetry_logical.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -117,8 +118,20 @@ private:
   }
 };
 
-inline std::string_view type_name(telemetry::PhysicalType type) {
+// The STAC table type. A logical type names the column as readers see it, so
+// an INT32 code is uint8 and a BYTE_ARRAY point is geometry.
+inline std::string_view type_name(telemetry::PhysicalType type,
+                                  const char *unit) {
   using telemetry::PhysicalType;
+  switch (telemetry::logical_for(type, unit)) {
+  case telemetry::LogicalType::Uint8:
+    return "uint8";
+  case telemetry::LogicalType::Geometry:
+    return "geometry";
+  case telemetry::LogicalType::None:
+  case telemetry::LogicalType::TimestampMicrosUtc:
+    break;
+  }
   switch (type) {
   case PhysicalType::Int32:
     return "int32";
@@ -126,6 +139,8 @@ inline std::string_view type_name(telemetry::PhysicalType type) {
     return "int64";
   case PhysicalType::Float:
     return "float";
+  case PhysicalType::ByteArray:
+    break;
   }
   fail("unknown physical type", "");
 }
@@ -275,6 +290,13 @@ std::string build(const Board &board, const Fields &fields,
   out.close(']');
   out.key("table:primary_datetime");
   out.value("event_time_utc_us");
+  // stac-opensensor 2f32104 PROFILE, SHOULD when the files have the column.
+  if (std::any_of(std::begin(fields), std::end(fields), [](const auto &field) {
+        return std::string_view{field.name} == "geometry";
+      })) {
+    out.key("table:primary_geometry");
+    out.value("geometry");
+  }
   out.key("table:columns");
   out.open('[');
   i = 0;
@@ -285,7 +307,7 @@ std::string build(const Board &board, const Fields &fields,
     out.key("name");
     out.value(row.name);
     out.key("type");
-    out.value(type_name(field.type));
+    out.value(type_name(field.type, field.unit));
     out.key("unit");
     out.value(row.ucum);
     out.key("roles");

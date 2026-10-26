@@ -150,7 +150,7 @@ build_info(std::span<char> out, const Identity &identity) {
                            identity.schema,
                            identity.dictionary_sha256,
                            identity.descriptor_sha256,
-                           identity.station,
+                           identity.thing,
                            identity.device,
                            identity.boot};
   if (std::ranges::any_of(strings, [](const char *text) { return !text; }) ||
@@ -193,8 +193,8 @@ build_info(std::span<char> out, const Identity &identity) {
   literal(identity.dictionary_sha256);
   literal("\",\"desc\":\"");
   append(identity.descriptor_sha256, kInfoDescChars);
-  literal("\",\"station\":\"");
-  literal(identity.station);
+  literal("\",\"thing\":\"");
+  literal(identity.thing);
   literal("\",\"dev\":\"");
   literal(identity.device);
   literal("\",\"boot\":\"");

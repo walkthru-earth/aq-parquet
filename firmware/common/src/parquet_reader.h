@@ -2,11 +2,12 @@
 
 // Bounded Parquet footer reader and Apache Iceberg DataFile metrics.
 //
-// Decodes the Thrift Compact FileMetaData of flat files with INT32, INT64 and
-// FLOAT leaves (the shapes parquet_writer.h emits) into a caller-owned
-// FileSummary, then derives the per-column metrics an Iceberg v3 manifest
-// entry needs. Manifests and catalog commits stay on the phone or host; this
-// code only reads what the footer already says, never pages.
+// Decodes the Thrift Compact FileMetaData of flat files with INT32, INT64,
+// FLOAT and GEOMETRY BYTE_ARRAY leaves (the shapes parquet_writer.h emits)
+// into a caller-owned FileSummary, then derives the per-column metrics an
+// Iceberg v3 manifest entry needs. Manifests and catalog commits stay on the
+// phone or host; this code only reads what the footer already says, never
+// pages.
 //
 // Zero heap. The caller owns FileSummary (about 70 KB, so static, PSRAM or
 // host memory, never a task stack) and the footer scratch for ReadAt. Each
@@ -73,7 +74,9 @@ struct FileSummary {
 
 // One column of an Iceberg DataFile, keyed by Parquet field_id. Bounds use
 // the Iceberg single-value binary form, little-endian, 4 bytes for int and
-// float and 8 bytes for long and timestamptz (microseconds).
+// float and 8 bytes for long and timestamptz (microseconds). A GEOMETRY
+// column never has bounds here, its bbox is in GeospatialStatistics, which
+// this reader skips.
 struct IcebergColumnMetrics {
   int32_t field_id = 0;
   PhysicalType type = PhysicalType::Int32;

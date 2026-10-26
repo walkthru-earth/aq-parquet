@@ -10,7 +10,7 @@
 #include <utility>
 
 // Persisted Parquet page codec. One u8 key, `codec`, in the existing
-// `parquet` namespace next to `station`. The stored byte is the Parquet
+// `parquet` namespace next to `thing`. The stored byte is the Parquet
 // CompressionCodec value the footer already carries (0 UNCOMPRESSED,
 // 7 LZ4_RAW), so a reader of the raw key and a reader of a file agree.
 // Nothing is written until the owner selects a codec, and nothing here ever

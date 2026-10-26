@@ -43,7 +43,7 @@ bool start_links(bool display_detected);
 // when the command queue is full (the caller reports busy on its link).
 bool enqueue_request(const ble::ControlRequest &request);
 // Identities for mDNS TXT records; valid after begin_logger().
-const char *station_text_id();
+const char *thing_text_id();
 const char *device_text_id();
 const char *firmware_text_id();
 

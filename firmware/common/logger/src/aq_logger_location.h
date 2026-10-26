@@ -2,10 +2,13 @@
 
 #include <aq_location.h>
 #include <device_config.h>
+#include <parquet_writer.h>
+#include <telemetry_logical.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace oslogger {
 // Captured at acquisition, copied with the queue and RAM batch. Later settings
@@ -14,9 +17,11 @@ template <typename Row> struct LocationSample : Row {
   config::LocationSettings location{};
 };
 
-// Nullable fields, in order: cell ID, actual resolution, center lat/lon e7.
-// Invalid/unset snapshots produce four nulls. The public center is always
-// calculated from the persisted cell, never from the incoming GPS position.
+// Nullable fields, in order: cell ID, actual resolution, location_source and
+// the GEOMETRY slot, a 2D point at the cell centre packed by
+// telemetry::pack_point_e7. Invalid/unset snapshots produce four nulls. The
+// point is always calculated from the persisted cell, never from an incoming
+// GPS position.
 template <typename Row>
 bool apply_location(Row &row, const config::LocationSettings &snapshot,
                     const std::array<std::size_t, 4> &fields) {
@@ -31,8 +36,13 @@ bool apply_location(Row &row, const config::LocationSettings &snapshot,
     return false;
   row.counter(fields[0], static_cast<std::int64_t>(published));
   row.integer(fields[1], opensensor::location::resolution(published));
-  row.counter(fields[2], lat);
-  row.counter(fields[3], lon);
+  row.integer(fields[2],
+              std::to_underlying(telemetry::LocationSource::Configured));
+  // center_e7 keeps latitude within 90 and longitude within 180 degrees, so
+  // both fit an int32.
+  row.counter(fields[3],
+              telemetry::pack_point_e7(static_cast<std::int32_t>(lon),
+                                       static_cast<std::int32_t>(lat)));
   return true;
 }
 } // namespace oslogger

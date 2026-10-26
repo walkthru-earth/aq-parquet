@@ -154,8 +154,8 @@ void check_depth_cap() {
 // rmdir on an open directory still erases the whole tree.
 void check_close_before_rmdir() {
   std::uint32_t files = 0, directories = 0;
-  write(card / "busy/station=a/day/x.parquet");
-  write(card / "busy/station=b/y.parquet");
+  write(card / "busy/thing=a/day/x.parquet");
+  write(card / "busy/thing=b/y.parquet");
   auto busy_io = io;
   busy_io.open = tracked_open;
   busy_io.close = tracked_close;
@@ -236,7 +236,7 @@ int main() {
   fs::remove_all(card / "output");
 
   write(card / "unrelated.txt");
-  write(card / "output/station=old/year=2026/month=10/day=10/part.parquet");
+  write(card / "output/thing=old/year=2026/month=10/day=10/part.parquet");
   write(card / "output/quarantine/interrupted.partial");
   write(card / "output/boot-0.partial");
   write(card / "parquet/legacy.parquet");
@@ -279,7 +279,7 @@ int main() {
   assert(files == 4 && directories == 7);
 
   // Custom configured output root without a legacy root.
-  write(card / "custom/archive/station=a/x.parquet");
+  write(card / "custom/archive/thing=a/x.parquet");
   write(card / "output/kept.parquet");
   assert(opensensor::logger::detail::erase_archive(
       "/sd/custom/archive", "/sd/custom/archive", nullptr, files, directories,

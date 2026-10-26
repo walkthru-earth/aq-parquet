@@ -186,15 +186,30 @@ void encode_location(char *out, std::size_t size,
   char cell[opensensor::location::kCellTextBytes]{};
   if (location.cell)
     opensensor::location::format_cell(location.cell, cell, sizeof(cell));
-  std::snprintf(out, size, "%s|%u|%s", cell, unsigned(location.resolution),
-                location.country);
+  std::snprintf(out, size, "%s|%u|%s|%s", cell, unsigned(location.resolution),
+                location.country, mobility_name(location.mobility));
 }
 
+bool parse_mobility(const char *value, Mobility &mobility) {
+  if (std::strcmp(value, "fixed") == 0)
+    mobility = Mobility::Fixed;
+  else if (std::strcmp(value, "moving") == 0)
+    mobility = Mobility::Moving;
+  else
+    return false;
+  return true;
+}
+
+// `cell|resolution|country|mobility`. A record written before #83 has no
+// mobility field and reads as a fixed Thing, so a reflash keeps the location.
 bool decode_location(char *record, LocationSettings &location) {
-  char *fields[3];
+  char *fields[4];
   std::uint32_t resolution;
   LocationSettings decoded;
-  if (!split_record(record, fields, 3) ||
+  const bool legacy =
+      std::count(record, record + std::strlen(record), '|') == 2;
+  if (!split_record(record, fields, legacy ? 3 : 4) ||
+      (!legacy && !parse_mobility(fields[3], decoded.mobility)) ||
       !parse_uint(fields[1], 0, 15, resolution) ||
       (*fields[0] &&
        !opensensor::location::parse_cell(fields[0], decoded.cell)) ||
@@ -296,11 +311,17 @@ static_assert(sizeof(Settings::sensor_vendor) + sizeof(Settings::sensor_model) +
                       sizeof(Settings::sensor_serial) + 2 <=
                   kSensorRecordBytes,
               "sensor record fits its field");
-static_assert(opensensor::location::kCellTextBytes + 3 + 1 + 3 <=
+// Cell text with its NUL, two digit resolution, country, "moving" and the
+// three separators.
+static_assert(opensensor::location::kCellTextBytes + 2 + 2 + 6 + 3 <=
                   kLocationRecordBytes,
               "location record fits its field");
 static_assert(kNtpServerCount * (kNtpServerMax + 1) + 16 <= kNtpRecordBytes,
               "NTP record fits its field");
+
+static_assert(LocationSettings{}.resolution ==
+                  opensensor::location::kDefaultResolution,
+              "oscfg defaults to the shared H3 resolution");
 
 // Only the command worker saves after startup and load runs before it, so
 // the staged record and its readback can share static storage.
@@ -746,6 +767,9 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
         return reject();
       std::snprintf(next.location.country, sizeof(next.location.country), "%s",
                     value);
+    } else if (std::strcmp(key, "thing.mobility") == 0) {
+      if (!parse_mobility(value, next.location.mobility))
+        return reject();
     } else if (std::strcmp(key, "sensor.vendor") == 0) {
       if (std::strlen(value) >= sizeof(next.sensor_vendor) ||
           (value[0] && std::strcmp(value, hardware_vendor()) != 0))
@@ -861,7 +885,11 @@ std::size_t build_json(char *out, std::size_t size, const WifiView &wifi) {
 }
 bool same_location(const LocationSettings &a, const LocationSettings &b) {
   return a.cell == b.cell && a.resolution == b.resolution &&
-         std::strcmp(a.country, b.country) == 0;
+         std::strcmp(a.country, b.country) == 0 && a.mobility == b.mobility;
+}
+
+const char *mobility_name(Mobility mobility) {
+  return mobility == Mobility::Moving ? "moving" : "fixed";
 }
 
 std::size_t build_page(char *out, std::size_t size, std::uint8_t page) {
@@ -882,9 +910,11 @@ std::size_t build_page(char *out, std::size_t size, std::uint8_t page) {
                     latitude, longitude);
     written = std::snprintf(out, size,
                             "{\"location\":{\"cell\":\"%s\",\"resolution\":%u,%"
-                            "s,\"country\":\"%s\"}}",
+                            "s,\"country\":\"%s\"},\"thing\":{\"mobility\":\"%"
+                            "s\"}}",
                             cell, unsigned(settings.location.resolution),
-                            center, settings.location.country);
+                            center, settings.location.country,
+                            mobility_name(settings.location.mobility));
   } else if (page == 2) {
     written = std::snprintf(
         out, size,

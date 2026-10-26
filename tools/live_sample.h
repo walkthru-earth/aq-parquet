@@ -14,7 +14,9 @@ namespace livesample {
 inline void print(const oslogger::Field *table, std::size_t count) {
   oslogger::Row row{};
   for (std::size_t i = 0; i < count; ++i) {
-    if (table[i].type == telemetry::PhysicalType::Int64)
+    // A GEOMETRY slot holds a packed point, never sent over LIVE.
+    if (table[i].type == telemetry::PhysicalType::Int64 ||
+        table[i].type == telemetry::PhysicalType::ByteArray)
       row.set(i, std::int64_t{1});
     else if (table[i].type == telemetry::PhysicalType::Int32)
       row.set(i, std::int32_t{1});

@@ -277,7 +277,7 @@ Settings get() { return fixture_settings; }
 } // namespace config
 namespace ble {
 const char *local_name() { return "OS-fixture"; }
-const char *info_json() { return "{\"station\":\"fixture\"}"; }
+const char *info_json() { return "{\"thing\":\"fixture\"}"; }
 bool send_response(const std::uint8_t *frame, std::size_t length,
                    std::uint32_t generation) {
   ble_frames.emplace_back(frame, frame + length);
@@ -338,7 +338,7 @@ int main() {
          fake_mdns_transport == "_tcp" && fake_mdns_port == config::kLanPort);
   assert(fake_mdns_txt ==
          (std::map<std::string, std::string>{{"proto", "3"},
-                                             {"station", "fixture"},
+                                             {"thing", "fixture"},
                                              {"dev", "device"},
                                              {"fw", "test"}}));
   int phones[ble::kMaxLanClients];

@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
   }
   auto compression = lz4.configuration();
   // Large fixtures exercise format limits on the host only. Firmware remains
-  // fixed at 1024-byte page scratch and 90 rows.
+  // fixed at telemetry::kLz4RawBytes page scratch and 90 rows.
   std::vector<uint8_t> raw(count * 10 + 4);
   std::vector<uint8_t> encoded(LZ4_COMPRESSBOUND(raw.size()));
   compression.raw = raw.data();

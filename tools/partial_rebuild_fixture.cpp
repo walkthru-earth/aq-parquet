@@ -8,9 +8,12 @@
 //
 // Columns follow prepare_columns() in the shared logger. Every leaf is
 // OPTIONAL with a validity byte, field_id is the 1-based table position and
-// an INT64 "us_since_unix_epoch" field carries TIMESTAMP(MICROS, UTC).
+// the logical type follows telemetry::logical_for, so a "us_since_unix_epoch"
+// INT64 is TIMESTAMP(MICROS, UTC), a "uint8_code" INT32 is UINT8 and a
+// "wkb_point_crs84" BYTE_ARRAY is GEOMETRY.
 #include "../firmware/common/src/lz4_codec.h"
 #include "../firmware/common/src/parquet_writer.h"
+#include "../firmware/common/src/telemetry_logical.h"
 
 #include <array>
 #include <cstdint>
@@ -81,6 +84,20 @@ void fill(Row &row, std::size_t r) {
       row.data[i] = 10'000'000ULL * (r + 1);
     } else if (std::strcmp(field.name, "schema_version") == 0) {
       put32(row, i, 5);
+    } else if (field.type == PhysicalType::ByteArray) {
+      // Points move each row and span both hemispheres, so the rebuilt
+      // GeospatialStatistics box differs per group.
+      const auto lon = static_cast<std::int32_t>(
+          static_cast<std::int64_t>((r * 37'000'001ULL) % 3'400'000'001ULL) -
+          1'700'000'000);
+      const auto lat =
+          850'000'000 -
+          static_cast<std::int32_t>((r * 19'000'003ULL) % 1'700'000'001ULL);
+      row.data[i] =
+          static_cast<std::uint64_t>(telemetry::pack_point_e7(lon, lat));
+    } else if (telemetry::logical_for(field.type, field.unit) ==
+               LogicalType::Uint8) {
+      put32(row, i, static_cast<std::uint32_t>((r * 7 + i) % 256));
     } else if (field.type == PhysicalType::Int64 &&
                std::strcmp(field.unit, "us_since_unix_epoch") == 0) {
       row.data[i] = static_cast<std::uint64_t>(
@@ -133,11 +150,7 @@ int main(int argc, char **argv) {
   std::array<Column, kFieldCount> columns{};
   for (std::size_t i = 0; i < kFieldCount; ++i) {
     const auto &field = kFields[i];
-    const auto logical =
-        field.type == PhysicalType::Int64 &&
-                std::strcmp(field.unit, "us_since_unix_epoch") == 0
-            ? LogicalType::TimestampMicrosUtc
-            : LogicalType::None;
+    const auto logical = telemetry::logical_for(field.type, field.unit);
     columns[i] = Column{field.name,        field.type,
                         &rows[0].data[i],  sizeof(Row),
                         &rows[0].valid[i], sizeof(Row),

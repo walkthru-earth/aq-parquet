@@ -5,7 +5,9 @@ Run with ``pixi run reader-test`` (ASan + UBSan) or
 
 1. Files from the firmware writer (1, 3 and 8 row groups, LZ4_RAW and
    UNCOMPRESSED, nulls, NaN, signed zeros) and from PyArrow (dictionary pages,
-   ZSTD, nullable timestamps) are decoded by the C++ reader. Schema, field ids,
+   ZSTD, nullable timestamps) and the GEOMETRY and UINT8 file of
+   tools/geo_fixture.cpp, with and without locations, are decoded by the C++
+   reader. Schema, field ids,
    chunk layout and statistics must match PyArrow and DuckDB, and the Iceberg
    metrics must match values recomputed from the rows themselves.
 2. Hand-built footers cover the limits and the hostile shapes: oversized
@@ -56,6 +58,14 @@ class Tools:
         source = ROOT / "firmware/common/src"
         subprocess.run(base + [str(ROOT / "tools/parquet_reader_fixture.cpp"),
                                str(source / "parquet_reader.cpp"), "-o", str(self.reader)], check=True)
+        self.geo = directory / "geo_fixture"
+        common = ROOT / "firmware/common"
+        includes = [arg for library in ("src", "runtime/src", "connectivity/src", "logger/src",
+                                        "power/src", "location/src")
+                    for arg in ("-I", str(common / library))]
+        subprocess.run(base + includes + [str(ROOT / "tools/geo_fixture.cpp"),
+                                          str(source / "parquet_writer.cpp"), "-o", str(self.geo)],
+                       check=True)
         subprocess.run(base + ["-I", str(ROOT / "firmware/common/vendor/lz4"),
                                str(ROOT / "tools/parquet_fixture.cpp"), str(source / "parquet_writer.cpp"),
                                str(source / "lz4_codec.cpp"), "-o", str(self.writer)], check=True)
@@ -99,6 +109,8 @@ def expected_metrics(path: Path, meta: dict) -> dict:
         present = [v for v in raw if v is not None]
         nans = sum(1 for v in present if isinstance(v, float) and math.isnan(v))
         finite = [v for v in present if not (isinstance(v, float) and math.isnan(v))]
+        if type_name == "BYTE_ARRAY":
+            finite = []  # GEOMETRY bounds live only in GeospatialStatistics
         groups = meta.get(footer.FILE_ROW_GROUPS, [])
         stats = [g[footer.GROUP_COLUMNS][c][footer.CHUNK_META].get(footer.META_STATISTICS, {}) for g in groups]
         has_nan = type_name == "FLOAT" and all(footer.STAT_NANS in s for s in stats)
@@ -151,6 +163,10 @@ def check_against_pyarrow(path: Path, got: dict) -> None:
         require(column["field_id"] == int(field.metadata[b"PARQUET:field_id"]), f"field_id {leaf.name}")
         timestamp = leaf.logical_type.type == "TIMESTAMP"
         require(column["timestamp_micros_utc"] == timestamp, f"logical type {leaf.name}")
+        logical = ("timestamp_micros_utc" if timestamp else
+                   {"None": "none", "Int(bitWidth=8, isSigned=false)": "uint8",
+                    "Geometry(crs=)": "geometry"}.get(str(leaf.logical_type)))
+        require(column["logical"] == logical, f"logical {leaf.logical_type} {leaf.name}")
         if timestamp:
             require(field.type == pa.timestamp("us", tz="UTC"), f"timestamp unit {leaf.name}")
     for g, group in enumerate(got["row_groups"]):
@@ -236,6 +252,24 @@ def writer_files(tools: Tools, directory: Path) -> None:
                         "zero bounds widened to cover -0.0 and +0.0")
             print(f"PASS firmware writer {groups} x {rows} rows x {columns} columns {codec}: "
                   "PyArrow + DuckDB + Iceberg metrics agree", flush=True)
+
+
+def geo_files(tools: Tools, directory: Path) -> None:
+    """location_source UINT8 and geometry GEOMETRY from the firmware writer."""
+    for mode in ("with", "none"):
+        path = directory / f"geo-{mode}.parquet"
+        subprocess.run([str(tools.geo), mode, str(path)], check=True, stdout=subprocess.DEVNULL,
+                       timeout=TIMEOUT)
+        got = check_file(tools, path, path.name)
+        kinds = {c["name"]: (c["type"], c["logical"]) for c in got["columns"]}
+        require(kinds["location_source"] == ("INT32", "uint8") and
+                kinds["geometry"] == ("BYTE_ARRAY", "geometry"), f"geo logical types {kinds}")
+        index = [c["name"] for c in got["columns"]].index("geometry")
+        require(all(g["columns"][index]["min"] is None for g in got["row_groups"]) and
+                got["iceberg"]["columns"][index]["lower_bound"] is None,
+                "GEOMETRY has no ordinary bounds")
+        print(f"PASS firmware writer GEOMETRY and UINT8 {mode} locations: "
+              "PyArrow + DuckDB + Iceberg metrics agree", flush=True)
 
 
 def pyarrow_files(tools: Tools, directory: Path) -> None:
@@ -416,6 +450,25 @@ BASE_COLUMNS = [
 ]
 
 
+def integer(width: int = 8, signed: bool = False) -> Struct:
+    return Struct().struct(10, Struct().add(1, BYTE, bytes([width])).boolean(2, signed))
+
+
+def geometry(crs: str | None = None) -> Struct:
+    inner = Struct()
+    if crs is not None:
+        inner.binary(1, crs.encode())
+    return Struct().struct(17, inner)
+
+
+# BASE_COLUMNS plus the two location columns the boards write (#83).
+GEO_COLUMNS = BASE_COLUMNS + [
+    {"name": "location_source", "type": 1, "optional": True, "field_id": 4, "converted": 11,
+     "logical": integer()},
+    {"name": "geometry", "type": 6, "optional": True, "field_id": 5, "logical": geometry()},
+]
+
+
 def base_groups(count: int = 2) -> list[dict]:
     return [{"rows": 5, "chunks": {
         0: {"min": struct.pack("<q", 10 * g), "max": struct.pack("<q", 10 * g + 4)},
@@ -569,6 +622,32 @@ def crafted(tools: Tools, directory: Path) -> None:
         refuse(label, data)
     accept("converted-with-logical", build_file(columns_with(0, converted=10), base_groups()))
 
+    got = accept("geo-columns", build_file(GEO_COLUMNS, base_groups()))
+    require([c["logical"] for c in got["columns"][3:]] == ["uint8", "geometry"], "UINT8 and GEOMETRY")
+    require(got["iceberg"]["columns"][4]["lower_bound"] is None, "GEOMETRY has no Iceberg bounds")
+    accept("uint8-without-converted", build_file(
+        BASE_COLUMNS + [{k: v for k, v in GEO_COLUMNS[3].items() if k != "converted"}], base_groups()))
+
+    def geo_with(index: int, **changes) -> list[dict]:
+        out = [dict(c) for c in GEO_COLUMNS]
+        out[index].update(changes)
+        return out
+
+    geo_refused = {
+        "uint8-int64": build_file(geo_with(3, type=2), base_groups()),
+        "int8-signed": build_file(geo_with(3, logical=integer(signed=True)), base_groups()),
+        "uint16": build_file(geo_with(3, logical=integer(width=16)), base_groups()),
+        "uint8-converted-only": build_file(geo_with(3, logical=None), base_groups()),
+        "uint8-converted-on-timestamp": build_file(geo_with(0, converted=11), base_groups()),
+        "geometry-crs": build_file(geo_with(4, logical=geometry("OGC:CRS84")), base_groups()),
+        "geometry-int64": build_file(geo_with(4, type=2), base_groups()),
+        "byte-array-plain": build_file(geo_with(4, logical=None), base_groups()),
+        "geometry-bounds": build_file(GEO_COLUMNS, with_chunk(base_groups(), 0, 4, min=b"\x00" * 4,
+                                                              max=b"\x00" * 4)),
+    }
+    for label, data in geo_refused.items():
+        refuse(label, data)
+
     raw = build_file(BASE_COLUMNS, base_groups())
     refuse("bad-head-magic", b"PAR0" + raw[4:])
     refuse("bad-tail-magic", raw[:-1] + b"0")
@@ -607,6 +686,7 @@ def main() -> None:
         directory = Path(temporary)
         tools = Tools(directory, args.sanitize)
         writer_files(tools, directory)
+        geo_files(tools, directory)
         pyarrow_files(tools, directory)
         crafted(tools, directory)
         fuzz(tools, directory)

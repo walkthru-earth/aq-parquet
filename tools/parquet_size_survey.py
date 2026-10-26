@@ -179,7 +179,7 @@ def variants(table: pa.Table) -> dict:
 
 
 def sort_keys(table: pa.Table) -> list[tuple[str, str]]:
-    keys = [name for name in ("station_id", "h3_cell_id", "event_time_utc_us", "monotonic_us")
+    keys = [name for name in ("thing_id", "h3_cell_id", "event_time_utc_us", "monotonic_us")
             if name in table.column_names]
     return [(name, "ascending") for name in keys]
 

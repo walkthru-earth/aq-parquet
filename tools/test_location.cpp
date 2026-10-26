@@ -74,7 +74,10 @@ int main() {
   Cell fine = 0, coarse = 0, raised = 0, lower = 0;
   assert(from_degrees(37.775938728915946, -122.41795063018799, 9, fine));
   assert(fine == 0x8928308280fffffULL); // official quick-start SF fixture
-  assert(coarsen(fine, kDefaultResolution, coarse));
+  // Res 8 by default (#83), about 0.74 km2 per cell.
+  static_assert(kDefaultResolution == 8);
+  assert(coarsen(fine, kDefaultResolution, coarse) && resolution(coarse) == 8);
+  assert(coarsen(fine, 5, coarse));
   assert(coarse == 0x85283083fffffffULL);
   assert(coarsen(coarse, 15, raised) && raised == coarse);
   assert(coarsen(coarse, 3, lower) && resolution(lower) == 3);
@@ -110,7 +113,10 @@ int main() {
   assert(!valid_country(nullptr));
   // Exercise the exact production envelope and mapping helper. A queued
   // snapshot owns its settings; later owner changes cannot rewrite its values.
-  config::LocationSettings current{0x85283473fffffffULL, 5, "US"};
+  config::LocationSettings current{.cell = 0x85283473fffffffULL,
+                                   .resolution = 5,
+                                   .country = "US",
+                                   .mobility = config::Mobility::Fixed};
   oslogger::LocationSample<opensensor::NumericSample<4>> captured{};
   captured.location = current;
   assert(oslogger::apply_location(captured, captured.location, {0, 1, 2, 3}));
@@ -119,7 +125,9 @@ int main() {
   std::strcpy(current.country, "EG");
   assert(captured.location.cell == 0x85283473fffffffULL);
   assert(captured.data[0] == 0x85283473fffffffULL && captured.data[1] == 5);
-  assert(captured.data[2] == 373457934 && captured.data[3] == -1219763760);
+  // location_source 1, configured, and the cell centre as a packed point.
+  assert(captured.data[2] == 1 && captured.valid[2] && captured.valid[3]);
+  assert(captured.data[3] == telemetry::pack_point_e7(-1219763760, 373457934));
   // Reducing privacy precision must reject a non-coarsened fine snapshot.
   captured.location.resolution = 4;
   assert(!oslogger::apply_location(captured, captured.location, {0, 1, 2, 3}));

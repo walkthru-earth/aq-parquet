@@ -186,7 +186,7 @@ void crc_contract() {
 
 void archive_contract() {
   using namespace opensensor::sync;
-  assert(safe_parquet_name("station=a/year=2026/part-01.parquet"));
+  assert(safe_parquet_name("thing=a/year=2026/part-01.parquet"));
   assert(safe_parquet_name("legacy-parquet/a.parquet"));
   assert(!safe_parquet_name(nullptr));
   for (const auto *invalid :

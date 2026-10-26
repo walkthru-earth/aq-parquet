@@ -295,8 +295,8 @@ bool find_partials(IO &io, const char *root, Move &move, TooDeep &too_deep,
 }
 
 // Quarantine keeps provenance. A ".partial" at `relative` below `root` moves
-// to "<root>/quarantine/<station>/<partition>/<name>-<boot>-<counter>.partial"
-// where <station> is the "station=..." segment (or "no-station") and the
+// to "<root>/quarantine/<thing>/<partition>/<name>-<boot>-<counter>.partial"
+// where <thing> is the "thing=..." segment (or "no-thing") and the
 // other directory segments are joined with '_' (or "root" when none). Both
 // outputs are length checked; nothing is truncated.
 inline bool quarantine_target(const char *root, const char *relative,
@@ -310,7 +310,7 @@ inline bool quarantine_target(const char *root, const char *relative,
   }
   const char *base = std::strrchr(relative, '/');
   base = base ? base + 1 : relative;
-  char station[96] = "no-station";
+  char thing[96] = "no-thing";
   char partition[192] = "";
   std::size_t used = 0;
   for (const char *segment = relative; segment < base;) {
@@ -321,14 +321,14 @@ inline bool quarantine_target(const char *root, const char *relative,
       errno = EINVAL;
       return false;
     }
-    if (std::strncmp(segment, "station=", 8) == 0 &&
-        std::strcmp(station, "no-station") == 0) {
-      if (length >= sizeof(station)) {
+    if (std::strncmp(segment, "thing=", 6) == 0 &&
+        std::strcmp(thing, "no-thing") == 0) {
+      if (length >= sizeof(thing)) {
         errno = ENAMETOOLONG;
         return false;
       }
-      std::memcpy(station, segment, length);
-      station[length] = '\0';
+      std::memcpy(thing, segment, length);
+      thing[length] = '\0';
     } else {
       const std::size_t needed = used + (used ? 1 : 0) + length;
       if (needed >= sizeof(partition)) {
@@ -345,7 +345,7 @@ inline bool quarantine_target(const char *root, const char *relative,
   }
   const int stem = static_cast<int>(std::strlen(base) - 8); // drop .partial
   int length = std::snprintf(directory, directory_size, "%s/quarantine/%s/%s",
-                             root, station, used ? partition : "root");
+                             root, thing, used ? partition : "root");
   if (length < 0 || static_cast<std::size_t>(length) >= directory_size) {
     errno = ENAMETOOLONG;
     return false;

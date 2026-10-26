@@ -53,16 +53,26 @@ TOOL_ID = "aq-parquet rebuild_partial version 1"
 MAX_ROW_GROUPS = 8  # telemetry::kMaxRowGroups
 MAX_ROWS = 65536  # telemetry::kMaxRows
 
-# Parquet physical types and codecs as the writer emits them.
-INT32, INT64, FLOAT = 1, 2, 4
-TYPES = {"Int32": INT32, "Int64": INT64, "Float": FLOAT}
-WIDTH = {INT32: 4, INT64: 8, FLOAT: 4}
+# Parquet physical types and codecs as the writer emits them. The only
+# BYTE_ARRAY the writer emits is a 2D little endian WKB Point, stored as a
+# four byte length then 21 bytes.
+INT32, INT64, FLOAT, BYTE_ARRAY = 1, 2, 4, 6
+TYPES = {"Int32": INT32, "Int64": INT64, "Float": FLOAT, "ByteArray": BYTE_ARRAY}
+WKB_POINT_BYTES = 21
+WIDTH = {INT32: 4, INT64: 8, FLOAT: 4, BYTE_ARRAY: 4 + WKB_POINT_BYTES}
+WKB_POINT = 1  # ISO WKB and Geospatial.md geometry type code
+CONVERTED_UINT8 = 11  # ConvertedType UINT_8
+# Unit labels that pick a logical type, telemetry::logical_for in
+# firmware/common/src/telemetry_logical.h.
+UTC_MICROS_UNIT = "us_since_unix_epoch"
+UINT8_CODE_UNIT = "uint8_code"
+WKB_POINT_UNIT = "wkb_point_crs84"
 UNCOMPRESSED, LZ4_RAW = 0, 7
 CODECS = {"none": UNCOMPRESSED, "lz4": LZ4_RAW}
 CODEC_NAMES = {UNCOMPRESSED: "none", LZ4_RAW: "lz4"}
 
 FIELD_RE = re.compile(
-    r"^\s*FIELD\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*(Int32|Int64|Float)\s*,"
+    r"^\s*FIELD\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*(Int32|Int64|Float|ByteArray)\s*,"
     r"[^,]*,\s*\"([^\"]*)\"",
     re.MULTILINE,
 )
@@ -80,7 +90,15 @@ class Field:
 
     @property
     def timestamp(self) -> bool:
-        return self.type == INT64 and self.unit == "us_since_unix_epoch"
+        return self.type == INT64 and self.unit == UTC_MICROS_UNIT
+
+    @property
+    def uint8(self) -> bool:
+        return self.type == INT32 and self.unit == UINT8_CODE_UNIT
+
+    @property
+    def geometry(self) -> bool:
+        return self.type == BYTE_ARRAY and self.unit == WKB_POINT_UNIT
 
 
 def load_fields(path: Path) -> list[Field]:
@@ -88,6 +106,9 @@ def load_fields(path: Path) -> list[Field]:
     fields = [Field(m[1], TYPES[m[2]], m[3]) for m in FIELD_RE.finditer(text)]
     if not fields:
         raise RebuildError(f"no FIELD rows in {path}")
+    for f in fields:
+        if f.type == BYTE_ARRAY and not f.geometry:
+            raise RebuildError(f"{f.name} is a BYTE_ARRAY the writer does not emit")
     names = [f.name for f in fields]
     if len(set(names)) != len(names):
         raise RebuildError(f"duplicate field names in {path}")
@@ -109,7 +130,7 @@ class Chunk:
     size: int  # header + stored payload
     uncompressed_size: int  # header + raw payload
     present: list[bool]
-    values: list  # python ints or float bit patterns, present rows only
+    values: list  # ints, float bit patterns or (lon, lat) points, present rows only
 
 
 @dataclass
@@ -168,6 +189,16 @@ def decode_payload(raw: bytes, rows: int, kind: int) -> tuple[list[bool], list]:
     count = sum(present)
     if len(raw) != 4 + length + count * width:
         raise Torn("payload size does not match the present values")
+    if kind == BYTE_ARRAY:
+        values = []
+        for record in struct.iter_unpack("<IBIdd", raw[4 + length :]):
+            size, order, shape, lon, lat = record
+            if (size, order, shape) != (WKB_POINT_BYTES, 1, WKB_POINT):
+                raise Torn("BYTE_ARRAY value is not a writer WKB Point")
+            if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+                raise Torn("WKB Point lies outside CRS84 bounds")
+            values.append((lon, lat))
+        return present, values
     fmt = {INT32: "<i", INT64: "<q", FLOAT: "<I"}[kind]
     values = [v[0] for v in struct.iter_unpack(fmt, raw[4 + length :])]
     return present, values
@@ -289,6 +320,14 @@ class Struct:
     def boolean(self, field_id: int, value: bool) -> None:
         self.field(field_id, 1 if value else 2)
 
+    def byte(self, field_id: int, value: int) -> None:
+        self.field(field_id, 3)
+        self.out.buf.append(value)
+
+    def real(self, field_id: int, value: float) -> None:
+        self.field(field_id, 7)
+        self.out.buf += struct.pack("<d", value)
+
     def end(self) -> None:
         self.out.buf.append(0)
 
@@ -313,8 +352,8 @@ def statistics(kind: int, chunk: Chunk) -> tuple[int, int, bytes | None, bytes |
         low = -0.0 if low == 0.0 else low
         high = 0.0 if high == 0.0 else high
         return nulls, nans, struct.pack("<f", high), struct.pack("<f", low)
-    if not chunk.values:
-        return nulls, 0, None, None
+    if not chunk.values or kind == BYTE_ARRAY:
+        return nulls, 0, None, None  # GEOMETRY has no sort order
     fmt = "<i" if kind == INT32 else "<q"
     return nulls, 0, struct.pack(fmt, max(chunk.values)), struct.pack(fmt, min(chunk.values))
 
@@ -324,8 +363,25 @@ def schema_element(out: Out, f: Field, field_id: int) -> None:
     leaf.number(1, I32, f.type)
     leaf.number(3, I32, 1)  # OPTIONAL, every board leaf has a validity byte
     leaf.binary(4, f.name.encode())
+    if f.uint8:
+        leaf.number(6, I32, CONVERTED_UINT8)
     leaf.number(9, I32, field_id)
-    if f.timestamp:
+    if f.uint8:
+        leaf.field(10, STRUCT)
+        logical = Struct(out)
+        logical.field(10, STRUCT)  # INTEGER
+        integer = Struct(out)
+        integer.byte(1, 8)  # bitWidth
+        integer.boolean(2, False)  # isSigned
+        integer.end()
+        logical.end()
+    elif f.geometry:
+        leaf.field(10, STRUCT)
+        logical = Struct(out)
+        logical.field(17, STRUCT)  # GEOMETRY, no crs means OGC:CRS84
+        Struct(out).end()
+        logical.end()
+    elif f.timestamp:
         leaf.field(10, STRUCT)
         logical = Struct(out)
         logical.field(8, STRUCT)
@@ -371,8 +427,53 @@ def column_chunk(out: Out, f: Field, chunk: Chunk, rows: int, codec: int) -> Non
     if f.type == FLOAT:
         stats.number(9, I64, nans)
     stats.end()
+    if f.geometry and chunk.values:
+        xs = [lon for lon, _ in chunk.values]
+        ys = [lat for _, lat in chunk.values]
+        meta.field(17, STRUCT)  # GeospatialStatistics
+        geo = Struct(out)
+        geo.field(1, STRUCT)  # BoundingBox, 2D
+        box = Struct(out)
+        box.real(1, min(xs))
+        box.real(2, max(xs))
+        box.real(3, min(ys))
+        box.real(4, max(ys))
+        box.end()
+        geo.field(2, LIST)  # geospatial_types
+        out.list(I32, 1)
+        out.integer(WKB_POINT)
+        geo.end()
     meta.end()
     outer.end()
+
+
+def e7_text(degrees: float) -> str:
+    """A coordinate as aq_logger_footer.h e7_decimal writes it."""
+    e7 = round(degrees * 1e7)
+    sign = "-" if e7 < 0 else ""
+    whole, fraction = divmod(abs(e7), 10_000_000)
+    if not fraction:
+        return f"{sign}{whole}"
+    return f"{sign}{whole}.{fraction:07d}".rstrip("0")
+
+
+def geo_json(fields: list[Field], groups: list[Group]) -> str | None:
+    """The GeoParquet `geo` value the board writes, from the kept groups."""
+    columns = [i for i, f in enumerate(fields) if f.geometry]
+    if not columns:
+        return None
+    points = [p for g in groups for p in g.chunks[columns[0]].values]
+    column = {"encoding": "WKB", "geometry_types": ["Point"]}
+    text = json.dumps(
+        {"version": "2.0.0", "primary_column": fields[columns[0]].name,
+         "columns": {fields[columns[0]].name: column}},
+        separators=(",", ":"))
+    if not points:
+        return text
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    bbox = ",".join(e7_text(v) for v in (min(xs), min(ys), max(xs), max(ys)))
+    return text[:-3] + f',"bbox":[{bbox}]' + "}}}"
 
 
 def sorted_by(fields: list[Field], group: Group) -> int | None:
@@ -560,6 +661,9 @@ def rebuild(
         ]
         if fields_path is not None:
             kv.append(("rebuild_fields_sha256", hashlib.sha256(Path(fields_path).read_bytes()).hexdigest()))
+        geo = geo_json(fields, p.groups)
+        if geo is not None:
+            kv.append(("geo", geo))
         kv.extend(extra_kv or [])
         meta = footer(fields, p.groups, p.codec, kv)
         body = data[: p.good_end] + meta + struct.pack("<I", len(meta)) + b"PAR1"

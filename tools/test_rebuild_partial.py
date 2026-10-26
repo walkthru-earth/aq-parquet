@@ -20,6 +20,7 @@ import contextlib
 import io
 import json
 import math
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +29,7 @@ import tempfile
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import footer_contract  # noqa: E402
 import parquet_footer as footer  # noqa: E402
 import rebuild_partial as rp  # noqa: E402
 from host_cxx import CXX_STD  # noqa: E402
@@ -136,6 +138,19 @@ def check_cut(src_dir: Path, out_dir: Path, data: bytes, cut: int, info: dict,
     require(kv["rebuild_source_bytes"] == str(cut), f"{where}: kv source bytes")
     require(kv["rebuild_dropped_tail_bytes"] == str(cut - good_end), f"{where}: kv tail")
     require(len(kv["rebuild_source_sha256"]) == 64 and len(kv["rebuild_fields_sha256"]) == 64, f"{where}: kv digests")
+    kept = fields[:width]
+    if any(f.geometry for f in kept):
+        # The rebuilt `geo` value is GeoParquet 2.0.0 and its bbox covers the
+        # kept rows, as the board would have written it.
+        points = [struct.unpack("<BIdd", r["geometry"])[2:] for r in rows if r["geometry"] is not None]
+        bbox = None
+        if points:
+            xs, ys = [x for x, _ in points], [y for _, y in points]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
+        problems = footer_contract.geo_problems(kv.get("geo", ""), bbox)
+        require(not problems, f"{where}: rebuilt geo {problems}")
+    else:
+        require("geo" not in kv, f"{where}: geo without a geometry column")
     return "rebuilt"
 
 

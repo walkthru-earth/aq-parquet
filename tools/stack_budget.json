@@ -85,7 +85,7 @@
   ],
   "tasks": {
     "parquet-sd": {
-      "about": "Storage worker. Owns the card, the writer, control requests from BLE and LAN, and NVS writes for codec, station and config.",
+      "about": "Storage worker. Owns the card, the writer, control requests from BLE and LAN, and NVS writes for codec, thing and config.",
       "entry": [
         "*oslogger::{anonymous}::storage_worker(*"
       ],

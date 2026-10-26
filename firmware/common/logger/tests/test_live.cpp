@@ -33,6 +33,12 @@ void keys() {
   const Field duplicate[] = {field("a", PhysicalType::Int64, "t"),
                              field("b", PhysicalType::Float, "t")};
   assert(!oslogger::valid_live_keys(duplicate, 2));
+  // A GEOMETRY point stays in the file, LIVE carries numbers only (#83).
+  const Field point[] = {field("geometry", PhysicalType::ByteArray, "geo")};
+  assert(!oslogger::valid_live_keys(point, 1));
+  const Field file_point[] = {
+      field("geometry", PhysicalType::ByteArray, nullptr)};
+  assert(oslogger::valid_live_keys(file_point, 1));
   for (const char *bad : {"", "T", "a-b", "a\"b", "sixteen_chars_xx"}) {
     const Field one[] = {field("a", PhysicalType::Int32, bad)};
     assert(!oslogger::valid_live_keys(one, 1));

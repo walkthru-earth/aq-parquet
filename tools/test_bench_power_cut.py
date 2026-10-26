@@ -163,7 +163,7 @@ class FakeBoard:
         self.emit(now + 0.15, "PARQUET CODEC codec=LZ4_RAW source=nvs")
         self.emit(now + 0.2, f"PARQUET BEGIN schema=v5 columns=62 sample_s=10 interval_s=900 max_rows=90 "
                              f"max_row_groups=8 psram_workspace_bytes=1 row_bytes=1 boot={self.boot} "
-                             f"station=st codec=lz4 crc32_check=on")
+                             f"thing=st codec=lz4 crc32_check=on")
         for stem in found:
             self.emit(now + 0.3, f"PARQUET QUARANTINE source={stem}-1.partial target=quarantine/{stem}-1.partial "
                                  f"bytes=4096 origin=boot")
@@ -262,7 +262,7 @@ def make_bench(out: Path, *, cycles=20, lag=0.0, reaction=0.0, act=True, seed=35
 
 def test_parse_line() -> None:
     begin = bpc.parse_line("I (812) aq: PARQUET BEGIN schema=v5 columns=62 sample_s=10 interval_s=900 max_rows=90 "
-                           "max_row_groups=8 psram_workspace_bytes=1 row_bytes=2 boot=abc123 station=s1 "
+                           "max_row_groups=8 psram_workspace_bytes=1 row_bytes=2 boot=abc123 thing=s1 "
                            "codec=lz4 crc32_check=on")
     require(begin["kind"] == "BEGIN" and begin["boot"] == "abc123" and begin["columns"] == 62, f"BEGIN {begin}")
     row = bpc.parse_line("PARQUET ROW sequence=17 monotonic_us=99 jitter_us=-3 buffered=4 dropped=1")

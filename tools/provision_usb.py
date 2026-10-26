@@ -2,7 +2,7 @@
 """Copy Wi-Fi settings between two owner-controlled OSLogger USB consoles.
 
 Only SSID, PSK and Wi-Fi/LAN enable flags are copied. Pairing PINs, bearer
-tokens and station identities remain per device. Credentials are held in
+tokens and thing identities remain per device. Credentials are held in
 memory only: never printed, logged, saved or placed in command-line arguments.
 """
 from __future__ import annotations

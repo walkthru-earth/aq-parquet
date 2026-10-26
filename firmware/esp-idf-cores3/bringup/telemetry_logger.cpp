@@ -236,7 +236,7 @@ bool start_links(bool display_detected) {
 bool enqueue_request(const ble::ControlRequest &request) {
   return oslogger::enqueue_request(request);
 }
-const char *station_text_id() { return oslogger::station_text_id(); }
+const char *thing_text_id() { return oslogger::thing_text_id(); }
 const char *device_text_id() { return oslogger::device_text_id(); }
 const char *firmware_text_id() { return oslogger::firmware_text_id(); }
 ClockView clock_view() {

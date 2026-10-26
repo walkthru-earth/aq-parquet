@@ -26,7 +26,9 @@ import copy
 import json
 from pathlib import Path
 import re
+import struct
 
+import duckdb
 from jsonschema import Draft7Validator, FormatChecker
 import pyarrow.parquet as pq
 
@@ -164,6 +166,61 @@ def kv_problems(kv: dict[str, str], *, dict_sha: str, desc: str, geometry: bool 
 def read_kv(path: Path) -> dict[str, str]:
     raw = pq.ParquetFile(path).metadata.metadata or {}
     return {k.decode(): v.decode() for k, v in raw.items()}
+
+
+# The configured cell the board contract fixtures write when located.
+FIXTURE_CELL = 0x85283473fffffff
+FIXTURE_RESOLUTION = 5
+FIXTURE_LON_E7 = -1219763760
+FIXTURE_LAT_E7 = 373457934
+CONFIGURED = 1  # telemetry::LocationSource::Configured
+
+
+def point_wkb(lon_e7: int, lat_e7: int) -> bytes:
+    """The 21 byte little endian 2D WKB Point the writer emits."""
+    return struct.pack("<BIdd", 1, 1, lon_e7 / 1e7, lat_e7 / 1e7)
+
+
+def check_location(path: Path, located: bool) -> list[float] | None:
+    """Checks the location columns of a board contract fixture file through
+    PyArrow and DuckDB and returns the bbox the rows imply, None when unset.
+    location_source is UINT8, geometry is native GEOMETRY with no crs, a WKB
+    Point at the cell centre, null exactly when h3_cell_id is null, with
+    GeoStatistics and no ordinary min or max."""
+    parquet = pq.ParquetFile(path)
+    names = parquet.schema_arrow.names
+    source, geometry = names.index("location_source"), names.index(GEOMETRY)
+    require(str(parquet.schema.column(source).logical_type) == "Int(bitWidth=8, isSigned=false)",
+            "location_source is UINT8")
+    require(str(parquet.schema.column(geometry).logical_type) == "Geometry(crs=)",
+            "geometry is GEOMETRY in OGC:CRS84")
+    table = parquet.read(columns=["h3_cell_id", "h3_resolution", "location_source", GEOMETRY])
+    point = point_wkb(FIXTURE_LON_E7, FIXTURE_LAT_E7)
+    want = ((FIXTURE_CELL, FIXTURE_RESOLUTION, CONFIGURED, point) if located
+            else (None, None, None, None))
+    for row in table.to_pylist():
+        require(tuple(row.values()) == want, f"location row {row}")
+    chunk = parquet.metadata.row_group(0).column(geometry)
+    require(chunk.statistics is None or not chunk.statistics.has_min_max,
+            "geometry has no ordinary min or max")
+    box = [FIXTURE_LON_E7 / 1e7, FIXTURE_LAT_E7 / 1e7] * 2 if located else None
+    stats = chunk.geo_statistics
+    if located:
+        require(stats is not None and stats.geospatial_types == [1] and
+                [stats.xmin, stats.ymin, stats.xmax, stats.ymax] == box, f"GeoStatistics {stats}")
+    else:
+        require(stats is None, "no GeoStatistics without a location")
+    with duckdb.connect() as connection:
+        types = dict(connection.execute(
+            "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_parquet(?))",
+            [str(path)]).fetchall())
+        require(types[GEOMETRY] == "GEOMETRY" and types["location_source"] == "UTINYINT",
+                f"DuckDB location types {types[GEOMETRY]} {types['location_source']}")
+        text = {value for (value,) in connection.execute(
+            "SELECT geometry::VARCHAR FROM read_parquet(?)", [str(path)]).fetchall()}
+    wkt = f"POINT ({FIXTURE_LON_E7 / 1e7!r} {FIXTURE_LAT_E7 / 1e7!r})"
+    require(text == ({wkt} if located else {None}), f"DuckDB geometry {text}")
+    return box
 
 
 def check_file(path: Path, *, dict_sha: str, desc: str, geometry: bool = True,
