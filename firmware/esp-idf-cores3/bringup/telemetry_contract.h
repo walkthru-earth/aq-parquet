@@ -41,7 +41,7 @@ constexpr const char *kFirmware = "idf-cores3-parquet-v6.21";
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
     "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
-    "ada95144af0cf5191e95a35d0f80768fe58ac73b/"
+    "093f2b8e45cd2b9e24e1324ad9fa2e6e20ad1d47/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
 static_assert(opensensor::pinned::names(kDictionaryUri,
                                         "firmware/esp-idf-cores3/bringup/"
@@ -281,7 +281,7 @@ constexpr const char *kTemplateHref =
     "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
     "1f37edf350ae5efab0caa59ab4ceedd07d0028e5/"
     "docs/shared/templates/m5stack-cores3/"
-    "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json";
+    "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json";
 static_assert(opensensor::pinned::names_template(kTemplateHref,
                                                  "m5stack-cores3",
                                                  kDictionarySha256),
