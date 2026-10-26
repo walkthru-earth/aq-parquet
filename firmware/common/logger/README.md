@@ -128,7 +128,9 @@ batch is waiting. Four nullable fields are mapped only when the board dictionary
 contains all four: `h3_cell_id` (INT64), `h3_resolution` (INT32),
 `location_source` (UINT8) and `geometry` (GEOMETRY, a 21 byte WKB Point at the
 cell centre, null exactly when the cell is null). Raw GPS never
-enters the logger. Country and source/precision metadata describe the whole file.
+enters the logger. Since #88 the `opensensor` footer holds no location, country
+or precision. The `geo` footer key gives the bbox of the located rows, and is
+left without one when no row has a location.
 See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,

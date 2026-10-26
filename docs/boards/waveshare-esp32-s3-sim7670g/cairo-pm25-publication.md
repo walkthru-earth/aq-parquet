@@ -22,7 +22,7 @@ at each scheduled deadline, changes in the sensor's frame transmission rate do
 not give additional weight to periods of changing concentration. Version 2
 also stores provisioned sticker digits per row, plus an optional count-based
 batch candidate and explicit status. It does not replace the atmospheric PM2.5
-word; `calibration_id` remains `unknown`.
+word, and footer `acquisition.calibration_id` remains `unknown`.
 
 `event_time_utc_us` is null until a host supplies a clock anchor, and becomes
 null again after a Waveshare reboot until another anchor. Never assign upload

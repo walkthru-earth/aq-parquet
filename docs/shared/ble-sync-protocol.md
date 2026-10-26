@@ -400,7 +400,7 @@ mismatch, 2 PMS unavailable/warming/stale/error, or 3 candidate calculated.
 `sensor_serial_code` stores all 9–17 sticker digits for a valid provisioned
 PMS5003T identity; this per-row value preserves identity across configuration
 changes during an open file. A status of 3 does **not** mean Cairo calibration
-or regulatory validity. File `calibration_id` remains `unknown`; LIVE `pm25`
+or regulatory validity. Footer `acquisition.calibration_id` remains `unknown`; LIVE `pm25`
 continues to mean raw atmospheric PM2.5 and has no batch candidate key.
 
 `SET_CONFIG` payload example (one request, three keys):

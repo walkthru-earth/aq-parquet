@@ -29,7 +29,7 @@ Raw results sit next to this page in [`parquet-small-files/`](parquet-small-file
 
 - A full 90 row CoreS3 window costs about 554 B per row uncompressed.
 - Key value metadata is 37 to 42 entries and 2.0 to 2.7 KB per file. The largest entries, `acquisition_config` and `time_semantics`, repeat unchanged in every file.
-  Since #88 the footer carries one `opensensor` key of compact JSON instead, about 1.7 KB on CoreS3 and 2.3 KB on Waveshare.
+  Note added 2026-10-26. Since #88 the flat keys are gone and the footer carries one nested `opensensor` key of compact JSON instead, about 1.7 KB on CoreS3 and 2.3 KB on Waveshare, plus the `geo` key. The survey numbers above predate it.
 - Each extra row group adds about 4.4 KB of footer on the 81 column CoreS3 schema, about 54 B per column chunk. A one off host build of the current writer gave footers of 7.9 KB for 1 row group, 12.3 KB for 2, 21.1 KB for 4 and 38.6 KB for 8. A real 3600 s file should carry a footer near 22 KB. That is an estimate until a v6.12 capture exists.
 - Every 900 s file fits inside the phone's 64 KiB tail read, so the phone already reads one in a single request.
 

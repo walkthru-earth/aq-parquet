@@ -10,7 +10,7 @@ Design note, source-checked 2026-09-18 and implemented the same day in firmware 
 
 ## The problem this solves
 
-Until 2026-09-18 the phone only **polled**: a WorkManager periodic request every 15 min (the platform minimum, later under Doze) browsed mDNS for up to 10 s, tried LAN, then a direct `connectGatt` to the bonded address. The device did nothing to help — it advertised `AQ-xxxx` plus the service UUID and waited. Measured consequences ([bench-verified](../boards/m5stack-cores3/bench-verified.md#board-1-phone-over-lan-and-ble)):
+Until 2026-09-18 the phone only **polled**: a WorkManager periodic request every 15 min (the platform minimum, later under Doze) browsed mDNS for up to 10 s, tried LAN, then a direct `connectGatt` to the bonded address. The device did nothing to help — it advertised `AQ-xxxx` plus the service UUID and waited. Measured consequences ([bench-verified](../boards/m5stack-cores3/bench-verified.md#phone-over-lan-and-ble-oneplus-7-pro-android-16)):
 
 - a file finalizes every 10–60 min and waited up to a period (plus Doze deferral) before the phone learned of it;
 - a rebooted device ran **unsynced** (rows into the `unsynced` tree) until the next poll happened to find it, even with the phone on the desk beside it;

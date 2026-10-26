@@ -929,13 +929,13 @@ CoreS3 MAC `44:1b:f6:e2:6b:40`, checked native USB port `/dev/cu.usbmodem11101`.
 `pixi run ports`, `chip`, `flash-id` and `efuse` ran before the flash. The
 ports listing from the same session is kept with the Waveshare artifacts in
 `firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261026/01-ports.txt`
-and shows `/dev/cu.usbmodem11101` as `USB JTAG/serial debug unit`, VID:PID
-`303A:1001`, with the CoreS3 MAC as its serial number. The CoreS3 eFuse summary
+and shows `/dev/cu.usbmodem11101` as the ESP32-S3 built in Espressif
+`USB JTAG/serial debug unit`, with the CoreS3 MAC as its serial number. The CoreS3 eFuse summary
 shows `SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0` and
 `DIS_DOWNLOAD_MODE=False`, and the esptool header in the flash log shows
 ESP32-S3 QFN56 rev v0.2. The CoreS3 chip and flash-id output was not kept, so
-this entry does not quote a flash ID readback. The owner waived a new backup. The flash helper still needs
-a backup path for its NVS layout check, so
+this entry does not quote a flash ID readback. The owner waived a new backup.
+The flash helper still needs a backup path for its NVS layout check, so
 `backup/m5stack-cores3-flash-20261025T220032Z.bin` from 2026-10-25 was passed
 only to satisfy that check.
 
