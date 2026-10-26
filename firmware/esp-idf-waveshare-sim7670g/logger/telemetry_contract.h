@@ -3,6 +3,7 @@
 #include "pms5003t_identity.h"
 #include "telemetry_descriptor_digest.h"
 #include "telemetry_dictionary_digest.h"
+#include "telemetry_logical.h"
 #include "telemetry_template.h"
 #include <algorithm>
 #include <aq_battery_health.h>
@@ -25,12 +26,16 @@ namespace contract {
 // STATUS flags, hibernate state, the shared battery health state and a
 // minutes-to-empty estimate. v4 renamed the two UTC instants to
 // microseconds and added a Parquet field_id on every leaf for Iceberg v3.
-constexpr std::int32_t kSchemaVersion = 5;
-constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.14";
+// Schema v6 and dictionary v7 (firmware v2.15, #83, owner decision 32) put
+// location_source (UINT8) and geometry (native Parquet GEOMETRY, a 2D WKB
+// Point at the H3 cell centre) in the two positions h3_center_lat_e7 and
+// h3_center_lon_e7 held, field ids 55 and 56. Still 62 leaves.
+constexpr std::int32_t kSchemaVersion = 6;
+constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v6";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v7";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.15";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
-// Footer station.board.
+// Footer thing.board.
 constexpr const char *kBoard =
     "Waveshare ESP32-S3-SIM7670G-4G V2.0 ESP32-S3 rev0.2";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
@@ -145,11 +150,10 @@ static_assert(opensensor::semantics::every_property_set(kFields),
               "every FIELD needs a property from telemetry_semantics.inc");
 using Sample = oslogger::Row;
 
-inline LogicalType logical_type(const Definition &field) {
-  return field.type == PhysicalType::Int64 &&
-                 std::strcmp(field.unit, "us_since_unix_epoch") == 0
-             ? LogicalType::TimestampMicrosUtc
-             : LogicalType::None;
+// The unit label picks the logical type (telemetry_logical.h), which changes
+// what readers present, never the stored slot.
+constexpr LogicalType logical_type(const Definition &field) {
+  return logical_for(field.type, field.unit);
 }
 template <typename Row>
 inline void prepare_columns(Column *columns, Row *rows) {

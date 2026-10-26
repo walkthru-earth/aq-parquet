@@ -159,5 +159,5 @@ SEM(clock_anchor_mono_us, "us", referenceInformation, "", point, , , 0, "finite"
 SEM(clock_anchor_utc_us, "us", referenceInformation, "", point, , , 0, "finite", "urn:walkthru-earth:property:clock_anchor_utc_time", "", "")
 SEM(h3_cell_id, "{h3_index}", coordinate, "", mode, , , 0, "finite", "urn:walkthru-earth:property:h3_cell_index", "", "")
 SEM(h3_resolution, "1", referenceInformation, "", mode, 0, 15, 0, "finite", "urn:walkthru-earth:property:h3_resolution", "", "")
-SEM(h3_center_lat_e7, "10*-7.deg", coordinate, "", mode, -900000000, 900000000, 0, "finite", "urn:walkthru-earth:property:h3_cell_center_latitude", "", "")
-SEM(h3_center_lon_e7, "10*-7.deg", coordinate, "", mode, -1800000000, 1800000000, 0, "finite", "urn:walkthru-earth:property:h3_cell_center_longitude", "", "")
+SEM(location_source, "{code}", referenceInformation, "", mode, , , 0, "finite", "urn:walkthru-earth:property:location_source", "", "")
+SEM(geometry, "deg", coordinate, "", mode, , , 0, "", "urn:walkthru-earth:property:h3_cell_center_point", "", "")

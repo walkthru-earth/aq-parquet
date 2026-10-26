@@ -3,6 +3,7 @@
 #include "parquet_writer.h"
 #include "telemetry_descriptor_digest.h"
 #include "telemetry_dictionary_digest.h"
+#include "telemetry_logical.h"
 #include "telemetry_template.h"
 #include <algorithm>
 #include <aq_logger_live.h>
@@ -25,10 +26,14 @@ namespace contract {
 // the reader contract. Dictionary v5 (firmware v6.13) adds each LIVE key to the
 // field table so the digest covers it. Columns are unchanged from v4.
 // Dictionary v6 (firmware v6.14) adds per field LIVE decimals, columns stay v5.
-constexpr std::int32_t kSchemaVersion = 5;
-constexpr const char *kSchemaName = "cores3-telemetry-v5";
-constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.20";
+// Schema v6 and dictionary v7 (firmware v6.21, #83, owner decision 32) put
+// location_source (UINT8) and geometry (native Parquet GEOMETRY, a 2D WKB
+// Point at the H3 cell centre) in the two positions h3_center_lat_e7 and
+// h3_center_lon_e7 held, field ids 80 and 81. Still 81 leaves.
+constexpr std::int32_t kSchemaVersion = 6;
+constexpr const char *kSchemaName = "cores3-telemetry-v6";
+constexpr const char *kDictionaryVersion = "cores3-telemetry-v7";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.21";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
@@ -49,7 +54,7 @@ constexpr const char *kConfiguration =
     "\"raw-v1\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
-// Footer station.board.
+// Footer thing.board.
 constexpr const char *kBoard = "CoreS3 ESP32-S3 rev0.2";
 constexpr const char *kTimeSemantics =
     "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
@@ -139,14 +144,10 @@ static_assert(opensensor::semantics::every_property_set(kFields),
 
 using Sample = opensensor::NumericSample<field_count>;
 
-// Fields whose unit is microseconds since the Unix epoch are the UTC instants;
-// the annotation changes what readers present, never the stored INT64.
-constexpr const char *kUtcMicrosUnit = "us_since_unix_epoch";
-inline LogicalType logical_type(const Definition &field) {
-  return field.type == PhysicalType::Int64 &&
-                 std::strcmp(field.unit, kUtcMicrosUnit) == 0
-             ? LogicalType::TimestampMicrosUtc
-             : LogicalType::None;
+// The unit label picks the logical type (telemetry_logical.h), which changes
+// what readers present, never the stored slot.
+constexpr LogicalType logical_type(const Definition &field) {
+  return logical_for(field.type, field.unit);
 }
 
 template <typename Row>

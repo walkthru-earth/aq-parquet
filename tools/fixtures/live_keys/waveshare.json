@@ -2,11 +2,11 @@
   "board": "waveshare",
   "convention": "Every field valid with integers 1 and floats 1.0, rendered by the shared emitter through tools/live_sample.h. utc is the stored microseconds times 1000 on the wire.",
   "digests": {
-    "6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb": {
-      "note": "Dictionary waveshare-sim7670g-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. t and rh print one decimal. Older digests are retired and no longer listed.",
+    "8be98b66ab3090be16aaa4f33086cdf76ed403648d5700daa00e83889572197b": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v7 (#83). The two H3 centre columns become location_source and geometry, neither has a LIVE key, so the LIVE keys and decimals are those of waveshare-sim7670g-telemetry-v6. Older digests are retired and no longer listed.",
       "builds": [
         {
-          "firmware": "idf-waveshare-parquet-v2.14",
+          "firmware": "idf-waveshare-parquet-v2.15",
           "emitter": "board field table through oslogger::format_live",
           "fields": {
             "seq": "sequence",

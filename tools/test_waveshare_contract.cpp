@@ -458,7 +458,7 @@ int main(int argc, char **argv) {
     row.location = location;
     oslogger::apply_location(
         row, row.location,
-        {h3_cell_id, h3_resolution, h3_center_lat_e7, h3_center_lon_e7});
+        {h3_cell_id, h3_resolution, location_source, geometry});
     const auto now = std::int64_t(10000000 + i * 10000000);
     row.integer(schema_version, kSchemaVersion);
     row.counter(device_id, 123);
@@ -506,10 +506,6 @@ int main(int argc, char **argv) {
     apply_battery_health(row, health);
   }
   prepare_columns(columns, rows);
-  // The one footer key the logger writes, built by the firmware code.
-  static char json[oslogger::footer::kMaxJsonBytes + 1];
-  const KeyValue metadata[] = {
-      {oslogger::footer::kKey, footerfixture::build(json, 900, 1, compressed)}};
   FILE *file = std::fopen(argv[1], "wb");
   if (!file)
     return 3;
@@ -518,6 +514,13 @@ int main(int argc, char **argv) {
                              compressed ? &compression : nullptr);
   if (result.ok)
     result = writer.row_group(90, sequence);
+  // The two footer keys the logger writes, built by the firmware code. geo
+  // takes its bbox from the rows written, so it follows the row group.
+  static char json[oslogger::footer::kMaxJsonBytes + 1];
+  static char geo[oslogger::footer::kMaxGeoJsonBytes + 1];
+  const KeyValue metadata[] = {
+      {oslogger::footer::kKey, footerfixture::build(json, 900, 1, compressed)},
+      {oslogger::footer::kGeoKey, footerfixture::geo(geo, writer, geometry)}};
   if (result.ok)
     result =
         writer.finish(metadata, std::size(metadata), kFirmware, kCreatedBy);
