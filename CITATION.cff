@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: >-
+  If you use this work, credit Walkthru.Earth visibly, for example in your
+  README, documentation, about screen or paper, and cite it as below. State
+  what you changed. Attribution does not imply that we endorse your project.
+type: software
+title: "opensensor-space-firmware. OpenSensor firmware for ESP32-S3 Things"
+abstract: >-
+  Native ESP-IDF firmware by Walkthru.Earth for ESP32-S3 Things that log
+  sensor measurements as Parquet on a microSD card and sync them over BLE or
+  the local network without internet. Boards plug in sensors through logger
+  hooks and a field dictionary. Air quality is the first sensor set.
+authors:
+  - given-names: Youssef
+    family-names: Harby
+  - given-names: Myagmarjargal
+    family-names: Mendbayar
+license: CC-BY-4.0
+date-released: "2026-10-27"
+repository-code: "https://github.com/walkthru-earth/opensensor-space-firmware"
+url: "https://github.com/walkthru-earth/opensensor-space-firmware"
+keywords:
+  - ESP32-S3
+  - ESP-IDF
+  - Parquet
+  - OpenSensor
+  - air quality

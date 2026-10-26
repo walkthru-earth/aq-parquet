@@ -2,6 +2,32 @@
 
 The device protocol, telemetry format, and offline-first data flow are shared across board trials. Wiring, power, peripheral ownership, build settings, and measured performance belong to the individual board. Source-checked claims and real-device results remain separate.
 
+## Project and sensor sets
+
+This is general OpenSensor firmware for any measurement. Air quality is the
+first sensor set, not the whole product. Four terms describe how it fits
+together.
+
+- A **Thing** is one deployed device with a persistent UUID. Its files land
+  under `output/thing=<UUID>/` and it can move between places.
+- A **board app** is one self-contained native ESP-IDF application under
+  `firmware/esp-idf-<board>/`. It owns pins, power, peripherals, storage
+  mounting and acquisition, and it records its own bench evidence.
+- A **sensor set** is the group of measurements a board app collects. The board
+  declares it in its field dictionary, `telemetry_fields.inc`, which fixes the
+  Parquet columns, units and LIVE keys, and fills each row in `Hooks::collect`.
+  Air quality is sensor set 1, with a Plantower particle sensor on both
+  current boards. On CoreS3 it is the optional M134 add-on, on Waveshare V2 a
+  wired PMS5003T.
+- The **shared components** in [`firmware/common`](../firmware/common/README.md)
+  are board and sensor neutral. They sample, write Parquet, keep settings and
+  sync over BLE and LAN for any sensor set.
+
+To add a board or a new sensor set, start with
+[board porting](shared/board-porting.md). A sensor plugin design is planned at
+`docs/shared/sensor-plugins.md`. Current board versions live in the
+[root README status table](../README.md#status).
+
 ## Shared contracts
 
 | Topic | Reference |
@@ -26,7 +52,7 @@ The device protocol, telemetry format, and offline-first data flow are shared ac
 | Board | Status | Reference |
 | --- | --- | --- |
 | M5Stack CoreS3 with optional M134/PMSA003 | Native OSLogger adapter with a short native USB/SD/sensor/time readback. Proto 3 phone transfers and endurance remain pending. Historical Arduino radio evidence stays image-specific | [CoreS3 board docs](boards/m5stack-cores3/README.md), [trial](../firmware/esp-idf-cores3/README.md) |
-| Waveshare ESP32-S3-SIM7670G-4G V2 with PMS5003T | Native ESP-IDF logger and retained diagnostic; native hardware unverified, historical Arduino evidence in its bench record | [Waveshare board docs](boards/waveshare-esp32-s3-sim7670g/README.md), [trial](../firmware/esp-idf-waveshare-sim7670g/README.md) |
+| Waveshare ESP32-S3-SIM7670G-4G V2 with PMS5003T | Native ESP-IDF logger and retained diagnostic with a short native USB/SD readback. Phone transfers and endurance remain pending. Historical Arduino evidence stays in its bench record | [Waveshare board docs](boards/waveshare-esp32-s3-sim7670g/README.md), [trial](../firmware/esp-idf-waveshare-sim7670g/README.md) |
 
 The seven shared ESP-IDF components are OSCommon (encoding and the Parquet writer), OSSensors (sensor drivers),
 OSRuntime (settings/logs), OSConnectivity (local transports), OSLogger (sampling/archive worker),
