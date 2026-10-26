@@ -1,10 +1,12 @@
-"""Fail on a retired AQ wire, NVS, Kconfig or serial name anywhere in the repo (#93).
+"""Fail on a retired AQ wire, NVS, Kconfig, serial or build name anywhere in the repo (#93, #111).
 
 The 2026-10-26 rename moved every name the phone, the host tools or a stored
 blob depends on to its OpenSensor form, with no backward compatibility. This
 check keeps the old names from coming back in code, tools, docs or CI.
 
-Matched names (old form, see docs/shared/mobile-migration.md for the new one)
+Matched names (old form). The failure names the doc that lists the new one,
+docs/shared/mobile-migration.md for names the phone or a stored blob sees and
+docs/shared/development.md for build and environment names.
   mDNS service           the old _xxsync service type
   LAN handshake          the old four byte magic
   GATT base UUID         the old base prefix
@@ -15,6 +17,10 @@ Matched names (old form, see docs/shared/mobile-migration.md for the new one)
                          or anywhere inside a string literal
   CMake helpers (#111)   the old firmware/cmake file names, the functions they
                          define and the variables they set, now os_ and OS_
+  build variables        the old build, script, signing and toolchain variables
+  build manifests        the old build hash and target file names
+  toolchain cache        the old SDK cache folder under ~/.cache
+  pixi project name      the old workspace name in pixi.toml
 
 History is exempt. The dated bench records, the migration log and the #93
 audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
@@ -62,6 +68,27 @@ RETIRED = (
         ),
     ),
     ("CMake variable", re.compile(r"\b" + OLD + r"_(SOURCE_ROOT|SOURCE_ROOT_REAL|NIMBLE_PATCH_DIR|PATCH_PROGRAM)\b")),
+    # Build, script and toolchain names moved in #111 Phases 2b and 2c, with
+    # no alias. The pattern also matches after -D. The Arduino era cache path
+    # in dated CoreS3 notes stays, so only the SDK toolchain path is retired,
+    # and M5_TOOLCHAIN_ROOT only where code reads or sets it.
+    (
+        "build variable",
+        re.compile(
+            r"(?<![A-Za-z0-9])" + OLD + r"_(REPO|BENCH|VARIANT|SDKCONFIG_OVERLAY|TOOLCHAIN_ROOT|IDF_TOOLS_PATH|IDF_PATH"
+            r"|APP_SIGNING_KEY|APP_SIGNING_SCHEME|GATE_TASK_TIMEOUT|FIELDS_INC|SYNC_ROM_CRC|REPRO_KEEP"
+            r"|FAKE_SOURCE|FAKE_ESPTOOL_MODE)\b|-D" + OLD + r"_(FIELDS_INC|SYNC_ROM_CRC)\b"
+            r"|\bM5_TOOLCHAIN_ROOT(:-|=|\})"
+        ),
+    ),
+    ("build manifest", re.compile(r"\b" + "aq" + r"-build-(sha256\.json|target\.txt)")),
+    ("toolchain cache", re.compile(r"\.cache/m5stack-" + "aq" + r"-parquet(?!/toolchains/arduino)")),
+    ("pixi project name", re.compile(r"^name = \"" + "aq" + r"-parquet\"")),
+)
+# Build and environment names. Their new form is in the development guide,
+# not the mobile migration log, which tracks what the phone can observe.
+BUILD_KINDS = frozenset(
+    {"CMake helper", "CMake variable", "build variable", "build manifest", "toolchain cache", "pixi project name"}
 )
 # History that names the old forms on purpose.
 EXEMPT = {
@@ -106,6 +133,12 @@ def findings(root: Path, names: list[str]) -> list[str]:
     return out
 
 
+def doc_for(finding: str) -> str:
+    """The doc that lists the new name for one finding's kind."""
+    kind = finding.rsplit(": retired ", 1)[-1]
+    return "docs/shared/development.md" if kind in BUILD_KINDS else "docs/shared/mobile-migration.md"
+
+
 def main(argv: list[str]) -> int:
     names = argv or tracked(ROOT)
     if names is None:
@@ -113,7 +146,7 @@ def main(argv: list[str]) -> int:
         return 2
     found = findings(ROOT, names)
     for finding in found:
-        print(f"!!! {finding}, use the OpenSensor name (docs/shared/mobile-migration.md)")
+        print(f"!!! {finding}, use the OpenSensor name ({doc_for(finding)})")
     return 1 if found else 0
 
 
