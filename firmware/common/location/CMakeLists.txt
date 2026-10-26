@@ -23,8 +23,8 @@ idf_component_register(
     SRCS "src/aq_location.cpp" ${h3_sources}
     INCLUDE_DIRS "src"
     PRIV_INCLUDE_DIRS "${h3_root}/h3lib/include" "${CMAKE_CURRENT_BINARY_DIR}/include")
-aq_pin_cxx_standard(${COMPONENT_LIB})
-aq_map_source_paths(${COMPONENT_LIB})
+os_pin_cxx_standard(${COMPONENT_LIB})
+os_map_source_paths(${COMPONENT_LIB})
 # ESP-IDF's section GC drops unused polygon/traversal/export functions. Do not
 # WHOLE_ARCHIVE this component or patch H3's indexing/hierarchy algorithm.
 target_compile_options(${COMPONENT_LIB} PRIVATE -ffunction-sections -fdata-sections)

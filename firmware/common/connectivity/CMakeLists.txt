@@ -5,8 +5,8 @@ idf_component_register(
     INCLUDE_DIRS "src"
     REQUIRES common runtime
     PRIV_REQUIRES bt esp_pm esp_timer heap esp_wifi esp_netif esp_event lwip mdns)
-aq_pin_cxx_standard(${COMPONENT_LIB})
-aq_map_source_paths(${COMPONENT_LIB})
+os_pin_cxx_standard(${COMPONENT_LIB})
+os_map_source_paths(${COMPONENT_LIB})
 
 # Match both endpoint and request originate timestamp before accepting SNTP.
 # ESP-IDF 6.1's lwIP default is zero; no SDK/vendor source edit is required.

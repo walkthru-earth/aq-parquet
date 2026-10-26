@@ -5,7 +5,7 @@ tools/check_repro_paths.sh builds the images and calls this. Every file in the
 manifest must hash the same, except the compiler database and the project
 description, which record absolute paths by design. For a file that differs,
 the report counts the differing bytes and says whether either checkout path
-appears in it, which points at a source that misses aq_map_source_paths().
+appears in it, which points at a source that misses os_map_source_paths().
 """
 from __future__ import annotations
 

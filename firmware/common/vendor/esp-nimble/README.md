@@ -13,7 +13,7 @@ Upstream fixed this in espressif/esp-nimble on `nimble-1.10.0-idf`.
 Neither is in ESP-IDF `release/v6.1` or the `v6.1` tag.
 [ble_hs_hci-stale-ack.patch](ble_hs_hci-stale-ack.patch) backports both to the
 pinned file. The SDK checkout stays untouched.
-[`firmware/cmake/aq_nimble_patches.cmake`](../../../cmake/aq_nimble_patches.cmake)
+[`firmware/cmake/os_nimble_patches.cmake`](../../../cmake/os_nimble_patches.cmake)
 copies the upstream file into the build directory, applies the patch with no
 fuzz and compiles the copy in place of the SDK file. Images without NimBLE
 skip the step.

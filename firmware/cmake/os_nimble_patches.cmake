@@ -1,7 +1,7 @@
 # NimBLE host fixes the pinned ESP-IDF does not carry yet.
 #
 # The SDK checkout stays untouched (tools/setup-idf.sh refuses a changed one).
-# aq_patch_nimble() copies the pinned source into the build directory, applies
+# os_patch_nimble() copies the pinned source into the build directory, applies
 # our patch from firmware/common/vendor/esp-nimble and compiles that copy in
 # place of the SDK file. Every board project calls it right after project().
 #
@@ -10,31 +10,31 @@
 # upstream and then drop or rebase the patch.
 include_guard(GLOBAL)
 
-set(AQ_NIMBLE_PATCH_DIR "${CMAKE_CURRENT_LIST_DIR}/../common/vendor/esp-nimble")
+set(OS_NIMBLE_PATCH_DIR "${CMAKE_CURRENT_LIST_DIR}/../common/vendor/esp-nimble")
 
-function(aq_patch_nimble)
+function(os_patch_nimble)
     # The Waveshare diagnostic image has no Bluetooth.
     if(NOT CONFIG_BT_NIMBLE_ENABLED)
-        message(STATUS "aq_patch_nimble: NimBLE is off, nothing to patch")
+        message(STATUS "os_patch_nimble: NimBLE is off, nothing to patch")
         return()
     endif()
     idf_build_get_property(idf_path IDF_PATH)
     idf_component_get_property(bt_lib bt COMPONENT_LIB)
     if(NOT bt_lib OR NOT TARGET "${bt_lib}")
-        message(FATAL_ERROR "aq_patch_nimble: the bt component is not part of this build")
+        message(FATAL_ERROR "os_patch_nimble: the bt component is not part of this build")
     endif()
 
     set(relative "nimble/host/src/ble_hs_hci.c")
     set(upstream_root "${idf_path}/components/bt/host/nimble/nimble")
     set(upstream "${upstream_root}/${relative}")
-    set(patch_file "${AQ_NIMBLE_PATCH_DIR}/ble_hs_hci-stale-ack.patch")
+    set(patch_file "${OS_NIMBLE_PATCH_DIR}/ble_hs_hci-stale-ack.patch")
     # esp-nimble 139cada as pinned by ESP-IDF v6.1 (tools/idf-dependencies.lock).
     set(expected "576e8582bf25dd56170ce1d47d5c64ccddf1fc5facd7dcfa818dc19629cbd7b1")
 
     file(SHA256 "${upstream}" actual)
     if(NOT actual STREQUAL expected)
         message(FATAL_ERROR
-            "aq_patch_nimble: ${upstream} changed (sha256 ${actual}, pinned ${expected}). "
+            "os_patch_nimble: ${upstream} changed (sha256 ${actual}, pinned ${expected}). "
             "Check whether the SDK now carries the stale ack drain from esp-nimble "
             "79316193f9, then drop or rebase ${patch_file} and update this pin.")
     endif()
@@ -42,26 +42,26 @@ function(aq_patch_nimble)
     # The patch runs on a fresh copy in work/ each configure. The compiled
     # file is replaced only when its content changes, so a reconfigure does
     # not rebuild it.
-    set(stage "${CMAKE_BINARY_DIR}/aq_nimble_patch")
+    set(stage "${CMAKE_BINARY_DIR}/os_nimble_patch")
     set(work "${stage}/work")
     file(REMOVE_RECURSE "${work}")
     configure_file("${upstream}" "${work}/${relative}" COPYONLY)
-    find_program(AQ_PATCH_PROGRAM patch REQUIRED)
+    find_program(OS_PATCH_PROGRAM patch REQUIRED)
     # -F0 refuses fuzz, -N refuses a reversed or already applied patch.
     execute_process(
-        COMMAND "${AQ_PATCH_PROGRAM}" -p1 -N -F0 -s -d "${work}" -i "${patch_file}"
+        COMMAND "${OS_PATCH_PROGRAM}" -p1 -N -F0 -s -d "${work}" -i "${patch_file}"
         RESULT_VARIABLE result
         OUTPUT_VARIABLE output
         ERROR_VARIABLE output)
     if(NOT result EQUAL 0)
-        message(FATAL_ERROR "aq_patch_nimble: ${patch_file} does not apply\n${output}")
+        message(FATAL_ERROR "os_patch_nimble: ${patch_file} does not apply\n${output}")
     endif()
     set(patched "${stage}/${relative}")
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${work}/${relative}" "${patched}"
         RESULT_VARIABLE result)
     if(NOT result EQUAL 0)
-        message(FATAL_ERROR "aq_patch_nimble: cannot stage ${patched}")
+        message(FATAL_ERROR "os_patch_nimble: cannot stage ${patched}")
     endif()
 
     get_target_property(sources "${bt_lib}" SOURCES)
@@ -73,7 +73,7 @@ function(aq_patch_nimble)
     endforeach()
     list(LENGTH matches count)
     if(NOT count EQUAL 1)
-        message(FATAL_ERROR "aq_patch_nimble: expected one ble_hs_hci.c in ${bt_lib}, found ${count}")
+        message(FATAL_ERROR "os_patch_nimble: expected one ble_hs_hci.c in ${bt_lib}, found ${count}")
     endif()
     list(REMOVE_ITEM sources ${matches})
     list(APPEND sources "${patched}")
@@ -84,5 +84,5 @@ function(aq_patch_nimble)
         PROPERTIES INCLUDE_DIRECTORIES "${upstream_root}/nimble/host/src")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${patch_file}" "${upstream}")
-    message(STATUS "aq_patch_nimble: ${relative} patched with ${patch_file}")
+    message(STATUS "os_patch_nimble: ${relative} patched with ${patch_file}")
 endfunction()

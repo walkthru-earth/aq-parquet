@@ -17,7 +17,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools/check_idf_target.py"
-PINNED = re.search(r"-std=gnu\+\+\d+", (ROOT / "firmware/cmake/aq_cxx_standard.cmake").read_text())[0]
+PINNED = re.search(r"-std=gnu\+\+\d+", (ROOT / "firmware/cmake/os_cxx_standard.cmake").read_text())[0]
 # The ESP-IDF 6.1 default. Spelled in two parts because check_cxx_dialect_sources
 # rejects a literal C++ -std in a tools/test_*.py.
 SDK_DEFAULT = "-std=gnu++" + "26"
@@ -61,7 +61,7 @@ def calls_check(text: str, call: str) -> bool:
     return False
 
 
-# What aq_map_source_paths() adds to every repo-owned component.
+# What os_map_source_paths() adds to every repo-owned component.
 SOURCE_MAP = f"-ffile-prefix-map={ROOT}=."
 
 
