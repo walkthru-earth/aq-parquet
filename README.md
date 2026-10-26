@@ -20,8 +20,8 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 
 Both source adapters implement the existing offline archive, configuration, BLE
 and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields; new schemas
-append four nullable H3 location fields. It retains persistent station/config NVS keys and types, and flash partition
-offsets. Existing BLE bond compatibility is not guaranteed; native bonded
+append four nullable H3 location fields. It retains persistent config NVS keys and types, and flash partition
+offsets. The Thing id lives in NVS `parquet/thing`, and the old `parquet/station` key stays in flash unread. Existing BLE bond compatibility is not guaranteed; native bonded
 reconnect or re-pairing needs a hardware check. Cellular/GNSS/camera integration
 remains future board work. See the [component map](firmware/common/README.md).
 
@@ -46,7 +46,7 @@ to their recorded Arduino images and do not establish native hardware behavior.
 [Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe
 later host/cloud work; dictionaries do not claim SensorThings API compliance.
 
-An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v2. The codec choice is saved in NVS and survives a reboot. Persistent station identity and UTC-aligned Hive partitions use:
+An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v2. The codec choice is saved in NVS and survives a reboot. Persistent Thing identity and UTC-aligned Hive partitions use:
 
 ```text
 output/thing=<UUID>/year=YYYY/month=MM/day=DD/

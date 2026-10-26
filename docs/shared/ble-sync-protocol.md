@@ -746,7 +746,7 @@ with no trailing NUL and no reformatting. The template cannot carry its own
 hash, so the phone hashes what it received, checks that the hex digest starts
 with the 16 hex `desc` from `info`, and checks the full 64 hex against the
 template SHA-256 it already trusts, from the Parquet footer or the
-`file:checksum` of the template link on the station Collection. A mismatch
+`file:checksum` of the template link on the Thing Collection. A mismatch
 means a corrupt download or a different image, and the phone discards the
 bytes. `pixi run ble-sync descriptor --out <file>` does the same from a host.
 

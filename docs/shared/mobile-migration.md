@@ -57,9 +57,13 @@ after the reflash.
   average). Locations already saved keep their stored resolution.
 - The validity predicate of the four location columns is `location_present`.
 - The Thing release is a fresh field table baseline on both boards (owner
-  answer to bridge question 36, 2026-10-26). Every `field_id` is renumbered as
-  a plain 1-based position. The app must not key on any id from an earlier
-  dictionary, take ids from the new template only. From this baseline the
+  answer to bridge question 36, 2026-10-26). Every `field_id` is a plain
+  1-based position. Removing the two H3 centre columns changes the meaning of
+  exactly four ids. CoreS3 ids 80 and 81 were `h3_center_lat_e7` and
+  `h3_center_lon_e7` and are now `location_source` and `geometry`. Waveshare
+  ids 55 and 56 change the same way. Every other id keeps its column. The app
+  must still not key on any id from an earlier dictionary, take ids from the
+  new template only. From this baseline the
   rule is append only again.
 - Template columns follow the spec spelling. `h3_cell_id` is `int64` with role
   `referenceInformation`, `h3_resolution` is `int32` with role
