@@ -1,0 +1,497 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "pms5003t",
+  "procedure": "pms5003t",
+  "vendor": "Plantower",
+  "model": "PMS5003T",
+  "buses": [
+    "uart"
+  ],
+  "status": {
+    "column": "pms_status"
+  },
+  "segments": {
+    "core": [
+      {
+        "name": "pms_status",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "missing",
+            "nodata": true
+          },
+          {
+            "value": 1,
+            "name": "warming"
+          },
+          {
+            "value": 2,
+            "name": "stale"
+          },
+          {
+            "value": 3,
+            "name": "sensor-error"
+          },
+          {
+            "value": 4,
+            "name": "valid"
+          },
+          {
+            "value": 5,
+            "name": "model-mismatch"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "always",
+          "live_key": "pms",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pms_age_ms",
+        "unit": "ms",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_frame_age",
+        "opensensor:valid_when": {
+          "column": "pms_age_ms",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int64",
+          "unit": "ms",
+          "validity": "pms_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm1_cf1_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:pm1_cf1_mass_concentration",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "c1",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm25_cf1_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:pm25_cf1_mass_concentration",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "c25",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm10_cf1_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:pm10_cf1_mass_concentration",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "c10",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm1_atmospheric_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "mass_concentration_of_pm1_ambient_aerosol_particles_in_air",
+        "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/mass_concentration_of_pm1_ambient_aerosol_particles_in_air/",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "pm1",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm25_atmospheric_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "mass_concentration_of_pm2p5_ambient_aerosol_particles_in_air",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/YUDG9DXK/",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "pm25",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pm10_atmospheric_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "mass_concentration_of_pm10_ambient_aerosol_particles_in_air",
+        "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/mass_concentration_of_pm10_ambient_aerosol_particles_in_air/",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "ug/m3",
+          "validity": "pms_valid",
+          "live_key": "pm10",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "particles_gt03_per_01l",
+        "unit": "{particles}/dL",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_count_gt_0p3um",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "count/0.1L",
+          "validity": "pms_valid",
+          "live_key": "n03",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "particles_gt05_per_01l",
+        "unit": "{particles}/dL",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_count_gt_0p5um",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "count/0.1L",
+          "validity": "pms_valid",
+          "live_key": "n05",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "particles_gt10_per_01l",
+        "unit": "{particles}/dL",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_count_gt_1um",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "count/0.1L",
+          "validity": "pms_valid",
+          "live_key": "n1",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "particles_gt25_per_01l",
+        "unit": "{particles}/dL",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_count_gt_2p5um",
+        "opensensor:valid_when": {
+          "column": "pms_status",
+          "equals": 4
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "count/0.1L",
+          "validity": "pms_valid",
+          "live_key": "n25",
+          "decimals": 0
+        }
+      }
+    ],
+    "tail": [
+      {
+        "name": "ambient_temperature_c",
+        "unit": "Cel",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "air_temperature",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0023/",
+        "opensensor:valid_when": {
+          "column": "ambient_temperature_c",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          -10,
+          60
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "degC",
+          "validity": "pms_valid",
+          "live_key": "t",
+          "decimals": 1
+        }
+      },
+      {
+        "name": "relative_humidity_percent",
+        "unit": "%",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "relative_humidity",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0413/",
+        "opensensor:valid_when": {
+          "column": "relative_humidity_percent",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          100
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "%",
+          "validity": "pms_valid_range_0_100",
+          "live_key": "rh",
+          "decimals": 1
+        }
+      },
+      {
+        "name": "pms_firmware",
+        "unit": "{code}",
+        "roles": [
+          "referenceInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_firmware_version",
+        "opensensor:valid_when": {
+          "column": "pms_firmware",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "pms_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pms_error",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_error_code",
+        "opensensor:valid_when": {
+          "column": "pms_error",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "pms_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pms_frames",
+        "unit": "{count}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_frame_count",
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int64",
+          "unit": "count",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pms_checksum_errors",
+        "unit": "{count}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_checksum_error_count",
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int64",
+          "unit": "count",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "pms_length_errors",
+        "unit": "{count}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_length_error_count",
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int64",
+          "unit": "count",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ],
+    "received": [
+      {
+        "name": "pms_received_mono_us",
+        "unit": "us",
+        "roles": [
+          "referenceInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_frame_received_time_since_boot",
+        "opensensor:valid_when": {
+          "column": "pms_received_mono_us",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int64",
+          "unit": "us",
+          "validity": "pms_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

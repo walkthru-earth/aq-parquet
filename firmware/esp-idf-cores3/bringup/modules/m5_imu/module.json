@@ -1,0 +1,242 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "m5_imu",
+  "procedure": "m5_imu",
+  "vendor": "Bosch Sensortec",
+  "model": "BMI270",
+  "buses": [
+    "i2c"
+  ],
+  "segments": {
+    "core": [
+      {
+        "name": "imu_fresh_mask",
+        "unit": "{bitmask}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:motion_sensor_fresh_mask",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "bitmask",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "accel_x_g",
+        "unit": "[g]",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:acceleration_x",
+        "opensensor:valid_when": {
+          "column": "accel_x_g",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "g",
+          "validity": "accel_fresh_finite",
+          "live_key": "",
+          "decimals": 3
+        }
+      },
+      {
+        "name": "accel_y_g",
+        "unit": "[g]",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:acceleration_y",
+        "opensensor:valid_when": {
+          "column": "accel_y_g",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "g",
+          "validity": "accel_fresh_finite",
+          "live_key": "",
+          "decimals": 3
+        }
+      },
+      {
+        "name": "accel_z_g",
+        "unit": "[g]",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:acceleration_z",
+        "opensensor:valid_when": {
+          "column": "accel_z_g",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "g",
+          "validity": "accel_fresh_finite",
+          "live_key": "",
+          "decimals": 3
+        }
+      },
+      {
+        "name": "gyro_x_dps",
+        "unit": "deg/s",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:angular_rate_x",
+        "opensensor:valid_when": {
+          "column": "gyro_x_dps",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "deg/s",
+          "validity": "gyro_fresh_finite",
+          "live_key": "",
+          "decimals": 2
+        }
+      },
+      {
+        "name": "gyro_y_dps",
+        "unit": "deg/s",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:angular_rate_y",
+        "opensensor:valid_when": {
+          "column": "gyro_y_dps",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "deg/s",
+          "validity": "gyro_fresh_finite",
+          "live_key": "",
+          "decimals": 2
+        }
+      },
+      {
+        "name": "gyro_z_dps",
+        "unit": "deg/s",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:angular_rate_z",
+        "opensensor:valid_when": {
+          "column": "gyro_z_dps",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "deg/s",
+          "validity": "gyro_fresh_finite",
+          "live_key": "",
+          "decimals": 2
+        }
+      },
+      {
+        "name": "mag_x_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:magnetic_field_x_raw",
+        "opensensor:procedure": "m5_imu_aux",
+        "opensensor:valid_when": {
+          "column": "mag_x_raw",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "mag_fresh",
+          "live_key": "",
+          "decimals": 0,
+          "model": "BMM150"
+        }
+      },
+      {
+        "name": "mag_y_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:magnetic_field_y_raw",
+        "opensensor:procedure": "m5_imu_aux",
+        "opensensor:valid_when": {
+          "column": "mag_y_raw",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "mag_fresh",
+          "live_key": "",
+          "decimals": 0,
+          "model": "BMM150"
+        }
+      },
+      {
+        "name": "mag_z_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:magnetic_field_z_raw",
+        "opensensor:procedure": "m5_imu_aux",
+        "opensensor:valid_when": {
+          "column": "mag_z_raw",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "mag_fresh",
+          "live_key": "",
+          "decimals": 0,
+          "model": "BMM150"
+        }
+      },
+      {
+        "name": "imu_temperature_c",
+        "unit": "Cel",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:board_temperature",
+        "opensensor:valid_when": {
+          "column": "imu_temperature_c",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          -40,
+          85
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "degC",
+          "validity": "imu_temperature_read_finite",
+          "live_key": "imu_t",
+          "decimals": 1
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "waveshare",
+  "procedure": "owner_provisioned_identity",
+  "buses": [
+    "uart"
+  ],
+  "segments": {
+    "pms_identity": [
+      {
+        "name": "sensor_serial_code",
+        "unit": "1",
+        "roles": [
+          "referenceInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:particle_sensor_serial_code",
+        "opensensor:valid_when": {
+          "column": "sensor_serial_code",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int64",
+          "unit": "1",
+          "validity": "exact_pms5003t_serial",
+          "live_key": "",
+          "decimals": 0,
+          "vendor": "Plantower",
+          "model": "PMS5003T"
+        }
+      },
+      {
+        "name": "pm25_batch_candidate_ug_m3",
+        "unit": "ug/m3",
+        "roles": [
+          "modelResult"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:pm25_batch_candidate_mass_concentration",
+        "opensensor:procedure": "airgradient_20260408_count_candidate_v1",
+        "opensensor:valid_when": {
+          "column": "pm25_batch_candidate_status",
+          "equals": 3
+        },
+        "opensensor:settle_s": 180,
+        "opensensor:derived": {
+          "from": [
+            "particles_gt03_per_01l"
+          ],
+          "method": "urn:walkthru-earth:method:airgradient_20260408_count_candidate_v1"
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          1000
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "ug/m3",
+          "validity": "owner_opt_in_exact_batch_pms_valid_not_cairo_validated",
+          "live_key": "",
+          "decimals": 1
+        }
+      },
+      {
+        "name": "pm25_batch_candidate_status",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "disabled"
+          },
+          {
+            "value": 1,
+            "name": "identity-mismatch"
+          },
+          {
+            "value": 2,
+            "name": "PMS-unavailable"
+          },
+          {
+            "value": 3,
+            "name": "candidate-only"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:pm25_batch_candidate_status",
+        "opensensor:procedure": "batch_candidate_gate",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

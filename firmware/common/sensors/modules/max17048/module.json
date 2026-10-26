@@ -1,0 +1,190 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "max17048",
+  "procedure": "max17048",
+  "vendor": "Analog Devices",
+  "model": "MAX17048",
+  "buses": [
+    "i2c"
+  ],
+  "status": {
+    "column": "gauge_status"
+  },
+  "segments": {
+    "core": [
+      {
+        "name": "gauge_status",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "battery-not-installed-or-disabled",
+            "nodata": true
+          },
+          {
+            "value": 1,
+            "name": "read-error-or-implausible"
+          },
+          {
+            "value": 2,
+            "name": "valid"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_gauge_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_mv",
+        "unit": "mV",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_voltage",
+        "opensensor:valid_when": {
+          "column": "battery_mv",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          2500,
+          4500
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "mV",
+          "validity": "battery_installed_gauge_read_ok",
+          "live_key": "bat",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_percent",
+        "unit": "%",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_state_of_charge",
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          100
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "%",
+          "validity": "battery_installed_gauge_read_ok_range_0_100",
+          "live_key": "pct",
+          "decimals": 0
+        }
+      }
+    ],
+    "v5": [
+      {
+        "name": "battery_soc_raw_percent",
+        "unit": "%",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_state_of_charge_raw",
+        "opensensor:valid_when": {
+          "column": "battery_soc_raw_percent",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          120
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "%",
+          "validity": "battery_installed_gauge_read_ok_uncapped",
+          "live_key": "",
+          "decimals": 2
+        }
+      },
+      {
+        "name": "battery_charge_rate_percent_per_h",
+        "unit": "%/h",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_charge_rate",
+        "opensensor:valid_when": {
+          "column": "battery_charge_rate_percent_per_h",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Float",
+          "unit": "%/h",
+          "validity": "battery_installed_crate_read_ok",
+          "live_key": "",
+          "decimals": 1
+        }
+      },
+      {
+        "name": "gauge_status_flags",
+        "unit": "{bitmask}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_gauge_alert_flags",
+        "opensensor:valid_when": {
+          "column": "gauge_status_flags",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "bitmask",
+          "validity": "battery_installed_status_read_ok",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "gauge_hibernating",
+        "unit": "{boolean}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "active"
+          },
+          {
+            "value": 1,
+            "name": "hibernating"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_gauge_hibernating",
+        "opensensor:valid_when": {
+          "column": "gauge_hibernating",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "boolean",
+          "validity": "battery_installed_mode_read_ok",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

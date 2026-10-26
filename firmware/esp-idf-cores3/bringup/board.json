@@ -1,0 +1,74 @@
+{
+  "type": "OpenSensorBoard",
+  "board_version": "0.1.0",
+  "board": "m5stack-cores3",
+  "schema": "cores3-telemetry-v6",
+  "sample_interval_s": 10,
+  "title": "M5Stack CoreS3 with Plantower PMSA003, Bosch Sensortec BMI270 and BMM150, and Lite-On LTR-553ALS-WA",
+  "keywords": [
+    "air quality",
+    "particulate matter",
+    "PM2.5",
+    "low-cost sensor"
+  ],
+  "local_modules": [
+    "modules/axp2101/module.json",
+    "modules/bm8563/module.json",
+    "modules/ft6336/module.json",
+    "modules/m5_imu/module.json"
+  ],
+  "segments": [
+    {
+      "module": "system",
+      "segment": "head"
+    },
+    {
+      "module": "pmsa003",
+      "segment": "core"
+    },
+    {
+      "module": "m5_imu",
+      "segment": "core"
+    },
+    {
+      "module": "ltr553",
+      "segment": "core"
+    },
+    {
+      "module": "axp2101",
+      "segment": "core"
+    },
+    {
+      "module": "bm8563",
+      "segment": "core"
+    },
+    {
+      "module": "ft6336",
+      "segment": "core"
+    },
+    {
+      "module": "system",
+      "segment": "runtime"
+    },
+    {
+      "module": "sht20",
+      "segment": "core"
+    },
+    {
+      "module": "system",
+      "segment": "clock_close"
+    },
+    {
+      "module": "pmsa003",
+      "segment": "received"
+    },
+    {
+      "module": "system",
+      "segment": "clock_anchor"
+    },
+    {
+      "module": "system",
+      "segment": "location"
+    }
+  ]
+}

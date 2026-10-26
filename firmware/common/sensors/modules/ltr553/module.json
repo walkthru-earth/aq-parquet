@@ -1,0 +1,169 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "ltr553",
+  "procedure": "ltr553",
+  "vendor": "Lite-On",
+  "model": "LTR-553ALS-WA",
+  "buses": [
+    "i2c"
+  ],
+  "status": {
+    "column": "light_status"
+  },
+  "segments": {
+    "core": [
+      {
+        "name": "light_ch0_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:ambient_light_visible_and_infrared_raw",
+        "opensensor:valid_when": {
+          "column": "light_status",
+          "equals": 3
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "light_valid",
+          "live_key": "als",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "light_ch1_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:ambient_light_infrared_raw",
+        "opensensor:valid_when": {
+          "column": "light_status",
+          "equals": 3
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          65535
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "light_valid",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "proximity_raw",
+        "unit": "{raw_count}",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:proximity_raw",
+        "opensensor:valid_when": {
+          "column": "proximity_status",
+          "equals": 3
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          2047
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "raw_count",
+          "validity": "proximity_valid",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "light_status",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "unavailable",
+            "nodata": true
+          },
+          {
+            "value": 1,
+            "name": "not-fresh"
+          },
+          {
+            "value": 2,
+            "name": "invalid"
+          },
+          {
+            "value": 3,
+            "name": "valid"
+          },
+          {
+            "value": 4,
+            "name": "io-error"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:ambient_light_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "proximity_status",
+        "unit": "{code}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "unavailable",
+            "nodata": true
+          },
+          {
+            "value": 1,
+            "name": "not-fresh"
+          },
+          {
+            "value": 2,
+            "name": "saturated"
+          },
+          {
+            "value": 3,
+            "name": "valid"
+          },
+          {
+            "value": 4,
+            "name": "io-error"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:proximity_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

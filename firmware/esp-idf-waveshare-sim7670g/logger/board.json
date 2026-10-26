@@ -1,0 +1,76 @@
+{
+  "type": "OpenSensorBoard",
+  "board_version": "0.1.0",
+  "board": "waveshare-esp32-s3-sim7670g",
+  "schema": "waveshare-sim7670g-telemetry-v6",
+  "sample_interval_s": 10,
+  "title": "Waveshare ESP32-S3-SIM7670G-4G V2.0 with Plantower PMS5003T and Analog Devices MAX17048",
+  "keywords": [
+    "air quality",
+    "particulate matter",
+    "PM2.5",
+    "air temperature",
+    "relative humidity",
+    "low-cost sensor"
+  ],
+  "local_modules": [
+    "modules/waveshare/module.json"
+  ],
+  "segments": [
+    {
+      "module": "system",
+      "segment": "head"
+    },
+    {
+      "module": "pms5003t",
+      "segment": "core"
+    },
+    {
+      "module": "waveshare",
+      "segment": "pms_identity"
+    },
+    {
+      "module": "pms5003t",
+      "segment": "tail"
+    },
+    {
+      "module": "max17048",
+      "segment": "core"
+    },
+    {
+      "module": "system",
+      "segment": "runtime"
+    },
+    {
+      "module": "system",
+      "segment": "clock_close"
+    },
+    {
+      "module": "pms5003t",
+      "segment": "received"
+    },
+    {
+      "module": "system",
+      "segment": "clock_anchor"
+    },
+    {
+      "module": "system",
+      "segment": "location"
+    },
+    {
+      "module": "max17048",
+      "segment": "v5"
+    },
+    {
+      "module": "battery_health",
+      "segment": "core"
+    }
+  ],
+  "class_subsets": {
+    "clock_status": [
+      "none",
+      "host",
+      "network"
+    ]
+  }
+}

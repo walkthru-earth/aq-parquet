@@ -1,0 +1,80 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "ft6336",
+  "procedure": "m5_touch",
+  "vendor": "FocalTech",
+  "model": "FT6336U",
+  "buses": [
+    "i2c"
+  ],
+  "segments": {
+    "core": [
+      {
+        "name": "touch_points",
+        "unit": "{count}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:touch_point_count",
+        "opensensor:aggregate": "maximum",
+        "firmware": {
+          "type": "Int32",
+          "unit": "count",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "touch_x_px",
+        "unit": "{pixel}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:touch_x_position",
+        "opensensor:valid_when": {
+          "column": "touch_x_px",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          319
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "pixel",
+          "validity": "touch_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "touch_y_px",
+        "unit": "{pixel}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:touch_y_position",
+        "opensensor:valid_when": {
+          "column": "touch_y_px",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          239
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "pixel",
+          "validity": "touch_present",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

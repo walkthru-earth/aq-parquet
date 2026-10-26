@@ -1,0 +1,86 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "battery_health",
+  "procedure": "battery_health",
+  "buses": [],
+  "status": {
+    "column": "battery_health_state"
+  },
+  "segments": {
+    "core": [
+      {
+        "name": "battery_health_state",
+        "unit": "{code}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "unknown",
+            "nodata": true
+          },
+          {
+            "value": 1,
+            "name": "external-power-likely"
+          },
+          {
+            "value": 2,
+            "name": "ok"
+          },
+          {
+            "value": 3,
+            "name": "low"
+          },
+          {
+            "value": 4,
+            "name": "critical"
+          },
+          {
+            "value": 5,
+            "name": "settling"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_health_state",
+        "opensensor:valid_when": {
+          "column": "battery_health_state",
+          "finite": true
+        },
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "battery_installed",
+          "live_key": "bstate",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_minutes_to_empty",
+        "unit": "min",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_time_to_empty",
+        "opensensor:valid_when": {
+          "column": "battery_minutes_to_empty",
+          "finite": true
+        },
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          10080
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "min",
+          "validity": "battery_soc_trusted_discharging_within_7_days",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

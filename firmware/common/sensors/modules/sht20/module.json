@@ -1,0 +1,66 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "sht20",
+  "procedure": "sht20_unresolved",
+  "vendor": "Sensirion",
+  "model": "SHT20",
+  "buses": [
+    "i2c"
+  ],
+  "segments": {
+    "core": [
+      {
+        "name": "ambient_temperature_c",
+        "unit": "Cel",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "air_temperature",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0023/",
+        "opensensor:valid_when": {
+          "column": "ambient_temperature_c",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          -40,
+          125
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "degC",
+          "validity": "unavailable",
+          "live_key": "t",
+          "decimals": 2
+        }
+      },
+      {
+        "name": "relative_humidity_percent",
+        "unit": "%",
+        "roles": [
+          "physicalMeasurement"
+        ],
+        "cf:standard_name": "relative_humidity",
+        "opensensor:property": "http://vocab.nerc.ac.uk/collection/P07/current/CFSN0413/",
+        "opensensor:valid_when": {
+          "column": "relative_humidity_percent",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          100
+        ],
+        "firmware": {
+          "type": "Float",
+          "unit": "%",
+          "validity": "unavailable",
+          "live_key": "rh",
+          "decimals": 1
+        }
+      }
+    ]
+  }
+}
