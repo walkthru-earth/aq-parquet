@@ -7,6 +7,7 @@ the firmware.
 """
 import asyncio
 import contextlib
+import hashlib
 import io
 import binascii
 from pathlib import Path
@@ -32,6 +33,11 @@ GOLDEN_LIST_END_V2 = bytes.fromhex("11" + "7011" + "0100" + "0066ed00" + "000400
 GOLDEN_EVENT = bytes.fromhex("78000000070000000302ffff00000200")
 GOLDEN_DIAG = bytes.fromhex("4c0200" + "0000" + "0500" + "0000" + "0100" + "0000" * 13 + "01") + GOLDEN_EVENT
 GOLDEN_BYE = bytes.fromhex("4b0104030201f5ff0300100e0000")
+# GET_DESCRIPTOR offset 512 length 1024, and the header of the 0x4f chunk
+# that answers it on a 1300 byte template, byte for byte from the protocol doc.
+GOLDEN_GET_DESCRIPTOR = bytes.fromhex("11" "00020000" "0004")
+GOLDEN_DESCRIPTOR_CHUNK_HEADER = bytes.fromhex("4f" "14050000" "00020000")
+DESCRIPTOR = b'{"type":"Feature","id":"template","x":"' + b"a" * 1259 + b'"}'
 GOLDEN_ABORTED_IDLE = bytes.fromhex("4d00")
 GOLDEN_ABORTED_READ = bytes.fromhex("4d03")
 # LIST_SINCE request and LIST_SINCE_END, byte for byte from the protocol doc.
@@ -62,6 +68,15 @@ class FakeClient:
         self.handle = 0
         self.drop_frame = drop_frame
         self.mtu_size = 517
+        # GET_DESCRIPTOR: served bytes (None answers ERROR 17), the frame
+        # budget, offsets whose first reply is lost (or every reply when
+        # descriptor_drop_always), and a stale chunk sent ahead of the reply.
+        self.descriptor = DESCRIPTOR
+        self.descriptor_budget = 512
+        self.descriptor_drop = set()
+        self.descriptor_drop_always = False
+        self.descriptor_stale = False
+        self.descriptor_requests = []
 
     async def start_notify(self, _uuid, callback):
         self.callback = callback
@@ -152,6 +167,29 @@ class FakeClient:
         elif op == ble.OP_GET_DIAG:
             assert len(data) == 1, data
             self.emit(GOLDEN_DIAG)
+        elif op == ble.OP_GET_DESCRIPTOR:
+            # Mirrors firmware encode_descriptor_chunk, error for error.
+            self.descriptor_requests.append(bytes(data))
+            if len(data) != 7:
+                self.emit(bytes([ble.F_ERROR, op, 1]) + b"descriptor")
+                return
+            if self.descriptor is None:
+                self.emit(bytes([ble.F_ERROR, op, 17]))
+                return
+            offset, length = struct.unpack_from("<IH", data, 1)
+            total = len(self.descriptor)
+            if length == 0 or offset >= total:
+                self.emit(bytes([ble.F_ERROR, op, 1 if length == 0 else 6]))
+                return
+            if offset in self.descriptor_drop:
+                if not self.descriptor_drop_always:
+                    self.descriptor_drop.discard(offset)
+                return
+            if self.descriptor_stale and offset:
+                self.emit(bytes([ble.F_DESCRIPTOR_CHUNK]) + struct.pack("<II", total, 0) + self.descriptor[:4])
+            count = min(length, total - offset, self.descriptor_budget - ble.DESCRIPTOR_HEADER)
+            self.emit(bytes([ble.F_DESCRIPTOR_CHUNK]) + struct.pack("<II", total, offset)
+                      + self.descriptor[offset:offset + count])
         elif op == ble.OP_ABORT:
             assert len(data) == 1, data
             if self.reading:  # a stopped READ ends with ERROR 16, then ABORTED names it
@@ -282,6 +320,89 @@ async def run():
     await run_lan()
     await run_lan_snapshot_deadlines()
     await run_lan_bye()
+    await run_descriptor()
+
+
+def descriptor_offsets(client):
+    return [struct.unpack_from("<I", request, 1)[0] for request in client.descriptor_requests]
+
+
+async def run_descriptor():
+    """GET_DESCRIPTOR chunking, re-request, stale drop, hash check and ERROR 17."""
+    assert len(DESCRIPTOR) == 1300
+    assert struct.pack("<BIH", ble.OP_GET_DESCRIPTOR, 512, 1024) == GOLDEN_GET_DESCRIPTOR
+    assert struct.pack("<BII", ble.F_DESCRIPTOR_CHUNK, 1300, 512) == GOLDEN_DESCRIPTOR_CHUNK_HEADER
+    digest = hashlib.sha256(DESCRIPTOR).hexdigest()
+    info = {"desc": digest[:16]}
+    for budget in (512, 1024):
+        client = FakeClient()
+        client.descriptor_budget = budget
+        session = ble.Session(client)
+        await session.start()
+        data = await session.descriptor()
+        assert data == DESCRIPTOR, (budget, len(data))
+        step = budget - ble.DESCRIPTOR_HEADER
+        assert descriptor_offsets(client) == list(range(0, len(DESCRIPTOR), step)), descriptor_offsets(client)
+        assert ble.check_descriptor(data, info, digest.upper()) == digest
+
+    # A lost reply costs one re-request of the same offset, a stale chunk is dropped.
+    client = FakeClient()
+    client.descriptor_budget = 1024
+    client.descriptor_drop = {600}
+    client.descriptor_stale = True
+    session = ble.Session(client)
+    session.frame_timeout = 0.05
+    await session.start()
+    assert await session.descriptor(length=600) == DESCRIPTOR
+    assert descriptor_offsets(client) == [0, 600, 600, 1200], descriptor_offsets(client)
+
+    # A reply lost every time gives up after DESCRIPTOR_TRIES requests.
+    client = FakeClient()
+    client.descriptor_drop = {0}
+    client.descriptor_drop_always = True
+    session = ble.Session(client)
+    session.frame_timeout = 0.05
+    await session.start()
+    try:
+        await session.descriptor()
+    except ble.ProtocolError as error:
+        assert "deadline" in str(error), error
+    else:
+        raise AssertionError("a reply lost every time must raise")
+    assert descriptor_offsets(client) == [0] * ble.DESCRIPTOR_TRIES
+
+    # An unconfigured board answers ERROR 17, never a retry.
+    client = FakeClient()
+    client.descriptor = None
+    session = ble.Session(client)
+    await session.start()
+    try:
+        await session.descriptor()
+    except ble.ProtocolError as error:
+        assert "no-descriptor" in str(error), error
+    else:
+        raise AssertionError("ERROR 17 must raise")
+    assert len(client.descriptor_requests) == 1
+
+    # The command writes the exact device bytes after the info desc check.
+    client = FakeClient()
+    client.disconnect = AsyncMock()
+    session = ble.Session(client)
+    await session.start()
+    session.info = AsyncMock(return_value=info)
+    with tempfile.TemporaryDirectory() as tmp, \
+            patch.object(ble, "connect", AsyncMock(return_value=(client, session))), \
+            contextlib.redirect_stdout(io.StringIO()) as out:
+        target = Path(tmp) / "nested" / "template.json"
+        await ble.cmd_descriptor(SimpleNamespace(out=target, expect=digest))
+        assert target.read_bytes() == DESCRIPTOR
+    assert f"sha256={digest}" in out.getvalue() and client.disconnect.await_count == 1, out.getvalue()
+
+    expect_protocol_error(lambda: ble.check_descriptor(DESCRIPTOR + b" ", info), "does not start with")
+    expect_protocol_error(lambda: ble.check_descriptor(DESCRIPTOR, {}), "no 16 hex desc")
+    expect_protocol_error(lambda: ble.check_descriptor(DESCRIPTOR, info, "0" * 64), "expected")
+    print("PASS ble_sync GET_DESCRIPTOR: golden request and header, 512 and 1024 budgets, "
+          "re-request after a lost reply, stale chunk dropped, retry limit, ERROR 17, hash check")
 
 
 async def run_auth_refused():
