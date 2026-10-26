@@ -70,19 +70,24 @@ RETIRED = (
     ("CMake variable", re.compile(r"\b" + OLD + r"_(SOURCE_ROOT|SOURCE_ROOT_REAL|NIMBLE_PATCH_DIR|PATCH_PROGRAM)\b")),
     # Build, script and toolchain names moved in #111 Phases 2b and 2c, with
     # no alias. The pattern also matches after -D. The Arduino era cache path
-    # in dated CoreS3 notes stays, so only the SDK toolchain path is retired,
-    # and M5_TOOLCHAIN_ROOT only where code reads or sets it.
+    # and the `$M5_TOOLCHAIN_ROOT` prose in dated CoreS3 notes stay, so only
+    # the SDK toolchain path is retired, and M5_TOOLCHAIN_ROOT only where code
+    # reads or sets it, quotes it as a name, or builds a path from it.
     (
         "build variable",
         re.compile(
             r"(?<![A-Za-z0-9])" + OLD + r"_(REPO|BENCH|VARIANT|SDKCONFIG_OVERLAY|TOOLCHAIN_ROOT|IDF_TOOLS_PATH|IDF_PATH"
             r"|APP_SIGNING_KEY|APP_SIGNING_SCHEME|GATE_TASK_TIMEOUT|FIELDS_INC|SYNC_ROM_CRC|REPRO_KEEP"
             r"|FAKE_SOURCE|FAKE_ESPTOOL_MODE)\b|-D" + OLD + r"_(FIELDS_INC|SYNC_ROM_CRC)\b"
-            r"|\bM5_TOOLCHAIN_ROOT(:-|=|\})"
+            r"|\bM5_TOOLCHAIN_ROOT(:-|=|\})|[\"']M5_TOOLCHAIN_ROOT[\"']"
+            r"|\$\{?M5_TOOLCHAIN_ROOT\}?/(?!toolchains/arduino)"
         ),
     ),
     ("build manifest", re.compile(r"\b" + "aq" + r"-build-(sha256\.json|target\.txt)")),
-    ("toolchain cache", re.compile(r"\.cache/m5stack-" + "aq" + r"-parquet(?!/toolchains/arduino)")),
+    (
+        "toolchain cache",
+        re.compile(r"(\.cache|XDG_CACHE_HOME[^/]*)/m5stack-" + "aq" + r"-parquet(?!/toolchains/arduino)"),
+    ),
     ("pixi project name", re.compile(r"^name = \"" + "aq" + r"-parquet\"")),
 )
 # Build and environment names. Their new form is in the development guide,
