@@ -9,6 +9,59 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. Board template over GET_DESCRIPTOR 0x11 and `info.desc` (fix/87-get-descriptor, issue #87)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that reads `info.desc` and knows opcode `0x11`. The firmware identity moves to
+`idf-cores3-parquet-v6.17` and `idf-waveshare-parquet-v2.11`. Both `dict`
+digests and both `desc` digests are unchanged, so files, LIVE profiles and
+cached templates keep working.
+
+**What changed.**
+
+- `info` (BLE `info` characteristic and LAN `HELLO`) gains `"desc"`, the first
+  16 hex characters of the board descriptor digest, right after `"dict"`. It is
+  always present. The whole document stays under 400 bytes.
+- New opcode `0x11` `GET_DESCRIPTOR` over BLE and LAN. The request is the
+  opcode, then `offset` u32 and `length` u16, little-endian, 7 bytes in all.
+- New frame `0x4F` `DESCRIPTOR_CHUNK`, `total` u32, `offset` u32, then up to
+  `min(length, total − offset, payload_max − 9)` template bytes. That is at
+  most 503 bytes over BLE and 1015 over LAN. The board only sends it as the
+  reply to a `GET_DESCRIPTOR`, never unsolicited.
+- New error code 17, no descriptor, for an image built without a template.
+  Other failures reuse codes the app knows. `ERROR` 1 `detail="descriptor"`
+  for a request that is not 7 bytes, `ERROR` 1 `detail="length"` for length 0,
+  `ERROR` 6 `detail="offset"` for an offset at or past `total`, `ERROR` 7
+  `detail="mtu"` when the link budget cannot hold a byte.
+
+**Why.** The app needs the board template (the `OpenSensorTemplate` JSON) to describe
+a station without a network. The board already carries it in flash, and now
+serves it.
+
+**What the app must do.**
+
+1. Read `info.desc`. If the app already holds a template whose SHA-256 starts
+   with that prefix, skip the download.
+2. Otherwise download by request, one chunk per request. Send offset 0, take
+   `total` from the reply, then ask for the next missing offset until all
+   `total` bytes are in. The board keeps no state between requests, so a lost
+   or late reply costs one more request for the same offset, and any missing
+   range can be asked for again later. Drop a chunk whose offset the app did
+   not ask for, and start over if `total` changes.
+3. Hash the exact bytes, without a trailing NUL and without reformatting. The
+   full `desc` is the SHA-256 of these bytes. The template cannot carry its own
+   hash, so check the hex digest twice. First its first 16 characters must
+   equal `info.desc`. Then the full 64 hex must equal the template SHA-256 the
+   app trusts, from the Parquet footer or the `file:checksum` of the template
+   link on the station Collection. Discard the bytes on any mismatch.
+4. Treat `ERROR` 17 as a board with no template and fall back to a bundled
+   copy, such as the published file in [`docs/shared/templates`](templates/README.md)
+   whose SHA-256 is the board `desc` (#86). Treat `ERROR` 7 `detail="mtu"` as a link to retry after a larger MTU.
+
+The host tool does the same with
+`pixi run ble-sync descriptor --out <file>`, and with `--expect <64 hex>` for
+the full check.
+
 ## Board templates published byte exact (fix/86-publish-templates, issue #86)
 
 **App update needed, no reflash.** Nothing on the board, BLE or LAN changes.
