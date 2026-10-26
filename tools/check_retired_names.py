@@ -11,10 +11,12 @@ Matched names (old form, see docs/shared/mobile-migration.md for the new one)
   GATT service name      the old service display name
   NVS namespaces         the old config and coredump namespaces
   Kconfig symbols        the old logger and runtime symbols, with or without CONFIG_
-  serial tags            a line tag at a line start or after a quote or backtick
+  serial tags            a line tag at a line start, after a quote or backtick,
+                         or anywhere inside a string literal
 
-History is exempt. The dated bench records, the migration log, the #93 audit
-and the sdkconfig.rename maps name the old forms on purpose.
+History is exempt. The dated bench records, the migration log and the #93
+audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
+old Kconfig name is retired everywhere else.
 
 Exit 0 when clean, 1 with one path:line per finding, 2 when the repo cannot be
 listed. tools/lint.sh fails on anything but 0.
@@ -40,7 +42,13 @@ RETIRED = (
     ("GATT service name", re.compile(OLD + " Sync")),
     ("NVS namespace", re.compile(r"\b" + "aq" + r"(cfg|dump)\b")),
     ("Kconfig symbol", re.compile(r"\b(CONFIG_)?" + OLD + r"_(LOGGER_WORKER_WDT|LOGGER_BENCH_STALL|LOG_PERSIST_|PM_DFS_)")),
-    ("serial tag", re.compile("(^|[\"'`])" + OLD + r" [A-Z][A-Z_]+")),
+    # A tag at a line start or right after a quote, or anywhere inside a
+    # string literal. Inside a literal the word needs 3 letters (or is TF), so
+    # the ISO 3166 list with Antarctica ("AO AQ AR") stays quiet.
+    (
+        "serial tag",
+        re.compile("(^|[\"'`])" + OLD + r" [A-Z][A-Z_]+|[\"'`][^\"'`]*\b" + OLD + r" ([A-Z][A-Z_]{2,}|TF)\b"),
+    ),
 )
 # History that names the old forms on purpose.
 EXEMPT = {
@@ -49,8 +57,6 @@ EXEMPT = {
     "docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md",
     "docs/shared/stac-contract/firmware-audit.md",
     "docs/shared/stac-contract/firmware-audit-review.md",
-    "firmware/common/logger/sdkconfig.rename",
-    "firmware/common/runtime/sdkconfig.rename",
 }
 SKIP_SUFFIXES = {".lock", ".png", ".jpg", ".jpeg", ".gif", ".bin", ".elf", ".parquet", ".pdf", ".zip"}
 

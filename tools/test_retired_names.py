@@ -23,6 +23,9 @@ FIRES = [
     "if line.startswith('" + OLD + " LIVE'):",
     "Look for `" + OLD + " BOOT` in the log.",
     OLD + " WIFI connected",
+    "std::printf(\"%s " + OLD + " READY\\n\", prefix);",
+    "ESP_LOGI(kTag, \"boot " + OLD + " TF mounted\");",
+    "log('[' + now + '] " + OLD + " OWNER_PIN set')",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -35,6 +38,9 @@ QUIET = [
     "PARQUET LIST ok",
     "aq_logger.cpp and " + OLD + "_BENCH stay, only wire names moved.",
     "#ifndef " + OLD + "_SHARED_H",
+    "constexpr char kIso[] = \"AN AO " + OLD + " AR AS\";",
+    "Tested near " + OLD + " READY state in prose without a literal.",
+    "printf(\"%s OS READY\\n\", prefix);",
 ]
 
 

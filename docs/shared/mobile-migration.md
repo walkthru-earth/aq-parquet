@@ -42,17 +42,30 @@ keep working. The firmware identity moves to `idf-cores3-parquet-v6.16` and
 | Serial and LOG_TAIL tags | `AQ BOARD`, `AQ CONFIG`, `AQ DIAG`, `AQ ERROR`, `AQ GAUGE`, `AQ MEMORY`, `AQ OWNER_PIN`, `AQ PMS`, `AQ READY`, `AQ TF`, `AQ WIFI_PROFILE` | `OS BOARD`, `OS CONFIG`, `OS DIAG`, `OS ERROR`, `OS GAUGE`, `OS MEMORY`, `OS OWNER_PIN`, `OS PMS`, `OS READY`, `OS TF`, `OS WIFI_PROFILE` |
 | DIAG task names | `aq-lan`, `aq-board`, `aq-wdt`, `aq-diagnostic` | `os-lan`, `os-board`, `os-wdt`, `os-diagnostic` |
 | DIAG BLE error key | `aq_ble_error` | `os_ble_error` |
-| Kconfig symbols | `CONFIG_AQ_LOGGER_WORKER_WDT*`, `CONFIG_AQ_LOGGER_BENCH_STALL`, `CONFIG_AQ_LOG_PERSIST_*`, `CONFIG_AQ_PM_DFS_*` | `CONFIG_OS_` with the same suffix, mapped by each component's `sdkconfig.rename` |
+| Kconfig symbols | `CONFIG_AQ_LOGGER_WORKER_WDT*`, `CONFIG_AQ_LOGGER_BENCH_STALL`, `CONFIG_AQ_LOG_PERSIST_*`, `CONFIG_AQ_PM_DFS_*` | `CONFIG_OS_` with the same suffix, no rename shim, an old saved value is dropped and the default applies |
 | Release image names | `aq_cores3-bringup-<tag>.bin`, `aq_waveshare-logger-<tag>.bin` | `opensensor_cores3-bringup-<tag>.bin`, `opensensor_waveshare-logger-<tag>.bin` |
 | Firmware identity | `idf-cores3-parquet-v6.15`, `idf-waveshare-parquet-v2.9` | `idf-cores3-parquet-v6.16`, `idf-waveshare-parquet-v2.10` |
 
 `PARQUET ...` serial lines keep their names.
 
 **The `oscfg` namespace starts empty.** Nothing is copied from `aqcfg`, so
-after the reflash the board has no sync token, no Wi-Fi profiles, no location
-and no NTP settings, and the pairing mode and PIN go back to the first boot
-default. Provision all of them again and pair again, as on a new board. The
-station UUID and the saved codec live in `parquet` and stay.
+after the reflash the board loses every stored setting, the pairing mode and
+PIN, the display flag, Wi-Fi on, the SSID and password, the `lan.on` switch
+(back to its default of on), the LAN sync token, the sensor identity
+(`sensor.vendor`, `sensor.model`, `sensor.serial`, `sensor.batch_candidate`),
+the location and the NTP settings. The pairing mode, PIN and display flag go
+back to the first boot default. Until the sensor identity is set again,
+Waveshare files carry no sensor identity and `pm25_batch_candidate_status`
+stays 0, disabled. Provision all of them again and pair again, as on a new
+board. The station UUID and the saved codec live in `parquet` and stay.
+
+**Pair again cleanly.** Bonds survive the reflash and the phone may cache the
+old GATT table, so forget the board in the phone's Bluetooth settings and send
+`ble.clear_bonds=1` before pairing again.
+
+**The old namespaces stay in flash.** The firmware never reads or erases
+`aqcfg` and `aqdump`, so they still hold the old Wi-Fi password and LAN token.
+Only a full flash erase removes them, and that also erases the station UUID.
 
 **Why.** The product is OpenSensor. The owner dropped backward compatibility on
 2026-10-26, so the wire and stored names move now instead of carrying two

@@ -63,12 +63,19 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 ```
 
 Keep the `parquet` station namespace, keys and value types. Since v2.10 (#93)
-settings live in the `oscfg` namespace, which starts empty after the reflash.
-Nothing is copied from the old namespace, so the sync token, the pairing mode
-and PIN, Wi-Fi profiles, location and NTP settings must be provisioned again.
-Existing Arduino-era BLE
-bond compatibility requires qualification and may need phone re-pairing; do
-not erase station identity or settings. Never write eFuses or format TF.
+settings live in the `oscfg` namespace and nothing is copied from the old one.
+It starts empty after that reflash, so the pairing mode and PIN, the display
+flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its default
+of on), the LAN sync token, the sensor identity (`sensor.vendor`,
+`sensor.model`, `sensor.serial`, `sensor.batch_candidate`), the location and
+the NTP settings must be provisioned again, as on a new board. Until the sensor
+identity is set again, Waveshare files carry no sensor identity and
+`pm25_batch_candidate_status` stays 0, disabled. Bonds survive the reflash and
+the phone may cache the old GATT table, so forget the board in the phone's
+Bluetooth settings and send `ble.clear_bonds=1` before pairing again. The old
+settings and crash log namespaces stay in flash with the old Wi-Fi password and
+LAN token, and only a full flash erase removes them. Do not erase station
+identity or settings. Never write eFuses or format TF.
 
 ## Native board ownership and qualification
 

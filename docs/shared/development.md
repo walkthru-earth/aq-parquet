@@ -127,8 +127,9 @@ capabilities from hooks, `ServiceConfig` and sdkconfig defaults instead.
 `tools/check_retired_names.py` then fails on any tracked file that still names
 a retired AQ wire, NVS, Kconfig or serial name from before #93, such as the old
 mDNS service, LAN handshake, GATT base UUID, NVS namespaces, `AQ_` Kconfig
-symbols or `AQ <WORD>` serial tags. The dated bench records, the migration log,
-the #93 audit and the `sdkconfig.rename` maps are history and stay exempt.
+symbols or `AQ <WORD>` serial tags. The dated bench records, the migration log
+and the #93 audit are history and stay exempt. No `sdkconfig.rename` shim maps
+the old Kconfig names, so a saved sdkconfig value under an old name is dropped.
 `retired-names-test` covers the rule.
 
 ### Source paths
