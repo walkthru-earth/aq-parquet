@@ -8,7 +8,7 @@ backup/
 .claude/
 .code-review-graph/
 
-# Firmware SDKs live in $M5_TOOLCHAIN_ROOT outside the repo, but ignore these
+# Firmware SDKs live in $OS_TOOLCHAIN_ROOT outside the repo, but ignore these
 # defensively in case a tool ever writes one here.
 .toolchains/
 

@@ -1,8 +1,10 @@
 [workspace]
 authors = ["Youssef Harby <yharby@walkthru.earth>"]
 channels = ["conda-forge"]
-name = "aq-parquet"
+name = "opensensor-space-firmware"
 platforms = ["osx-arm64", "linux-64"]
+# CI pins the same pixi in setup-pixi (pixi-version).
+requires-pixi = ">=0.83.0"
 version = "0.1.0"
 
 [tasks]
@@ -189,12 +191,11 @@ jsonschema = "==4.26.0"
 rfc3986-validator = "==0.1.1"
 
 [activation.env]
-# Firmware SDKs are large and are not conda packages, so the project bootstraps
-# them itself into one pinned cache that every git worktree shares. Override
-# this to relocate them. Nothing here is ever written inside the repo.
-AQ_TOOLCHAIN_ROOT = "$HOME/.cache/m5stack-aq-parquet/toolchains"
-# Legacy override remains accepted by both trial scripts.
-M5_TOOLCHAIN_ROOT = "$HOME/.cache/m5stack-aq-parquet/toolchains"
+# Firmware SDKs are large and are not conda packages, so tools/idf-env.sh
+# bootstraps them into one pinned cache that every git worktree shares, by
+# default ${XDG_CACHE_HOME:-~/.cache}/$PIXI_WORKSPACE_NAME/toolchains. That
+# default lives in the script, not here, because activation.env outranks the
+# outside environment and would make OS_TOOLCHAIN_ROOT impossible to override.
 # macOS system zoneinfo remains valid if a Pixi environment is moved with a
 # worktree; Python's compiled default path can still point at its old location.
 PYTHONTZPATH = "/usr/share/zoneinfo"

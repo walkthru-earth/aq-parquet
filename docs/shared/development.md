@@ -8,7 +8,9 @@ OSLogger, OSLocation and `power`) belong to [`firmware/common`](../../firmware/c
 
 ## Host and toolchain
 
-Host dependencies are pinned in root `pixi.toml` and `pixi.lock`. Start with
+Host dependencies are pinned in root `pixi.toml` and `pixi.lock`. The manifest
+sets `requires-pixi = ">=0.83.0"` and CI runs pixi **0.83.0**, so an older pixi
+stops with a clear error. Start with
 `pixi install`; run host and firmware commands through `pixi run`. Add host
 packages with `pixi add`. The SDK is installed separately by the pinned
 `tools/setup-idf.sh`; `tools/idf.sh` enters its own Python/compiler environment
@@ -45,14 +47,34 @@ resolution. The Waveshare diagnostic variant keeps its own in
 and [netif/SNTP manual](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/api-reference/network/esp_netif_programming.html)
 when changing integrations.
 
-SDK downloads use `$AQ_TOOLCHAIN_ROOT`, default
-`~/.cache/m5stack-aq-parquet/toolchains`; legacy `$M5_TOOLCHAIN_ROOT` is accepted.
-`AQ_IDF_PATH` and `AQ_IDF_TOOLS_PATH` can select an already installed checkout
-and SDK tools directory; the wrapper still enforces the exact source commit.
-SDK compiler/Python tools default to the official shared `~/.espressif`;
-`AQ_IDF_TOOLS_PATH` overrides that tools directory.
+`tools/idf-env.sh` derives every SDK path for `idf-setup` and the build
+wrappers from values pixi sets (`PIXI_WORKSPACE_NAME`, `PIXI_WORKSPACE_ROOT`,
+see the [pixi environment variables](https://pixi.sh/latest/reference/environment_variables/)).
+Large downloads are shared by every checkout and worktree. State bound to one
+checkout's Python stays in that checkout.
+
+| State | Scope | Default | Override |
+| --- | --- | --- | --- |
+| ESP-IDF source clone | Shared | `${XDG_CACHE_HOME:-~/.cache}/opensensor-space-firmware/toolchains` | `OS_TOOLCHAIN_ROOT`, or `OS_IDF_PATH` for one checkout |
+| SDK compilers and tools | Shared | `~/.espressif` | `OS_IDF_TOOLS_PATH` |
+| Pixi host environment | Per checkout | `.pixi/envs/default` | pixi config |
+| ESP-IDF Python venv | Per checkout | `.pixi/idf-python-env/idf<X.Y>_py<X.Y>_env` | `OS_IDF_PYTHON_ENV_PATH` |
+
+The wrapper still enforces the exact source commit for any `OS_IDF_PATH`. A venv
+links to the interpreter that created it, so each checkout owns one, and
+`tools/idf.sh` rebuilds it with the SDK's own `idf_tools.py install-python-env`
+when it is missing or its Python link is dangling. A new worktree needs no
+manual step. The venv path never reaches the image, `repro-paths` checks that.
 Each board owns its sdkconfig defaults, partitions and manifest dependencies.
 Sharing a download cache does not make a sibling board a dependency.
+
+The `[cache]` table and `PIXI_CACHE_DIR` move only pixi's own package caches,
+see [pixi configuration](https://pixi.sh/latest/reference/pixi_configuration/).
+Users who need those elsewhere set either one in their own pixi config, never
+in this repo. The ESP-IDF cache is not a pixi cache. It follows
+`XDG_CACHE_HOME` or `OS_TOOLCHAIN_ROOT`. Defaults live in `tools/idf-env.sh`
+rather than `[activation.env]`, because activation values outrank the outside
+environment and would make these overrides impossible.
 
 Board wrappers verify dictionary/vendor hashes and generated ESP32-S3 flash,
 PSRAM and partition configuration. Build output is ephemeral under
@@ -224,7 +246,7 @@ and by hand from the Actions tab (`workflow_dispatch`).
   commands locally before changing a workflow.
 - **Host gate** runs `pixi run gate --keep-going` on Ubuntu with the locked
   Pixi environment. Each task runs under GNU `timeout` from the Pixi
-  `coreutils` pin, 300 s by default (`AQ_GATE_TASK_TIMEOUT` overrides it), and
+  `coreutils` pin, 300 s by default (`OS_GATE_TASK_TIMEOUT` overrides it), and
   a stalled task is reported as `TIMEOUT` by name in the gate summary. The
   gate refuses to start when a `*-test` task in `pixi.toml` is missing from its
   list, except the two SDK fixtures the board job runs.
@@ -237,7 +259,7 @@ and by hand from the Actions tab (`workflow_dispatch`).
   saved from the cores3 leg alone, so pull requests never evict the `main`
   entries. `waveshare-psram-build` stays a manual SDK fixture.
 - Each board job uploads its `idf.py size --format json2` report and
-  `aq-build-sha256.json` as the `size-<board>` artifact, and the ELF, map and
+  `os-build-sha256.json` as the `size-<board>` artifact, and the ELF, map and
   `flash_args` as `firmware-<board>`. Both are kept 90 days for `main` builds
   and 7 days otherwise. The job summary shows a size table. For a pull request
   the change is measured against the green build of its base commit, else
@@ -250,7 +272,7 @@ and by hand from the Actions tab (`workflow_dispatch`).
 - **Reproducible image paths** runs `repro-paths-check waveshare logger`. It
   builds that image in two git worktrees of the commit at paths of different
   length, with `SOURCE_DATE_EPOCH` set to the commit time, and fails unless
-  every file in the two `aq-build-sha256.json` manifests matches, the app,
+  every file in the two `os-build-sha256.json` manifests matches, the app,
   bootloader, partition table, OTA data, `sdkconfig` and flash arguments. The
   compiler database and project description hold absolute paths by design and
   are left out. On a failure it names the file, the count of differing bytes
@@ -393,14 +415,14 @@ Run these from the repository root.
 3. Write `secrets/.env`. The key path is relative to `secrets/`.
 
    ```sh
-   printf 'AQ_APP_SIGNING_KEY=app_signing_key.pem\nAQ_APP_SIGNING_SCHEME=rsa3072\n' > secrets/.env
+   printf 'OS_APP_SIGNING_KEY=app_signing_key.pem\nOS_APP_SIGNING_SCHEME=rsa3072\n' > secrets/.env
    chmod 600 secrets/.env
    ```
 
    | Variable | Meaning |
    | --- | --- |
-   | `AQ_APP_SIGNING_KEY` | Required. File name of the PEM private key inside `secrets/` |
-   | `AQ_APP_SIGNING_SCHEME` | Optional. `rsa3072`, the default and the only accepted value |
+   | `OS_APP_SIGNING_KEY` | Required. File name of the PEM private key inside `secrets/` |
+   | `OS_APP_SIGNING_SCHEME` | Optional. `rsa3072`, the default and the only accepted value |
 
    The file takes `NAME=VALUE` lines, an optional `export` prefix, `#`
    comments and optional quotes. Nothing else is read from it.
@@ -426,7 +448,7 @@ For each input it runs `espsecure sign-data --version 2` to
 result. It then writes `<out>/SHA256SUMS` in `sha256sum` format. It refuses to
 run when
 
-- `secrets/.env` is missing or does not set `AQ_APP_SIGNING_KEY`
+- `secrets/.env` is missing or does not set `OS_APP_SIGNING_KEY`
 - git tracks any path under `secrets/`
 - `secrets/`, `secrets/.env` or the key is open to group or other
 - the key is outside `secrets/`, password protected or not an RSA-3072 key
