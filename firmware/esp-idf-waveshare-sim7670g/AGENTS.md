@@ -6,9 +6,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
 
 - Use `pixi run idf-setup`, `pixi run waveshare-build [logger|diagnostic]`
   and the backup-gated `waveshare-flash` task. No Arduino APIs or components.
-  Native v2.15 has a dated USB Parquet readback from 2026-10-26 in the board
-  bench record. Earlier Arduino image results remain historical and require
-  native readback to extend.
+  See the newest dated USB Parquet readback in the board bench record, at
+  this writing native v2.15 on 2026-10-26. Earlier Arduino image results
+  remain historical and require native readback to extend.
 - Exact board: ESP32-S3-SIM7670G-4G **V2.0**, ESP32-S3R8 rev0.2, 16 MB Quad
   flash and 8 MB Octal PSRAM. OPI was qualified by an allocated-region memory
   test. Preserve UART0 console through CH343; USB CDC is not the console.

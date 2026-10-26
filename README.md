@@ -2,7 +2,7 @@
 
 ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have a native ESP-IDF application and separate hardware documentation. Application source uses no Arduino APIs or Arduino component. Both applications implement writing real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
 
-Each board owns its pins, peripherals, schema and acquisition callbacks. Five opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding/drivers (**OSCommon**), settings/logging (**OSRuntime**), radios and sync (**OSConnectivity**), the sampling/storage worker (**OSLogger**), and official H3 geometry (**OSLocation**). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
+Each board owns its pins, peripherals, schema and acquisition callbacks. Seven opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding and the Parquet writer (**OSCommon**), bus agnostic sensor drivers (**OSSensors**), settings/logging (**OSRuntime**), radios and sync (**OSConnectivity**), the sampling/storage worker (**OSLogger**), official H3 geometry (**OSLocation**) and the pure battery health classifier (`power`). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
 
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
@@ -15,8 +15,8 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 
 | Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
-| [CoreS3 v6.9](firmware/esp-idf-cores3/README.md) | 81 columns; native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified; phone transfers/endurance remain unqualified; [bench record](docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback) |
-| [Waveshare logger v2.7](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns; native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Native image requires bench qualification; earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md) |
+| [CoreS3 v6.21](firmware/esp-idf-cores3/README.md) | 81 columns, schema `cores3-telemetry-v6`, dictionary `cores3-telemetry-v7`. Native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified, newest on v6.21 on 2026-10-26. Phone transfers and endurance remain unqualified. [Bench record](docs/boards/m5stack-cores3/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
+| [Waveshare logger v2.15](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns, schema `waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`. Native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Short native USB/SD readback, newest on v2.15 on 2026-10-26. Phone transfers and endurance remain unqualified. Earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
 
 Both source adapters implement the existing offline archive, configuration, BLE
 and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields, new schemas
@@ -28,8 +28,9 @@ remains future board work. See the [component map](firmware/common/README.md).
 Automatic time tries router DHCP option 42, configured local NTP hosts, then
 permitted public fallback. RTC and phone anchors remain available offline.
 Location is unset until explicit provisioning: the mobile app sends an H3 cell
-at a configurable precision (default maximum resolution 5), firmware derives
-its center, and optional owner-declared country is included in Parquet metadata.
+at a configurable precision (default maximum resolution 8), firmware derives
+its center, and an optional owner-declared country stays in the device settings.
+Since #88 the file footer carries no location or country, the rows hold the cell.
 Location changes split immutable files. See [time and location](docs/shared/time-and-location.md).
 
 The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.26** and
@@ -46,7 +47,7 @@ to their recorded Arduino images and do not establish native hardware behavior.
 [Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe
 later host/cloud work; dictionaries do not claim SensorThings API compliance.
 
-An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v2. The codec choice is saved in NVS and survives a reboot. Persistent Thing identity and UTC-aligned Hive partitions use:
+An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v3. The codec choice is saved in NVS and survives a reboot. Persistent Thing identity and UTC-aligned Hive partitions use:
 
 ```text
 output/thing=<UUID>/year=YYYY/month=MM/day=DD/

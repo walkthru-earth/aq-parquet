@@ -1,7 +1,7 @@
 # Reusable firmware modules
 
-The common tree contains six opt-in native ESP-IDF components: **OSCommon**,
-**OSSensors**, **OSRuntime**, **OSConnectivity**, **OSLogger** and **OSLocation**. The target is ESP32-S3 with
+The common tree contains seven opt-in native ESP-IDF components, **OSCommon**,
+**OSSensors**, **OSRuntime**, **OSConnectivity**, **OSLogger**, **OSLocation** and `power`. The target is ESP32-S3 with
 ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
 math plus the actual status/provisioning helpers remain host-testable. Boards
 own peripheral initialization and consume only the required components.
@@ -55,7 +55,7 @@ own PR with the reason and both board builds green.
 | Cap | Where | What it bounds | What a new board must check |
 | --- | --- | --- | --- |
 | `kMaxColumns = 96` | `src/parquet_writer.h` | Columns per file, including the four required runtime fields. Sizes the PSRAM writer workspace (`kMaxRowGroups` x 96 chunk records) and the `Row` type | `begin()` refuses a dictionary over 96 fields. Count every column, including runtime counters, and leave room for appended fields, since positions are never reused |
-| `cadence::kMaxBatchRows = 90` | `logger/src/aq_logger_cadence.h` | Rows in one RAM batch, which is one row group and the loss window on reset. Footer `row_group_rows_max` | Rows per group are the rotation window divided by `Config::sample_interval_ms`, at most 90. A file holds at most `kMaxRowGroups = 8` groups (720 rows), so a fast period with a long window closes several files per window. The period must pass `cadence::valid_sample_interval()`, 1 s to 300 s and a divisor of 300 s |
+| `cadence::kMaxBatchRows = 90` | `logger/src/aq_logger_cadence.h` | Rows in one RAM batch, which is one row group and the loss window on reset. Footer `file.row_group_rows_max` | Rows per group are the rotation window divided by `Config::sample_interval_ms`, at most 90. A file holds at most `kMaxRowGroups = 8` groups (720 rows), so a fast period with a long window closes several files per window. The period must pass `cadence::valid_sample_interval()`, 1 s to 300 s and a divisor of 300 s |
 | 480 byte STATUS and LIVE JSON | `ble::kMaxJson` in `connectivity/src/ble_sync.h` | Each snapshot, so one BLE frame (512) and MTU 483 carry it | Add up every `live_key` of the board at its widest value. A LIVE document that does not fit is not published at all, never truncated. Prove the worst case with a host test like `logger-live-test` |
 | `footer::kMaxJsonBytes = 4096` | `logger/src/aq_logger_footer.h` | The one `opensensor` footer value, compact JSON per stac-opensensor `footer.json` v0.1.0 | The board strings (`acquisition.config` above all) must keep the JSON under 4096 bytes. A footer that does not fit fails the file closed with `footer-overflow`, never truncated. CoreS3 writes 1663 bytes and Waveshare 2287. The contract tests print the length |
 | BLE name at most 11 characters | `ble::wire::kMaxLocalName` in `connectivity/src/ble_advert.h` | Prefix plus four device id characters, so the full service UUID fits the legacy scan response | `Config::ble_name_prefix` is 1 to 7 characters of `[A-Za-z0-9-]`. Required, with no default in `firmware/common`. The mDNS host is the name in lower case. CoreS3 and Waveshare pass `OS-` (`OS-xxxx`, `os-xxxx`). The current app filters its scan with `AQ-`, so it must scan by the GATT service UUID or learn each new prefix, see [mobile-migration.md](../../docs/shared/mobile-migration.md) |
@@ -117,8 +117,8 @@ row group is fsynced, but unfinished RAM rows can be lost and power-cut durabili
 requires board measurements.
 
 Both current board logger adapters consume OSLogger. CoreS3 retains M5Unified,
-its 81-column v4 dictionary, SPI/display arbitration and optional BM8563 hooks.
-Waveshare supplies its 62-column PMS5003T v5 dictionary and one-bit SDMMC adapter,
+its 81-column `cores3-telemetry-v6` schema with dictionary v7, SPI/display arbitration and optional BM8563 hooks.
+Waveshare supplies its 62-column PMS5003T `waveshare-sim7670g-telemetry-v6` schema with dictionary v7 and one-bit SDMMC adapter,
 with no RTC hook in this image. Its retained diagnostic consumes common/runtime for the parser and physical
 console, without starting the logger or radio services. Source integration does not transfer hardware measurements between
 boards; use each board's bench record for the deployed image and tested scope.
@@ -137,8 +137,8 @@ OSLocation vendors unmodified official H3 4.5.0 with verified hashes. OSRuntime
 stores one coherent location record containing only the coarsened cell, cap and
 optional owner-declared ISO country. OSLogger captures it at acquisition and
 splits batches/files when it changes. Four nullable fields carry the cell,
-actual resolution and derived center in 1e-7 degrees; metadata records country
-and policy. The [time/location contract](../../docs/shared/time-and-location.md)
+actual resolution, location source and the cell centre as a WKB Point. Since #88
+the file footer carries no location or country. The [time/location contract](../../docs/shared/time-and-location.md)
 describes mobile provisioning and NTP restrictions.
 
 Physical serial owner/provisioning commands are documented in [OSLogger](logger/README.md).

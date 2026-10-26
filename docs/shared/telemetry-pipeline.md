@@ -2,8 +2,9 @@
 
 
 > **Board scope:** OSCommon/OSLogger implement the shared pipeline for both native
-> ESP-IDF 6.1 board adapters. CoreS3 uses an 81-column v4 schema; Waveshare
-> V2 uses its 62-column PMS5003T v5 schema. Schema identities and hardware
+> ESP-IDF 6.1 board adapters. CoreS3 v6.21 uses the 81-column `cores3-telemetry-v6`
+> schema and Waveshare V2 v2.15 the 62-column PMS5003T `waveshare-sim7670g-telemetry-v6`
+> schema, both with dictionary v7. Schema identities and hardware
 > acquisition remain board-owned. Dated SD/throughput results below are historical
 > Arduino image evidence. A [short native CoreS3 readback](../boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback)
 > passed; Waveshare, native endurance and durability remain pending.

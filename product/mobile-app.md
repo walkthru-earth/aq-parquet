@@ -40,7 +40,7 @@ flowchart TD
 ```
 
 - Device adapters declare sensors, protocols, update methods and recovery steps. No universal firmware or phone-flashing promise.
-- Prefer preconfigured hardware. Updates require model checks, verified images and backups, adequate power and tested recovery. Follow the [CoreS3 safety sequence](../AGENTS.md#do-not-brick-the-board) for this trial; no eFuse writes.
+- Prefer preconfigured hardware. Updates require model checks, verified images and backups, adequate power and tested recovery. Follow the [CoreS3 safety sequence](../AGENTS.md#before-any-physical-flash-write) for this trial; no eFuse writes.
 - Pairing requires proof of ownership; a QR label or shared Wi-Fi alone is insufficient. Include lost-phone recovery and credential revocation.
 - Location is optional and private, with indoor/outdoor context and effective dates. Unknown location prevents spatial sharing, not logging.
 

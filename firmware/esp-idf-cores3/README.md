@@ -4,7 +4,8 @@ The current source is a pure **ESP-IDF 6.1** application, firmware identity
 **`idf-cores3-parquet-v6.21`**, with an **81-column** CoreS3 schema
 `cores3-telemetry-v6` and dictionary `cores3-telemetry-v7`. The original 77
 columns retain their order and types. Four nullable location fields follow,
-`h3_cell_id`, `h3_resolution`, `location_source` and the WKB Point `geometry`. Since v6.12 the two UTC instants are `event_time_utc_us` and
+`h3_cell_id`, `h3_resolution`, `location_source` and the WKB Point `geometry`.
+Since v6.12 the two UTC instants are `event_time_utc_us` and
 `clock_anchor_utc_us`, INT64 microseconds annotated `TIMESTAMP(MICROS, UTC)`,
 and every leaf carries Parquet `field_id` = its 1-based dictionary position
 (see [mobile migration](../../docs/shared/mobile-migration.md)). Each `FIELD`
