@@ -1,159 +1,76 @@
-# aq-parquet
+# opensensor-space-firmware
 
-ESP32-S3 air-quality firmware with reusable sampling, Parquet, settings, Bluetooth and Wi-Fi/LAN synchronization. The **M5Stack CoreS3** and **Waveshare ESP32-S3-SIM7670G-4G V2.0** each have a native ESP-IDF application and separate hardware documentation. Application source uses no Arduino APIs or Arduino component. Both applications implement writing real measurements directly to microSD as Parquet; host tools retrieve and validate the files without conversion.
+OpenSensor firmware is native ESP-IDF firmware for ESP32-S3 Things. A Thing
+samples its sensors every 10 seconds, writes immutable Parquet files straight to
+its microSD card and syncs them to a phone or laptop over BLE or the local
+network, with no internet needed. The firmware is board and sensor neutral.
+Each board app plugs its sensors in through logger hooks and a field
+dictionary, and reuses the shared components in
+[`firmware/common/`](firmware/common/README.md). Air quality is sensor set 1,
+the first set of measurements the boards ship with.
 
-Each board owns its pins, peripherals, schema and acquisition callbacks. Seven opt-in ESP-IDF components under [`firmware/common/`](firmware/common/README.md) provide encoding and the Parquet writer (**OSCommon**), bus agnostic sensor drivers (**OSSensors**), settings/logging (**OSRuntime**), radios and sync (**OSConnectivity**), the sampling/storage worker (**OSLogger**), official H3 geometry (**OSLocation**) and the pure battery health classifier (`power`). Both logger adapters consume these components. Shared contracts live in `docs/shared/`; wiring and measured evidence live in `docs/boards/<board>/`.
+## Status
 
-- `AGENTS.md` is the entry point for humans and coding agents.
-- `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
-- `product/` holds the [mobile app workflows](product/mobile-app.md), [architecture and privacy](product/mobile-architecture.md), and [Bluetooth SQL idea](product/bluetooth-parquet.md); these are proposals, not implemented features.
-- The [board options](product/board-options.md) page ranks ESP32-S3 boards for an outdoor Thing with LoRa, solar charging, an RTC and an SD card.
-- The [community extension shortlist](product/community-extension-shortlist.md) maps DuckDB candidates to these product ideas, with adoption limits and source references.
-- `firmware/<framework>-<variant>/` holds each self-contained trial.
+This table is the single source of truth for board versions. Other docs link
+here instead of repeating them.
 
-## Current status
+| Board app | Firmware | Schema and dictionary | Columns | Sensor set 1 | Hardware evidence |
+| --- | --- | --- | --- | --- | --- |
+| [M5Stack CoreS3](firmware/esp-idf-cores3/README.md) | v6.21 | `cores3-telemetry-v6`, `cores3-telemetry-v7` | 81 | Optional M134 (PMSA003), onboard IMU, light, RTC and power | Short native USB and SD readback on 2026-10-26. [Bench record](docs/boards/m5stack-cores3/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
+| [Waveshare ESP32-S3-SIM7670G-4G V2](firmware/esp-idf-waveshare-sim7670g/README.md) | v2.15 | `waveshare-sim7670g-telemetry-v6`, `waveshare-sim7670g-telemetry-v7` | 62 | PMS5003T with temperature and humidity, MAX17048 battery gauge | Short native USB and SD readback on 2026-10-26. [Bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
 
-| Native firmware | Measurements and board adapter | Hardware evidence |
-| --- | --- | --- |
-| [CoreS3 v6.21](firmware/esp-idf-cores3/README.md) | 81 columns, schema `cores3-telemetry-v6`, dictionary `cores3-telemetry-v7`. Native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified, newest on v6.21 on 2026-10-26. Phone transfers and endurance remain unqualified. [Bench record](docs/boards/m5stack-cores3/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
-| [Waveshare logger v2.15](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns, schema `waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`. Native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Short native USB/SD readback, newest on v2.15 on 2026-10-26. Phone transfers and endurance remain unqualified. [Newest bench entry](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26), earlier Arduino image results remain in the same record |
+Phone transfers, endurance and power-cut durability remain unqualified on both
+boards. The firmware proves on-device Parquet is feasible, not that it is
+production durable. See [security hardening](docs/shared/security-hardening.md)
+for the open limits.
 
-Both source adapters implement the existing offline archive, configuration, BLE
-and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields, new schemas
-append four nullable location fields (h3_cell_id, h3_resolution, location_source, geometry). It retains persistent config NVS keys and types, and flash partition
-offsets. The Thing id lives in NVS `parquet/thing`, and the old `parquet/station` key stays in flash unread. Existing BLE bond compatibility is not guaranteed; native bonded
-reconnect or re-pairing needs a hardware check. Cellular/GNSS/camera integration
-remains future board work. See the [component map](firmware/common/README.md).
-
-Automatic time tries router DHCP option 42, configured local NTP hosts, then
-permitted public fallback. RTC and phone anchors remain available offline.
-Location is unset until explicit provisioning: the mobile app sends an H3 cell
-at a configurable precision (default maximum resolution 8), firmware derives
-its center, and an optional owner-declared country stays in the device settings.
-Since #88 the `opensensor` footer key carries no location or country, the rows hold the cell.
-Location changes split immutable files. See [time and location](docs/shared/time-and-location.md).
-
-The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.26** and
-**M5GFX 0.2.33** for CoreS3, **mDNS 1.14.0** for connectivity, and **led_strip
-3.1.0~1** for Waveshare; vendored LZ4 remains 1.10.0 and H3 is pinned to 4.5.0.
-Pins were checked on **2026-10-16** and track the latest stable releases. The
-[development guide](docs/shared/development.md#host-and-toolchain) records the
-pin policy. [ESP-IDF 6.1 documentation](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html)
-and [development workflow](docs/shared/development.md) describe the native build.
-[Native board/fixture builds and host gates passed on 2026-10-09](docs/shared/development.md#native-migration-validation-2026-10-09).
-CoreS3 also passed a [short native hardware readback](docs/boards/m5stack-cores3/bench-verified.md#board-1-first-native-esp-idf-flash-and-readback); Waveshare remains unqualified on hardware.
-Historical footprint, throughput and durability observations below apply only
-to their recorded Arduino images and do not establish native hardware behavior.
-[Iceberg/OGC decisions](docs/shared/table-and-observation-model.md) describe
-later host/cloud work; dictionaries do not claim SensorThings API compliance.
-
-An eight-row queue feeds a separate storage task and a bounded PSRAM batch. Default rotation is **15 minutes / up to 90 rows**, configurable to **10 minutes / up to 60 rows** or (firmware v6) **30 / 60 minutes with two / four 90-row row groups per file**. The writer emits immutable Parquet without an Arrow runtime, with **LZ4_RAW** (default) and **UNCOMPRESSED** codecs, per-column min/max statistics `TIMESTAMP(MICROS, UTC)` on the UTC fields and a stable Parquet `field_id` on every column for Apache Iceberg v3. The codec choice is saved in NVS and survives a reboot. Persistent Thing identity and UTC-aligned Hive partitions use:
-
-```text
-output/thing=<UUID>/year=YYYY/month=MM/day=DD/
-  data_HHMM_<boot>_<first>-<last>-<attempt>.parquet
-```
-
-Measured on one board/card: a full automatic 60-row batch was **28,059 bytes** and finalized in **122 ms**, with no recorded drops or missed deadlines. A later full **90-row uncompressed Hive file was 39,869 bytes** and also passed both readers with zero recorded health errors. See the dated [bench record](docs/boards/m5stack-cores3/bench-verified.md) for image identities and scope, and the [compression experiment](docs/boards/m5stack-cores3/compression-benchmark.md) for codec comparisons.
-
-**What the evidence establishes:** direct on-device Parquet is feasible for this workload and its files interoperate with PyArrow/DuckDB without host conversion. On the same 60 rows, three LZ4 comparisons produced **14,080-byte files versus 28,537 bytes uncompressed (50.7% smaller)** and **93.0 ms versus 118.4 ms median finalization (21.4% faster)**. That supports choosing LZ4 for this tested logger; it is not a claim of superiority over every format, card, codec or cloud architecture. Filesystem allocated space, energy use and production durability have not been compared.
-
-Offline logging needs no internet. The measured 60-row LZ4 rate projects to about **2.03 MB/day / 0.74 GB/year before filesystem overhead** at ten-minute rotation. A 32 GB card therefore offers multi-year storage capacity in principle, not a guaranteed card or battery lifetime. [Capacity assumptions and future synchronization](docs/shared/telemetry-pipeline.md#offline-capacity-and-reconnection) explain allocation-unit overhead, power, clock drift and the uploader that still needs to be built.
-
-**Feasibility, not production durability:** unfinished RAM rows are lost on reset; interrupted partial files are quarantined at boot but not repaired. The [security and production-hardening boundary](docs/shared/security-hardening.md) documents implemented controls and unimplemented protections. Power-cut recovery, upload, cloud compaction and Iceberg remain open; Snappy/Zstd results are host-only. UTC comes from an explicit host anchor, successful native SNTP callback, or CoreS3 RTC restore, without a measured accuracy guarantee. CoreS3 can restore its earlier estimate from its RTC; Waveshare needs a new host or network anchor after reboot. Until an anchor exists, files use `unsynced/boot=<boot>/` with null UTC. Unsupported measurements remain null; the Waveshare PMS5003T supplies ambient temperature/humidity. Camera/audio streams are outside these scalar loggers.
-
-## Getting started
-
-Choose the [CoreS3](firmware/esp-idf-cores3/README.md) or
-[Waveshare V2](firmware/esp-idf-waveshare-sim7670g/README.md) adapter. Build through
-Pixi and ESP-IDF from the command line:
+## Quick start
 
 ```sh
 pixi install
 pixi run idf-setup
 pixi run cores3-build
 pixi run waveshare-build              # logger
-pixi run waveshare-build diagnostic   # retained UART/read-only TF fixture
+pixi run waveshare-build diagnostic   # UART and read-only TF fixture
+pixi run gate                         # host gate, the same one CI runs
 ```
 
-Before any physical flash write, follow [AGENTS.md](AGENTS.md#before-any-physical-flash-write)
-on the exact board and checked serial port, in this order:
+Before any physical flash write, follow the
+[flash checklist in AGENTS.md](AGENTS.md#before-any-physical-flash-write) on the
+exact board and checked serial port. The
+[development guide](docs/shared/development.md) covers the toolchain, the flash
+tasks and every gate.
 
-```sh
-pixi run ports
-pixi run chip --port <checked-port>
-pixi run flash-id --port <checked-port>
-pixi run efuse --port <checked-port>
-pixi run backup --board <board> --port <checked-port>
-ls -l backup/   # confirm the full backup is exactly 16777216 bytes
-```
+## Where to read next
 
-Use `m5stack-cores3` or `waveshare-sim7670g-v2` for `<board>`. The chip command
-can reset a running app. Flash tasks require both the checked port and the
-matching full backup; they flash the verified build without erasing NVS:
-
-```sh
-pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
-pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin
-```
-
-After native flashing, qualify serial startup, sensor/null behavior, SD writes,
-clock transition and immutable USB/BLE/LAN readback on each board before
-claiming native hardware behavior. Host tools retain their protocol:
-
-```sh
-pixi run parquet-device sync-time --port <checked-port>
-pixi run parquet-device command --port <checked-port> 'parquet status'
-pixi run parquet-device command --port <checked-port> 'parquet list'
-pixi run parquet-test --sanitize
-```
-
-Only one host process owns a serial port at a time. Keep retained binaries,
-captures and fetched files in the selected trial's ignored `artifacts/`, outside
-the rebuildable `build/`; full-card owner copies belong in ignored `exports/`.
-
-The SDK installer uses `$AQ_TOOLCHAIN_ROOT`, default
-`~/.cache/m5stack-aq-parquet/toolchains`; `$M5_TOOLCHAIN_ROOT` remains accepted
-for the existing shared cache. The firmware wrapper isolates ESP-IDF Python and
-compiler tools from pinned Pixi host validators. See the [development guide](docs/shared/development.md).
-
-## Hardware
-
-Current boards: [M5Stack CoreS3](docs/boards/m5stack-cores3/README.md) (K128, 16 MB flash, 8 MB Quad PSRAM) and [Waveshare ESP32-S3-SIM7670G-4G V2](docs/boards/waveshare-esp32-s3-sim7670g/README.md) (16 MB flash, 8 MB OPI PSRAM, PMS5003T on GPIO1/2). Sensor modules are optional; the standalone PMS5003T and M134/PMSA003 have different frame data and are documented separately.
+- [AGENTS.md](AGENTS.md) is the entry point for people and coding agents.
+- [Documentation router](docs/README.md) explains Things, board apps and sensor
+  sets, and routes to every shared contract and board reference.
+- [Board porting](docs/shared/board-porting.md) shows how a new board plugs in
+  its sensors.
+- [Telemetry pipeline](docs/shared/telemetry-pipeline.md) covers sampling,
+  nulls, Parquet, rotation, Hive paths and offline capacity.
+- [Sync protocol](docs/shared/ble-sync-protocol.md) is the BLE and LAN wire
+  contract.
+- [Time and location](docs/shared/time-and-location.md) covers router and local
+  NTP, RTC anchors and private H3 location.
+- [Product notes](product/) hold proposals such as the mobile app and board
+  options. They are not implemented features.
 
 ## License and attribution
 
-Licensed under [CC BY 4.0](LICENSE), matching other Walkthru.Earth repositories.
+Our work is licensed under [CC BY 4.0](LICENSE), like other Walkthru.Earth
+repositories. Third-party code keeps its own license and notices. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and ship it with any firmware
+binary you distribute.
 
-The CC BY 4.0 license covers only original Walkthru.Earth work. Third-party code
-keeps its own license and notices, including vendored
-[LZ4 1.10.0](firmware/common/vendor/lz4/README.md) (BSD-2-Clause), vendored
-[Uber H3 4.5.0](firmware/common/location/vendor/h3/NOTICE) (Apache-2.0), the
-[esp-nimble host patch](firmware/common/vendor/esp-nimble/README.md) (Apache-2.0), and the
-ESP-IDF, toolchain and managed components linked into firmware images. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full list and ship it
-with any firmware binary you distribute.
+**If you use any of this work, you must credit us visibly**, for example in
+your README, documentation, about screen or paper. A buried source comment does
+not count. State what you changed. Attribution does not imply we endorse your
+project. Minimum credit.
 
-**If you use any of this work, you must credit us visibly.** Attribution belongs
-somewhere a reader actually sees it, such as your README, your documentation, your
-about screen, or your paper. A buried comment in source does not count.
-
-Minimum credit.
-
-> Based on [walkthru-earth/aq-parquet](https://github.com/walkthru-earth/aq-parquet)
+> Based on [walkthru-earth/opensensor-space-firmware](https://github.com/walkthru-earth/opensensor-space-firmware)
 > by Walkthru.Earth, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-BibTeX.
-
-```bibtex
-@software{walkthru_aq_parquet,
-  author  = {Youssef Harby, Myagmarjargal Mendbayar},
-  title   = {aq-parquet: ESP32-S3 air-quality Parquet firmware},
-  year    = {2026},
-  url     = {https://github.com/walkthru-earth/aq-parquet},
-  license = {CC-BY-4.0},
-  note    = {Walkthru.Earth}
-}
-```
-
-State what you changed if you modified the work. Attribution does not imply we endorse your project.
+To cite it in a paper, use [CITATION.cff](CITATION.cff). GitHub shows it as
+APA and BibTeX under "Cite this repository".
