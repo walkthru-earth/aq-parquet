@@ -53,7 +53,7 @@ const ble_uuid128_t uuids[] = {native_uuid(1), native_uuid(2), native_uuid(3),
 enum Characteristic : unsigned { Info, Status, Live, Control, Response, Count };
 static_assert(Count <= PendingCccd::kMax, "every CCCD restore must fit");
 char name_text[16]{};
-char info_text[400]{};
+char info_text[kMaxInfo]{};
 char status_text[kMaxJson + 1] = "{}", live_text[kMaxJson + 1] = "{}";
 std::size_t status_length = 2, live_length = 2;
 portMUX_TYPE snapshot_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -1043,7 +1043,8 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
            const Options &link_options) {
   if (!handler || startup_done || !identity.station || !identity.device ||
       !identity.boot || !identity.schema || !identity.dictionary_sha256 ||
-      !identity.firmware || !valid_options(link_options))
+      !identity.firmware || !identity.descriptor_sha256 ||
+      !valid_options(link_options))
     return false;
   options = link_options;
   request_handler = handler;
@@ -1052,16 +1053,7 @@ bool begin(const Identity &identity, config::PairMode pairing_mode,
   // Leave enough legacy scan-response space for the complete service UUID.
   if (!wire::local_name(name_text, identity.name_prefix, identity.device))
     return false;
-  const int info_length = std::snprintf(
-      info_text, sizeof(info_text),
-      "{\"proto\":%u,\"fw\":\"%s\",\"schema\":\"%s\",\"cols\":%u,"
-      "\"dict\":\"%s\",\"station\":\"%s\",\"dev\":\"%s\","
-      "\"boot\":\"%s\",\"max_read\":%lu}",
-      unsigned(kProtocolVersion), identity.firmware, identity.schema,
-      identity.columns, identity.dictionary_sha256, identity.station,
-      identity.device, identity.boot, static_cast<unsigned long>(kMaxRead));
-  if (info_length < 0 ||
-      static_cast<std::size_t>(info_length) >= sizeof(info_text))
+  if (!wire::build_info(info_text, identity))
     return false;
   const auto boot_length = std::strlen(identity.boot);
   boot16 = static_cast<std::uint16_t>(std::strtoul(

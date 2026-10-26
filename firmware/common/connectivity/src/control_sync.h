@@ -2,6 +2,8 @@
 
 #include "ble_sync.h"
 
+#include <span>
+
 namespace ossync {
 // Synchronous worker-side replies; may wrap the same BLE/LAN response adapters
 // used by ArchiveSession. A reply can block on transport back-pressure, so this
@@ -12,10 +14,13 @@ struct ControlReplies {
   bool (*respond)(void *, ble::Link, const std::uint8_t *,
                   std::size_t) = nullptr;
   bool (*error)(void *, ble::Link, ble::Op, ble::Error, const char *) = nullptr;
+  // The board template GET_DESCRIPTOR serves, without its NUL. It must live
+  // in .rodata for the program's lifetime. Empty answers ERROR no-descriptor.
+  std::span<const char> descriptor{};
 };
 
-// Executes GET/SET_CONFIG, LOG_TAIL, GET_DIAG, idle ABORT, GET_TOKEN and busy
-// WIFI_SCAN replies.
+// Executes GET/SET_CONFIG, LOG_TAIL, GET_DIAG, idle ABORT, GET_TOKEN,
+// GET_DESCRIPTOR and busy WIFI_SCAN replies.
 // Clock, STATUS, flush and reboot remain runtime operations. One command worker
 // owns this service and config writes; returns false for a runtime operation.
 bool handle_common_control(const ble::ControlRequest &request,

@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstring>
+#include <expected>
 #include <span>
 
 namespace ble::wire {
@@ -128,6 +129,86 @@ inline constexpr std::size_t kNameDeviceChars = 4;
     out[i] = c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
   }
   return true;
+}
+
+enum class InfoError : std::uint8_t {
+  Missing,  // a required identity string is null or desc is under 16 hex
+  Overflow, // the JSON and its NUL do not fit `out`
+};
+
+// Characters of desc that info carries. The full 64 hex value is inside the
+// template GET_DESCRIPTOR serves.
+inline constexpr std::size_t kInfoDescChars = 16;
+
+// The info JSON shared by the BLE info characteristic and the LAN HELLO.
+// Returns the length without the NUL that always follows it. Built with
+// appends, no snprintf, so the 400 byte cap is checked in one place.
+[[nodiscard]] inline std::expected<std::size_t, InfoError>
+build_info(std::span<char> out, const Identity &identity) {
+  const char *strings[] = {identity.firmware,
+                           identity.schema,
+                           identity.dictionary_sha256,
+                           identity.descriptor_sha256,
+                           identity.station,
+                           identity.device,
+                           identity.boot};
+  for (const char *text : strings)
+    if (!text)
+      return std::unexpected(InfoError::Missing);
+  if (std::strlen(identity.descriptor_sha256) < kInfoDescChars)
+    return std::unexpected(InfoError::Missing);
+  std::size_t used = 0;
+  bool fits = true;
+  const auto append = [&](const char *text, std::size_t length) {
+    if (!fits || length >= out.size() - used) {
+      fits = false;
+      return;
+    }
+    std::memcpy(out.data() + used, text, length);
+    used += length;
+  };
+  const auto literal = [&](const char *text) {
+    append(text, std::strlen(text));
+  };
+  const auto number = [&](std::uint32_t value) {
+    char digits[10];
+    std::size_t count = 0;
+    do {
+      digits[sizeof(digits) - 1 - count++] =
+          static_cast<char>('0' + value % 10);
+      value /= 10;
+    } while (value);
+    append(digits + sizeof(digits) - count, count);
+  };
+  if (out.empty())
+    return std::unexpected(InfoError::Overflow);
+  literal("{\"proto\":");
+  number(kProtocolVersion);
+  literal(",\"fw\":\"");
+  literal(identity.firmware);
+  literal("\",\"schema\":\"");
+  literal(identity.schema);
+  literal("\",\"cols\":");
+  number(identity.columns);
+  literal(",\"dict\":\"");
+  literal(identity.dictionary_sha256);
+  literal("\",\"desc\":\"");
+  append(identity.descriptor_sha256, kInfoDescChars);
+  literal("\",\"station\":\"");
+  literal(identity.station);
+  literal("\",\"dev\":\"");
+  literal(identity.device);
+  literal("\",\"boot\":\"");
+  literal(identity.boot);
+  literal("\",\"max_read\":");
+  number(kMaxRead);
+  literal("}");
+  if (!fits) {
+    out[0] = '\0';
+    return std::unexpected(InfoError::Overflow);
+  }
+  out[used] = '\0';
+  return used;
 }
 
 constexpr std::uint16_t response_capacity(std::uint16_t negotiated_mtu) {

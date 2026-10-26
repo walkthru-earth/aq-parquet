@@ -1759,7 +1759,9 @@ ossync::ArchiveSession archive_session(
      },
      [](void *) { stamp_heartbeat(); }});
 
-const ossync::ControlReplies control_replies{
+// begin() points `descriptor` at config.descriptor (.rodata) once the config
+// validates, before any link starts. The worker only reads it afterwards.
+ossync::ControlReplies control_replies{
     nullptr, [](void *, ble::Link) { return link_payload_max(); },
     [](void *, ble::Link, const std::uint8_t *frame, std::size_t length) {
       return respond(frame, length);
@@ -2963,6 +2965,7 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       std::strlen(config.descriptor) != config.descriptor_bytes ||
       !sha256_hex(config.descriptor_sha256))
     return false;
+  control_replies.descriptor = {config.descriptor, config.descriptor_bytes};
   sample_us = cadence::period_us(config.sample_interval_ms);
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = config.fields[i];
@@ -3188,15 +3191,16 @@ void poll() {
 bool start_links(bool display_detected) {
   if (!accepting)
     return false;
-  static const ble::Identity identity{.station = station_text,
-                                      .device = device_text,
-                                      .boot = boot_text,
-                                      .schema = config.schema_name,
-                                      .columns = unsigned(field_count),
-                                      .dictionary_sha256 =
-                                          config.dictionary_sha256,
-                                      .firmware = config.firmware,
-                                      .name_prefix = config.ble_name_prefix};
+  static const ble::Identity identity{
+      .station = station_text,
+      .device = device_text,
+      .boot = boot_text,
+      .schema = config.schema_name,
+      .columns = unsigned(field_count),
+      .dictionary_sha256 = config.dictionary_sha256,
+      .firmware = config.firmware,
+      .descriptor_sha256 = config.descriptor_sha256,
+      .name_prefix = config.ble_name_prefix};
   return ossync::begin(identity, enqueue_request, display_detected, sync_config)
       .ble_started;
 }

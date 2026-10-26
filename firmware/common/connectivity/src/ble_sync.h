@@ -30,6 +30,9 @@ constexpr std::uint16_t kMaxFrame = 512;
 constexpr std::size_t kMaxJson = 480;
 static_assert(kMaxJson + 16 <= kMaxFrame,
               "JSON characteristic exceeds GATT cap");
+// info JSON buffer, NUL included. The BLE info characteristic and the LAN
+// HELLO frame (4 + kMaxInfo) both size from it, see wire::build_info().
+constexpr std::size_t kMaxInfo = 400;
 
 // Shared snapshot notification policy. The full value remains available by
 // long read when it cannot fit the negotiated ATT notification payload.
@@ -58,6 +61,9 @@ enum Op : std::uint8_t {
   // Opcodes and frame types are separate number spaces. LIST_SINCE shares
   // 0x10 with the FILE frame, which is never sent to the device.
   kOpListSince = 0x10,
+  // Read-only board template download, one chunk per request
+  // (descriptor_chunk.h). The reply is DESCRIPTOR_CHUNK, never unsolicited.
+  kOpGetDescriptor = 0x11,
 };
 enum Frame : std::uint8_t {
   kFrameFile = 0x10,
@@ -83,6 +89,7 @@ enum Frame : std::uint8_t {
   kFrameDiag = 0x4c,
   kFrameAborted = 0x4d,
   kFrameListSinceEnd = 0x4e,
+  kFrameDescriptorChunk = 0x4f,
   kFrameError = 0x7f,
 };
 // Every frame type the device sends, for the uniqueness check below.
@@ -92,7 +99,8 @@ inline constexpr Frame kFrames[] = {
     kFrameConfig,  kFrameWifiAp,  kFrameWifiScanEnd,  kFrameRebooting,
     kFrameLog,     kFrameLogEnd,  kFrameToken,        kFrameHello,
     kFrameStatus,  kFrameLive,    kFrameConfigChunk,  kFrameBye,
-    kFrameDiag,    kFrameAborted, kFrameListSinceEnd, kFrameError,
+    kFrameDiag,    kFrameAborted, kFrameListSinceEnd, kFrameDescriptorChunk,
+    kFrameError,
 };
 consteval bool frames_unique() {
   for (std::size_t i = 0; i < std::size(kFrames); ++i)
@@ -120,6 +128,8 @@ enum Error : std::uint8_t {
   kErrAuth = 14,
   kErrWifiUnavailable = 15,
   kErrAborted = 16,
+  // GET_DESCRIPTOR on a board built without a descriptor.
+  kErrNoDescriptor = 17,
 };
 
 // Advertising service data (protocol v2.1, docs/shared/ble-sync-protocol.md
@@ -168,6 +178,9 @@ struct Identity {
   unsigned columns = 0;
   const char *dictionary_sha256 = nullptr;
   const char *firmware = nullptr;
+  // desc, the 64 hex SHA-256 of the board template. info carries the first
+  // 16 hex; GET_DESCRIPTOR serves the bytes it hashes.
+  const char *descriptor_sha256 = nullptr;
   // Board constant that starts the BLE name. The name is the prefix plus the
   // last four device id characters (OS-6b40 on CoreS3), and the mDNS host is
   // the same text in lower case. Required, see wire::valid_name_prefix().
