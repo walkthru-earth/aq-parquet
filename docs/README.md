@@ -35,6 +35,7 @@ To add a board or a new sensor set, start with
 | Host tooling and shared modules | [Development workflow](shared/development.md), [shared component map](../firmware/common/README.md) |
 | New ESP32-S3 board hooks, shared logger worker, board measurement/RTC hooks and immutable archives | [Board porting](shared/board-porting.md), [OSLogger adapter contract](../firmware/common/logger/README.md) |
 | Sampling, nulls, Parquet, Hive partitions, and offline archives | [Telemetry pipeline](shared/telemetry-pipeline.md) |
+| Proposed sensor plugin model, modules compose a board dictionary (not implemented) | [Sensor plugins](shared/sensor-plugins.md) |
 | Dictionary, observation semantics, and proposed Iceberg workflow | [Table and observation model](shared/table-and-observation-model.md) |
 | Small file sizes, encodings, compaction and range reads | [Small Parquet files](shared/parquet-small-files.md) |
 | Proposed STAC metadata contract, firmware audit and review (research, not implemented) | [STAC contract research](shared/stac-contract/README.md) |

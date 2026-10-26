@@ -6,6 +6,8 @@ controller initialization, power, mount policy, measurements and capabilities.
 Extend hooks or configuration for a new capability. Never branch on a board
 name inside common code or include a sibling trial.
 
+A proposal to compose boards from sensor modules is in [Sensor plugins](sensor-plugins.md).
+
 ## Logger hooks and capabilities
 
 The source contracts are [`aq_logger.h`](../../firmware/common/logger/src/aq_logger.h)
