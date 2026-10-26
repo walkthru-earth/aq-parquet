@@ -63,8 +63,9 @@ checkout's Python stays in that checkout.
 The wrapper still enforces the exact source commit for any `OS_IDF_PATH`. A venv
 links to the interpreter that created it, so each checkout owns one, and
 `tools/idf.sh` rebuilds it with the SDK's own `idf_tools.py install-python-env`
-when it is missing or its Python link is dangling. A new worktree needs no
-manual step. The venv path never reaches the image, `repro-paths` checks that.
+when it is missing, its Python link is dangling, or its `pyvenv.cfg` home is
+not the Pixi Python of the current checkout. A new worktree needs no manual
+step. The venv path never reaches the image, `repro-paths` checks that.
 Each board owns its sdkconfig defaults, partitions and manifest dependencies.
 Sharing a download cache does not make a sibling board a dependency.
 

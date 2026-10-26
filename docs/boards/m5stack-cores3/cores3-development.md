@@ -31,8 +31,9 @@ belong to each board adapter.
   compiles and verifies dictionary/vendor hashes, custom partitions, 16 MB QIO
   flash, Quad PSRAM and USB Serial/JTAG console.
 - SDK source defaults to `$OS_TOOLCHAIN_ROOT`, otherwise
-  `${XDG_CACHE_HOME:-~/.cache}/opensensor-space-firmware/toolchains`. Compiler tools default to official shared `~/.espressif`,
-  and `$OS_IDF_TOOLS_PATH` overrides that directory. The ESP-IDF Python venv
+  `${XDG_CACHE_HOME:-~/.cache}/opensensor-space-firmware/toolchains`.
+  Compiler tools default to official shared `~/.espressif`, and
+  `$OS_IDF_TOOLS_PATH` overrides that directory. The ESP-IDF Python venv
   lives in the checkout under `.pixi/idf-python-env`. The wrapper keeps the SDK
   Python/compiler environment separate from Pixi host validators.
 - C++ `app_main` has C linkage. Use native FreeRTOS tasks, `esp_timer`, UART,

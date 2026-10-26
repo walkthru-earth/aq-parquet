@@ -27,12 +27,21 @@ idf_py_version="$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 export IDF_PYTHON_ENV_PATH="${OS_IDF_PYTHON_ENV_PATH:-${PIXI_WORKSPACE_ROOT:-${repo_root}}/.pixi/idf-python-env/idf${idf_major}.${idf_minor}_py${idf_py_version}_env}"
 
 # Create the IDF venv with the pinned SDK's own installer when it is missing,
-# or when its python is a dangling link (the checkout or its Pixi env moved).
-# idf_tools.py tests the link with os.path.exists and would not notice it.
-# Needs IDF_PATH exported.
+# when its python is a dangling link (the checkout or its Pixi env moved), or
+# when the pyvenv.cfg home is not the bin folder of the python on PATH (a
+# copied checkout, or a venv still bound to another checkout's live Pixi env).
+# tools/idf.sh never runs the installer, so the repair lives here. Needs
+# IDF_PATH exported.
 ensure_idf_python_env() {
   local venv_python="${IDF_PYTHON_ENV_PATH}/bin/python"
-  if [[ -x "${venv_python}" ]] && "${venv_python}" -c '' >/dev/null 2>&1; then
+  local cfg="${IDF_PYTHON_ENV_PATH}/pyvenv.cfg"
+  local want_home venv_home=""
+  want_home="$(dirname "$(command -v python)")"
+  if [[ -f "${cfg}" ]]; then
+    venv_home="$(sed -n 's/^home[[:space:]]*=[[:space:]]*//p' "${cfg}" | head -n 1)"
+  fi
+  if [[ -x "${venv_python}" ]] && [[ "${venv_home}" == "${want_home}" ]] \
+    && "${venv_python}" -c '' >/dev/null 2>&1; then
     return 0
   fi
   if [[ -L "${IDF_PYTHON_ENV_PATH}" ]] || [[ -n "$(ls -A "${IDF_PYTHON_ENV_PATH}" 2>/dev/null)" ]]; then
