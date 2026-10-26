@@ -58,6 +58,22 @@ const char *type_name(telemetry::PhysicalType type) {
     return "INT64";
   case telemetry::PhysicalType::Float:
     return "FLOAT";
+  case telemetry::PhysicalType::ByteArray:
+    return "BYTE_ARRAY";
+  }
+  return "?";
+}
+
+const char *logical_name(telemetry::LogicalType logical) {
+  switch (logical) {
+  case telemetry::LogicalType::None:
+    return "none";
+  case telemetry::LogicalType::TimestampMicrosUtc:
+    return "timestamp_micros_utc";
+  case telemetry::LogicalType::Uint8:
+    return "uint8";
+  case telemetry::LogicalType::Geometry:
+    return "geometry";
   }
   return "?";
 }
@@ -84,13 +100,13 @@ void dump(const FileSummary &file, const IcebergDataFileMetrics *metrics,
   for (size_t c = 0; c < file.column_count; ++c) {
     const auto &column = file.columns[c];
     printf("%s{\"name\":\"%s\",\"type\":\"%s\",\"nullable\":%s,"
-           "\"timestamp_micros_utc\":%s,\"field_id\":%d}",
+           "\"timestamp_micros_utc\":%s,\"logical\":\"%s\",\"field_id\":%d}",
            c ? "," : "", column.name, type_name(column.type),
            column.nullable ? "true" : "false",
            column.logical == telemetry::LogicalType::TimestampMicrosUtc
                ? "true"
                : "false",
-           column.field_id);
+           logical_name(column.logical), column.field_id);
   }
   printf("],\"row_groups\":[");
   for (size_t g = 0; g < file.row_group_count; ++g) {

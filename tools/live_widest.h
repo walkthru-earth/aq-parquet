@@ -50,6 +50,9 @@ inline std::size_t measure(const oslogger::Field *table, std::size_t count,
     case telemetry::PhysicalType::Float:
       row.set(i, entry->number);
       break;
+    case telemetry::PhysicalType::ByteArray:
+      // valid_live_keys above refuses a LIVE key on a byte array column.
+      break;
     }
   }
   assert(keys == widest.size() && "a widest entry names no LIVE key");

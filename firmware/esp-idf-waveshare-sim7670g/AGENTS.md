@@ -43,7 +43,7 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   1-based `telemetry_fields.inc` position, so only append fields. Each `FIELD`
   row ends with its LIVE key ("" stays off LIVE) and its LIVE float decimals, so
   the dictionary digest covers both and any change needs a matching mobile app release. Shared H3 helpers
-  publish only the owner-configured coarsened station cell and its center;
+  publish only the owner-configured coarsened Thing cell and its centre point;
   country is optional and owner-declared. Do not turn on modem GNSS for this.
 - Fixed pairing PIN is random per device. Retrieve it only through the
   explicit physical-serial owner command; never put PIN/PSK/token values in

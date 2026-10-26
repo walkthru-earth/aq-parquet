@@ -39,19 +39,22 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     require(table.column_names == [field["name"] for field in fields], "dictionary order")
     utc_fields = {field["name"] for field in fields if field["unit"] == "us_since_unix_epoch"}
     require(utc_fields == {"event_time_utc_us", "clock_anchor_utc_us"}, "UTC annotation scope")
-    types = {1: pa.int32(), 2: pa.int64(), 4: pa.float32()}
+    types = {1: pa.int32(), 2: pa.int64(), 4: pa.float32(), 6: pa.binary()}
     for field, definition in zip(parquet.schema_arrow, fields, strict=True):
-        expected = pa.timestamp("us", tz="UTC") if field.name in utc_fields else types[definition["type"]]
+        expected = (pa.timestamp("us", tz="UTC") if field.name in utc_fields else
+                    pa.uint8() if definition["unit"] == "uint8_code" else types[definition["type"]])
         require(field.type == expected and field.nullable, f"schema: {field.name}")
         require(field.metadata[b"PARQUET:field_id"] == str(definition["field_id"]).encode(),
                 f"Iceberg field_id: {field.name}")
-    # The one `opensensor` key, valid against the pinned footer.json (#88).
+    # The `opensensor` key, valid against the pinned footer.json (#88), and
+    # the `geo` key with the bbox of the rows (#83).
+    bbox = footer_contract.check_location(path, located)
     dict_sha, desc = footer_contract.board_digests(FIRMWARE)
-    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc)
+    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc, bbox=bbox)
     footer_contract.check_document(footer, dictionary, "waveshare-esp32-s3-sim7670g", compressed=compressed,
                                    rotation=900, row_groups=1)
-    require(dictionary["schema"] == "waveshare-sim7670g-telemetry-v5", "schema identity")
-    require(dictionary["dictionary"] == "waveshare-sim7670g-telemetry-v6", "dictionary identity")
+    require(dictionary["schema"] == "waveshare-sim7670g-telemetry-v6", "schema identity")
+    require(dictionary["dictionary"] == "waveshare-sim7670g-telemetry-v7", "dictionary identity")
     require(parquet.metadata.created_by ==
             f"aq-parquet version 0.1 (build {dictionary['firmware']})", "Waveshare writer identity")
     config = json.loads(footer["acquisition"]["config"])
@@ -85,11 +88,8 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     table = pa.table({name: column.cast(pa.int64()) if name in utc_fields else column
                       for name, column in zip(table.column_names, table.columns, strict=True)})
     for i, row in enumerate(table.to_pylist()):
-        for name, value in (("h3_cell_id", 0x85283473fffffff), ("h3_resolution", 5),
-                            ("h3_center_lat_e7", 373457934), ("h3_center_lon_e7", -1219763760)):
-            require(row[name] == (value if located else None), f"nullable published location: {name}")
         now = 10000000 + i * 10000000
-        require(row["schema_version"] == 5 and row["sequence"] == i, "row identity")
+        require(row["schema_version"] == 6 and row["sequence"] == i, "row identity")
         require(row["monotonic_us"] == now and row["scheduled_us"] == now - 123 and
                 row["sample_jitter_us"] == 123, "synthetic cadence")
         require(row["collection_completed_mono_us"] == now + 1234, "collection completion")
@@ -137,6 +137,9 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             "SELECT * REPLACE (epoch_us(event_time_utc_us) AS event_time_utc_us, "
             "epoch_us(clock_anchor_utc_us) AS clock_anchor_utc_us) "
             "FROM read_parquet(?, hive_partitioning=false)", [str(path)]).to_arrow_table()
+    # check_location compares geometry, which DuckDB presents as GEOMETRY.
+    table = table.drop_columns([footer_contract.GEOMETRY])
+    other = other.drop_columns([footer_contract.GEOMETRY])
     require(table.equals(other, check_metadata=False), "PyArrow/DuckDB values and nulls")
 
 
@@ -180,9 +183,12 @@ def main() -> None:
                                          separators=(",", ":")).encode()).hexdigest()
                 == "01c9db4e628e33367f0bfd594afa10f088d5b1c75d3d64c8616fccdd23654209",
                 "original 52-column prefix changed")
-        require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:56]],
-                                         separators=(",", ":")).encode()).hexdigest()
-                == "10543fa0c92bb9fa2a1ed195fb3030c465dc6c58981d8b7d495c511722233798", "schema v4 56-column prefix changed")
+        # The Thing release (#83) is the field table baseline. Later fields
+        # append only, so this 62-column prefix never changes.
+        thing_baseline = hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:62]],
+                                                   separators=(",", ":")).encode()).hexdigest()
+        require(thing_baseline == "c02fb9a145db666870c571b459ad2e86f862a4a296a70789e664727dc1c7593c",
+                "Thing baseline 62-column prefix changed")
         require([(f["name"], f["type"], f["live"]) for f in fields[56:]] == [
             ("battery_soc_raw_percent", 4, ""), ("battery_charge_rate_percent_per_h", 4, ""),
             ("gauge_status_flags", 1, ""), ("gauge_hibernating", 1, ""),
@@ -204,7 +210,7 @@ def main() -> None:
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.14", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.15", "firmware identity")
         footer_contract.check_board(executable, firmware, dictionary, "waveshare-esp32-s3-sim7670g")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)

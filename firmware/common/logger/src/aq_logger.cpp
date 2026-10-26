@@ -22,6 +22,7 @@
 #include "lz4_codec.h"
 #include "parquet_writer.h"
 #include "storage_governor.h"
+#include "telemetry_logical.h"
 #include "wifi_link.h"
 #include <abort_signal.h>
 #include <archive_files.h>
@@ -77,6 +78,8 @@ Hooks hooks;
 std::size_t field_count = 0;
 std::size_t sequence = 0, event_time_utc_us = 0, clock_epoch = 0;
 std::size_t monotonic_field = 0;
+// The native GEOMETRY column (#83), field_count when the table has none.
+std::size_t geometry_field = 0;
 constexpr std::int32_t kClockNone = opensensor::utc::None;
 constexpr std::int32_t kClockHost = opensensor::utc::Host;
 constexpr std::int32_t kClockRtc = opensensor::utc::Rtc;
@@ -89,6 +92,8 @@ using opensensor::sync::put_u16;
 using opensensor::sync::put_u32;
 using opensensor::utc::days_from_civil;
 constexpr std::size_t kMaxRows = cadence::kMaxBatchRows;
+static_assert(kMaxRows <= telemetry::kLz4PageRows,
+              "the LZ4 page scratch must hold a full RAM batch");
 // Config::sample_interval_ms in microseconds, set once by begin().
 std::int64_t sample_us = cadence::period_us(cadence::kDefaultSampleIntervalMs);
 const char *kDirectory = "/sd/output";
@@ -137,9 +142,10 @@ struct WriterState {
   std::uint8_t crc_scratch[kCrcScratchBytes]{};
   char read_buffers[ossync::ArchiveSession::kReadHandles]
                    [ossync::ArchiveSession::kReadBufferBytes]{};
-  // The `opensensor` footer JSON (#88), built by finalize_file. Worker only,
-  // here so it costs no worker stack.
+  // The `opensensor` footer JSON (#88) and the GeoParquet `geo` JSON (#83),
+  // built by finalize_file. Worker only, here so they cost no worker stack.
   char footer_json[footer::kMaxJsonBytes + 1]{};
+  char geo_json[footer::kMaxGeoJsonBytes]{};
 };
 // Telemetry stdio staging stays in internal RAM, distinct from the PSRAM row
 // buffer. codec-test staging is PSRAM, allocated only while the test runs.
@@ -222,7 +228,7 @@ static_assert(kWorkerStartWaitMs <
 #endif
 char boot_text[33]{};
 char device_text[13]{};
-char station_text[37]{};
+char thing_text[37]{};
 portMUX_TYPE clock_mutex = portMUX_INITIALIZER_UNLOCKED;
 std::int64_t anchor_mono_us = 0, anchor_utc_ns = 0;
 std::int32_t clock_generation = 0;
@@ -364,11 +370,7 @@ void remember_crc(const char *path, std::uint32_t size, std::uint32_t crc) {
 void prepare_columns() {
   for (std::size_t i = 0; i < field_count; ++i) {
     const auto &field = config.fields[i];
-    const auto logical =
-        field.type == PhysicalType::Int64 &&
-                std::strcmp(field.unit, "us_since_unix_epoch") == 0
-            ? LogicalType::TimestampMicrosUtc
-            : LogicalType::None;
+    const auto logical = logical_for(field.type, field.unit);
     writer_state->columns[i] = Column{
         field.name, field.type, &writer_state->rows[0].data[i], sizeof(Sample),
         &writer_state->rows[0].valid[i], sizeof(Sample), logical,
@@ -378,24 +380,23 @@ void prepare_columns() {
   }
 }
 
-bool station_identity() {
+bool thing_identity() {
   nvs_handle_t settings;
   if (nvs_open("parquet", NVS_READWRITE, &settings) != ESP_OK)
     return false;
-  std::size_t length = sizeof(station_text);
-  const esp_err_t found =
-      nvs_get_str(settings, "station", station_text, &length);
+  std::size_t length = sizeof(thing_text);
+  const esp_err_t found = nvs_get_str(settings, "thing", thing_text, &length);
   if (found == ESP_ERR_NVS_NOT_FOUND) {
     std::uint8_t id[16];
     esp_fill_random(id, sizeof(id));
     id[6] = (id[6] & 0x0f) | 0x40;
     id[8] = (id[8] & 0x3f) | 0x80;
     std::snprintf(
-        station_text, sizeof(station_text),
+        thing_text, sizeof(thing_text),
         "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
         id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7], id[8], id[9],
         id[10], id[11], id[12], id[13], id[14], id[15]);
-    if (nvs_set_str(settings, "station", station_text) != ESP_OK ||
+    if (nvs_set_str(settings, "thing", thing_text) != ESP_OK ||
         nvs_commit(settings) != ESP_OK) {
       nvs_close(settings);
       return false;
@@ -405,13 +406,13 @@ bool station_identity() {
     return false;
   }
   nvs_close(settings);
-  if (std::strlen(station_text) != 36)
+  if (std::strlen(thing_text) != 36)
     return false;
   for (std::size_t i = 0; i < 36; ++i) {
     const bool dash = i == 8 || i == 13 || i == 18 || i == 23;
-    if (dash ? station_text[i] != '-'
-             : !((station_text[i] >= '0' && station_text[i] <= '9') ||
-                 (station_text[i] >= 'a' && station_text[i] <= 'f')))
+    if (dash ? thing_text[i] != '-'
+             : !((thing_text[i] >= '0' && thing_text[i] <= '9') ||
+                 (thing_text[i] >= 'a' && thing_text[i] <= 'f')))
       return false;
   }
   return true;
@@ -589,7 +590,7 @@ void close_failed(OutputFile &target, const char *operation,
 }
 
 // The boot ring is one blob, `boots`, in the `parquet` namespace next to
-// `station` and `codec`. Never erased.
+// `thing` and `codec`. Never erased.
 constexpr char kRingKey[] = "boots";
 const list_since::RingStore ring_store{
     nullptr,
@@ -629,7 +630,7 @@ void note_unsynced_boot() {
   boot_ring.note_unsynced(ring_store);
   char marker[192] = {};
   const bool named =
-      list_since::marker_path(marker, kDirectory, station_text, boot_text);
+      list_since::marker_path(marker, kDirectory, thing_text, boot_text);
   if (boot_ring.appended()) {
     const auto *ring = boot_ring.ring(ring_store);
     oslog.printf("PARQUET BOOT_RING appended=%lu\n",
@@ -687,10 +688,9 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
       ++errors;
       return false;
     }
-    partition_length =
-        std::snprintf(partition, sizeof(partition),
-                      "station=%s/year=%04d/month=%02d/day=%02d", station_text,
-                      utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
+    partition_length = std::snprintf(
+        partition, sizeof(partition), "thing=%s/year=%04d/month=%02d/day=%02d",
+        thing_text, utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
     std::snprintf(prefix, sizeof(prefix), "data_%02d%02d", utc.tm_hour,
                   utc.tm_min);
     target.dated = true;
@@ -699,8 +699,8 @@ bool create_file(OutputFile &target, Codec codec, bool benchmark) {
                       static_cast<unsigned>(utc.tm_mday));
   } else {
     partition_length =
-        std::snprintf(partition, sizeof(partition),
-                      "station=%s/unsynced/boot=%s", station_text, boot_text);
+        std::snprintf(partition, sizeof(partition), "thing=%s/unsynced/boot=%s",
+                      thing_text, boot_text);
     std::strcpy(prefix, "data_unsynced");
     note_unsynced_boot();
   }
@@ -824,9 +824,14 @@ bool append_group(OutputFile &target, std::size_t count) {
 // Writes the footer, syncs, closes, checks the structure and renames to
 // `<stem>-<last>-<attempt>.parquet`.
 bool finalize_file(OutputFile &target) {
+  // Mobility comes from the file's location snapshot, which splits the file
+  // whenever it changes, so every row of the file shares it.
   const auto json = footer::build(
       writer_state->footer_json, config,
-      {.device = device_text, .station = station_text, .boot = boot_text},
+      {.device = device_text,
+       .thing = thing_text,
+       .boot = boot_text,
+       .mobility = ::config::mobility_name(target.location.mobility)},
       {.rotation_seconds = rotation_seconds.load(),
        .row_groups = target.writer.row_groups(),
        .compression = codec_name(target.codec),
@@ -835,10 +840,23 @@ bool finalize_file(OutputFile &target) {
     close_failed(target, "footer", footer::error_name(json.error()));
     return false;
   }
-  const KeyValue metadata[] = {{footer::kKey, writer_state->footer_json}};
+  // A table with a GEOMETRY column also carries the GeoParquet `geo` key,
+  // its bbox taken from the points the writer encoded.
+  const bool geometry = geometry_field < field_count;
+  if (geometry) {
+    const auto geo = footer::build_geo(
+        writer_state->geo_json, target.writer.point_bounds(geometry_field));
+    if (!geo) {
+      close_failed(target, "geo-footer", footer::error_name(geo.error()));
+      return false;
+    }
+  }
+  const auto metadata = footer::metadata(writer_state->footer_json,
+                                         writer_state->geo_json, geometry);
   const auto started = esp_timer_get_time();
-  const auto result = target.writer.finish(metadata, std::size(metadata),
-                                           config.firmware, config.created_by);
+  const auto result =
+      target.writer.finish(metadata.entries.data(), metadata.count,
+                           config.firmware, config.created_by);
   target.writer_us += esp_timer_get_time() - started;
   if (!result.ok) {
     close_failed(target, "finish", result.error);
@@ -928,7 +946,7 @@ bool commit(std::size_t &count, bool finalize) {
   return true;
 }
 
-// A one-row-group diagnostic copy of the RAM batch outside station trees;
+// A one-row-group diagnostic copy of the RAM batch outside thing trees;
 // the rows stay buffered for normal telemetry rotation.
 bool write_benchmark(std::size_t count, Codec codec) {
   if (!writer_state->benchmark)
@@ -1071,7 +1089,7 @@ public:
   }
 
   // LIST_SINCE. The plan picks the plain walk when the cursor does not
-  // match this mount, or the incremental walk of this station.
+  // match this mount, or the incremental walk of this thing.
   ossync::ListStatus step_since(bool start, const ossync::ListCursor &cursor,
                                 ossync::ListSinceResult &result,
                                 unsigned budget, FileEmitter emit,
@@ -1096,7 +1114,7 @@ public:
         return step(true, budget, emit, context, partials);
       incremental_ = true;
       finalized_at_start_ = finalized.load();
-      if (!since_->begin(io_, kDirectory, station_text, plan,
+      if (!since_->begin(io_, kDirectory, thing_text, plan,
                          in.ring ? *in.ring : list_since::Ring{}))
         return fail();
     }
@@ -1162,9 +1180,9 @@ bool partial_name(const char *name) {
   return length > 8 && std::strcmp(name + length - 8, ".partial") == 0;
 }
 
-// Move interrupted files out of active station trees without deleting or
+// Move interrupted files out of active thing trees without deleting or
 // pretending to repair them. Each lands under output/quarantine/ in a
-// directory that keeps its station and partition provenance. The walk is
+// directory that keeps its thing and partition provenance. The walk is
 // iterative with a fixed depth, and a directory past it is logged. An entry
 // that cannot be inspected or opened is logged and skipped, so the partials
 // after it still move. Only a directory read error ends the walk.
@@ -2466,7 +2484,7 @@ void storage_worker(void *) {
           "PARQUET STATUS interval_s=%lu buffered=%u open_rows=%lu "
           "open_groups=%lu finalized=%lu "
           "dropped=%lu errors=%lu queue_peak=%lu failed=%s sd_state=%s "
-          "sd_free_kib=%llu station=%s "
+          "sd_free_kib=%llu thing=%s "
           "codec=%s schema=%s config=%s deployment=unknown "
           "calibration=unknown\n",
           static_cast<unsigned long>(rotation_seconds.load()), unsigned(count),
@@ -2479,7 +2497,7 @@ void storage_worker(void *) {
           worker_failed.load() ? "true" : "false",
           storage::state_name(governor.state()),
           static_cast<unsigned long long>(governor.free_bytes() / 1024),
-          station_text, codec_name(selected_codec), config.schema_name,
+          thing_text, codec_name(selected_codec), config.schema_name,
           config.configuration_id);
     } else if (std::strcmp(command.text, "parquet schema") == 0) {
       oslog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s "
@@ -2602,7 +2620,7 @@ void collect(std::int64_t now, std::int64_t scheduled) {
     hooks.collect(row, now, scheduled, hooks.context);
   const std::array<std::size_t, 4> location_fields = {
       field_index("h3_cell_id"), field_index("h3_resolution"),
-      field_index("h3_center_lat_e7"), field_index("h3_center_lon_e7")};
+      field_index("location_source"), geometry_field};
   if (std::all_of(location_fields.begin(), location_fields.end(),
                   [](std::size_t index) { return index < field_count; }))
     apply_location(row, row.location, location_fields);
@@ -2957,11 +2975,34 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       config.fields[clock_epoch].type != telemetry::PhysicalType::Int32)
     return false;
   monotonic_field = monotonic;
+  // Location columns are optional, but present ones must have the shape
+  // apply_location writes, and a GEOMETRY column needs the location fields.
+  geometry_field = field_index("geometry");
+  {
+    const auto cell = field_index("h3_cell_id");
+    const auto resolution = field_index("h3_resolution");
+    const auto source = field_index("location_source");
+    const bool any = cell < field_count || resolution < field_count ||
+                     source < field_count || geometry_field < field_count;
+    const auto is = [](std::size_t index, PhysicalType type,
+                       LogicalType logical) {
+      return index < field_count && config.fields[index].type == type &&
+             logical_for(type, config.fields[index].unit) == logical;
+    };
+    if (any &&
+        !(is(cell, PhysicalType::Int64, LogicalType::None) &&
+          is(resolution, PhysicalType::Int32, LogicalType::None) &&
+          is(source, PhysicalType::Int32, LogicalType::Uint8) &&
+          is(geometry_field, PhysicalType::ByteArray, LogicalType::Geometry))) {
+      oslog.println("PARQUET ERROR operation=location-fields logging=false");
+      return false;
+    }
+  }
   kDirectory = config.output_directory;
   kBenchDirectory = config.benchmark_directory;
   mounted = sd_mounted;
-  if (!station_identity()) {
-    oslog.println("PARQUET ERROR operation=station-identity logging=false");
+  if (!thing_identity()) {
+    oslog.println("PARQUET ERROR operation=thing-identity logging=false");
     return false;
   }
   // A failed read never stops logging. It falls back to the default codec and
@@ -3046,11 +3087,11 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
   oslog.printf(
       "PARQUET BEGIN schema=%s columns=%u sample_s=10 "
       "interval_s=900 max_rows=90 max_row_groups=%u psram_workspace_bytes=%u "
-      "row_bytes=%u boot=%s station=%s "
+      "row_bytes=%u boot=%s thing=%s "
       "codec=%s crc32_check=%s\n",
       config.schema_name, unsigned(field_count), unsigned(kMaxRowGroups),
       unsigned(sizeof(WriterState)), unsigned(sizeof(Sample)), boot_text,
-      station_text, codec_name(selected_codec), crc_check);
+      thing_text, codec_name(selected_codec), crc_check);
   // Releases the worker held in storage_worker() until BEGIN is out.
   xTaskNotifyGive(worker_task);
   return true;
@@ -3159,7 +3200,7 @@ bool start_links(bool display_detected) {
   if (!accepting)
     return false;
   static const ble::Identity identity{
-      .station = station_text,
+      .thing = thing_text,
       .device = device_text,
       .boot = boot_text,
       .schema = config.schema_name,
@@ -3200,7 +3241,7 @@ void report_battery(opensensor::battery::State state, std::int32_t millivolts) {
     hooks.power_shed(state, hooks.context);
 }
 
-const char *station_text_id() { return station_text; }
+const char *thing_text_id() { return thing_text; }
 const char *device_text_id() { return device_text; }
 const char *firmware_text_id() { return config.firmware; }
 

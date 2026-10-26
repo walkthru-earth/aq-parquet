@@ -24,7 +24,7 @@ in `../../docs/boards/m5stack-cores3/` (start at its `README.md`).
   either changes the digest and needs a new entry in `tools/fixtures/live_keys/cores3.json`.
   Preserve the original 77-field order. Field ids are the 1-based
   `telemetry_fields.inc` position, so only append fields. H3 and NTP policy are
-  shared services: capture coarsened station location with each sample, keep
+  shared services: capture the coarsened Thing location with each sample, keep
   country owner-declared, and never initialize GPS or infer country here.
 - Reserve the heap-owned 4 KiB internal DMA SD transfer buffer before starting
   radios; keep it alive for the mount and reuse it for eight-sector chunks.

@@ -39,7 +39,7 @@ struct CountingIO {
 };
 
 std::filesystem::path root_path;
-const char *kStation = "11111111-2222-3333-4444-555555555555";
+const char *kThing = "11111111-2222-3333-4444-555555555555";
 
 ls::BootId boot_of(unsigned n) {
   ls::BootId boot{};
@@ -54,7 +54,7 @@ std::string hex(const ls::BootId &boot) {
   return text;
 }
 
-std::string station_dir() { return std::string("station=") + kStation; }
+std::string thing_dir() { return std::string("thing=") + kThing; }
 
 // Creates a file and returns its name relative to the archive root.
 std::string touch(const std::string &relative) {
@@ -69,8 +69,8 @@ std::string dated(unsigned year, unsigned month, unsigned day,
   char name[200];
   std::snprintf(name, sizeof(name),
                 "%s/year=%04u/month=%02u/day=%02u/data_1200_%s_%u-%u-0.parquet",
-                station_dir().c_str(), year, month, day, hex(boot).c_str(),
-                first, first);
+                thing_dir().c_str(), year, month, day, hex(boot).c_str(), first,
+                first);
   return name;
 }
 
@@ -78,7 +78,7 @@ std::string unsynced(const ls::BootId &boot, unsigned first) {
   char name[200];
   std::snprintf(name, sizeof(name),
                 "%s/unsynced/boot=%s/data_unsynced_%s_%u-%u-0.parquet",
-                station_dir().c_str(), hex(boot).c_str(), hex(boot).c_str(),
+                thing_dir().c_str(), hex(boot).c_str(), hex(boot).c_str(),
                 first, first + 4);
   return name;
 }
@@ -94,7 +94,7 @@ Listing run(const ls::Plan &plan, const ls::Ring &ring, unsigned budget = 32) {
   ls::IncrementalWalk<CountingIO> walk;
   const std::string root = root_path.string();
   Listing out;
-  assert(walk.begin(io, root.c_str(), kStation, plan, ring));
+  assert(walk.begin(io, root.c_str(), kThing, plan, ring));
   auto visit = [&](const char *name, const struct stat &info) {
     if (S_ISREG(info.st_mode))
       assert(out.names.insert(name).second);
@@ -114,13 +114,13 @@ Listing run(const ls::Plan &plan, const ls::Ring &ring, unsigned budget = 32) {
   return out;
 }
 
-// Everything plain LIST would name under this station.
+// Everything plain LIST would name under this thing.
 std::set<std::string> everything() {
   CountingIO io;
   DirectoryWalk<CountingIO> walk;
   const std::string root = root_path.string();
   std::set<std::string> names;
-  assert(walk.begin(io, root.c_str(), station_dir().c_str(), 1));
+  assert(walk.begin(io, root.c_str(), thing_dir().c_str(), 1));
   auto visit = [&](const char *name, const struct stat &) {
     names.insert(name);
     return true;
@@ -149,25 +149,22 @@ void check_names_and_dates() {
       !ossync::valid_list_day(21010101) && !ossync::valid_list_day(20260431) &&
       !ossync::valid_list_day(20261301));
 
-  static_assert(ls::enter_dated("station=a/unsynced", 0) == false);
-  static_assert(ls::enter_dated("station=a/unsynced/boot=x", 20260101) ==
-                false);
-  static_assert(ls::enter_dated("station=a/unsynced2", 20260101));
-  static_assert(ls::enter_dated("station=a/year=2025", 0));
-  static_assert(!ls::enter_dated("station=a/year=2025", 20260101));
-  static_assert(ls::enter_dated("station=a/year=2026", 20260315));
-  static_assert(!ls::enter_dated("station=a/year=2026/month=02", 20260315));
-  static_assert(ls::enter_dated("station=a/year=2026/month=03", 20260315));
+  static_assert(ls::enter_dated("thing=a/unsynced", 0) == false);
+  static_assert(ls::enter_dated("thing=a/unsynced/boot=x", 20260101) == false);
+  static_assert(ls::enter_dated("thing=a/unsynced2", 20260101));
+  static_assert(ls::enter_dated("thing=a/year=2025", 0));
+  static_assert(!ls::enter_dated("thing=a/year=2025", 20260101));
+  static_assert(ls::enter_dated("thing=a/year=2026", 20260315));
+  static_assert(!ls::enter_dated("thing=a/year=2026/month=02", 20260315));
+  static_assert(ls::enter_dated("thing=a/year=2026/month=03", 20260315));
   static_assert(
-      !ls::enter_dated("station=a/year=2026/month=03/day=14", 20260315));
-  static_assert(
-      ls::enter_dated("station=a/year=2026/month=03/day=15", 20260315));
-  static_assert(
-      ls::enter_dated("station=a/year=2027/month=01/day=01", 20260315));
+      !ls::enter_dated("thing=a/year=2026/month=03/day=14", 20260315));
+  static_assert(ls::enter_dated("thing=a/year=2026/month=03/day=15", 20260315));
+  static_assert(ls::enter_dated("thing=a/year=2027/month=01/day=01", 20260315));
   // A folder it does not recognise is always entered.
-  static_assert(ls::enter_dated("station=a/stray", 20260315));
-  static_assert(ls::enter_dated("station=a/year=20x6", 20260315));
-  static_assert(ls::enter_dated("station=a/year=2026/odd", 20260315));
+  static_assert(ls::enter_dated("thing=a/stray", 20260315));
+  static_assert(ls::enter_dated("thing=a/year=20x6", 20260315));
+  static_assert(ls::enter_dated("thing=a/year=2026/odd", 20260315));
 
   static_assert(*ls::first_seq("a/b/data_unsynced_ab_17-20-0.parquet") == 17);
   static_assert(*ls::first_seq("data_1200_ab_0-3-1.parquet") == 0);
@@ -339,14 +336,14 @@ void check_keeper() {
     char path[96];
     assert(ls::marker_path(path, "/sdcard/output", "ab", "0011"));
     assert(std::string(path) ==
-           "/sdcard/output/station=ab/unsynced/ringless=0011");
+           "/sdcard/output/thing=ab/unsynced/ringless=0011");
     char small[20];
     assert(!ls::marker_path(small, "/sdcard/output", "ab", "0011"));
     assert(!ls::marker_path(std::span<char>{}, "/sdcard/output", "ab", "0011"));
     // The path needs room for its terminator. A buffer exactly its length
     // fails and one byte more fits.
     constexpr std::size_t exact =
-        sizeof("/sdcard/output/station=ab/unsynced/ringless=0011") - 1;
+        sizeof("/sdcard/output/thing=ab/unsynced/ringless=0011") - 1;
     char edge[exact + 1];
     assert(!ls::marker_path(std::span<char>(edge, exact), "/sdcard/output",
                             "ab", "0011"));
@@ -520,9 +517,9 @@ void check_walks() {
     touch(unsynced(old_boot, i * 5));
   for (unsigned i = 0; i < 10; ++i)
     touch(unsynced(current, i * 5));
-  touch(station_dir() + "/unsynced/boot=" + hex(current) + "/open.partial");
-  // Other stations and loose root files are not this station's.
-  touch("station=other/year=2025/month=12/day=31/data_1200_x_1-1-0.parquet");
+  touch(thing_dir() + "/unsynced/boot=" + hex(current) + "/open.partial");
+  // Other things and loose root files are not this thing's.
+  touch("thing=other/year=2025/month=12/day=31/data_1200_x_1-1-0.parquet");
   touch("loose.parquet");
   const auto all = everything();
   assert(all.size() > 5000);
@@ -562,7 +559,7 @@ void check_walks() {
       expected.insert(name);
   // A name the seq filter cannot parse is always passed on, here the open
   // .partial file the logger counts.
-  expected.insert(station_dir() + "/unsynced/boot=" + hex(current) +
+  expected.insert(thing_dir() + "/unsynced/boot=" + hex(current) +
                   "/open.partial");
   assert(listing.names == expected);
   assert(plan.result.next.boot == current && plan.result.next.seq == 50);
@@ -609,7 +606,7 @@ void check_walks() {
   // marker makes later walks read its whole folder. A marker for a boot the
   // ring holds is ignored, so nothing is listed twice.
   const auto ringless = boot_of(5);
-  const std::string unsynced_dir = station_dir() + "/unsynced/";
+  const std::string unsynced_dir = thing_dir() + "/unsynced/";
   std::filesystem::create_directories(root_path / unsynced_dir /
                                       ("ringless=" + hex(ringless)));
   std::filesystem::create_directories(root_path / unsynced_dir /
@@ -641,14 +638,14 @@ void check_walks() {
     if (name.find("/unsynced/") != std::string::npos)
       assert(listing.names.count(name));
 
-  // A ring boot whose folder is gone is skipped, as is a missing station.
+  // A ring boot whose folder is gone is skipped, as is a missing thing.
   ring.append(boot_of(4));
   in.cursor.boot = later;
   in.cursor.seq = 0;
   plan = ls::plan(in);
   listing = run(plan, ring);
   assert(listing.names.count(unsynced(later, 0)));
-  std::filesystem::remove_all(root_path / station_dir());
+  std::filesystem::remove_all(root_path / thing_dir());
   assert(run(plan, ring).names.empty());
 }
 

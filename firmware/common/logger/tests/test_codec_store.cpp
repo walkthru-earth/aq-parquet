@@ -47,8 +47,8 @@ void wire_values() {
 
 void missing_key_boots_default() {
   fake_nvs::reset();
-  // The station key lives in the same namespace and must not be mistaken.
-  fake_nvs::put("parquet", "station", Type::Str, 0);
+  // The thing key lives in the same namespace and must not be mistaken.
+  fake_nvs::put("parquet", "thing", Type::Str, 0);
   const auto loaded = store::load();
   assert(!loaded.has_value() && loaded.error() == store::Error::Missing);
   const auto boot = store::resolve(loaded);
@@ -71,15 +71,15 @@ void missing_key_boots_default() {
 void store_then_load_round_trips() {
   for (const auto codec : {Codec::Uncompressed, Codec::Lz4Raw}) {
     fake_nvs::reset();
-    fake_nvs::put("parquet", "station", Type::Str, 42);
+    fake_nvs::put("parquet", "thing", Type::Str, 42);
     const auto saved = store::store(codec);
     assert(saved.has_value());
     const auto *entry = committed("parquet", "codec");
     assert(entry && entry->type == Type::U8);
     assert(entry->number == store::encode(codec));
     // The neighbouring key and other namespaces are untouched.
-    const auto *station = committed("parquet", "station");
-    assert(station && station->type == Type::Str && station->number == 42);
+    const auto *thing = committed("parquet", "thing");
+    assert(thing && thing->type == Type::Str && thing->number == 42);
     assert(fake_nvs::state.committed.size() == 2);
     assert(fake_nvs::state.commits == 1);
     // A reboot reads it back as the boot codec.

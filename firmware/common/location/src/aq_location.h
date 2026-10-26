@@ -8,7 +8,7 @@
 // or an administrative country lookup.
 namespace opensensor::location {
 using Cell = std::uint64_t;
-constexpr int kDefaultResolution = 5;
+constexpr int kDefaultResolution = 8;
 constexpr std::size_t kCellTextBytes = 16; // 15 lowercase hex digits + NUL
 
 bool valid_cell(Cell cell);

@@ -396,10 +396,15 @@ void time_and_location() {
   assert(config::get().ntp.enabled && config::get().ntp.dhcp &&
          config::get().ntp.public_fallback);
   assert(config::get().location.cell == 0 &&
-         config::get().location.resolution == 5);
+         config::get().location.resolution == 8 &&
+         config::get().location.mobility == config::Mobility::Fixed);
   char json[480];
   assert(config::build_page(json, sizeof(json), 1));
   assert(std::strstr(json, "\"lat\":null"));
+  assert(std::strstr(json, "\"thing\":{\"mobility\":\"fixed\"}"));
+  reject("thing.mobility=walking", "thing.mobility");
+  reject("thing.mobility=", "thing.mobility");
+  reject("thing.mobility=Fixed", "thing.mobility");
   reject("location.cell=fffffffffffffff", "location.cell");
   reject("location.resolution=16", "location.resolution");
   reject("location.country=ZZ", "location.country");
@@ -428,6 +433,20 @@ void time_and_location() {
   auto cap_change = config::get().location;
   cap_change.resolution = 6;
   assert(!config::same_location(cap_change, config::get().location));
+  // A mobility change splits the open file like any other location change.
+  auto moving = config::get().location;
+  moving.mobility = config::Mobility::Moving;
+  assert(!config::same_location(moving, config::get().location));
+  assert(apply("thing.mobility=moving", actions, bad_key));
+  assert(actions.location_changed);
+  assert(config::get().location.mobility == config::Mobility::Moving);
+  assert(std::string(field(kLocationAt)).ends_with("|EG|moving"));
+  assert(config::build_page(json, sizeof(json), 1));
+  assert(std::strstr(json, "\"mobility\":\"moving\""));
+  assert(config::load(false));
+  assert(config::get().location.mobility == config::Mobility::Moving);
+  accept("thing.mobility=fixed");
+  assert(config::get().location.mobility == config::Mobility::Fixed);
   assert(opensensor::location::resolution(coarse) == 5 &&
          coarse != 0x8928308280fffffULL);
   assert(std::string(field(kLocationAt)).find("8928308280fffff") ==
@@ -474,6 +493,19 @@ void time_and_location() {
   assert(config::load(false));
   assert(same(before_failure, config::get()));
   // A sealed record still passes the same validation as per-key values.
+  // A record from before #83 has no mobility and reads as a fixed Thing.
+  accept("thing.mobility=moving");
+  set_field(kLocationAt, 40, "|7|EG");
+  reseal();
+  assert(config::load(false));
+  assert(config::get().location.resolution == 7 &&
+         std::strcmp(config::get().location.country, "EG") == 0 &&
+         config::get().location.mobility == config::Mobility::Fixed);
+  set_field(kLocationAt, 40, "|7|EG|walking");
+  reseal();
+  assert(config::load(false));
+  assert(config::get().location.resolution == 8 &&
+         !config::get().location.country[0]);
   set_field(kLocationAt, 40, "broken|15|EG");
   set_field(kNtpAt, 560, "broken");
   reseal();

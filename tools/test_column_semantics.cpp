@@ -300,6 +300,14 @@ void check_board(const char *board, const Fields &fields,
     broken[0].ucum = "";
     expect(!well_formed(fields, std::span{broken}), "empty UCUM is caught");
   }
+  for (std::size_t i = 0; i < N; ++i) {
+    if (rows[i].name != "geometry")
+      continue;
+    auto broken = copy(rows);
+    broken[i].ucum = "deg";
+    expect(!well_formed(fields, std::span{broken}),
+           "a unit on the GEOMETRY column is caught");
+  }
   {
     auto broken = copy(rows);
     broken[12].property = "urn:walkthru-earth:cores3:property:pm1_cf1_ug_m3";

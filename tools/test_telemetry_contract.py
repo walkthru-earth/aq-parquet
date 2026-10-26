@@ -43,22 +43,25 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     fields = dictionary["fields"]
     require(table.num_rows == 90, "row count")
     require(table.column_names == [f["name"] for f in fields], "dictionary/schema order")
-    types = {1: pa.int32(), 2: pa.int64(), 4: pa.float32()}
+    types = {1: pa.int32(), 2: pa.int64(), 4: pa.float32(), 6: pa.binary()}
     utc_fields = {f["name"] for f in fields if f["unit"] == "us_since_unix_epoch"}
     require(utc_fields == {"event_time_utc_us", "clock_anchor_utc_us"}, "UTC instant fields")
     for field, definition in zip(parquet.schema_arrow, fields, strict=True):
-        expected = pa.timestamp("us", tz="UTC") if field.name in utc_fields else types[definition["type"]]
+        expected = (pa.timestamp("us", tz="UTC") if field.name in utc_fields else
+                    pa.uint8() if definition["unit"] == "uint8_code" else types[definition["type"]])
         require(field.type == expected and field.nullable, f"schema: {field.name}")
         require(field.metadata[b"PARQUET:field_id"] == str(definition["field_id"]).encode(),
                 f"Iceberg field_id: {field.name}")
-    # The one `opensensor` key, valid against the pinned footer.json (#88).
+    # The `opensensor` key, valid against the pinned footer.json (#88), and
+    # the `geo` key with the bbox of the rows (#83).
+    bbox = footer_contract.check_location(path, located)
     dict_sha, desc = footer_contract.board_digests(FIRMWARE)
-    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc)
+    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc, bbox=bbox)
     footer_contract.check_document(footer, dictionary, "m5stack-cores3", compressed=compressed,
                                    rotation=900, row_groups=1)
-    require(dictionary["schema"] == "cores3-telemetry-v5", "schema version")
-    require(dictionary["dictionary"] == "cores3-telemetry-v6",
-            "dictionary version tracks the field table bytes, now with LIVE keys")
+    require(dictionary["schema"] == "cores3-telemetry-v6", "schema version")
+    require(dictionary["dictionary"] == "cores3-telemetry-v7",
+            "dictionary version tracks the field table bytes, now with location_source and geometry")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
             "firmware identity in created_by")
     group = parquet.metadata.row_group(0)
@@ -87,11 +90,8 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
         require(parquet.metadata.row_group(0).column(i).compression ==
                 ("LZ4" if compressed else "UNCOMPRESSED"), "column codec")
     for i, row in enumerate(table.to_pylist()):
-        for name, value in (("h3_cell_id", 0x85283473fffffff), ("h3_resolution", 5),
-                            ("h3_center_lat_e7", 373457934), ("h3_center_lon_e7", -1219763760)):
-            require(row[name] == (value if located else None), f"nullable published location: {name}")
         now = 20000000 + i * 10000000
-        require(row["schema_version"] == dictionary["schema_version"] == 5 and row["sequence"] == i, "identity")
+        require(row["schema_version"] == dictionary["schema_version"] == 6 and row["sequence"] == i, "identity")
         require(row["collection_completed_mono_us"] == now + 1234, "completion time")
         require(row["pms_received_mono_us"] == (now - 250000 if i else None), "PMS receipt")
         require(row["clock_anchor_mono_us"] == (15000000 if anchored else None), "anchor mono")
@@ -107,6 +107,9 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             "SELECT * REPLACE (epoch_us(event_time_utc_us) AS event_time_utc_us, "
             "epoch_us(clock_anchor_utc_us) AS clock_anchor_utc_us) "
             "FROM read_parquet(?, hive_partitioning=false)", [str(path)]).to_arrow_table()
+    # check_location compares geometry, which DuckDB presents as GEOMETRY.
+    table = table.drop_columns([footer_contract.GEOMETRY])
+    other = other.drop_columns([footer_contract.GEOMETRY])
     require(table.equals(other, check_metadata=False), "PyArrow/DuckDB values and nulls")
 
 
@@ -166,6 +169,12 @@ def main() -> None:
                                          separators=(",", ":")).encode()).hexdigest()
                 == "511b231ecdbf8f93fc3acbca42d5fceef7c3808551af1d035866cc0da4366135",
                 "original 77-column prefix changed")
+        # The Thing release (#83) is the field table baseline. Later fields
+        # append only, so this 81-column prefix never changes.
+        thing_baseline = hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:81]],
+                                                   separators=(",", ":")).encode()).hexdigest()
+        require(thing_baseline == "c3ebd39ab723436c435c0fbec93cba449fae7544a7c3a04a1fbceb43ea0de4c3",
+                "Thing baseline 81-column prefix changed")
         inc = (firmware / "telemetry_fields.inc").read_text()
         rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
         require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],
@@ -173,7 +182,7 @@ def main() -> None:
         require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= live_key_fixture.MAX_LIVE_DECIMALS
                     for f in fields),
                 f"decimals is 0 for integer fields and at most {live_key_fixture.MAX_LIVE_DECIMALS} for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.20", "firmware identity")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.21", "firmware identity")
         footer_contract.check_board(executable, firmware, dictionary, "m5stack-cores3")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)

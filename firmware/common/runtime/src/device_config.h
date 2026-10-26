@@ -3,7 +3,7 @@
 // Owner-editable device settings, protocol v2
 // (docs/shared/ble-sync-protocol.md, "Device configuration"). Stored in the NVS
 // namespace `oscfg`, separate from the `parquet` namespace that holds the
-// station identity. Loaded once at boot on the main task; later reads and
+// Thing identity. Loaded once at boot on the main task; later reads and
 // writes come from the storage worker (the only task that executes control
 // requests), so the copy handed out by get() is guarded by a spinlock and
 // everything else is single-writer.
@@ -31,10 +31,14 @@ struct NtpSettings {
   std::uint32_t interval_s = 3600;
   char servers[kNtpServerCount][kNtpServerMax + 1]{};
 };
+// How the Thing moves, `thing.mobility`. The footer `thing.mobility` and the
+// STAC `opensensor:mobility` carry the same word (#83, decision 31).
+enum class Mobility : std::uint8_t { Fixed = 0, Moving = 1 };
 struct LocationSettings {
   std::uint64_t cell = 0; // Only the published cell is retained, zero = unset.
-  std::uint8_t resolution = 5; // Maximum permitted precision, not an upsample.
+  std::uint8_t resolution = 8; // Maximum permitted precision, not an upsample.
   char country[3]{};           // Optional owner-declared ISO 3166-1 alpha-2.
+  Mobility mobility = Mobility::Fixed;
 };
 
 struct Settings {
@@ -119,4 +123,6 @@ std::size_t build_page(char *out, std::size_t size, std::uint8_t page);
 bool same_location(const LocationSettings &, const LocationSettings &);
 
 const char *pair_name(PairMode mode);
+// "fixed" or "moving", the SET_CONFIG and footer word.
+const char *mobility_name(Mobility mobility);
 } // namespace config

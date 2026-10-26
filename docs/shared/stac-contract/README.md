@@ -18,7 +18,7 @@ The two audits are dated and propose draft field names. Their findings still sta
 v0.1.0 splits the metadata into three layers, as its [PROFILE.md](https://github.com/walkthru-earth/stac-opensensor/blob/main/PROFILE.md) defines.
 
 1. Board template. The firmware build generates one per schema, plain JSON with `"type": "OpenSensorTemplate"`, not STAC and not a profile Collection. It holds the public columns in `item_assets.data.table:columns` (core `unit`, core `roles` and the `opensensor:` column fields, no `title` or `opensensor:scale`), `instruments`, `opensensor:sample_interval_s`, and a `firmware` block with `schema`, `proto_min`, `dict`, `live_keys` and `unit_labels`. Its SHA-256 is the `desc` digest and `GET_DESCRIPTOR` streams it. The dictionary digest reaches it as `file:checksum` on a `describedby` link to `telemetry_fields.inc`. There is no `cube:dimensions`.
-2. Station Collection. The catalog publisher copies the template columns and adds titles, scales, extent, license and a second `describedby` link to the template with `file:checksum` set to `1220` plus `desc`.
+2. Thing Collection. The catalog publisher copies the template columns and adds titles, scales, extent, license and a second `describedby` link to the template with `file:checksum` set to `1220` plus `desc`.
 3. App profile. `primary`, `hero`, `family`, `display_step` and column labels live in an app file keyed by the dictionary digest, outside any published schema.
 
 | Draft name in the audits | v0.1.0 |
@@ -34,12 +34,12 @@ v0.1.0 splits the metadata into three layers, as its [PROFILE.md](https://github
 | `opensensor:precision` | App profile `display_step` |
 | `opensensor:codes`, or a `bands` entry per code column | `classification:classes` in the column |
 | `opensensor:sensor` (vendor, model) | `opensensor:procedure` on the column and core `instruments` on the Collection |
-| `opensensor:station_id` on Items | One Collection per station UUID, one Item per day |
+| `opensensor:station_id` on Items | One Collection per Thing UUID, one Item per day. The footer names it `thing.id` (#83) |
 | `opensensor:calibration` | Not in v0.1.0 |
 | Role values (measurement, quality, state and others) | Core `roles` with ACDD values `physicalMeasurement`, `auxiliaryInformation`, `qualityInformation`, `referenceInformation`, `coordinate`, and `modelResult` for derived columns |
 | `cube:dimensions`, `cube:variables` | Not used. Cadence is `opensensor:sample_interval_s` |
 | Shared `urn:opensensor:property:<id>` | `opensensor:property` with a shared URI such as NERC P07 where one fits, otherwise a per board URI |
-| Footer `stac:collection_href`, `stac:descriptor_sha256`, `urn:opensensor:collection:` | One `opensensor` footer key whose `template` group holds `href` and `sha256`, per stac-opensensor `footer.json` v0.1.0 (a56dfb0, #88) |
+| Footer `stac:collection_href`, `stac:descriptor_sha256`, `urn:opensensor:collection:` | One `opensensor` footer key whose `template` group holds `href` and `sha256`, per stac-opensensor `footer.json` v0.1.0 (now commit `4408c4e52366bb3d154d22bbfffc88ff09aed6f1`, #88, #83) |
 | `opensensor:field_id`, `opensensor:procedure`, `opensensor:property` | Unchanged |
 
 `opensensor:settle_s` and `opensensor:derived` are new in v0.1.0. Upstream proposals may move some fields later, see stac-extensions/table#16 (`field_id`), table#17 (common metadata in columns), classification#55 (classes in table columns) and cf#11 (CF fields in table columns).
@@ -53,3 +53,7 @@ The owner decided these points after both audits were written. They supersede th
 - Every declared LIVE key is always present, with a number or null (#91). Per field precision lands in #91 with a new dictionary digest. An absent key means the board has no such field. Correction item 11 and its "display hint only" reasoning no longer hold. So do "omits invalid values" in the LIVE paragraph of `firmware-audit.md` Q2 and review E2 in `firmware-audit-review.md` ("absent means invalid or unrepresentable").
 - The BLE name prefix becomes `OS-` and the mDNS host becomes `os-xxxx` (#90). Other internal and wire AQ names are renamed in #93. The audit's list of AQ names that are wire contract is history.
 - The footer keys were frozen as `opensensor:template_href` and `opensensor:template_sha256` (#88). The owner then superseded this with stac-opensensor a56dfb0. Each file the firmware finalizes now has one `opensensor` key holding versioned JSON, and the template link and digest sit in its `template` group. A partial file rebuilt by `tools/rebuild_partial.py` has no `opensensor` key (see the #88 entry in `../mobile-migration.md`).
+- Station becomes Thing with a required `mobility`, and the location moves to a
+  native `geometry` column with a `geo` footer key (#83, bridge decisions 31 to
+  35). The firmware follows stac-opensensor commit `4408c4e52366bb3d154d22bbfffc88ff09aed6f1`. See the
+  Thing entry in `../mobile-migration.md`.

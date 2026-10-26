@@ -188,6 +188,21 @@ def write(root: Path = ROOT) -> list[str]:
             contract.write_text(text[:declaration.start()] + literal(pin, commit) + text[declaration.end():])
             changed.append(f"{pin.board} {pin.name} -> {commit}")
         if name == DICTIONARY and changed:
+            # A new dict also renames the published template. The contract
+            # static_asserts that kTemplateHref names <board>/<dict>.json, so
+            # point it at the new name under its old commit until the next run
+            # pins the content commit. Without this --write-template cannot
+            # build. pinned-uris-test fails on this provisional pin by design.
+            for pin in (p for p in todo if p.name == TEMPLATE):
+                contract = contract_path(root, pin.board)
+                current = PINNED.fullmatch(read_constant(contract, TEMPLATE))
+                if current is None or current[2] == pin.path:
+                    continue
+                text = contract.read_text()
+                declaration = _literal(TEMPLATE).search(text)
+                contract.write_text(text[:declaration.start()] + literal(pin, current[1])
+                                    + text[declaration.end():])
+                changed.append(f"{pin.board} {TEMPLATE} provisional -> {pin.path}")
             print("kDictionaryUri moved. The template embeds it, so run the board contract test with "
                   "--write-template, commit, then run pixi run pin-uris again", flush=True)
             return changed

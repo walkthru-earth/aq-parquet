@@ -126,7 +126,8 @@ uses the first row's snapshot for file metadata. Changing any of those settings
 closes the previous file before adding new-location rows, including while a RAM
 batch is waiting. Four nullable fields are mapped only when the board dictionary
 contains all four: `h3_cell_id` (INT64), `h3_resolution` (INT32),
-`h3_center_lat_e7` and `h3_center_lon_e7` (INT64, 10⁻⁷ degrees). Raw GPS never
+`location_source` (UINT8) and `geometry` (GEOMETRY, a 21 byte WKB Point at the
+cell centre, null exactly when the cell is null). Raw GPS never
 enters the logger. Country and source/precision metadata describe the whole file.
 See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 

@@ -17,6 +17,8 @@
 //   telemetry_contract.h, which apply_pms, apply_gauge and
 //   apply_battery_health write through the enums named here.
 //   gauge_hibernating is the bool MAX17048 hibernating() returns.
+//   location_source names are telemetry::LocationSource, the stac-opensensor
+//   profile codes the shared logger writes in apply_location.
 // No classes.
 //   pms_firmware and pms_error are raw PMS5003T frame bytes with no published
 //   code list. gauge_status_flags is the MAX17048 STATUS bitmask, not a code.
@@ -49,3 +51,7 @@ CLASS(battery_health_state, opensensor::battery::State::Ok, "ok", false)
 CLASS(battery_health_state, opensensor::battery::State::Low, "low", false)
 CLASS(battery_health_state, opensensor::battery::State::Critical, "critical", false)
 CLASS(battery_health_state, opensensor::battery::State::Settling, "settling", false)
+CLASS(location_source, telemetry::LocationSource::None, "none", true)
+CLASS(location_source, telemetry::LocationSource::Configured, "configured", false)
+CLASS(location_source, telemetry::LocationSource::Gnss, "gnss", false)
+CLASS(location_source, telemetry::LocationSource::Phone, "phone", false)

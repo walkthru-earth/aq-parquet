@@ -164,7 +164,7 @@ public:
   bool current_unlisted() const { return unsynced_ && !held_; }
   bool appended() const { return held_; }
   // The append failed and no ringless= marker names this boot yet. The
-  // logger then makes "station=<id>/unsynced/ringless=<boot>", so a later
+  // logger then makes "thing=<id>/unsynced/ringless=<boot>", so a later
   // boot's LIST_SINCE still finds this boot's folder.
   bool needs_marker() const { return current_unlisted() && !marked_; }
   void marker_made() { marked_ = true; }
@@ -296,8 +296,8 @@ constexpr bool starts(const char *text, const char *prefix) {
 }
 } // namespace detail
 
-// Whether the dated walk, started at "station=<id>", enters `relative`
-// (relative to the archive root). Never "station=<id>/unsynced". A year=,
+// Whether the dated walk, started at "thing=<id>", enters `relative`
+// (relative to the archive root). Never "thing=<id>/unsynced". A year=,
 // month= or day= folder only when it can hold a day at or after `floor`, and
 // any folder it does not recognise always, so a stray folder is never
 // skipped. floor 0 enters every dated folder.
@@ -382,7 +382,7 @@ struct Plan {
   bool full = false;
   // Dated walk floor, 0 for none.
   std::uint32_t floor = 0;
-  // Walk the station's whole unsynced tree, as the ring cannot place the
+  // Walk the thing's whole unsynced tree, as the ring cannot place the
   // cursor boot.
   bool unsynced_full = false;
   // Ring ages to read, from first_age to the newest. The folder at
@@ -454,7 +454,7 @@ public:
         min_known(lowest_dated_,
                   static_cast<std::uint32_t>(year) * 10000 + month * 100 + day);
   }
-  // Only an unsynced station file moves the sequence the cursor resumes at.
+  // Only an unsynced thing file moves the sequence the cursor resumes at.
   constexpr void finalized(bool benchmark, bool dated_file, std::int64_t last) {
     if (!benchmark && !dated_file && last >= 0)
       last_unsynced_seq_ = static_cast<std::uint64_t>(last);
@@ -488,19 +488,19 @@ inline constexpr char kRinglessPrefix[] = "ringless=";
 // Ringless boots one walk reads by name. More widen it to the whole tree.
 inline constexpr std::size_t kMaxRingless = 4;
 
-// Writes "<directory>/station=<station>/unsynced/ringless=<boot>". False
+// Writes "<directory>/thing=<thing>/unsynced/ringless=<boot>". False
 // when it does not fit.
 inline bool marker_path(std::span<char> out, const char *directory,
-                        const char *station, const char *boot) {
+                        const char *thing, const char *boot) {
   if (out.empty())
     return false;
   const int length =
-      std::snprintf(out.data(), out.size(), "%s/station=%s/unsynced/%s%s",
-                    directory, station, kRinglessPrefix, boot);
+      std::snprintf(out.data(), out.size(), "%s/thing=%s/unsynced/%s%s",
+                    directory, thing, kRinglessPrefix, boot);
   return length > 0 && static_cast<std::size_t>(length) < out.size();
 }
 
-// The incremental LIST_SINCE walk of one station: the dated tree above the
+// The incremental LIST_SINCE walk of one thing: the dated tree above the
 // floor, then the unsynced tree, or the planned ring boot folders followed by
 // one read of "unsynced/" for ringless= markers and the boot folders they
 // name. Same step contract as DirectoryWalk. visit(name, info) sees every file,
@@ -511,23 +511,22 @@ public:
   using Status = typename Walk::Status;
 
   // `root` must outlive the walk. The plan and ring are copied.
-  bool begin(IO &io, const char *root, const char *station, const Plan &chosen,
+  bool begin(IO &io, const char *root, const char *thing, const Plan &chosen,
              const Ring &ring) {
     cancel();
     io_ = &io;
     root_ = root;
     plan_ = chosen;
     ring_ = ring;
-    const int length =
-        std::snprintf(station_, sizeof(station_), "station=%s", station);
-    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(station_)) {
+    const int length = std::snprintf(thing_, sizeof(thing_), "thing=%s", thing);
+    if (length < 0 || static_cast<std::size_t>(length) >= sizeof(thing_)) {
       errno = ENAMETOOLONG;
       return false;
     }
     phase_ = Phase::Dated;
     age_ = chosen.first_age;
     widened_ = false;
-    return open(walk_.begin(io, root, station_, 1));
+    return open(walk_.begin(io, root, thing_, 1));
   }
 
   template <class Visitor> Status step(unsigned budget, Visitor &visit) {
@@ -627,14 +626,14 @@ private:
   }
 
   bool open_unsynced(char (&relative)[160]) {
-    std::snprintf(relative, sizeof(relative), "%s/unsynced", station_);
+    std::snprintf(relative, sizeof(relative), "%s/unsynced", thing_);
     return open(walk_.begin(*io_, root_, relative, 2));
   }
 
   bool open_boot(const BootId &id, char (&relative)[160]) {
     char boot[33] = {};
     format_boot(id, boot);
-    std::snprintf(relative, sizeof(relative), "%s/unsynced/boot=%s", station_,
+    std::snprintf(relative, sizeof(relative), "%s/unsynced/boot=%s", thing_,
                   boot);
     return walk_.begin(*io_, root_, relative, 3);
   }
@@ -698,7 +697,7 @@ private:
   Walk walk_;
   IO *io_ = nullptr;
   const char *root_ = "";
-  char station_[48]{};
+  char thing_[48]{};
   Plan plan_{};
   Ring ring_{};
   Phase phase_ = Phase::Done;

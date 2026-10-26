@@ -68,8 +68,9 @@ oslogger::Config base_config() {
   };
 }
 
+constexpr const char *kBoot = "0123456789abcdef0123456789abcdef";
 constexpr oslogger::footer::Ids kIds{
-    .device = "d", .station = "s", .boot = "b"};
+    .device = "d", .thing = "s", .boot = kBoot, .mobility = "fixed"};
 constexpr oslogger::footer::File kFile{.rotation_seconds = 900,
                                        .row_groups = 1,
                                        .compression = "LZ4_RAW",
@@ -88,8 +89,9 @@ void footer_bytes() {
   check(length.has_value());
   constexpr std::string_view kFrozen =
       R"({"version":"0.1.0",)"
-      R"("station":{"id":"s","device_id":"d","board":"board","deployment_id":"unknown"},)"
-      R"("firmware":{"version":"firmware","schema":"schema","boot_id":"b"},)"
+      R"("thing":{"id":"s","device_id":"d","board":"board","deployment_id":"unknown",)"
+      R"("mobility":"fixed"},)"
+      R"("firmware":{"version":"firmware","schema":"schema","boot_id":"0123456789abcdef0123456789abcdef"},)"
       R"("dictionary":{"sha256":"0000000000000000000000000000000000000000000000000000000000000001",)"
       R"("version":"dictionary","uri":"https://example.org/dictionary.json"},)"
       R"("template":{"href":"https://example.org/template.json",)"
@@ -115,9 +117,9 @@ void footer_bytes() {
       R"("purpose":"codec-comparison-duplicate-rows"}})"));
 
   // Quotes, backslashes and control bytes are escaped, UTF-8 passes through.
-  config.board = "a\"b\\c\n\x01 \xc3\xa9";
+  config.deployment_id = "a\"b\\c\n\x01 \xc3\xa9";
   check(footer::build(json, config, kIds, kFile).has_value());
-  check(std::string_view(json).find(R"("board":"a\"b\\c\n\u0001 )"
+  check(std::string_view(json).find(R"("deployment_id":"a\"b\\c\n\u0001 )"
                                     "\xc3\xa9\"") != std::string_view::npos);
   config = base_config();
 
@@ -159,9 +161,48 @@ void footer_bytes() {
     empty.*member = nullptr;
     config_fails(empty, footer::Error::Missing);
   }
-  check(!footer::build(json, config,
-                       {.device = "d", .station = "", .boot = "b"}, kFile)
+  check(!footer::build(
+             json, config,
+             {.device = "d", .thing = "", .boot = kBoot, .mobility = "fixed"},
+             kFile)
              .has_value());
+  // thing.board is the board slug, never free text (stac-opensensor 4408c4e).
+  for (const char *board :
+       {"CoreS3 ESP32-S3 rev0.2", "M5Stack-CoreS3", "a_b"}) {
+    auto bad = base_config();
+    bad.board = board;
+    config_fails(bad, footer::Error::Range);
+  }
+  // firmware.boot_id is the 32 hex token of the file name.
+  for (const char *boot : {"b", "0123456789abcdef0123456789abcde",
+                           "0123456789abcdef0123456789abcdef0",
+                           "0123456789ABCDEF0123456789ABCDEF"}) {
+    const auto bad = footer::build(
+        json, config,
+        {.device = "d", .thing = "s", .boot = boot, .mobility = "fixed"},
+        kFile);
+    check(!bad.has_value() && bad.error() == footer::Error::Range);
+  }
+  // thing.mobility is required and one of fixed or moving.
+  for (const char *mobility : {"", "parked", "Fixed"}) {
+    const auto bad = footer::build(
+        json, config,
+        {.device = "d", .thing = "s", .boot = kBoot, .mobility = mobility},
+        kFile);
+    check(!bad.has_value() &&
+          bad.error() == (*mobility == '\0' ? footer::Error::Missing
+                                            : footer::Error::Range));
+  }
+  check(!footer::build(json, config,
+                       {.device = "d", .thing = "s", .boot = kBoot}, kFile)
+             .has_value());
+  check(footer::build(
+            json, config,
+            {.device = "d", .thing = "s", .boot = kBoot, .mobility = "moving"},
+            kFile)
+            .has_value());
+  check(std::string_view(json).find(R"("mobility":"moving"})") !=
+        std::string_view::npos);
   fails(config, {.rotation_seconds = 900, .row_groups = 1, .compression = ""},
         footer::Error::Missing);
   fails(config, {.rotation_seconds = 0, .row_groups = 1, .compression = "x"},
@@ -206,6 +247,69 @@ void footer_bytes() {
     const std::size_t old_rows = rotation / 10 < 90 ? rotation / 10 : 90;
     check(cadence::rows_per_group(rotation, 10000) == old_rows);
   }
+}
+
+// The `geo` JSON, byte for byte, with and without a bbox.
+void geo_bytes() {
+  static char json[footer::kMaxGeoJsonBytes];
+  const auto none = footer::build_geo(json, std::nullopt);
+  constexpr std::string_view kNoBox =
+      R"({"version":"2.0.0","primary_column":"geometry","columns":)"
+      R"({"geometry":{"encoding":"WKB","geometry_types":["Point"]}}})";
+  check(none.has_value() && *none == kNoBox.size());
+  check(std::string_view(json) == kNoBox);
+
+  const telemetry::PointBounds cairo{.xmin_e7 = 312345678,
+                                     .ymin_e7 = 300000000,
+                                     .xmax_e7 = 313000001,
+                                     .ymax_e7 = 300500000};
+  const auto box = footer::build_geo(json, cairo);
+  constexpr std::string_view kBox =
+      R"({"version":"2.0.0","primary_column":"geometry","columns":)"
+      R"({"geometry":{"encoding":"WKB","geometry_types":["Point"],)"
+      R"("bbox":[31.2345678,30,31.3000001,30.05]}}})";
+  check(box.has_value() && *box == kBox.size());
+  check(std::string_view(json) == kBox);
+
+  // The widest bbox still fits the documented buffer.
+  const telemetry::PointBounds world{.xmin_e7 = -telemetry::kMaxLongitudeE7 + 1,
+                                     .ymin_e7 = -telemetry::kMaxLatitudeE7 + 1,
+                                     .xmax_e7 = telemetry::kMaxLongitudeE7 - 1,
+                                     .ymax_e7 = telemetry::kMaxLatitudeE7 - 1};
+  const auto wide = footer::build_geo(json, world);
+  check(wide.has_value() && *wide < footer::kMaxGeoJsonBytes);
+  check(std::string_view(json).ends_with(
+      R"("bbox":[-179.9999999,-89.9999999,179.9999999,89.9999999]}}})"));
+
+  // Exact decimals, the text parses to the same double as e7 / 1e7.
+  std::array<char, 12> digits{};
+  const auto decimal = [&](std::int32_t e7) {
+    return std::string_view(digits.data(),
+                            footer::detail::e7_decimal(digits, e7));
+  };
+  check(decimal(0) == "0");
+  check(decimal(-1) == "-0.0000001");
+  check(decimal(10) == "0.000001");
+  check(decimal(-1800000000) == "-180");
+  check(decimal(900000000) == "90");
+  check(decimal(-5) == "-0.0000005");
+
+  // Out of range or inverted bounds fail closed.
+  const auto bounds = [](std::int32_t xmin, std::int32_t ymin,
+                         std::int32_t xmax, std::int32_t ymax) {
+    return telemetry::PointBounds{
+        .xmin_e7 = xmin, .ymin_e7 = ymin, .xmax_e7 = xmax, .ymax_e7 = ymax};
+  };
+  for (const telemetry::PointBounds bad :
+       {bounds(-1800000001, 0, 0, 0), bounds(0, 0, 1800000001, 0),
+        bounds(0, -900000001, 0, 0), bounds(0, 0, 0, 900000001),
+        bounds(2, 0, 1, 0), bounds(0, 2, 0, 1)}) {
+    const auto result = footer::build_geo(json, bad);
+    check(!result.has_value() && result.error() == footer::Error::Range);
+  }
+  const auto small =
+      footer::build_geo(std::span<char>(json, kNoBox.size()), std::nullopt);
+  check(!small.has_value() && small.error() == footer::Error::Overflow);
 }
 
 void cadence_bounds() {
@@ -332,7 +436,7 @@ void soil_board(const char *path) {
   config.fields = kSoilFields;
   config.column_count = std::size(kSoilFields);
   config.schema_name = "soil-fixture-v1";
-  config.board = "fixture soil board";
+  config.board = "fixture-soil-board";
   config.sample_interval_ms = 30000;
   config.deployment_id = "fixture-plot-7";
   config.calibration_id = "soil-cal-2026-10";
@@ -402,16 +506,19 @@ void soil_board(const char *path) {
   static char json[footer::kMaxJsonBytes + 1];
   check(footer::build(json, config,
                       {.device = "0123456789ab",
-                       .station = "00000000-0000-4000-8000-000000000000",
-                       .boot = "0000beef"},
+                       .thing = "00000000-0000-4000-8000-000000000000",
+                       .boot = kBoot,
+                       .mobility = "fixed"},
                       {.rotation_seconds = kRotation,
                        .row_groups = writer.row_groups(),
                        .compression = "UNCOMPRESSED",
                        .benchmark = false})
             .has_value());
-  const KeyValue metadata[] = {{footer::kKey, json}};
+  // No GEOMETRY column, so the helper the logger uses gives one entry.
+  const auto metadata = footer::metadata(json, "", false);
+  check(metadata.count == 1);
   check(writer
-            .finish(metadata, std::size(metadata), config.firmware,
+            .finish(metadata.entries.data(), metadata.count, config.firmware,
                     "fixture-soil-board")
             .ok);
   check(std::fclose(file) == 0);
@@ -426,6 +533,7 @@ void soil_board(const char *path) {
 int main(int argc, char **argv) {
   check(argc == 2);
   footer_bytes();
+  geo_bytes();
   cadence_bounds();
   cadence_deadline();
   names();

@@ -28,7 +28,7 @@ def check_wiring(source: str) -> None:
             r"void note_unsynced_boot\(\) \{ if \(boot_ring\.appended\(\)\) return; "
             r"boot_ring\.note_unsynced\(ring_store\); char marker\[192\] = \{\}; "
             r"const bool named = list_since::marker_path\(marker, kDirectory, "
-            r"station_text, boot_text\); if \(boot_ring\.appended\(\)\) \{.*?"
+            r"thing_text, boot_text\); if \(boot_ring\.appended\(\)\) \{.*?"
             r"if \(!boot_ring\.stale_marker\(\)\) return;.*?"
             r"if \(::rmdir\(marker\) != 0\).*?"
             r"else boot_ring\.marker_removed\(\); return; \}.*?"

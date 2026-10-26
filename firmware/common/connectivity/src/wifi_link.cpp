@@ -541,7 +541,7 @@ void start_server() {
   char proto[4];
   std::snprintf(proto, sizeof(proto), "%u", unsigned(kProtocolVersion));
   mdns_txt_item_t txt[] = {{"proto", proto},
-                           {"station", device_identity.station},
+                           {"thing", device_identity.thing},
                            {"dev", device_identity.device},
                            {"fw", device_identity.firmware}};
   if (mdns_init() == ESP_OK) {

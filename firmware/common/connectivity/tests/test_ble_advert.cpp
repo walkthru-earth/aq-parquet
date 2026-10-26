@@ -12,12 +12,12 @@ void hex(const std::uint8_t *bytes, std::size_t length) {
 }
 
 // info with the longest value each identity field takes on a board: a 36
-// character station UUID, 12 hex device, 32 hex boot, 64 hex dict and desc,
+// character thing UUID, 12 hex device, 32 hex boot, 64 hex dict and desc,
 // a three digit column count. The schema and firmware come from the board's
 // telemetry_contract.h through test_ble_advert.py.
 int print_info(const char *schema, const char *firmware, const char *desc) {
   const ble::Identity identity{
-      .station = "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      .thing = "ffffffff-ffff-ffff-ffff-ffffffffffff",
       .device = "ffffffffffff",
       .boot = "ffffffffffffffffffffffffffffffff",
       .schema = schema,
@@ -35,7 +35,7 @@ int print_info(const char *schema, const char *firmware, const char *desc) {
 }
 
 void info_bounds() {
-  ble::Identity identity{.station = "s",
+  ble::Identity identity{.thing = "s",
                          .device = "d",
                          .boot = "b",
                          .schema = "x",
@@ -49,7 +49,7 @@ void info_bounds() {
   assert(length && std::string_view(info, *length) ==
                        "{\"proto\":3,\"fw\":\"f\",\"schema\":\"x\",\"cols\":0,"
                        "\"dict\":\"a\",\"desc\":\"0123456789abcdef\","
-                       "\"station\":\"s\",\"dev\":\"d\",\"boot\":\"b\","
+                       "\"thing\":\"s\",\"dev\":\"d\",\"boot\":\"b\","
                        "\"max_read\":16384}");
   // Exactly fits with its NUL, then one byte short.
   char exact[160];

@@ -29,7 +29,7 @@ import pyarrow.parquet as pq
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analyze_discharge as ad  # noqa: E402
 
-STATION = "station=00000000-0000-4000-8000-000000000001"
+THING = "thing=00000000-0000-4000-8000-000000000001"
 T0 = 1_792_454_400_000_000  # 2026-10-20T00:00:00Z in microseconds
 BOOT_A = (0x0A0A0A0A0A0A0A0A, -0x0505050505050506)  # lo is negative on purpose
 BOOT_B = (0x0B, 0x0B)
@@ -91,7 +91,7 @@ def state_for(mv: int) -> int:
 
 
 def build_run(root: Path) -> None:
-    dated = root / "output" / STATION / "year=2026" / "month=10" / "day=20"
+    dated = root / "output" / THING / "year=2026" / "month=10" / "day=20"
     boot_a = hex_boot(BOOT_A)
     # Pre v5 file of an earlier boot, no soc, crate or state columns.
     write(dated / f"data_0000_{hex_boot(BOOT_D)}_1-60-0.parquet",
@@ -108,9 +108,9 @@ def build_run(root: Path) -> None:
     # Reboot loop near cutoff, unsynced and small.
     for boot, count in ((BOOT_B, 5), (BOOT_C, 3)):
         name = hex_boot(boot)
-        write(root / "output" / STATION / "unsynced" / f"boot={name}" / f"data_unsynced_{name}_1-{count}-0.parquet",
+        write(root / "output" / THING / "unsynced" / f"boot={name}" / f"data_unsynced_{name}_1-{count}-0.parquet",
               rows(boot, 1, count, utc_start=None, mv_start=3300, state=state_for))
-    quarantine = root / "output" / "quarantine" / STATION / "year=2026" / "q.parquet"
+    quarantine = root / "output" / "quarantine" / THING / "year=2026" / "q.parquet"
     write(quarantine, rows(BOOT_A, 181, 2, utc_start=T0, mv_start=3300, state=state_for))
     (dated / "torn.parquet").write_bytes(b"PAR1 torn")
 
@@ -119,7 +119,7 @@ LOG = """\
 # capture started
 ESP-ROM:esp32s3-20210327
 rst:0x1 (POWERON),boot:0x8 (SPI_FAST_FLASH_BOOT)
-12.001 PARQUET BEGIN schema=waveshare-v5 columns=62 boot={a} station=x codec=lz4 crc32_check=ok
+12.001 PARQUET BEGIN schema=waveshare-v5 columns=62 boot={a} thing=x codec=lz4 crc32_check=ok
 POWER STATE state=ok mv=3600
 PARQUET READY name=data_0000_{a}_1-90-0.parquet rows=90 row_groups=1 first=1 last=90
 POWER STATE state=low mv=3500
@@ -128,14 +128,14 @@ PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1
 ESP-ROM:esp32s3-20210327
 rst:0xf (BROWNOUT),boot:0x8 (SPI_FAST_FLASH_BOOT)
 PARQUET RECOVERY quarantined=1 retained=0
-PARQUET BEGIN schema=waveshare-v5 boot={b} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={b} thing=x
 PARQUET SCAN files=4 retained_partials=0
 POWER STATE state=critical mv=3310 action=finalize
 PARQUET FLUSH reason=power-critical result=busy-retry storage=absent attempt=1 files=0 retry_ms=1000
 PARQUET FLUSH reason=power-critical result=closed attempt=2 files=1
 PARQUET READY name=data_unsynced_{b}_1-5-0.parquet rows=5 row_groups=1 first=1 last=5
 ESP-ROM:esp32s3-20210327
-PARQUET BEGIN schema=waveshare-v5 boot={c} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={c} thing=x
 POWER STATE state=critical mv=3290 action=finalize
 PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1
 PARQUET READY name=data_unsynced_{c}_1-3-0.parquet rows=3 row_groups=1 first=1 last=3
@@ -147,7 +147,7 @@ PARQUET ERROR operation=power-close reason=busy-retry attempts=8 files=0 closed=
 
 LOG_TAIL = """\
 PARQUET READY name=a.parquet rows=88 row_groups=1 first=1 last=88
-PARQUET BEGIN schema=waveshare-v5 boot={c} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={c} thing=x
 POWER STATE state=critical mv=null action=finalize
 PARQUET FLUSH reason=power-critical result=nothing-open attempt=2 files=0
 PARQUET READY name=b.parquet rows=oops
@@ -211,14 +211,14 @@ def test_parse_log() -> None:
 POLLS = (
     # Poll 1, early in the boot.
     """\
-PARQUET BEGIN schema=waveshare-v5 boot={e} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={e} thing=x
 POWER STATE state=ok mv=3600
 PARQUET READY name=data_0000_{e}_1-12-0.parquet rows=12 row_groups=1 first=1 last=12
 POWER STATE state=low mv=3500
 """,
     # Poll 2, the same boot again, BEGIN still in the ring.
     """\
-PARQUET BEGIN schema=waveshare-v5 boot={e} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={e} thing=x
 POWER STATE state=ok mv=3600
 PARQUET READY name=data_0000_{e}_1-12-0.parquet rows=12 row_groups=1 first=1 last=12
 POWER STATE state=low mv=3500
@@ -231,7 +231,7 @@ POWER STATE state=critical mv=3350 action=finalize
 PARQUET FLUSH reason=power-critical result=closed attempt=1 files=1
 PARQUET READY name=data_0100_{e}_13-20-0.parquet rows=8 row_groups=1 first=13 last=20
 ESP-ROM:esp32s3-20210327
-PARQUET BEGIN schema=waveshare-v5 boot={f} station=x
+PARQUET BEGIN schema=waveshare-v5 boot={f} thing=x
 POWER STATE state=external_power_likely mv=4250
 PARQUET READY name=data_0500_{f}_1-9-0.parquet rows=9 row_groups=1 first=1 last=9
 """,
@@ -278,7 +278,7 @@ def test_overlapping_polls(work: Path) -> None:
 def test_clean_single_boot(work: Path) -> None:
     """One boot discharging to cutoff, then a recharge boot hours later, with nothing to flag."""
     root = work / "clean"
-    dated = root / "output" / STATION / "year=2026" / "month=10" / "day=21"
+    dated = root / "output" / THING / "year=2026" / "month=10" / "day=21"
     boot_e, boot_f = (0x0E, 0x0E), (0x0F, 0x0F)
     first, mv, t = 1, 3620, T0
     for count in (20, 90, 90, 90, 12):  # short first file, power-critical close of 12 rows
@@ -310,7 +310,7 @@ def test_clean_single_boot(work: Path) -> None:
 def test_loop_boots(work: Path) -> None:
     """Which boots count as reboot loop boots on the Parquet side."""
     root = work / "loop"
-    dated = root / "output" / STATION / "year=2026" / "month=10" / "day=22"
+    dated = root / "output" / THING / "year=2026" / "month=10" / "day=22"
     early, crit, synced, unsynced = (0x10, 0x10), (0x11, 0x11), (0x12, 0x12), (0x13, 0x13)
     # A watchdog reset at Low before Critical, small but not a loop boot.
     write(dated / "early.parquet", rows(early, 1, 10, utc_start=T0, mv_start=3460, state=state_for))
@@ -320,7 +320,7 @@ def test_loop_boots(work: Path) -> None:
     write(dated / "crit-2.parquet", rows(crit, 26, 10, utc_start=T0 + 350_000_000, mv_start=3325, state=state_for))
     # Two loop boots, one with host time right after the cut, one without.
     write(dated / "synced.parquet", rows(synced, 1, 4, utc_start=T0 + 450_000_000, mv_start=3300, state=state_for))
-    write(root / "output" / STATION / "unsynced" / "u.parquet",
+    write(root / "output" / THING / "unsynced" / "u.parquet",
           rows(unsynced, 1, 3, utc_start=None, mv_start=3290, state=state_for))
     summary = ad.summarize_rows(ad.read_run(root), small_rows=30, gap_s=30.0)
     loop = {b["boot"]: b["loop"] for b in summary["boots"]}

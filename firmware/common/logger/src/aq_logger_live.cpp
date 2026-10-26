@@ -1,4 +1,5 @@
 #include "aq_logger_live.h"
+#include "telemetry_logical.h"
 
 #include <climits>
 #include <cmath>
@@ -65,7 +66,8 @@ Rendered render(const Field *fields, std::size_t count, const Row &row,
         // unit of nanoseconds. The stored value is exact, so the scale is
         // lossless.
         const long long scale =
-            field.unit && std::strcmp(field.unit, "us_since_unix_epoch") == 0
+            telemetry::logical_for(field.type, field.unit) ==
+                    telemetry::LogicalType::TimestampMicrosUtc
                 ? 1000
                 : 1;
         const long long stored = static_cast<long long>(row.data[i]);
@@ -90,6 +92,10 @@ Rendered render(const Field *fields, std::size_t count, const Row &row,
                             static_cast<double>(number));
         break;
       }
+      case telemetry::PhysicalType::ByteArray:
+        // valid_live_keys refuses a key on a byte array column, so a
+        // GEOMETRY point never reaches LIVE. Kept null if one ever does.
+        break;
       }
       // Non-finite floats and values wider than the scratch buffer stay null.
       if (written >= 0 && std::size_t(written) < sizeof(text))
@@ -115,7 +121,8 @@ bool valid_live_keys(const Field *fields, std::size_t count) {
     const char *key = fields[i].live_key;
     if (!key)
       continue;
-    if (!key_chars(key))
+    // LIVE carries numbers only, a GEOMETRY point stays in the file.
+    if (!key_chars(key) || fields[i].type == telemetry::PhysicalType::ByteArray)
       return false;
     for (std::size_t j = 0; j < i; ++j)
       if (fields[j].live_key && std::strcmp(fields[j].live_key, key) == 0)

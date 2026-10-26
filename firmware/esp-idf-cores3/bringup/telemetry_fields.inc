@@ -3,8 +3,10 @@
 // LIVE. decimals is the number of digits after the point when a Float prints,
 // chosen from the sensor resolution, and 0 for integer fields. Both are part
 // of the digest, so the app keeps one LIVE profile per dictionary SHA-256.
-// Parquet/Iceberg field_id = 1-based order of the FIELD entries below. Append
-// new fields only; never reorder, remove or reuse a position.
+// Parquet/Iceberg field_id = 1-based order of the FIELD entries below. The
+// Thing release (#83) is the baseline. From it, append new fields only and
+// never reorder, remove or reuse a position (owner answer to bridge question
+// 36, 2026-10-26).
 // The property id of each field comes from telemetry_semantics.inc, board
 // neutral, looked up by name (#99).
 // Procedure identifiers describe code paths, not instrument serial numbers.
@@ -90,8 +92,10 @@ FIELD(pms_received_mono_us, Int64, pmsa003, "us", pms_present, "", 0)
 FIELD(clock_anchor_mono_us, Int64, clock, "us", clock_anchored, "", 0)
 FIELD(clock_anchor_utc_us, Int64, clock, "us_since_unix_epoch", clock_anchored, "", 0)
 
-// Optional owner-provisioned H3 cell; all centers derive from this published cell.
-FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_configured, "", 0)
-FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_configured, "", 0)
-FIELD(h3_center_lat_e7, Int64, h3_grid_center, "1e-7_degree_latitude", location_configured, "", 0)
-FIELD(h3_center_lon_e7, Int64, h3_grid_center, "1e-7_degree_longitude", location_configured, "", 0)
+// Optional owner-provisioned H3 cell. location_source says where it came from
+// and geometry is a native Parquet GEOMETRY 2D WKB Point at the cell centre,
+// never the raw fix. All four are null when there is no location.
+FIELD(h3_cell_id, Int64, h3_grid, "h3_index", location_present, "", 0)
+FIELD(h3_resolution, Int32, h3_grid, "resolution_0_15", location_present, "", 0)
+FIELD(location_source, Int32, h3_grid, "uint8_code", location_present, "", 0)
+FIELD(geometry, ByteArray, h3_grid_center, "wkb_point_crs84", location_present, "", 0)

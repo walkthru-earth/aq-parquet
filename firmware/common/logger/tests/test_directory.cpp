@@ -189,12 +189,11 @@ struct Tree {
 
   // "/sd/" holds a day tree with partials and one huge flat directory.
   explicit Tree(unsigned huge) {
-    directories["/sd/"] = {"a.parquet", "station=x/", "huge/", "z.parquet"};
-    directories["/sd/station=x"] = {"year=2026/", "b.partial", ".hidden"};
-    directories["/sd/station=x/year=2026"] = {"month=01/", "month=02/"};
-    directories["/sd/station=x/year=2026/month=01"] = {"c.parquet",
-                                                       "d.parquet"};
-    directories["/sd/station=x/year=2026/month=02"] = {};
+    directories["/sd/"] = {"a.parquet", "thing=x/", "huge/", "z.parquet"};
+    directories["/sd/thing=x"] = {"year=2026/", "b.partial", ".hidden"};
+    directories["/sd/thing=x/year=2026"] = {"month=01/", "month=02/"};
+    directories["/sd/thing=x/year=2026/month=01"] = {"c.parquet", "d.parquet"};
+    directories["/sd/thing=x/year=2026/month=02"] = {};
     auto &flat = directories["/sd/huge"];
     for (unsigned i = 0; i < huge; ++i)
       flat.push_back("f" + std::to_string(i) +
@@ -283,7 +282,7 @@ void check_resumable_walk() {
   }
   assert(whole.size() == 4 + 1 + 10000);
   assert(whole[0] == "a.parquet" &&
-         whole[1] == "station=x/year=2026/month=01/c.parquet" &&
+         whole[1] == "thing=x/year=2026/month=01/c.parquet" &&
          whole.back() == "z.parquet");
   for (const unsigned budget : {1U, 7U, 32U, 4096U}) {
     TreeIO io(tree);
@@ -344,19 +343,19 @@ void check_quarantine_names() {
   char directory[416], path[416];
   assert(quarantine_target(
       "/sd/output",
-      "station=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial", "b2",
-      7, directory, sizeof(directory), path, sizeof(path)));
-  assert(std::strcmp(directory, "/sd/output/quarantine/station=abc/"
+      "thing=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial", "b2", 7,
+      directory, sizeof(directory), path, sizeof(path)));
+  assert(std::strcmp(directory, "/sd/output/quarantine/thing=abc/"
                                 "year=2026_month=10_day=11") == 0);
-  assert(std::strcmp(path, "/sd/output/quarantine/station=abc/"
+  assert(std::strcmp(path, "/sd/output/quarantine/thing=abc/"
                            "year=2026_month=10_day=11/"
                            "data_1200_b1_42-3-b2-00000007.partial") == 0);
   assert(quarantine_target("/sd/output",
-                           "station=abc/unsynced/boot=b1/data_unsynced_b1_0-0."
+                           "thing=abc/unsynced/boot=b1/data_unsynced_b1_0-0."
                            "partial",
                            "b1", 0, directory, sizeof(directory), path,
                            sizeof(path)));
-  assert(std::strcmp(path, "/sd/output/quarantine/station=abc/unsynced_boot=b1/"
+  assert(std::strcmp(path, "/sd/output/quarantine/thing=abc/unsynced_boot=b1/"
                            "data_unsynced_b1_0-0-b1-00000000.partial") == 0);
   assert(quarantine_target("/sd/output",
                            "benchmarks/boot=b1/lz4_raw_b1_0-1."
@@ -364,29 +363,28 @@ void check_quarantine_names() {
                            "b1", 1, directory, sizeof(directory), path,
                            sizeof(path)));
   assert(std::strcmp(directory,
-                     "/sd/output/quarantine/no-station/benchmarks_boot=b1") ==
-         0);
+                     "/sd/output/quarantine/no-thing/benchmarks_boot=b1") == 0);
   assert(quarantine_target("/sd/output", "stray-0.partial", "b1", 2, directory,
                            sizeof(directory), path, sizeof(path)));
-  assert(std::strcmp(path, "/sd/output/quarantine/no-station/root/"
+  assert(std::strcmp(path, "/sd/output/quarantine/no-thing/root/"
                            "stray-0-b1-00000002.partial") == 0);
   // Rejections: not a partial, unsafe segments, absolute or too long.
   for (const char *bad :
-       {"station=a/x.parquet", "station=a/../x.partial", "station=a//x.partial",
+       {"thing=a/x.parquet", "thing=a/../x.partial", "thing=a//x.partial",
         "/abs/x.partial", "./x.partial", ".partial"}) {
     errno = 0;
     assert(!quarantine_target("/sd/output", bad, "b1", 0, directory,
                               sizeof(directory), path, sizeof(path)));
   }
-  assert(!quarantine_target("/sd/output", "station=a/x-0.partial", "b1", 0,
+  assert(!quarantine_target("/sd/output", "thing=a/x-0.partial", "b1", 0,
                             directory, 24, path, sizeof(path)));
   assert(errno == ENAMETOOLONG);
-  assert(!quarantine_target("/sd/output", "station=a/x-0.partial", "b1", 0,
+  assert(!quarantine_target("/sd/output", "thing=a/x-0.partial", "b1", 0,
                             directory, sizeof(directory), path, 40));
   assert(errno == ENAMETOOLONG);
-  const std::string long_station =
-      "station=" + std::string(120, 's') + "/x-0.partial";
-  assert(!quarantine_target("/sd/output", long_station.c_str(), "b1", 0,
+  const std::string long_thing =
+      "thing=" + std::string(120, 's') + "/x-0.partial";
+  assert(!quarantine_target("/sd/output", long_thing.c_str(), "b1", 0,
                             directory, sizeof(directory), path, sizeof(path)));
   assert(errno == ENAMETOOLONG);
 }
@@ -409,7 +407,7 @@ void check_same_boot_quarantine() {
   assert(::mkdtemp(temporary));
   const fs::path root = fs::path(temporary) / "output";
   const char *relative =
-      "station=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial";
+      "thing=abc/year=2026/month=10/day=11/data_1200_b1_42-3.partial";
   fs::create_directories((root / relative).parent_path());
   {
     std::ofstream(root / relative) << "partial bytes";
@@ -419,8 +417,8 @@ void check_same_boot_quarantine() {
   assert(opensensor::logger::detail::quarantine_partial(
       io, root.c_str(), relative, "b1", 0, moved, sizeof(moved)));
   assert(!fs::exists(root / relative));
-  assert(fs::exists(root / "station=abc/year=2026/month=10/day=11"));
-  const fs::path expected = root / "quarantine/station=abc/"
+  assert(fs::exists(root / "thing=abc/year=2026/month=10/day=11"));
+  const fs::path expected = root / "quarantine/thing=abc/"
                                    "year=2026_month=10_day=11/"
                                    "data_1200_b1_42-3-b1-00000000.partial";
   assert(moved == expected.string() && fs::file_size(expected) == 13);
@@ -466,9 +464,9 @@ void check_find_partials() {
   };
   touch(root / "top-0.partial");
   touch(root / "kept.parquet");
-  touch(root / "quarantine/station=a/day/old-0.partial");
-  touch(root / "station=a/year=2026/month=10/day=11/data-1.partial");
-  touch(root / "station=a/year=2026/month=10/day=11/data-1-2-3.parquet");
+  touch(root / "quarantine/thing=a/day/old-0.partial");
+  touch(root / "thing=a/year=2026/month=10/day=11/data-1.partial");
+  touch(root / "thing=a/year=2026/month=10/day=11/data-1-2-3.parquet");
   // The deepest directory the walk opens sits at kMaxDepth, so a partial
   // there is found and one more level is reported.
   fs::path deep = root;
@@ -493,11 +491,11 @@ void check_find_partials() {
   std::sort(moved.begin(), moved.end());
   assert(moved.size() == 3);
   assert(moved[0] == "l1/l2/l3/l4/l5/l6/at-cap.partial");
-  assert(moved[1] == "station=a/year=2026/month=10/day=11/data-1.partial");
+  assert(moved[1] == "thing=a/year=2026/month=10/day=11/data-1.partial");
   assert(moved[2] == "top-0.partial");
   assert(reported.size() == 1 && reported[0] == "l1/l2/l3/l4/l5/l6/past");
   assert(fs::exists(deep / "past/below-cap.partial"));
-  assert(fs::exists(root / "quarantine/station=a/day/old-0.partial"));
+  assert(fs::exists(root / "quarantine/thing=a/day/old-0.partial"));
   assert(fs::exists(root / "kept.parquet"));
   // A second walk finds only what was left behind on purpose.
   moved.clear();
@@ -627,7 +625,7 @@ void check_find_partials_failures() {
   };
   touch(root / "a-bad.partial");
   touch(root / "b-locked/inside-0.partial");
-  touch(root / "station=a/day/c-0.partial");
+  touch(root / "thing=a/day/c-0.partial");
   touch(root / "z-0.partial");
   FaultyDirectoryIO io;
   std::vector<std::string> moved, skipped;
@@ -641,7 +639,7 @@ void check_find_partials_failures() {
   assert(find_partials(io, root.c_str(), move, too_deep, unreadable));
   std::sort(moved.begin(), moved.end());
   assert(moved.size() == 2);
-  assert(moved[0] == "station=a/day/c-0.partial" && moved[1] == "z-0.partial");
+  assert(moved[0] == "thing=a/day/c-0.partial" && moved[1] == "z-0.partial");
   assert(skipped.size() == 2);
   const bool bad_first = skipped[0] == "a-bad.partial";
   assert(skipped[bad_first ? 0 : 1] == "a-bad.partial");
@@ -649,14 +647,14 @@ void check_find_partials_failures() {
   assert(errors[bad_first ? 0 : 1] == EIO);
   assert(errors[bad_first ? 1 : 0] == EACCES);
   // A directory that fails mid read stops the walk with its errno.
-  touch(root / "station=a/broken/d-0.partial");
+  touch(root / "thing=a/broken/d-0.partial");
   moved.clear();
   skipped.clear();
   errno = 0;
   assert(!find_partials(io, root.c_str(), move, too_deep, unreadable));
   assert(errno == EIO);
-  assert(std::find(moved.begin(), moved.end(),
-                   "station=a/broken/d-0.partial") == moved.end());
+  assert(std::find(moved.begin(), moved.end(), "thing=a/broken/d-0.partial") ==
+         moved.end());
   fs::remove_all(temporary);
 }
 

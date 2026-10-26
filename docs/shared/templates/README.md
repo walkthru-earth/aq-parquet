@@ -92,7 +92,9 @@ the dictionary digest or the LIVE fixture, so do these steps in order.
    key to field map in field order.
 4. Commit the field table, the digest and the fixture.
 5. Run `pixi run pin-uris`. It pins `kDictionaryUri` to that commit and stops,
-   because the template embeds the URL.
+   because the template embeds the URL. It also points `kTemplateHref` at the
+   new `<dict>.json` name under its old commit, so the contract static_assert
+   holds and the next step builds. Do not commit this step on its own.
 6. Run the board command above. It publishes the template under the new
    `dict` name with the new describedby link and removes the file for the old
    one. Commit this as the content commit.

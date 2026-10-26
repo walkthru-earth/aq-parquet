@@ -1041,7 +1041,7 @@ void host_task(void *) {
 bool begin(const Identity &identity, config::PairMode pairing_mode,
            std::uint32_t fixed_pin, RequestHandler handler,
            const Options &link_options) {
-  if (!handler || startup_done || !identity.station || !identity.device ||
+  if (!handler || startup_done || !identity.thing || !identity.device ||
       !identity.boot || !identity.schema || !identity.dictionary_sha256 ||
       !identity.firmware || !identity.descriptor_sha256 ||
       !valid_options(link_options))

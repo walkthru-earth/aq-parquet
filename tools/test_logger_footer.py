@@ -11,6 +11,11 @@ A source check also pins the begin() gate. footer::check_config() runs in
 logger::begin() before the writer state, the storage worker or any file open,
 and a failure logs `PARQUET ERROR operation=footer-config` and returns false.
 Removing the call, the log line or the early return fails here.
+
+A second source check pins finalize_file() to footer::metadata(), the helper
+the board contract fixtures finish through. Those fixtures write a geometry
+column and read the raw Thrift key-value list, so opensensor before geo is
+proven on the bytes, and swapping the keys in the logger call fails here.
 """
 from __future__ import annotations
 
@@ -39,6 +44,13 @@ FOOTER_GATE = re.compile(
     r"\"logging=false\\n\",\s*"
     r"footer::error_name\(footer_config\.error\(\)\)\);\s*"
     r"return false;\s*\}")
+# finalize_file() takes its key-value list from footer::metadata(), the same
+# helper the board contract fixtures finish through, and passes it unchanged.
+FOOTER_METADATA = re.compile(
+    r"const auto metadata = footer::metadata\(writer_state->footer_json,\s*"
+    r"writer_state->geo_json, geometry\);\s*"
+    r"const auto started = esp_timer_get_time\(\);\s*"
+    r"const auto result =\s*target\.writer\.finish\(metadata\.entries\.data\(\), metadata\.count,")
 # Anything in begin() that opens a file or starts the code that does.
 FILE_WORK = ("fopen(", "::open(", "opendir(", "mkdir(", "create_file(",
              "heap_caps_calloc(", "xTaskCreate(", "storage_worker")
@@ -89,13 +101,44 @@ def prove_footer_gate(source: str) -> None:
         raise AssertionError(f"footer gate check missed the mutant: {name}")
 
 
+def check_footer_metadata(source: str) -> None:
+    """The logger writes opensensor then geo through footer::metadata() (#83)."""
+    assert len(FOOTER_METADATA.findall(source)) == 1, \
+        "finalize_file() must finish with footer::metadata(footer_json, geo_json, geometry) " \
+        "and pass metadata.entries.data() and metadata.count unchanged"
+    assert source.count("writer.finish(") == 1, "one writer.finish() call in aq_logger.cpp"
+
+
+def prove_footer_metadata(source: str) -> None:
+    check_footer_metadata(source)
+    text = FOOTER_METADATA.search(source).group(0)
+    mutants = {
+        "keys swapped": source.replace(text, text.replace(
+            "writer_state->footer_json,", "writer_state->geo_json,", 1).replace(
+            "writer_state->geo_json, geometry", "writer_state->footer_json, geometry", 1)),
+        "geo always written": source.replace(text, text.replace(", geometry);", ", true);")),
+        "count fixed": source.replace(text, text.replace("metadata.count,", "2,")),
+        "inline array": source.replace(text, text.replace(
+            "footer::metadata(", "my_metadata(")),
+    }
+    for name, mutant in mutants.items():
+        assert mutant != source, name
+        try:
+            check_footer_metadata(mutant)
+        except AssertionError:
+            continue
+        raise AssertionError(f"footer metadata check missed the mutant: {name}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sanitize", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     common = root / "firmware/common"
-    prove_footer_gate((common / "logger/src/aq_logger.cpp").read_text())
+    logger_source = (common / "logger/src/aq_logger.cpp").read_text()
+    prove_footer_gate(logger_source)
+    prove_footer_metadata(logger_source)
     with tempfile.TemporaryDirectory(prefix="aq-logger-footer-") as directory:
         executable = Path(directory) / "footer-test"
         output = Path(directory) / "soil.parquet"
@@ -114,15 +157,15 @@ def main() -> None:
         assert result.stdout.split() == ["SL-89ab", "sl-89ab"], result.stdout
 
         parquet = pq.ParquetFile(output)
-        footer = footer_contract.check_file(output, dict_sha=DICT_SHA, desc=DESC_SHA)
+        footer = footer_contract.check_file(output, dict_sha=DICT_SHA, desc=DESC_SHA, geometry=False)
         acquisition, file = footer["acquisition"], footer["file"]
         assert acquisition["sample_interval_ms"] == 30000
         assert file == {"rotation_interval_s": 3600, "row_groups": 2, "row_group_rows_max": 90,
                         "compression": "UNCOMPRESSED", "purpose": "telemetry"}, file
-        assert footer["station"]["deployment_id"] == "fixture-plot-7"
+        assert footer["thing"]["deployment_id"] == "fixture-plot-7"
         assert acquisition["calibration_id"] == "soil-cal-2026-10"
         assert footer["firmware"]["schema"] == "soil-fixture-v1"
-        assert footer["station"]["board"] == "fixture soil board"
+        assert footer["thing"]["board"] == "fixture-soil-board"
 
         groups = [parquet.metadata.row_group(i).num_rows
                   for i in range(parquet.metadata.num_row_groups)]

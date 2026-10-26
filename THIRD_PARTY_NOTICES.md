@@ -120,19 +120,22 @@ cppcheck, are installed by [Pixi](pixi.toml) from conda-forge and PyPI under
 their own licenses and are not redistributed by this repository.
 
 The JSON Schemas in [`tools/stac_opensensor/v0.1.0`](tools/stac_opensensor/v0.1.0)
-(`template.json`, `profile.json`, `schema.json`) are unmodified copies of
-[stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) at commit
-`a017edf`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
-[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). The host contract
-tests use them to validate the board templates. They are not in any firmware
-image.
-
-The footer schema [`tools/stac_opensensor/v0.1.0/footer.json`](tools/stac_opensensor/v0.1.0/footer.json),
-the profile text [`tools/stac_opensensor/PROFILE.md`](tools/stac_opensensor/PROFILE.md)
+(`template.json`, `profile.json`, `schema.json`, `footer.json`), the profile
+text [`tools/stac_opensensor/PROFILE.md`](tools/stac_opensensor/PROFILE.md)
 and the example [`tools/stac_opensensor/footers/cores3-telemetry-v5.json`](tools/stac_opensensor/footers/cores3-telemetry-v5.json)
 are unmodified copies of
 [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) at commit
-`a56dfb0`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
+`4408c4e52366bb3d154d22bbfffc88ff09aed6f1`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). The host contract
-tests use them to validate the `opensensor` Parquet footer each board writes.
-They are not in any firmware image.
+tests use them to validate the board templates and the `opensensor` Parquet
+footer each board writes. They are not in any firmware image.
+
+The GeoParquet metadata schema
+[`tools/geoparquet/v2.0.0/schema.json`](tools/geoparquet/v2.0.0/schema.json)
+is an unmodified copy of `format-specs/schema.json` from
+[opengeospatial/geoparquet](https://github.com/opengeospatial/geoparquet) at
+commit `1edd56fb020a188fcb35fd8babe89c41e241288e` (git blob `99b8312`),
+Copyright the GeoParquet contributors, licensed
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0). The host tests use
+it to validate the `geo` Parquet footer each board writes. It is not in any
+firmware image.

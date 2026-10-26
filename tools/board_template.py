@@ -111,6 +111,16 @@ def validator() -> Draft7Validator:
     return Draft7Validator(schema, registry=registry, format_checker=FormatChecker())
 
 
+# (type, roles, has unit, aggregate) per stac-opensensor PROFILE at
+# 4408c4e52366bb3d154d22bbfffc88ff09aed6f1.
+LOCATION_COLUMNS = {
+    "h3_cell_id": ("int64", ["referenceInformation"], True, "mode"),
+    "h3_resolution": ("int32", ["referenceInformation"], True, "mode"),
+    "location_source": ("uint8", ["qualityInformation"], True, "mode"),
+    "geometry": ("geometry", ["coordinate"], False, "mode"),
+}
+
+
 def validate(template: dict, dictionary: dict, dictionary_uri: str) -> None:
     errors = sorted(validator().iter_errors(template), key=lambda e: list(e.path))
     require(not errors, "template schema: " + "; ".join(
@@ -132,23 +142,41 @@ def validate(template: dict, dictionary: dict, dictionary_uri: str) -> None:
     columns = template["item_assets"]["data"]["table:columns"]
     require([c["name"] for c in columns] == [f["name"] for f in fields], "one column per FIELD, in order")
     types = {1: "int32", 2: "int64", 4: "float"}
+    # Logical types by firmware unit, as telemetry_logical.h maps them.
+    logical = {"uint8_code": "uint8", "wkb_point_crs84": "geometry"}
     for column, field in zip(columns, fields, strict=True):
-        require(column["type"] == types[field["type"]], f"type: {field['name']}")
+        want = logical.get(field["unit"]) or types[field["type"]]
+        require(column["type"] == want, f"type: {field['name']}")
         require(column["opensensor:field_id"] == field["field_id"], f"field_id: {field['name']}")
         require(column["opensensor:procedure"] == field["procedure"], f"procedure: {field['name']}")
         require(column["opensensor:property"] == field["property"], f"property: {field['name']}")
-        require(firmware["unit_labels"].get(field["name"], column["unit"]) == field["unit"],
+        unit = column.get("unit", "")
+        require(firmware["unit_labels"].get(field["name"], unit) == field["unit"],
                 f"unit label: {field['name']}")
-        require(field["name"] not in firmware["unit_labels"] or column["unit"] != field["unit"],
+        require(field["name"] not in firmware["unit_labels"] or unit != field["unit"],
                 f"unit label only where it differs: {field['name']}")
+        # stac-opensensor 4408c4e PROFILE location columns.
+        spelled = LOCATION_COLUMNS.get(field["name"])
+        if spelled is not None:
+            got = (column["type"], column["roles"], "unit" in column, column["opensensor:aggregate"])
+            require(got == spelled, f"location column spelling: {field['name']} {got}")
         gate = column.get("opensensor:valid_when")
         require(gate is None or gate["column"] in {f["name"] for f in fields}, f"gate column: {field['name']}")
         derived = column.get("opensensor:derived")
         require((derived is not None) == (column["roles"] == ["modelResult"]), f"derived: {field['name']}")
-        if column["unit"] in ("{code}", "{boolean}"):
+        if unit in ("{code}", "{boolean}"):
             classes = column.get("classification:classes", [])
             require([c["value"] for c in classes] == sorted({c["value"] for c in classes}),
                     f"class values ascending and unique: {field['name']}")
+    names = {f["name"] for f in fields}
+    if "geometry" in names:
+        require(template["item_assets"]["data"].get("table:primary_geometry") == "geometry",
+                "table:primary_geometry is geometry")
+        sources = [c for c in columns if c["name"] == "location_source"]
+        require(len(sources) == 1 and [k["value"] for k in sources[0].get("classification:classes", [])]
+                == [0, 1, 2, 3], "location_source lists codes 0 to 3")
+    else:
+        require("table:primary_geometry" not in template["item_assets"]["data"], "no geometry column")
     require(firmware["live_keys"] == {f["name"]: f["live"] for f in fields if f["live"]},
             "live_keys follow the dictionary")
     require(list(firmware["live_keys"]) == [f["name"] for f in fields if f["live"]], "live_keys in field order")

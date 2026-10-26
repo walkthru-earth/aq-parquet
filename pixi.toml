@@ -39,6 +39,8 @@ parquet-device = "python tools/parquet_device.py"
 ble-sync = "python tools/ble_sync.py"
 ble-sync-test = "python tools/test_ble_sync.py"
 parquet-test = "python tools/test_parquet.py"
+# Native GEOMETRY and UINT8 columns and the geo footer key, PyArrow and DuckDB (#83).
+geoparquet-test = "python tools/test_geoparquet.py"
 # Footer reader and Iceberg DataFile metrics: PyArrow/DuckDB cross-check, crafted footers, fuzz loop.
 reader-test = "python tools/test_parquet_reader.py --sanitize"
 # Power cut cycles at the write, footer and rename stages with a per boot loss account (owner bench, #61 item 2).

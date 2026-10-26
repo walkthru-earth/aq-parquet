@@ -101,9 +101,9 @@ largest-block and minimum-free values. These bounds follow the SDK's
 actual peak memory, radio coexistence and transfer rates require board evidence.
 
 Location starts unset. Owner provisioning supplies a cell, configurable maximum
-resolution (default **5**) and optional declared ISO country code. Only the
-coarsened cell is persisted; its center supplies `h3_center_lat_e7` and
-`h3_center_lon_e7`, alongside `h3_cell_id` and actual `h3_resolution`. Country
+resolution (default **8**) and optional declared ISO country code. Only the
+coarsened cell is persisted. Its centre supplies the `geometry` WKB Point,
+alongside `h3_cell_id`, actual `h3_resolution` and `location_source`. Country
 and precision provenance are file metadata. Each queued sample owns its location
 snapshot, and location/country changes finalize the old file before writing
 new-location rows. Existing files retain their original schema and metadata.
@@ -280,13 +280,13 @@ Files use **`/output/` on the card** (`/sd/output` in firmware). A station UUID 
 
 ```text
 output/
-└── station=<persistent-UUID>/
+└── thing=<persistent-UUID>/
     └── year=2026/month=09/day=08/
         ├── data_0900_<boot>_<first>-<last>-<attempt>.parquet
         └── data_0915_<boot>_<first>-<last>-<attempt>.parquet
 ```
 
-The suffix prevents restarts, clock corrections and forced flushes from overwriting a file in the same window. Before UTC is supplied, files instead use `station=<UUID>/unsynced/boot=<boot>/data_unsynced_...parquet`. Existing dated and unsynced files are never relocated when the clock changes. The legacy first-run files under `/parquet/` remain on the card and are now exposed by list/get as `legacy-parquet/<name>`. Since #5 benchmark duplicates live under `/sd/bench/boot=<boot>/`, outside the listed and synced archive. Older cards keep any earlier `/output/benchmarks/` copies.
+The suffix prevents restarts, clock corrections and forced flushes from overwriting a file in the same window. Before UTC is supplied, files instead use `thing=<UUID>/unsynced/boot=<boot>/data_unsynced_...parquet`. Existing dated and unsynced files are never relocated when the clock changes. The legacy first-run files under `/parquet/` remain on the card and are now exposed by list/get as `legacy-parquet/<name>`. Since #5 benchmark duplicates live under `/sd/bench/boot=<boot>/`, outside the listed and synced archive. Older cards keep any earlier `/output/benchmarks/` copies.
 
 The worker creates files exclusively, writes `.partial`, retries positive short writes, checks zero/error writes, calls `fflush` and `fsync`, closes, verifies structural completion and reads CRC32, then renames to `.parquet`. Files are retained; no automatic deletion or upload exists. On write failure the batch is retained in RAM and the SD space governor retries with a remount on a 10 s to 10 min backoff; `parquet flush` retries at once. A full card pauses logging with `PARQUET ALARM storage=full` and resumes when space returns. Interrupted partial files are conservatively moved out of active station trees into `/output/quarantine/<station>/<partition>/`, at boot and right after a same-boot failure; bounded status keys `qf`/`qb` report total quarantined files/bytes across boots. No repair, deletion or overwrite is attempted.
 
@@ -325,11 +325,11 @@ pixi run parquet-device bench --port /dev/cu.usbmodem101 --sync-time --seconds 3
 
 The smoke command changes the clock anchor and manually finalizes a short batch; it is not an endurance test. `flush` does not stop sampling or unmount SD, so it is not a safe-eject command. `status`, `list` and `fetch` need no device reset. The host fetcher rejects unsafe relative paths and differing existing destinations, while accepting an identical already-verified file; it preserves both device files and local Hive structure.
 
-For querying dated files, use DuckDB's Hive discovery explicitly; the `station`, `year`, `month` and `day` fields come from the path:
+For querying dated files, use DuckDB's Hive discovery explicitly; the `thing`, `year`, `month` and `day` fields come from the path:
 
 ```sql
-SELECT station, year, month, day, sequence, pm25_atmospheric_ug_m3
-FROM read_parquet('output/station=*/year=*/month=*/day=*/*.parquet',
+SELECT thing, year, month, day, sequence, pm25_atmospheric_ug_m3
+FROM read_parquet('output/thing=*/year=*/month=*/day=*/*.parquet',
                   hive_partitioning=true);
 ```
 

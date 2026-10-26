@@ -18,14 +18,14 @@ from unittest.mock import AsyncMock, patch
 
 import ble_sync as ble
 
-NAME = "station=abc/unsynced/boot=def/data_unsynced_def_0-1-0.parquet"
+NAME = "thing=abc/unsynced/boot=def/data_unsynced_def_0-1-0.parquet"
 FILE = b"PAR1" + bytes(range(256)) * 3 + struct.pack("<I", 40) + b"PAR1"
 CONFIG = (b'{"ble":{"pair":"random","pin_set":1,"pin_default":0,"bonds":1,"display":1},'
           b'"wifi":{"on":0,"ssid":"","psk_set":0,"state":"off","ip":"","rssi":0,"mac":"aa"},'
           b'"lan":{"on":1,"port":47390,"host":"os-6b40","clients":0}}')
 TOKEN = bytes(range(32))
 LOG = b"PARQUET BEGIN x\n" + b"BLE CONNECT peer=y\n" * 20
-INFO = b'{"proto":3,"max_read":16384,"station":"abc","dev":"0123456789ab"}'
+INFO = b'{"proto":3,"max_read":16384,"thing":"abc","dev":"0123456789ab"}'
 STATUS = b'{"part":3,"qf":7,"qb":123456,"open":0,"open_rg":0}'
 # Protocol 3 goldens, byte for byte from docs/shared/ble-sync-protocol.md.
 GOLDEN_LIST_END = bytes.fromhex("117011010001000066ed0000040000")
@@ -252,7 +252,7 @@ async def run_list_since():
         with contextlib.redirect_stderr(io.StringIO()):
             ble.save_cursor(path, "abc", end["cursor"])
         assert ble.load_cursor(path, "abc") == end["cursor"]
-    print("PASS ble_sync LIST_SINCE: request and end goldens, cursor per station, corrupt cursor fallback, ERROR 11 fallback signal")
+    print("PASS ble_sync LIST_SINCE: request and end goldens, cursor per thing, corrupt cursor fallback, ERROR 11 fallback signal")
 
 
 async def run():
@@ -279,7 +279,7 @@ async def run():
     else:
         raise AssertionError("ERROR frame must raise")
     try:
-        await session.open("station=abc/other.parquet")
+        await session.open("thing=abc/other.parquet")
     except ble.ProtocolError as error:
         assert "code=3" in str(error)
     else:

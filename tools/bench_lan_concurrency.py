@@ -80,7 +80,7 @@ async def run(args: argparse.Namespace) -> dict:
         inspected = validate_file(destination)
         throttle = await throttle_check(args, links, sessions, name, payload) if args.throttle_seconds else None
         return {
-            "firmware": infos[0].get("fw"), "station": infos[0].get("station"),
+            "firmware": infos[0].get("fw"), "thing": infos[0].get("thing"),
             "host_clients": args.clients, "sensor_clients": 3, "fourth_busy": True, "disconnect_isolated": True,
             "name": name, "bytes": len(payload), "crc32": f"{binascii.crc32(payload) & 0xffffffff:08x}",
             "sha256": hashlib.sha256(payload).hexdigest(), "seconds": round(elapsed, 3),

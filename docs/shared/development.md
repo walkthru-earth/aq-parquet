@@ -71,7 +71,7 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 ```
 
 Follow [the full identification/backup sequence](../../AGENTS.md#before-any-physical-flash-write)
-first. Never erase station/config NVS or format the card. The migration retains
+first. Never erase Thing/config NVS or format the card. The migration retains
 NVS namespaces, keys and value types and existing flash partition offsets;
 The logger configuration retains the earlier two-universal-MAC policy
 (`CONFIG_ESP32S3_UNIVERSAL_MAC_ADDRESSES_TWO=y`), preserving Bluetooth base+1.

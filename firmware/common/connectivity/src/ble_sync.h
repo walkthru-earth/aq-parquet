@@ -171,7 +171,7 @@ struct ControlRequest {
 using RequestHandler = bool (*)(const ControlRequest &request);
 
 struct Identity {
-  const char *station = nullptr;
+  const char *thing = nullptr;
   const char *device = nullptr;
   const char *boot = nullptr;
   const char *schema = nullptr;

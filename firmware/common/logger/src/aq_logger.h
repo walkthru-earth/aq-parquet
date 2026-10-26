@@ -55,7 +55,7 @@ struct Config {
   // Sync service tuning; nullptr keeps the shared defaults.
   const ossync::ServiceConfig *sync = nullptr;
   // Storage worker task. Its stack stays in internal RAM: the worker commits
-  // NVS (SET_CONFIG, station id), and a flash write disables the cache that a
+  // NVS (SET_CONFIG, thing id), and a flash write disables the cache that a
   // PSRAM stack needs. Size from the hourly DIAG tasks line plus 25 percent.
   unsigned worker_priority = 3;
   std::size_t worker_stack_bytes = 24576;
@@ -63,7 +63,7 @@ struct Config {
   // must pass cadence::valid_sample_interval(). Row groups hold the rows of
   // one rotation window, at most cadence::kMaxBatchRows.
   std::uint32_t sample_interval_ms = cadence::kDefaultSampleIntervalMs;
-  // Footer station.deployment_id and acquisition.calibration_id. Non empty
+  // Footer thing.deployment_id and acquisition.calibration_id. Non empty
   // text, "unknown" until a board or deployment knows better.
   const char *deployment_id = "unknown";
   const char *calibration_id = "unknown";
@@ -129,7 +129,7 @@ bool start_links(bool display_detected);
 bool enqueue_request(const ble::ControlRequest &);
 void lock_bus();
 void unlock_bus();
-const char *station_text_id();
+const char *thing_text_id();
 const char *device_text_id();
 const char *firmware_text_id();
 std::size_t field_index(const char *name); // column_count when absent

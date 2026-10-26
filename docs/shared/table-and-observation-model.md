@@ -12,7 +12,7 @@
 
 ## Decision: complementary layers
 
-Keep compressed Parquet with station/date Hive paths as the device's immutable raw archive. Use a versioned measurement dictionary to describe its meaning. Add an OGC-facing adapter or Iceberg table on the host/cloud when a concrete consumer needs it. Neither requires replacing the device's wide numeric snapshot with JSON observations or moving Parquet generation off the device.
+Keep compressed Parquet with Thing/date Hive paths as the device's immutable raw archive. Use a versioned measurement dictionary to describe its meaning. Add an OGC-facing adapter or Iceberg table on the host/cloud when a concrete consumer needs it. Neither requires replacing the device's wide numeric snapshot with JSON observations or moving Parquet generation off the device.
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,7 @@ Solid arrows describe the device design; dashed arrows are unimplemented downstr
 | Layer | Responsibility | Decision |
 | --- | --- | --- |
 | Parquet + LZ4_RAW | Typed measurements, nulls and page compression | Device implementation exists; dated tests apply only to their image/schema |
-| Hive directory layout | Human-readable station/UTC grouping and query partition discovery | Preserve current SD/object-key contract |
+| Hive directory layout | Human-readable Thing/UTC grouping and query partition discovery | Preserve current SD/object-key contract |
 | Measurement dictionary | Property identity, units, procedure, quality and time semantics | Implement a versioned firmware/host contract |
 | SensorThings adapter | Expose observations and linked metadata through a conforming API | Later host/service work, not current compliance |
 | Iceberg | Table membership, snapshots and coordinated metadata commits | Later host/cloud experiment |
@@ -53,15 +53,21 @@ dictionary digest are planned to live in the generated board templates under
 
 | Field | Physical type | Meaning |
 | --- | --- | --- |
-| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range; hex in config/footer |
+| `h3_cell_id` | INT64 | Official H3 published cell ID, safely within signed range, hex in config |
 | `h3_resolution` | INT32 | Actual published cell resolution, potentially coarser than the configured maximum |
-| `h3_center_lat_e7` | INT64 | H3 grid-center latitude in 1e-7 degrees |
-| `h3_center_lon_e7` | INT64 | H3 grid-center longitude in 1e-7 degrees |
+| `location_source` | INT32 with `INTEGER(8,false)` (UINT8) | Where the row location came from. 0 none, 1 configured, 2 gnss, 3 phone. Classes live in `telemetry_classes.inc` |
+| `geometry` | BYTE_ARRAY with the Parquet `GEOMETRY` logical type, no crs (OGC:CRS84) | 2D WKB Point, little endian, 21 bytes, at the H3 cell centre |
 
-All four remain null while the deployment cell is unset. Firmware derives the
-center from the published cell; no raw GPS is stored. The footer carries no
-location (#88). The rows hold the cell, the resolution and the center, and the
-country is no longer written to the file. Country is not inferred from H3.
+All four are null while the deployment cell is unset, and `geometry` is null
+exactly when `h3_cell_id` is null. Since the Thing release (#83) the centre is
+no longer two integer columns (decision 32). Each `geometry` chunk carries
+Parquet `GeospatialStatistics` (bbox and geometry type) and no min or max. A
+second footer key, `geo`, holds compact GeoParquet 2.0 JSON naming `geometry`
+as the primary column, with a bbox only when the file has a location. Firmware
+derives the centre from the published cell, no raw GPS is stored. The
+`opensensor` footer key carries no location (#88). Country is not written to
+the file and is not inferred from H3. Today every located row has
+`location_source` 1, because the firmware has no GNSS or phone path yet.
 
 Acquisition snapshots cell, maximum precision and country into each queued row.
 The worker splits the RAM batch and open file before appending a different
@@ -78,9 +84,9 @@ PyIceberg `StaticTable` reads a table directly from a metadata location without 
 
 Device-side metadata generation is conceivable but untested here; it is not rejected as impossible. A host-generated static snapshot is the first useful trial if reproducible dataset publication is needed. A managed cloud table becomes worthwhile for coordinated writers, corrections, snapshot-based queries or schema/partition evolution. Iceberg adds table semantics, not another compression layer, and does not automatically combine small data files.
 
-At uninterrupted 15-minute rotation, one station creates 96 files/day or 35,040/year; 100 stations create 3,504,000/year, before extra splits (firmware v6 can cut this to 24 files/day per station with 60-minute files of four row groups). File discovery and small-file requests may eventually matter more than byte capacity. Measure query latency/request cost before selecting compaction cadence or table infrastructure.
+At uninterrupted 15-minute rotation, one Thing creates 96 files/day or 35,040/year; 100 Things create 3,504,000/year, before extra splits (firmware v6 can cut this to 24 files/day per Thing with 60-minute files of four row groups). File discovery and small-file requests may eventually matter more than byte capacity. Measure query latency/request cost before selecting compaction cadence or table infrastructure.
 
-Since CoreS3 v6.12 / Waveshare v2.6 (CoreS3 schema v5, Waveshare schema v4) every leaf carries a Parquet `field_id` equal to its 1-based position in the board's `telemetry_fields.inc`, and the UTC fields are `event_time_utc_us`/`clock_anchor_utc_us` annotated `TIMESTAMP(MICROS, isAdjustedToUTC=true)`, which Apache Iceberg maps to `timestamptz` in format v1, v2 and v3 (NANOS would map only to v3 `timestamptz_ns`). Tables are created as Iceberg v3 on the phone or host. Field ids are append only. A dictionary may add fields at the end, but never reorder, remove or reuse a position. Earlier files carry no field ids. Since schema v3 (firmware v6, 2026-09-17) every column chunk carries `min_value`/`max_value`/`null_count` statistics; files written by v1–v5 firmware have `null_count` only and bare INT64 nanoseconds. Station UUID is in the path and file metadata, not a row column. PyIceberg 0.12 cannot write v3 tables yet, so register files with iceberg-go 0.7.0 `AddFiles` or iceberg-rust 0.9.0 or later. PyIceberg can import some existing files into v2 tables through name mapping, but its partition inference depends on source-column statistics, which older files lack. Do not assume Hive directories automatically populate Iceberg columns. Test compatibility explicitly; host compaction can materialize station identity and typed timestamps in a separate curated table. Do not give Iceberg maintenance ownership of the only raw archive copy: imported files can become eligible for deletion by maintenance. [Existing-file import](https://py.iceberg.apache.org/api/#add-files)
+Since CoreS3 v6.12 / Waveshare v2.6 (CoreS3 schema v5, Waveshare schema v4) every leaf carries a Parquet `field_id` equal to its 1-based position in the board's `telemetry_fields.inc`, and the UTC fields are `event_time_utc_us`/`clock_anchor_utc_us` annotated `TIMESTAMP(MICROS, isAdjustedToUTC=true)`, which Apache Iceberg maps to `timestamptz` in format v1, v2 and v3 (NANOS would map only to v3 `timestamptz_ns`). Tables are created as Iceberg v3 on the phone or host. The Thing release (#83) is a fresh field table baseline on both boards, which dropped the H3 centre columns and gave CoreS3 ids 80 and 81 and Waveshare ids 55 and 56 new meanings (owner answer to bridge question 36, 2026-10-26). From that baseline field ids are append only. A dictionary may add fields at the end, but never reorder, remove or reuse a position. Readers never key on an id from an earlier dictionary. Files before v6.12 carry no field ids. Since schema v3 (firmware v6, 2026-09-17) every column chunk carries `min_value`/`max_value`/`null_count` statistics; files written by v1–v5 firmware have `null_count` only and bare INT64 nanoseconds. The Thing UUID is in the path and file metadata, not a row column. PyIceberg 0.12 cannot write v3 tables yet, so register files with iceberg-go 0.7.0 `AddFiles` or iceberg-rust 0.9.0 or later. PyIceberg can import some existing files into v2 tables through name mapping, but its partition inference depends on source-column statistics, which older files lack. Do not assume Hive directories automatically populate Iceberg columns. Test compatibility explicitly; host compaction can materialize Thing identity and typed timestamps in a separate curated table. Do not give Iceberg maintenance ownership of the only raw archive copy: imported files can become eligible for deletion by maintenance. [Existing-file import](https://py.iceberg.apache.org/api/#add-files)
 
 `firmware/common/src/parquet_reader.h` decodes a footer into a caller-owned summary and derives the per-column numbers an Iceberg v3 `DataFile` entry (the same fields as v2) needs. Those are record count, file size, split offsets (row group starts), and per field id the column size, value, null and NaN counts and little-endian lower and upper bounds. It uses no heap and keeps every stack frame under 1 KB. Statistics the footer does not carry are reported as absent, never as zero. Bounds are omitted unless every chunk that holds a non-NaN value has them, and zero float bounds are widened to cover both `-0.0` and `+0.0`. Files without field ids are refused for metrics, so name mapping stays a host decision. Manifests, manifest lists and catalog commits are not written by this code. Today it is host verified only (`pixi run reader-test`, which cross-checks PyArrow and DuckDB, runs crafted hostile footers and a fuzz loop under ASan and UBSan). It is compiled into the firmware component but no board calls it yet.
 
@@ -92,19 +98,19 @@ Our proposed mapping:
 
 | Concept | Project interpretation |
 | --- | --- |
-| Thing | Persistent station UUID; hardware MAC remains separate |
+| Thing | Persistent Thing UUID, footer `thing.id` and Hive `thing=`. Hardware MAC remains separate |
 | Sensor | Instrument/procedure, with actual replacement and calibration history when known |
-| Datastream | Stable measurement contract for a sensor/procedure at a station |
+| Datastream | Stable measurement contract for a sensor/procedure on a Thing |
 | ObservedProperty | Exact quantity and processing variant; atmospheric PM2.5 is distinct from CF=1 PM2.5 |
 | Observation | Sensor result with time, quality and stable identity |
 | Location / HistoricalLocation | Deployment geometry and when it applied; unknown until provisioned |
-| Feature of interest | What was observed: local air for PM, board for power health; not automatically the station location |
+| Feature of interest | What was observed: local air for PM, board for power health; not automatically the Thing location |
 
 One physical Parquet row can supply several semantic observations. Keep the wide row efficient on SD, and project per-instrument results on the host. Group PMS fields into a structured particle result; IMU and power results retain separate provenance. Device health counters are not ambient environmental observations. A driver/procedure identifier is not a sensor serial number or evidence that an optional accessory was attached.
 
 ```mermaid
 flowchart TD
-    T[Thing: station UUID] --> DS[Datastream: station + procedure + contract]
+    T[Thing: Thing UUID] --> DS[Datastream: Thing + procedure + contract]
     S[Sensor / procedure] --> DS
     OP[Observed properties + units] --> DS
     DS --> OB[Semantic observations]
@@ -137,7 +143,7 @@ Each board has a single-source field dictionary that drives the enum and physica
 
 Each board also embeds one stac-opensensor v0.1.0 board template, a minified JSON built on the host from the field dictionary, `telemetry_semantics.inc`, `telemetry_classes.inc` and the title and keywords in `telemetry_contract.h`. It sits in `.rodata` as `kTemplateJson` in `telemetry_template.h`, and `desc` in `telemetry_descriptor_digest.h` is the SHA-256 of exactly those bytes. The contract tests fail when either header is stale and validate the template against the pinned schemas. `tools/build-idf-board.sh` checks `desc` before the build and checks the app image holds the same bytes after it. The template's `describedby` link is `kDictionaryUri`, the raw `telemetry_fields.inc` at a full 40 hex commit on `main`, with `file:checksum` `1220` plus the dict digest. The footer `dictionary.uri` inside the `opensensor` key is the same string. `kTemplateHref` names the published template, the raw `docs/shared/templates/<board>/<dict>.json` at a full commit whose bytes hash to `desc` (#89). The footer `template.href` carries it (#88). Commit URLs never move, so the bytes at each link always hash to its digest. `pixi run pinned-uris-test` fails on a `main` or branch URL, on a commit that is not on `main` and on a commit whose bytes miss the digest. Readers trust `dictionary.sha256` and `template.sha256`, never a URL, and fetch the dictionary by its digest. Files written before #88 and #89 carry the old flat `dictionary_uri` (on `main`, which may have moved since) and `dictionary_sha256` keys. That is history only, the app does not read those older files (no backward compatibility, owner decision 14).
 
-Each new file carries exactly one Parquet key-value entry, `opensensor`, whose value is compact JSON per stac-opensensor `footer.json` v0.1.0 (pinned in `tools/stac_opensensor/`). Its groups are `station`, `firmware`, `dictionary` (`sha256` is `dict`), `template` (`href` and `sha256`, which is `desc`), `acquisition` (sample period, time semantics, config id, config and calibration id) and `file` (rotation, row groups, rows per group, compression and purpose). The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
+Each new file carries exactly one Parquet key-value entry, `opensensor`, whose value is compact JSON per stac-opensensor `footer.json` v0.1.0 at commit `4408c4e52366bb3d154d22bbfffc88ff09aed6f1` (pinned in `tools/stac_opensensor/`). A second key, `geo`, holds the GeoParquet 2.0 metadata for the `geometry` column, and no other key is written. Its groups are `thing` (id, device id, board slug, deployment id and `mobility`), `firmware` (with the 32 hex `boot_id` of the file name), `dictionary` (`sha256` is `dict`), `template` (`href` and `sha256`, which is `desc`), `acquisition` (sample period, time semantics, config id, config and calibration id) and `file` (rotation, row groups, rows per group, compression and purpose). The acquisition configuration describes selected settings, not a complete hardware register dump or proof of a successful sensor initialization. Runtime rotation and compression are recorded separately. Metadata `unknown` is an explicit sentinel, not an actual deployment/calibration identifier. Host adapters must translate it to missing context, not join all unknown deployments together.
 
 ```sh
 pixi run telemetry-contract-test --sanitize
@@ -148,7 +154,7 @@ pixi run waveshare-contract-test --dictionary-out firmware/esp-idf-waveshare-sim
 pixi run parquet-device command --port <checked-port> 'parquet schema'
 ```
 
-`parquet schema` emits a BEGIN line (schema, columns, the dictionary `sha256`, the board template `desc` and its `desc_bytes`), one FIELD line per leaf of the running schema and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append station/deployment/instrument identity in the later service mapping.
+`parquet schema` emits a BEGIN line (schema, columns, the dictionary `sha256`, the board template `desc` and its `desc_bytes`), one FIELD line per leaf of the running schema and END; it is a bounded diagnostic, not a SensorThings endpoint. Physical type codes match the writer: 1 = INT32, 2 = INT64, 4 = FLOAT. Property URIs include the exact column name, so CF=1/atmospheric PM and raw/physical quantities cannot be silently conflated. Procedure IDs describe logical code paths; append Thing/deployment/instrument identity in the later service mapping.
 
 ### Timing and validity dictionary
 
