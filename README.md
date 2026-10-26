@@ -16,7 +16,7 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Seven o
 | Native firmware | Measurements and board adapter | Hardware evidence |
 | --- | --- | --- |
 | [CoreS3 v6.21](firmware/esp-idf-cores3/README.md) | 81 columns, schema `cores3-telemetry-v6`, dictionary `cores3-telemetry-v7`. Native M5Unified/M5GFX, RTC, display and shared SPI2 card arbitration | Short native SD/USB readback, network UTC and retained settings/bonds verified, newest on v6.21 on 2026-10-26. Phone transfers and endurance remain unqualified. [Bench record](docs/boards/m5stack-cores3/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
-| [Waveshare logger v2.15](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns, schema `waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`. Native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Short native USB/SD readback, newest on v2.15 on 2026-10-26. Phone transfers and endurance remain unqualified. Earlier Arduino image results remain in the [bench record](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26) |
+| [Waveshare logger v2.15](firmware/esp-idf-waveshare-sim7670g/README.md) | 62 columns, schema `waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`. Native UART PMS5003T, I²C gauge with uncalibrated battery health states, one-bit SDMMC and OPI PSRAM | Short native USB/SD readback, newest on v2.15 on 2026-10-26. Phone transfers and endurance remain unqualified. [Newest bench entry](docs/boards/waveshare-esp32-s3-sim7670g/bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26), earlier Arduino image results remain in the same record |
 
 Both source adapters implement the existing offline archive, configuration, BLE
 and authenticated local TCP/mDNS contract. The native migration retained the existing measurement fields, new schemas
@@ -30,7 +30,7 @@ permitted public fallback. RTC and phone anchors remain available offline.
 Location is unset until explicit provisioning: the mobile app sends an H3 cell
 at a configurable precision (default maximum resolution 8), firmware derives
 its center, and an optional owner-declared country stays in the device settings.
-Since #88 the file footer carries no location or country, the rows hold the cell.
+Since #88 the `opensensor` footer key carries no location or country, the rows hold the cell.
 Location changes split immutable files. See [time and location](docs/shared/time-and-location.md).
 
 The toolchain pins **ESP-IDF 6.1**. Managed components pin **M5Unified 0.2.26** and

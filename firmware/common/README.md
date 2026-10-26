@@ -138,7 +138,7 @@ stores one coherent location record containing only the coarsened cell, cap and
 optional owner-declared ISO country. OSLogger captures it at acquisition and
 splits batches/files when it changes. Four nullable fields carry the cell,
 actual resolution, location source and the cell centre as a WKB Point. Since #88
-the file footer carries no location or country. The [time/location contract](../../docs/shared/time-and-location.md)
+the `opensensor` footer key carries no location or country. The [time/location contract](../../docs/shared/time-and-location.md)
 describes mobile provisioning and NTP restrictions.
 
 Physical serial owner/provisioning commands are documented in [OSLogger](logger/README.md).
