@@ -40,6 +40,7 @@ tasks=(
   "repro-paths-test"
   "stack-budget-test"
   "board-conditionals-test"
+  "retired-names-test"
   # Local signing key guard and sign task, throwaway keys only
   "secrets-check-test"
   "release-sign-test"
