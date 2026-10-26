@@ -682,7 +682,7 @@ def main() -> None:
     parser.add_argument("--sanitize", action="store_true", help="enable AddressSanitizer and UBSan")
     args = parser.parse_args()
     check_stack()
-    with tempfile.TemporaryDirectory(prefix="aq-parquet-reader-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="os-parquet-reader-") as temporary:
         directory = Path(temporary)
         tools = Tools(directory, args.sanitize)
         writer_files(tools, directory)

@@ -8,13 +8,13 @@
 # SDK writes into the app description without changing sdkconfig. Release
 # builds keep the real build time.
 #
-# tools/repro_paths.py compares the two aq-build-sha256.json manifests. The
+# tools/repro_paths.py compares the two os-build-sha256.json manifests. The
 # compiler database and project description hold absolute paths by design,
 # every other file, the flashed images included, must match byte for byte.
 #
 # Usage: tools/check_repro_paths.sh [cores3|waveshare] [logger|diagnostic]
 #   Defaults to waveshare logger, which builds every common component.
-#   AQ_REPRO_KEEP=1 keeps both worktrees for inspection.
+#   OS_REPRO_KEEP=1 keeps both worktrees for inspection.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 board="${1:-waveshare}"
@@ -27,11 +27,11 @@ esac
 if [[ -n "$(git -C "${repo_root}" status --porcelain --untracked-files=no)" ]]; then
   printf 'note: uncommitted changes are not built, the check uses HEAD\n' >&2
 fi
-work="$(mktemp -d "${TMPDIR:-/tmp}/aq-repro.XXXXXX")"
-first="${work}/a/aq-parquet"
-second="${work}/second-checkout-path/aq-parquet-repro"
+work="$(mktemp -d "${TMPDIR:-/tmp}/os-repro.XXXXXX")"
+first="${work}/a/opensensor-space-firmware"
+second="${work}/second-checkout-path/opensensor-space-firmware-repro"
 cleanup() {
-  if [[ "${AQ_REPRO_KEEP:-0}" == 1 ]]; then
+  if [[ "${OS_REPRO_KEEP:-0}" == 1 ]]; then
     printf 'kept %s and %s\n' "${first}" "${second}" >&2
     return
   fi

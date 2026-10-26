@@ -51,7 +51,7 @@ the build, and the measured high water mark comes from the board.
 
 Bench recipe, about 75 min.
 
-1. Flash a checked image and note its `aq-build-sha256.json` hash. A high water
+1. Flash a checked image and note its `os-build-sha256.json` hash. A high water
    mark only grows until the next reset, so do not reset the board until step 4.
 2. Wait for the first `DIAG tasks` line (60 s after boot) as the idle baseline.
 3. Exercise the deep paths. Sync a full day over BLE, then over LAN, run

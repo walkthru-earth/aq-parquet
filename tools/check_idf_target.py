@@ -420,7 +420,7 @@ def main() -> None:
         build = args.build.resolve()
         commit, hashes = check_target(build, args.board, args.variant)
         manifest = {"board": args.board, "variant": args.variant, "sdk_commit": commit, "files": hashes}
-        manifest_path = build / "aq-build-sha256.json"
+        manifest_path = build / "os-build-sha256.json"
         if args.verify_manifest:
             require(json.loads(manifest_path.read_text()) == manifest,
                     "reviewed build artifacts changed; build and verify again")

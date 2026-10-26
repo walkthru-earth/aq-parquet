@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two aq-build-sha256.json manifests of one board built from two checkout paths.
+"""Compare two os-build-sha256.json manifests of one board built from two checkout paths.
 
 tools/check_repro_paths.sh builds the images and calls this. Every file in the
 manifest must hash the same, except the compiler database and the project
@@ -16,7 +16,7 @@ from pathlib import Path
 # check_idf_target.py hashes these too, but they list absolute source and
 # build paths, so they always differ between checkouts.
 PATH_BOUND = frozenset({"compile_commands.json", "project_description.json"})
-MANIFEST = "aq-build-sha256.json"
+MANIFEST = "os-build-sha256.json"
 
 
 def compare(first: dict, second: dict) -> list[str]:

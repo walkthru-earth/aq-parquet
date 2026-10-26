@@ -4,8 +4,8 @@ The key lives in secrets/ on the owner machine and is never a CI secret. See
 docs/shared/development.md#local-app-signing for the one-time setup.
 secrets/.env names the key
 
-  AQ_APP_SIGNING_KEY=<file name of the PEM, relative to secrets/>
-  AQ_APP_SIGNING_SCHEME=rsa3072   # optional, the only scheme ESP32-S3 has
+  OS_APP_SIGNING_KEY=<file name of the PEM, relative to secrets/>
+  OS_APP_SIGNING_SCHEME=rsa3072   # optional, the only scheme ESP32-S3 has
 
 Each unsigned app .bin is signed with `espsecure sign-data --version 2` into
 the output directory as <stem>.signed.bin, then checked with
@@ -37,8 +37,8 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-KEY_VAR = "AQ_APP_SIGNING_KEY"
-SCHEME_VAR = "AQ_APP_SIGNING_SCHEME"
+KEY_VAR = "OS_APP_SIGNING_KEY"
+SCHEME_VAR = "OS_APP_SIGNING_SCHEME"
 # ESP32-S3 Secure Boot v2 verifies RSA-3072 only. ECDSA v2 is for other chips.
 SCHEMES = {"rsa3072": 3072}
 DEFAULT_SCHEME = "rsa3072"

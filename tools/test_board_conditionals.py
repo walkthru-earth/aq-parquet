@@ -17,7 +17,7 @@ FIRES = [
     "#if 0\n#elif defined(CONFIG_OS_BOARD_CORES3)\n#endif\n",
     "#if !defined(WAVESHARE_X)\n#endif\n",
     "#  ifdef m5stack_core\n#  endif\n",
-    "#ifndef AQ_CORE_S3_PINS\n#endif\n",
+    "#ifndef OS_CORE_S3_PINS\n#endif\n",
     "#if CONFIG_IDF_TARGET == \"esp32s3\"\n#endif\n",
     "#if 0\n#elif CONFIG_OS_SIM7670G_UART\n#endif\n",
     "#if defined(A) || \\\n    CONFIG_IDF_TARGET_ESP32S3\n#endif\n",
@@ -28,7 +28,7 @@ QUIET = [
     "#if CONFIG_SOC_UART_NUM > 2\n#endif\n",
     "#if CONFIG_IDF_TARGET_LINUX\n#endif\n",
     "#ifdef CONFIG_OS_SCORE_S\n#endif\n",
-    "#ifndef AQ_SHARED_H\n#define AQ_SHARED_H\n#endif\n",
+    "#ifndef OS_SHARED_H\n#define OS_SHARED_H\n#endif\n",
     "#if CONFIG_OS_LOGGER_WORKER_WDT // not for CORES3\n#endif // CORES3\n",
     "#define CORES3 1\nint waveshare = 0;\n",
     "#if A // a comment that ends in a backslash \\\n   || WAVESHARE\n#endif\n",
@@ -49,7 +49,7 @@ def check_findings(root: Path) -> None:
     for text in QUIET:
         assert check(root, text) == [], text
     # CRLF line ends, also on a continuation, read as LF.
-    assert len(check(root, b"#if defined(A) || \\\r\n    defined(AQ_WAVESHARE)\r\n#endif\r\n")) == 1
+    assert len(check(root, b"#if defined(A) || \\\r\n    defined(OS_WAVESHARE)\r\n#endif\r\n")) == 1
     # The finding names the line the directive starts on, after a block
     # comment and a splice that each took up a line before it.
     found = check(root, "/* one\n two */\nint a = 1; \\\n\n#elif CORES3\n")

@@ -47,7 +47,7 @@ def compile_fixture(inc: Path, exe: Path, sanitize: bool) -> None:
     command = [
         "clang++", CXX_STD, "-Wall", "-Wextra", "-Werror",
         "-I", str(ROOT / "firmware/common/vendor/lz4"),
-        f'-DAQ_FIELDS_INC="{inc.resolve()}"',
+        f'-DOS_FIELDS_INC="{inc.resolve()}"',
     ]
     if sanitize:
         command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]

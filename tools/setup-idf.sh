@@ -2,9 +2,8 @@
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${repo_root}/tools/idf-dependencies.lock"
-toolchain_root="${AQ_TOOLCHAIN_ROOT:-${M5_TOOLCHAIN_ROOT:-${HOME}/.cache/m5stack-aq-parquet/toolchains}}"
-idf_path="${AQ_IDF_PATH:-${toolchain_root}/esp-idf-v${ESP_IDF_VERSION}}"
-export IDF_TOOLS_PATH="${AQ_IDF_TOOLS_PATH:-${HOME}/.espressif}"
+# Sets toolchain_root, idf_path, IDF_TOOLS_PATH and IDF_PYTHON_ENV_PATH.
+source "${repo_root}/tools/idf-env.sh"
 if [[ ! -d "${idf_path}" ]]; then
   mkdir -p "$(dirname "${idf_path}")"
   git clone --depth 1 --branch "v${ESP_IDF_VERSION}" https://github.com/espressif/esp-idf.git "${idf_path}"
@@ -18,5 +17,9 @@ python "${repo_root}/tools/check_idf_target.py" --sdk-only "${idf_path}" --allow
 git -C "${idf_path}" submodule update --init --recursive --depth 1
 python "${repo_root}/tools/check_idf_target.py" --sdk-only "${idf_path}"
 export IDF_PATH="${idf_path}"
+# install.sh already recreates a venv whose python link dangles (it passes
+# --clear). The shared check also replaces a venv bound to another interpreter
+# and keeps this script and tools/idf.sh, which never runs it, on one rule.
+ensure_idf_python_env
 "${idf_path}/install.sh" esp32s3
-printf 'ESP-IDF v%s ready at %s\n' "${ESP_IDF_VERSION}" "${idf_path}"
+printf 'ESP-IDF v%s ready at %s, Python venv at %s\n' "${ESP_IDF_VERSION}" "${idf_path}" "${IDF_PYTHON_ENV_PATH}"

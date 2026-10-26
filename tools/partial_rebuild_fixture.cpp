@@ -3,7 +3,7 @@
 // byte offset where each row group ends, so the test can cut the file at the
 // row group, footer and rename stages.
 //
-// Build with -DAQ_FIELDS_INC="\"<board>/telemetry_fields.inc\"".
+// Build with -DOS_FIELDS_INC="\"<board>/telemetry_fields.inc\"".
 // Usage: partial_rebuild_fixture output.parquet none|lz4 groups rows
 //
 // Columns follow prepare_columns() in the shared logger. Every leaf is
@@ -23,8 +23,8 @@
 #include <limits>
 #include <vector>
 
-#ifndef AQ_FIELDS_INC
-#error "define AQ_FIELDS_INC as the quoted path of a board telemetry_fields.inc"
+#ifndef OS_FIELDS_INC
+#error "define OS_FIELDS_INC as the quoted path of a board telemetry_fields.inc"
 #endif
 
 namespace {
@@ -41,7 +41,7 @@ struct FieldDef {
 constexpr FieldDef kFields[] = {
 #define FIELD(name, type, procedure, unit, validity, live, decimals)           \
   {#name, PhysicalType::type, unit},
-#include AQ_FIELDS_INC
+#include OS_FIELDS_INC
 #undef FIELD
 };
 constexpr std::size_t kFieldCount = sizeof(kFields) / sizeof(kFields[0]);

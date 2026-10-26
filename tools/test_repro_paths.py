@@ -1,6 +1,6 @@
 """Host tests for repro_paths.py, the manifest compare behind repro-paths-check.
 
-It needs no SDK. The builds come from crafted aq-build-sha256.json manifests
+It needs no SDK. The builds come from crafted os-build-sha256.json manifests
 and image files, and the shell wrapper is checked for the calls it relies on.
 """
 
@@ -41,7 +41,7 @@ def run(root: Path, first: dict, second: dict, images: tuple[bytes, bytes] | Non
     for index, manifest in enumerate((first, second)):
         build = root / f"checkout-{index}" / "build"
         build.mkdir(parents=True)
-        (build / "aq-build-sha256.json").write_text(json.dumps(manifest))
+        (build / "os-build-sha256.json").write_text(json.dumps(manifest))
         if images:
             (build / "opensensor_waveshare.bin").write_bytes(images[index])
         builds.append(build)
@@ -91,7 +91,7 @@ def main() -> None:
                                  str(missing / "checkout-0"), str(missing / "checkout-0" / "build"),
                                  str(missing / "checkout-1"), str(missing / "checkout-1" / "build")],
                                 capture_output=True, text=True, timeout=60, check=False)
-        assert result.returncode != 0 and "aq-build-sha256.json" in result.stderr, result.stderr
+        assert result.returncode != 0 and "os-build-sha256.json" in result.stderr, result.stderr
 
     # The wrapper must pin the build time, build twice and fail on a compare failure.
     wrapper = WRAPPER.read_text()

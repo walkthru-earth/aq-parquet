@@ -40,6 +40,26 @@ FIRES = [
     "if(NOT " + OLD + "_SOURCE_ROOT_REAL STREQUAL root)",
     "set(" + OLD + "_NIMBLE_PATCH_DIR dir)",
     "find_program(" + OLD + "_PATCH_PROGRAM patch REQUIRED)",
+    OLD + "_BENCH=stall pixi run cores3-build",
+    "idf_args=(-D \"" + OLD + "_VARIANT=${variant}\")",
+    "set(" + OLD + "_SDKCONFIG_OVERLAY \"\" CACHE FILEPATH \"x\")",
+    "printf '" + OLD + "_APP_SIGNING_KEY=k.pem' > secrets/.env",
+    "KEY_VAR = \"" + OLD + "_APP_SIGNING_SCHEME\"",
+    "task_timeout=${" + OLD + "_GATE_TASK_TIMEOUT:-300}",
+    "export IDF_TOOLS_PATH=\"${" + OLD + "_IDF_TOOLS_PATH:-${HOME}/.espressif}\"",
+    "f'-D" + OLD + "_FIELDS_INC=x'",
+    "(\"rom\", [\"-D" + OLD + "_SYNC_ROM_CRC\"])",
+    "toolchain_root=\"${M5_" + "TOOLCHAIN_ROOT:-x}\"",
+    "idf_path=\"$M5_" + "TOOLCHAIN_ROOT/esp-idf-v6.1\"",
+    "idf_path=\"${M5_" + "TOOLCHAIN_ROOT}/esp-idf-v6.1\"",
+    "root = os.environ[\"M5_" + "TOOLCHAIN_ROOT\"]",
+    "root = os.environ.get('M5_" + "TOOLCHAIN_ROOT')",
+    "root=\"${XDG_CACHE_HOME}/m5stack-" + "aq" + "-parquet/toolchains\"",
+    "root=\"${XDG_CACHE_HOME:-x}/m5stack-" + "aq" + "-parquet\"",
+    "cp \"${PROJECT}/build/" + "aq" + "-build-sha256.json\" size/",
+    "rm -f build/" + "aq" + "-build-target.txt",
+    "~/.cache/m5stack-" + "aq" + "-parquet/toolchains/esp-idf-v6.1",
+    "name = \"" + "aq" + "-parquet\"",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -50,8 +70,16 @@ QUIET = [
     "\"AD AE AF AG AI AL AM AO " + OLD + " AR AS AT\"",
     "for (const char *code : {\"EG\", \"US\", \"" + OLD + "\"})",
     "PARQUET LIST ok",
-    "aq_logger.cpp and " + OLD + "_BENCH stay, only wire names moved.",
-    "#ifndef " + OLD + "_SHARED_H",
+    "aq_logger.cpp stays, only wire and build names moved.",
+    "#ifndef OS_SHARED_H",
+    "OS_BENCH=stall pixi run cores3-build",
+    "cp build/os-build-sha256.json size/",
+    "toolchain_root=\"${OS_TOOLCHAIN_ROOT:-${HOME}/.cache/opensensor-space-firmware/toolchains}\"",
+    "the tool lives under `~/.cache/m5stack-" + "aq" + "-parquet/toolchains/arduino/data/packages`",
+    "Setup keeps SDKs below `$M5_TOOLCHAIN_ROOT`, which defaults outside the repository.",
+    "the tool lives under `$M5_TOOLCHAIN_ROOT/toolchains/arduino/data/packages`",
+    "\"created_by\": \"m5stack-" + "aq" + "-parquet version 0.1\"",
+    "name = \"opensensor-space-firmware\"",
     "constexpr char kIso[] = \"AN AO " + OLD + " AR AS\";",
     "Tested near " + OLD + " READY state in prose without a literal.",
     "printf(\"%s OS READY\\n\", prefix);",
@@ -96,6 +124,15 @@ def check_exit_codes() -> None:
         bad.write_text(FIRES[4] + "\n")
         result = subprocess.run([sys.executable, str(script), str(bad)], capture_output=True, text=True)
         assert result.returncode == 1 and "retired NVS namespace" in result.stdout, result
+        # A name the phone or a stored blob sees points to the migration log,
+        # a build or environment name to the development guide.
+        assert "(docs/shared/mobile-migration.md)" in result.stdout, result
+        build = Path(tmp) / "build.sh"
+        build.write_text(OLD + "_BENCH=stall\n" + "aq" + "_pin_cxx_standard(x)\n")
+        result = subprocess.run([sys.executable, str(script), str(build)], capture_output=True, text=True)
+        lines = result.stdout.splitlines()
+        assert result.returncode == 1 and len(lines) == 2, result
+        assert all(line.endswith("(docs/shared/development.md)") for line in lines), result
         good = Path(tmp) / "good.md"
         good.write_text(QUIET[0] + "\n")
         result = subprocess.run([sys.executable, str(script), str(good)], capture_output=True, text=True)

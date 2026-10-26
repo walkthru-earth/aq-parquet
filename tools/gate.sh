@@ -7,7 +7,7 @@
 # builds run in the CI board job instead.
 #
 # Each task runs under GNU timeout from the pixi coreutils pin. A task that
-# outlives AQ_GATE_TASK_TIMEOUT seconds (default 300) is stopped, reported as
+# outlives OS_GATE_TASK_TIMEOUT seconds (default 300) is stopped, reported as
 # TIMEOUT by name, and killed 10 s later if it ignores SIGTERM. Anything left
 # in the task's process group is then killed, so no stray process outlives it.
 #
@@ -112,7 +112,7 @@ if [[ ${#unlisted[@]} -gt 0 ]]; then
   exit 1
 fi
 
-task_timeout=${AQ_GATE_TASK_TIMEOUT:-300}
+task_timeout=${OS_GATE_TASK_TIMEOUT:-300}
 group=""
 # The task group is not the terminal's foreground group, so Ctrl-C and a CI
 # cancel reach only this script. Pass them on to the running task.

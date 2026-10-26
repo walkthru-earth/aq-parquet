@@ -42,7 +42,7 @@ jobs:
       # pins through pixi exec, so local runs use the same versions.
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
-          pixi-version: v0.82.0
+          pixi-version: v0.83.0
           run-install: false
       - name: actionlint
         run: pixi exec -s actionlint==1.7.12 -s shellcheck==0.11.0 -- actionlint -color
@@ -69,7 +69,7 @@ jobs:
           fetch-depth: 0
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
-          pixi-version: v0.82.0
+          pixi-version: v0.83.0
           locked: true
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -124,7 +124,7 @@ jobs:
           persist-credentials: false
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
-          pixi-version: v0.82.0
+          pixi-version: v0.83.0
           locked: true
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -132,8 +132,14 @@ jobs:
         id: idf
         run: |
           source tools/idf-dependencies.lock
-          echo "version=${ESP_IDF_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "commit=${ESP_IDF_COMMIT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${ESP_IDF_VERSION}"
+            echo "commit=${ESP_IDF_COMMIT}"
+            # SDK and IDF venv paths from tools/idf-env.sh under pixi run, the
+            # same derivation every local build uses.
+            # shellcheck disable=SC2016 # the inner bash expands these
+            pixi run bash -c 'repo_root=$PWD; source tools/idf-dependencies.lock; source tools/idf-env.sh; echo "sdk=${idf_path}"; echo "venv=${IDF_PYTHON_ENV_PATH}"'
+          } >> "$GITHUB_OUTPUT"
           echo "CCACHE_DIR=${HOME}/.ccache" >> "$GITHUB_ENV"
       # The SDK comes from the repo's own `pixi run idf-setup`, not the
       # espressif/idf container. setup-idf.sh clones the pinned tag, refuses any
@@ -149,19 +155,23 @@ jobs:
       # pull requests, so writing them would only evict the main entries from
       # the 10 GB repository quota.
       #
-      # The IDF Python venv under ~/.espressif links to the pixi interpreter
-      # in the checkout, whose path holds the repository name. The key carries
-      # that name, so a renamed repository installs a fresh venv instead of
-      # restoring one that points at the old path.
+      # The IDF Python venv lives in the checkout at .pixi/idf-python-env and
+      # links to the pixi interpreter there, whose path holds the repository
+      # name. The key carries that name, so a renamed repository installs a
+      # fresh venv instead of restoring one that points at the old path. The
+      # shared ~/.espressif keeps only compilers and tools, never a venv.
+      # setup-pixi caches the pixi env itself.
       - name: Restore ESP-IDF SDK and tools
         id: sdk-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ${{ steps.idf.outputs.sdk }}
+            ${{ steps.idf.outputs.venv }}
             ~/.espressif
             !~/.espressif/dist
-          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
+            !~/.espressif/python_env
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'tools/idf-env.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
       - name: Install pinned ESP-IDF
         run: pixi run idf-setup
       # Every leg installs the same SDK, so one leg saves it.
@@ -172,9 +182,11 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ${{ steps.idf.outputs.sdk }}
+            ${{ steps.idf.outputs.venv }}
             ~/.espressif
             !~/.espressif/dist
+            !~/.espressif/python_env
           key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
       - name: Restore ccache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -214,7 +226,7 @@ jobs:
           mkdir -p size
           pixi run idf -C "${PROJECT}" -B "${PROJECT}/build/${VARIANT}" \
             size --format json2 --output-file "${PWD}/size/size.json"
-          cp "${PROJECT}/build/${VARIANT}/aq-build-sha256.json" size/
+          cp "${PROJECT}/build/${VARIANT}/os-build-sha256.json" size/
       - name: Fetch size baseline
         id: baseline
         if: matrix.project
@@ -330,7 +342,7 @@ jobs:
   # One board built from two checkout paths must give the same images (#45).
   # tools/check_repro_paths.sh builds the Waveshare logger, which compiles every
   # common component, in two git worktrees of HEAD and compares the
-  # aq-build-sha256.json manifests. One board keeps the job to two builds.
+  # os-build-sha256.json manifests. One board keeps the job to two builds.
   # No ccache, a cache hit could hide a path that leaks at compile time.
   repro-paths:
     name: Reproducible image paths
@@ -345,7 +357,7 @@ jobs:
           persist-credentials: false
       - uses: prefix-dev/setup-pixi@ad1da6449d9e506fd127fd67ab2d054a769f6a94 # v0.11.2
         with:
-          pixi-version: v0.82.0
+          pixi-version: v0.83.0
           locked: true
           cache: true
           cache-write: false
@@ -353,17 +365,25 @@ jobs:
         id: idf
         run: |
           source tools/idf-dependencies.lock
-          echo "version=${ESP_IDF_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "commit=${ESP_IDF_COMMIT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${ESP_IDF_VERSION}"
+            echo "commit=${ESP_IDF_COMMIT}"
+            # SDK and IDF venv paths from tools/idf-env.sh under pixi run, the
+            # same derivation every local build uses.
+            # shellcheck disable=SC2016 # the inner bash expands these
+            pixi run bash -c 'repo_root=$PWD; source tools/idf-dependencies.lock; source tools/idf-env.sh; echo "sdk=${idf_path}"; echo "venv=${IDF_PYTHON_ENV_PATH}"'
+          } >> "$GITHUB_OUTPUT"
       # Same SDK cache key as the board builds, which alone write it.
       - name: Restore ESP-IDF SDK and tools
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/m5stack-aq-parquet/toolchains/esp-idf-v${{ steps.idf.outputs.version }}
+            ${{ steps.idf.outputs.sdk }}
+            ${{ steps.idf.outputs.venv }}
             ~/.espressif
             !~/.espressif/dist
-          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
+            !~/.espressif/python_env
+          key: esp-idf-${{ runner.os }}-${{ steps.idf.outputs.commit }}-${{ hashFiles('tools/setup-idf.sh', 'tools/idf-env.sh', 'pixi.lock') }}-${{ github.event.repository.name }}
       - name: Install pinned ESP-IDF
         run: pixi run idf-setup
       - name: Build from two paths and compare

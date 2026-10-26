@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstring>
 
-#if defined(ESP_PLATFORM) || defined(AQ_SYNC_ROM_CRC)
+#if defined(ESP_PLATFORM) || defined(OS_SYNC_ROM_CRC)
 #include <esp_rom_crc.h>
 #endif
 
@@ -55,7 +55,7 @@ inline std::uint32_t crc_update(std::uint32_t crc, const std::uint8_t *data,
 // golden vectors.
 inline std::uint32_t crc32_update(std::uint32_t crc, const std::uint8_t *data,
                                   std::size_t size) {
-#if defined(ESP_PLATFORM) || defined(AQ_SYNC_ROM_CRC)
+#if defined(ESP_PLATFORM) || defined(OS_SYNC_ROM_CRC)
   while (size) {
     const auto part = size > 0x10000 ? std::uint32_t(0x10000)
                                      : static_cast<std::uint32_t>(size);
