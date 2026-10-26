@@ -36,6 +36,6 @@ direct_dependencies:
 - idf
 - m5stack/m5gfx
 - m5stack/m5unified
-manifest_hash: 6fe206e3d85099513924e430d5773fff51574f17f015812b9d2c38e614dcb04f
+manifest_hash: 1f5dca767d2caed7dcd75616cbfb07d6ad3d20759849d0d903c291d967e11f4f
 target: esp32s3
 version: 3.0.0

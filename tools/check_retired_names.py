@@ -21,6 +21,7 @@ docs/shared/development.md for build and environment names.
   build manifests        the old build hash and target file names
   toolchain cache        the old SDK cache folder under ~/.cache
   pixi project name      the old workspace name in pixi.toml
+  board component (#111) the old CoreS3 and Waveshare board component names
 
 History is exempt. The dated bench records, the migration log and the #93
 audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
@@ -89,11 +90,25 @@ RETIRED = (
         re.compile(r"(\.cache|XDG_CACHE_HOME[^/]*)/m5stack-" + "aq" + r"-parquet(?!/toolchains/arduino)"),
     ),
     ("pixi project name", re.compile(r"^name = \"" + "aq" + r"-parquet\"")),
+    # Board components renamed in #111 Phase 2d, plus the Waveshare form that
+    # builds the name from OS_VARIANT.
+    (
+        "board component",
+        re.compile(r"\b" + "aq" + r"_(cores3|waveshare_logger|waveshare_diagnostic)\b|\b" + "aq" + r"_waveshare_\$\{"),
+    ),
 )
 # Build and environment names. Their new form is in the development guide,
 # not the mobile migration log, which tracks what the phone can observe.
 BUILD_KINDS = frozenset(
-    {"CMake helper", "CMake variable", "build variable", "build manifest", "toolchain cache", "pixi project name"}
+    {
+        "CMake helper",
+        "CMake variable",
+        "build variable",
+        "build manifest",
+        "toolchain cache",
+        "pixi project name",
+        "board component",
+    }
 )
 # History that names the old forms on purpose.
 EXEMPT = {
