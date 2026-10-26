@@ -922,3 +922,49 @@ values (9 to 16,381 mV) appear on both the old and the new image, so this
 install did not cause them. BLE pairing with the new PIN, phone sync, LAN and
 Parquet readback were not run. Logs and the image are in ignored
 `firmware/esp-idf-cores3/artifacts/install-20261018/`.
+
+## Main 689bb61 USB reflash, Thing id and first `geo` footer (2026-10-26)
+
+CoreS3 MAC `44:1b:f6:e2:6b:40`, checked native USB port `/dev/cu.usbmodem11101`.
+`pixi run ports`, `chip`, `flash-id` and `efuse` ran before the flash. Only the
+eFuse summary was kept in the artifact directory. It shows
+`SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0` and `DIS_DOWNLOAD_MODE=False`,
+and the esptool header in the flash log shows ESP32-S3 QFN56 rev v0.2. The
+ports, chip and flash-id output was not kept, so this entry does not quote a
+flash ID readback. The owner waived a new backup. The flash helper still needs
+a backup path for its NVS layout check, so
+`backup/m5stack-cores3-flash-20261025T220032Z.bin` from 2026-10-25 was passed
+only to satisfy that check.
+
+`pixi run cores3-build` on `main` at `689bb61` (#108, the Thing rename, the
+`geometry` column and the `geo` footer key) passed the target checks. App BIN
+SHA-256 `6e2492fc98e635179988869c100516c2163bd46dac3d9068a33776ea6998cdf4`.
+`pixi run cores3-flash` wrote only bootloader, partition table, otadata and
+app0, and esptool verified every region hash. No eFuse write, NVS erase, full
+chip erase or card format.
+
+| Check | Result |
+| :--- | :--- |
+| Image | `idf-cores3-parquet-v6.21`, app version `689bb61`, compiled Oct 26 2026 19:53:16, ESP-IDF v6.1. `PARQUET BEGIN schema=cores3-telemetry-v6 columns=81 ... psram_workspace_bytes=169824 row_bytes=880 ... codec=LZ4_RAW crc32_check=ok`. `parquet schema` printed `sha256=3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9 desc=1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a`. The file footer names dictionary `cores3-telemetry-v7` |
+| Settings | `CONFIG LOADED first_boot=false display=true pair=random pin_default=false wifi_on=false ssid_set=false lan_on=true`, `BLE BEGIN name=OS-6b40 ... bonds=0 pair=random` |
+| Thing id | Both captured boots (`boot_seq=5` and `boot_seq=6`) and `parquet status` print the same Thing id, which differs from the station id in the 2026-10-18 entry. The id itself is left out of this record |
+| Time | `PARQUET TIME ... source=rtc` on both boots. Every row of the first file has `clock_status=2` and a non-null `event_time_utc_us` |
+| Watchdog and SD | `PARQUET WATCHDOG mode=armed ... consecutive=0`, `PARQUET STORAGE state=ready`, `PARQUET RECOVERY quarantined=0 repaired=0 deleted=0`, `PARQUET SCAN files=15` before the archive reset |
+| Core dump | The first boot of this image printed `Core dump data checksum is correct` and `Found core dump 25376 bytes in flash @ 0xc10000`. The dump was written before this image ran and was not decoded |
+| Archive reset (owner requested) | `parquet erase-archive CONFIRM` returned `PARQUET ERASE_ARCHIVE ok=1 files=15 directories=6 reboot_required=1`. The capture tool refuses that command, so a one-off pyserial script sent it. After a reset the board printed `PARQUET SCAN files=0 retained_partials=0 quarantine_files=0`. Card not formatted |
+| Sensors | PMSA003 valid frames with `checksum_failures=0 length_failures=0`, for example PM2.5 35 ug/m3 atmospheric |
+
+| First file | Result |
+| :--- | :--- |
+| File | `data_1645_4e1530a2..._0-70-0.parquet` in the dated tree, 71 rows, 1 row group, 81 columns, 20,535 bytes, CRC-32 `c30c3179` (matches `PARQUET READY`), SHA-256 `c89062aff53f4b83b49641bf1efe9b595f269f87f9bbf0e471d888c76ffe8e08`. `PARQUET READY ... write_us=187401 sync_us=36662 codec=LZ4_RAW` |
+| Cadence | `sequence` 0 to 70, `event_time_utc_us` 16:48:11 to 16:59:51 UTC, the end of the 16:45 window. `scheduled_us` steps exactly 10,000,000 us. `monotonic_us` intervals 9,985,796 to 10,010,024 us, at most 14.2 ms from ten seconds. `rows_dropped`, `storage_errors` and `sample_deadlines_missed` are 0 |
+| Footer key order | The raw thrift `key_value_metadata` holds `opensensor` before `geo`. PyArrow 25 returns the keys in a different order, so the raw bytes are the evidence |
+| `geo` key | `{"version": "2.0.0", "primary_column": "geometry", "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}}}` |
+| Location columns | Column 81 `geometry` is BYTE_ARRAY with the Parquet `Geometry` logical type (PyArrow 25 prints `Geometry(crs=)`). Column 78 `h3_cell_id` and column 80 `location_source` (UINT8) are present. Location is unset, so all three are null in all 71 rows, and the `geometry` chunk statistics carry only `null_count=71` with no bounds |
+
+Limits. Location was unset, so a non-null `geometry` value and geospatial
+statistics with bounds are not proven on hardware. No BLE, LAN or phone sync
+was run. This short USB readback does not establish endurance, SD or power-cut
+durability, and host tests do not prove those either. Logs, the image hashes
+and the fetched file are in ignored
+`firmware/esp-idf-cores3/artifacts/2026-10-26-v621/`.

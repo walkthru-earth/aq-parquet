@@ -3,8 +3,12 @@
 The current [V2.0 application](../../../firmware/esp-idf-waveshare-sim7670g/README.md)
 is native **ESP-IDF 6.1**, with logger and UART/read-only TF diagnostic variants.
 The logger retains UART1 PMS5003T, one-bit SDMMC, OPI PSRAM, UART0 console,
-MAX17048 and the 62-column v5 schema with dictionary v5, including battery health state and gauge diagnostics. **Native hardware qualification is
-pending.** Use the [native build/flash workflow](../../../firmware/esp-idf-waveshare-sim7670g/README.md#current-build-and-flash-workflow)
+MAX17048 and the 62-column v6 schema with dictionary v7, including battery health state, gauge diagnostics and the location columns.
+The newest dated native readback is the
+[2026-10-26 reflash of main 689bb61](bench-verified.md#main-689bb61-usb-reflash-thing-id-and-first-geo-footer-2026-10-26),
+with the Thing id, a null `geometry` column and the `geo` footer key on the
+first file. **Phone sync, endurance and power-cut durability remain
+unqualified.** Use the [native build/flash workflow](../../../firmware/esp-idf-waveshare-sim7670g/README.md#current-build-and-flash-workflow)
 and [shared development guide](../../shared/development.md).
 
 The following hardware observations describe historical Arduino images.
