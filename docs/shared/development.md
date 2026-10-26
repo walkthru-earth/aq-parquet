@@ -258,7 +258,10 @@ and by hand from the Actions tab (`workflow_dispatch`).
   commit in `tools/idf-dependencies.lock`. The SDK and ccache caches are
   restored on every run but written only by pushes to `main`, and the SDK is
   saved from the cores3 leg alone, so pull requests never evict the `main`
-  entries. `waveshare-psram-build` stays a manual SDK fixture.
+  entries. `waveshare-psram-build` stays a manual SDK fixture. A
+  `bench-stall` leg compiles the CoreS3 and Waveshare logger bench images
+  with `OS_BENCH=stall`, so the `CONFIG_OS_LOGGER_BENCH_STALL` code keeps
+  building. It only compiles them and has no size or slot check.
 - Each board job uploads its `idf.py size --format json2` report and
   `os-build-sha256.json` as the `size-<board>` artifact, and the ELF, map and
   `flash_args` as `firmware-<board>`. Both are kept 90 days for `main` builds
@@ -284,6 +287,9 @@ and by hand from the Actions tab (`workflow_dispatch`).
   required check.
 - `.github/workflows/release.yml` is a separate workflow for `v*` tags and
   is not part of `CI result`, see [Cutting a release](#cutting-a-release).
+- `.github/workflows/scorecard.yml` runs the OpenSSF Scorecard weekly and on
+  pushes to `main` and uploads its SARIF result to code scanning. It never
+  runs on pull requests and is not part of `CI result`.
 - Dependabot opens one grouped pull request a week for action pin updates,
   only for releases at least 7 days old (`.github/dependabot.yml`).
 
