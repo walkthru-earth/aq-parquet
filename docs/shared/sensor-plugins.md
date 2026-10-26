@@ -243,7 +243,10 @@ The gate enforces four rules.
   a removal or an edit inside a shipped segment fails.
 - A new release lands with a newest first entry in
   [mobile migration notes](mobile-migration.md) that names the new `dict`.
-- Releases are append only. An old entry never changes.
+- Releases are append only. The gate also reads the base branch lock
+  (`git show origin/main:<path>/shipped.lock`, or the PR base in CI) and
+  requires every earlier entry to be byte identical, so only new entries may
+  be appended.
 
 Two existing checks already catch an inconsistent `dict` move today.
 `tools/build-idf-board.sh` lines 20 to 23 fails when the digest header and the
