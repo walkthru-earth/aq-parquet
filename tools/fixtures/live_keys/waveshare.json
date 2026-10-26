@@ -6,7 +6,7 @@
       "note": "Dictionary waveshare-sim7670g-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. t and rh print one decimal. Older digests are retired and no longer listed.",
       "builds": [
         {
-          "firmware": "idf-waveshare-parquet-v2.10",
+          "firmware": "idf-waveshare-parquet-v2.11",
           "emitter": "board field table through oslogger::format_live",
           "fields": {
             "seq": "sequence",

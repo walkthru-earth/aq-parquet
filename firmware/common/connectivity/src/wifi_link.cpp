@@ -1020,8 +1020,8 @@ void accept_client() {
 bool send_hello(std::uint8_t peer) {
   const char *info = ble::info_json();
   const std::size_t info_length = std::strlen(info);
-  std::uint8_t frame[4 + 400];
-  if (info_length > 400)
+  std::uint8_t frame[4 + ble::kMaxInfo];
+  if (info_length > ble::kMaxInfo)
     return false;
   frame[0] = ble::kFrameHello;
   frame[1] = kProtocolVersion;

@@ -8,11 +8,29 @@
 #include <sync_codec.h>
 #include <wifi_link.h>
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <new>
+#include <random>
+#include <span>
 #include <string>
+#include <tuple>
 #include <vector>
+
+// The two shipped board templates (#85). Each defines
+// telemetry::contract::kTemplateJson with no includes, so a namespace keeps
+// them apart. tools/test_control_sync.py hashes what GET_DESCRIPTOR returns
+// against kDescriptorSha256 in each board's telemetry_descriptor_digest.h.
+namespace cores3 {
+#include "../firmware/esp-idf-cores3/bringup/telemetry_template.h"
+}
+namespace waveshare {
+#include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_template.h"
+}
 
 // The default board layout (runtime Kconfig), 64 KiB and 64 events.
 constexpr DebugLog::Layout kTestLayout{65536, 64};
@@ -20,6 +38,8 @@ constexpr DebugLog::Layout kTestLayout{65536, 64};
 namespace {
 unsigned bonds_cleared = 0, sessions_dropped = 0, wifi_reapplied = 0,
          time_reapplied = 0;
+// Every global operator new in this process, see the replacement at the end.
+std::size_t heap_allocations = 0;
 struct Reply {
   ble::Link link;
   std::vector<std::uint8_t> bytes;
@@ -28,6 +48,7 @@ struct Failure {
   ble::Link link;
   ble::Op op;
   ble::Error code;
+  std::string detail{};
 };
 // abort::sequences and abort::stopped are process-wide; reset between cases.
 void reset_abort() {
@@ -51,9 +72,10 @@ struct Peer {
   ble::Link abort_link = ble::Link::Ble;
   std::vector<Reply> successful;
   std::vector<Failure> errors;
+  std::span<const char> descriptor{};
 
   ossync::ControlReplies callbacks() {
-    return {this, payload_max, respond, error};
+    return {this, payload_max, respond, error, descriptor};
   }
   static std::uint16_t payload_max(void *context, ble::Link) {
     return static_cast<Peer *>(context)->payload;
@@ -75,8 +97,9 @@ struct Peer {
     return true;
   }
   static bool error(void *context, ble::Link link, ble::Op op, ble::Error code,
-                    const char *) {
-    static_cast<Peer *>(context)->errors.push_back({link, op, code});
+                    const char *detail) {
+    static_cast<Peer *>(context)->errors.push_back(
+        {link, op, code, detail ? detail : ""});
     return true;
   }
 };
@@ -550,6 +573,184 @@ void dispatch() {
   assert(peer.errors.size() == 1 && peer.errors[0].code == ble::kErrBusy);
   assert(peer.errors[0].link == ble::Link::Lan);
 }
+
+std::string descriptor_body(std::uint32_t offset, std::uint16_t length) {
+  std::string body(6, '\0');
+  for (unsigned i = 0; i < 4; ++i)
+    body[i] = static_cast<char>(offset >> (8 * i));
+  body[4] = static_cast<char>(length);
+  body[5] = static_cast<char>(length >> 8);
+  return body;
+}
+std::size_t link_cap(ble::Link link, std::uint16_t payload) {
+  const std::size_t cap = link == ble::Link::Ble ? ble::kMaxFrame : 1024;
+  return payload < cap ? payload : cap;
+}
+// One GET_DESCRIPTOR round trip. Checks the frame header and returns its bytes.
+std::string chunk(Peer &peer, ble::Link link, std::uint32_t offset,
+                  std::uint16_t length) {
+  const auto replies = peer.successful.size();
+  handle(request(ble::kOpGetDescriptor, link, descriptor_body(offset, length)),
+         peer);
+  assert(peer.errors.empty() && peer.successful.size() == replies + 1);
+  const auto &frame = peer.successful.back().bytes;
+  assert(peer.successful.back().link == link);
+  assert(frame.size() > 9 && frame.size() <= link_cap(link, peer.payload));
+  assert(frame[0] == ble::kFrameDescriptorChunk);
+  assert(opensensor::sync::get_u32(frame.data() + 1) == peer.descriptor.size());
+  assert(opensensor::sync::get_u32(frame.data() + 5) == offset);
+  return {frame.begin() + 9, frame.end()};
+}
+// The phone's loop: request the next offset until total bytes arrived.
+std::string download(std::span<const char> descriptor, ble::Link link,
+                     std::uint16_t payload) {
+  Peer peer;
+  peer.payload = payload;
+  peer.descriptor = descriptor;
+  const std::size_t room = link_cap(link, payload) - 9;
+  std::string bytes;
+  do {
+    const auto part = chunk(peer, link, std::uint32_t(bytes.size()), 0xffff);
+    // Every chunk but the last fills the link budget.
+    assert(part.size() == room ||
+           bytes.size() + part.size() == descriptor.size());
+    bytes += part;
+  } while (bytes.size() < descriptor.size());
+  assert(peer.successful.size() == (descriptor.size() + room - 1) / room);
+  return bytes;
+}
+Failure descriptor_error(std::span<const char> descriptor,
+                         const std::string &body, std::uint16_t payload = 512) {
+  Peer peer;
+  peer.payload = payload;
+  peer.descriptor = descriptor;
+  handle(request(ble::kOpGetDescriptor, ble::Link::Ble, body), peer);
+  assert(peer.successful.empty() && peer.errors.size() == 1);
+  assert(peer.errors[0].op == ble::kOpGetDescriptor);
+  return peer.errors[0];
+}
+
+void descriptors(const char *directory) {
+  struct Board {
+    const char *name;
+    std::span<const char> bytes;
+  };
+  const Board boards[] = {
+      {"cores3",
+       {cores3::telemetry::contract::kTemplateJson,
+        sizeof(cores3::telemetry::contract::kTemplateJson) - 1}},
+      {"waveshare",
+       {waveshare::telemetry::contract::kTemplateJson,
+        sizeof(waveshare::telemetry::contract::kTemplateJson) - 1}},
+  };
+  std::mt19937 random(87);
+  for (const auto &board : boards) {
+    const std::string expected(board.bytes.data(), board.bytes.size());
+    // Whole template at the BLE GATT cap and the LAN payload cap. The Python
+    // wrapper hashes each file against the board's desc.
+    for (const auto &[link, payload, suffix] :
+         {std::tuple{ble::Link::Ble, std::uint16_t(512), "ble"},
+          std::tuple{ble::Link::Lan, std::uint16_t(1024), "lan"}}) {
+      const auto bytes = download(board.bytes, link, payload);
+      assert(bytes == expected);
+      std::ofstream(std::string(directory) + "/" + board.name + "-" + suffix +
+                        ".json",
+                    std::ios::binary)
+          << bytes;
+    }
+    // Re-requested ranges return the same bytes, clamped to what remains and
+    // to the frame budget.
+    for (unsigned i = 0; i < 300; ++i) {
+      Peer peer;
+      const auto link = i % 2 ? ble::Link::Lan : ble::Link::Ble;
+      peer.payload = static_cast<std::uint16_t>(10 + random() % 1100);
+      peer.descriptor = board.bytes;
+      const auto offset = std::uint32_t(random() % board.bytes.size());
+      const auto length = static_cast<std::uint16_t>(1 + random() % 0xffff);
+      const auto part = chunk(peer, link, offset, length);
+      const std::size_t count =
+          std::min({std::size_t(length), board.bytes.size() - offset,
+                    link_cap(link, peer.payload) - 9});
+      assert(part == expected.substr(offset, count));
+    }
+    const auto total = std::uint32_t(board.bytes.size());
+    Peer peer;
+    peer.payload = 512;
+    peer.descriptor = board.bytes;
+    // Last partial chunk, a one byte tail and an oversize length.
+    assert(chunk(peer, ble::Link::Ble, total - 5, 100) ==
+           expected.substr(total - 5));
+    assert(chunk(peer, ble::Link::Ble, total - 1, 0xffff) ==
+           expected.substr(total - 1));
+    assert(chunk(peer, ble::Link::Ble, 0, 0xffff).size() == 512 - 9);
+    assert(chunk(peer, ble::Link::Ble, 0, 1) == expected.substr(0, 1));
+    // The smallest budget that carries a byte.
+    peer.payload = 10;
+    assert(chunk(peer, ble::Link::Ble, 7, 0xffff) == expected.substr(7, 1));
+    // Offset at or past total.
+    for (const auto offset : {total, total + 1, 0xffffffffU}) {
+      const auto failure =
+          descriptor_error(board.bytes, descriptor_body(offset, 16));
+      assert(failure.code == ble::kErrRange && failure.detail == "offset");
+    }
+    const auto zero = descriptor_error(board.bytes, descriptor_body(0, 0));
+    assert(zero.code == ble::kErrMalformed && zero.detail == "length");
+    for (const auto &body :
+         {std::string{}, std::string(5, '\0'), descriptor_body(0, 16) + "x"}) {
+      const auto failure = descriptor_error(board.bytes, body);
+      assert(failure.code == ble::kErrMalformed &&
+             failure.detail == "descriptor");
+    }
+    const auto narrow =
+        descriptor_error(board.bytes, descriptor_body(0, 16), 9);
+    assert(narrow.code == ble::kErrBusy && narrow.detail == "mtu");
+  }
+  // A board without a template: no-descriptor, never a range error at total 0.
+  for (const auto offset : {0U, 1U}) {
+    const auto failure = descriptor_error({}, descriptor_body(offset, 16));
+    assert(failure.code == ble::kErrNoDescriptor && failure.detail.empty());
+  }
+
+  // No heap on the serving path. These replies copy into a static buffer, so
+  // any allocation during the download would come from the dispatch itself.
+  // The Peer vectors above prove the counter sees allocations.
+  assert(heap_allocations > 0);
+  static std::uint8_t last[1024];
+  static std::size_t last_size = 0;
+  static unsigned frames = 0;
+  ossync::ControlReplies quiet{
+      nullptr,
+      [](void *, ble::Link link) -> std::uint16_t {
+        return link == ble::Link::Ble ? 512 : 1024;
+      },
+      [](void *, ble::Link, const std::uint8_t *bytes, std::size_t size) {
+        std::memcpy(last, bytes, size);
+        last_size = size;
+        ++frames;
+        return true;
+      },
+      [](void *, ble::Link, ble::Op, ble::Error, const char *) {
+        return false;
+      },
+      boards[1].bytes};
+  for (const auto link : {ble::Link::Ble, ble::Link::Lan}) {
+    ble::ControlRequest next =
+        request(ble::kOpGetDescriptor, link, descriptor_body(0, 0xffff));
+    const auto before = heap_allocations;
+    std::uint32_t offset = 0;
+    frames = 0;
+    while (offset < quiet.descriptor.size()) {
+      for (unsigned i = 0; i < 4; ++i)
+        next.bytes[1 + i] = static_cast<std::uint8_t>(offset >> (8 * i));
+      assert(ossync::handle_common_control(next, quiet));
+      assert(last[0] == ble::kFrameDescriptorChunk && last_size > 9);
+      assert(std::memcmp(last + 9, quiet.descriptor.data() + offset,
+                         last_size - 9) == 0);
+      offset += std::uint32_t(last_size - 9);
+    }
+    assert(heap_allocations == before && frames > 1);
+  }
+}
 } // namespace
 
 // These are transport observations/actions, not radio or protocol mirrors.
@@ -579,7 +780,8 @@ void apply_time_settings() { ++time_reapplied; }
 void apply_settings() { ++wifi_reapplied; }
 } // namespace lan
 
-int main() {
+int main(int argc, char **argv) {
+  assert(argc == 2); // directory for the downloaded descriptors
   configuration();
   paged_configuration();
   config_chunks();
@@ -588,8 +790,20 @@ int main() {
   diagnostics();
   aborts();
   dispatch();
+  descriptors(argv[1]);
 }
 
 namespace opensensor::network_time {
 Status status() { return Status{}; }
 } // namespace opensensor::network_time
+
+// Counts allocations so descriptors() can show GET_DESCRIPTOR allocates none.
+// Array and nothrow forms forward here by default.
+void *operator new(std::size_t size) {
+  ++heap_allocations;
+  if (void *memory = std::malloc(size ? size : 1))
+    return memory;
+  throw std::bad_alloc();
+}
+void operator delete(void *memory) noexcept { std::free(memory); }
+void operator delete(void *memory, std::size_t) noexcept { std::free(memory); }

@@ -20,6 +20,7 @@ the device except for the explicitly named write operations (`time`, `flush`,
   pixi run ble-sync token --save artifacts/lan-token.txt        # BLE only
   pixi run ble-sync log [--bytes 8192]         # LOG_TAIL
   pixi run ble-sync diag                       # GET_DIAG disconnect counters and events
+  pixi run ble-sync descriptor --out artifacts/template.json   # GET_DESCRIPTOR, hash checked
   pixi run ble-sync abort                      # ABORT whatever the device is running
   pixi run ble-sync reboot                     # explicit
 
@@ -59,17 +60,21 @@ OP_GET_DIAG, OP_ABORT = 0x0E, 0x0F
 # Opcodes and frame types are separate number spaces, so OP_LIST_SINCE and
 # F_FILE share the value 0x10.
 OP_LIST_SINCE = 0x10
+OP_GET_DESCRIPTOR = 0x11
 F_FILE, F_LIST_END = 0x10, 0x11
 F_OPENED, F_CHUNK, F_READ_END, F_CLOSED = 0x20, 0x21, 0x22, 0x23
 F_TIME_SET, F_FLUSHED, F_ERROR = 0x30, 0x31, 0x7F
 F_CONFIG, F_WIFI_AP, F_WIFI_SCAN_END, F_REBOOTING = 0x40, 0x41, 0x42, 0x43
 F_LOG, F_LOG_END, F_TOKEN, F_HELLO, F_STATUS, F_LIVE = 0x44, 0x45, 0x46, 0x47, 0x48, 0x49
 F_BYE, F_DIAG, F_ABORTED, F_LIST_SINCE_END = 0x4B, 0x4C, 0x4D, 0x4E
+F_DESCRIPTOR_CHUNK = 0x4F
 ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed",
           5: "bad-handle", 6: "range", 7: "busy", 8: "storage-unavailable",
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
           12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
-          16: "aborted"}
+          16: "aborted", 17: "no-descriptor"}
+DESCRIPTOR_HEADER = 9  # type, total u32, offset u32
+DESCRIPTOR_TRIES = 3   # attempts per offset before giving up
 # What a person should do about an ERROR. Code 14 is never a busy device, so
 # the client never retries it. Over LAN it means the token was rejected. Over
 # BLE an unpaired link normally gets the ATT refusal below instead, and 14 is
@@ -528,6 +533,57 @@ class Session:
             raise ProtocolError(f"expected DIAG, got 0x{data[0]:02x}")
         return decode_diag(data)
 
+    async def descriptor(self, length: int = 0xFFFF) -> bytes:
+        """GET_DESCRIPTOR: the board template, one DESCRIPTOR_CHUNK per request.
+
+        Requests the next missing offset until `total` bytes arrived. A lost
+        or late reply only costs a re-request of the same offset, and a stale
+        chunk for another offset is dropped. A changed `total` means another
+        template, so the bytes are dropped and the download restarts from
+        offset 0 once. A second change raises.
+        """
+        if not 1 <= length <= 0xFFFF:
+            raise ValueError("length must be 1..65535")
+        data = bytearray()
+        total = None
+        restarted = False
+        while total is None or len(data) < total:
+            offset = len(data)
+            for attempt in range(DESCRIPTOR_TRIES):
+                await self.request(struct.pack("<BIH", OP_GET_DESCRIPTOR, offset, length))
+                try:
+                    chunk = await self._descriptor_chunk(offset)
+                except ProtocolError as error:
+                    if "deadline" not in str(error) or attempt + 1 == DESCRIPTOR_TRIES:
+                        raise
+                    continue
+                break
+            chunk_total, payload = chunk
+            if total is None:
+                total = chunk_total
+            elif chunk_total != total:
+                if restarted:
+                    raise ProtocolError(f"DESCRIPTOR_CHUNK total changed {total} -> {chunk_total} "
+                                        "again after a restart")
+                restarted = True
+                data.clear()
+                total = None
+                continue
+            if not payload or offset + len(payload) > total:
+                raise ProtocolError(f"DESCRIPTOR_CHUNK of {len(payload)} bytes at {offset} "
+                                    f"does not fit total {total}")
+            data.extend(payload)
+        return bytes(data)
+
+    async def _descriptor_chunk(self, offset: int) -> tuple[int, bytes]:
+        while True:
+            data = await self.frame()
+            if data[0] != F_DESCRIPTOR_CHUNK or len(data) < DESCRIPTOR_HEADER:
+                raise ProtocolError(f"expected DESCRIPTOR_CHUNK, got 0x{data[0]:02x}")
+            total, got = struct.unpack_from("<II", data, 1)
+            if got == offset:
+                return total, bytes(data[DESCRIPTOR_HEADER:])
+
     async def abort(self) -> dict:
         """ABORT. A running op first ends with ERROR code 16, then ABORTED names it."""
         await self.request(bytes([OP_ABORT]))
@@ -971,6 +1027,34 @@ async def cmd_diag(args):
         await client.disconnect()
 
 
+def check_descriptor(data: bytes, info: dict, expect: str | None = None) -> str:
+    """desc is the SHA-256 of these exact bytes. info carries its first 16 hex."""
+    digest = hashlib.sha256(data).hexdigest()
+    prefix = info.get("desc")
+    if not isinstance(prefix, str) or len(prefix) != 16:
+        raise ProtocolError(f"info has no 16 hex desc ({prefix!r})")
+    if not digest.startswith(prefix):
+        raise ProtocolError(f"descriptor sha256 {digest} does not start with info desc {prefix}")
+    if expect is not None and digest != expect.lower():
+        raise ProtocolError(f"descriptor sha256 {digest} != expected {expect}")
+    return digest
+
+
+async def cmd_descriptor(args):
+    client, session = await connect(args)
+    try:
+        info = await session.info()
+        data = await session.descriptor()
+    finally:
+        await client.disconnect()
+    digest = check_descriptor(data, info, args.expect)
+    # Parse only to prove it is JSON. The file keeps the exact device bytes.
+    json.loads(data)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_bytes(data)
+    print(f"DESCRIPTOR bytes={len(data)} sha256={digest} desc={info['desc']} out={args.out}")
+
+
 async def cmd_abort(args):
     client, session = await connect(args)
     try:
@@ -1036,6 +1120,11 @@ def main():
     log.add_argument("--bytes", type=int, default=8192)
     log.set_defaults(run=cmd_log)
     sub.add_parser("diag", help="GET_DIAG: persistent disconnect counters and recent events").set_defaults(run=cmd_diag)
+    descriptor = sub.add_parser("descriptor", help="GET_DESCRIPTOR: download the board template, "
+                                                   "check its sha256 against info desc")
+    descriptor.add_argument("--out", type=Path, required=True, help="file for the exact template bytes")
+    descriptor.add_argument("--expect", metavar="SHA256", help="full 64 hex desc to require")
+    descriptor.set_defaults(run=cmd_descriptor)
     sub.add_parser("abort", help="ABORT the op the device is running, if any").set_defaults(run=cmd_abort)
     sub.add_parser("reboot", help="reboot the device after it finalizes its RAM batch (explicit)").set_defaults(run=cmd_reboot)
     args = parser.parse_args()

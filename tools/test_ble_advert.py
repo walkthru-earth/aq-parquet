@@ -6,7 +6,9 @@ Run: pixi run python tools/test_ble_advert.py --sanitize
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -31,6 +33,46 @@ def ad_fields(packet: bytes) -> dict[int, bytes]:
     return fields
 
 
+# info shares one 400 byte buffer between the BLE info characteristic and the
+# LAN HELLO frame (ble::kMaxInfo, NUL included). Keep this much room for later
+# keys or longer firmware tags.
+INFO_CAP = 400
+INFO_MARGIN = 48
+BOARDS = {
+    "cores3": "firmware/esp-idf-cores3/bringup",
+    "waveshare": "firmware/esp-idf-waveshare-sim7670g/logger",
+}
+
+
+def board_constant(root: Path, board: str, header: str, name: str) -> str:
+    text = (root / BOARDS[board] / header).read_text()
+    found = re.findall(rf'\b{name} =\s*"([^"]+)"', text)
+    assert len(found) == 1, (board, name)
+    return found[0]
+
+
+def check_info(root: Path, executable: Path) -> list[str]:
+    """Longest realistic info on both boards stays under the shared cap."""
+    report = []
+    for board in BOARDS:
+        schema = board_constant(root, board, "telemetry_contract.h", "kSchemaName")
+        firmware = board_constant(root, board, "telemetry_contract.h", "kFirmware")
+        desc = board_constant(root, board, "telemetry_descriptor_digest.h",
+                              "kDescriptorSha256")
+        assert re.fullmatch(r"[0-9a-f]{64}", desc)
+        text = subprocess.check_output([str(executable), schema, firmware, desc],
+                                       text=True).rstrip("\n")
+        info = json.loads(text)
+        assert info["desc"] == desc[:16] and info["fw"] == firmware
+        assert info["schema"] == schema and info["proto"] == 3
+        assert list(info)[:6] == ["proto", "fw", "schema", "cols", "dict", "desc"]
+        size = len(text.encode())
+        # The NUL rides in the same buffer, so size + 1 must fit the cap.
+        assert size + 1 + INFO_MARGIN <= INFO_CAP, (board, size)
+        report.append(f"{board} {size} B")
+    return report
+
+
 def wire_uuid(value: bytes) -> str:
     assert len(value) == 16
     return str(UUID(bytes=bytes(reversed(value))))
@@ -53,6 +95,7 @@ def main() -> None:
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(command, check=True)
+        info_sizes = check_info(root, executable)
         packets = [bytes.fromhex(line) for line in subprocess.check_output(
             [str(executable)], text=True).splitlines()]
     assert len(packets) == 16
@@ -89,6 +132,8 @@ def main() -> None:
         assert client.advertises_sync_service(SimpleNamespace(
             service_uuids=[wire_uuid(fields[0x07])], service_data={}))
     print("Native BLE UUID/ADV/SCAN_RSP interoperates with the BLE client; bounds passed")
+    print(f"info with desc under {INFO_CAP} B with {INFO_MARGIN} B margin: "
+          + ", ".join(info_sizes))
 
 
 if __name__ == "__main__":

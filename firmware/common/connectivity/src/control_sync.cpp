@@ -1,6 +1,7 @@
 #include "control_sync.h"
 #include "abort_signal.h"
 #include "debug_log.h"
+#include "descriptor_chunk.h"
 #include "device_config.h"
 #include "disconnect.h"
 #include "wifi_link.h"
@@ -141,6 +142,42 @@ void send_diag(ble::Link link, const ControlReplies &replies) {
   }
   replies.respond(replies.context, link, frame, length);
 }
+
+// One chunk per request from .rodata into this stack frame. No heap and no
+// copy beyond the frame, the same budget as send_diag.
+void send_descriptor(ble::Link link, std::span<const std::uint8_t> body,
+                     const ControlReplies &replies) {
+  std::uint8_t frame[kPayloadCapacity];
+  const auto encoded = ble::wire::encode_descriptor_chunk(
+      replies.descriptor, body,
+      std::span<std::uint8_t>(frame, reply_cap(link, replies)));
+  if (encoded) {
+    replies.respond(replies.context, link, frame, *encoded);
+    return;
+  }
+  struct Reply {
+    ble::Error code;
+    const char *detail;
+  };
+  const Reply reply = [&]() -> Reply {
+    using enum ble::wire::DescriptorError;
+    switch (encoded.error()) {
+    case Malformed:
+      return {.code = ble::kErrMalformed, .detail = "descriptor"};
+    case ZeroLength:
+      return {.code = ble::kErrMalformed, .detail = "length"};
+    case Unconfigured:
+      return {.code = ble::kErrNoDescriptor, .detail = nullptr};
+    case Range:
+      return {.code = ble::kErrRange, .detail = "offset"};
+    case Mtu:
+      break;
+    }
+    return {.code = ble::kErrBusy, .detail = "mtu"};
+  }();
+  replies.error(replies.context, link, ble::kOpGetDescriptor, reply.code,
+                reply.detail);
+}
 } // namespace
 
 bool handle_common_control(const ble::ControlRequest &request,
@@ -223,6 +260,9 @@ bool handle_common_control(const ble::ControlRequest &request,
     oslog.println("LAN TOKEN issued=ble");
     return true;
   }
+  case ble::kOpGetDescriptor:
+    send_descriptor(request.link, {body, length}, replies);
+    return true;
   case ble::kOpWifiScan:
     // Normal scans are dispatched on the LAN task. A queued scan means it
     // already had one pending, so answer busy on the originating transport.

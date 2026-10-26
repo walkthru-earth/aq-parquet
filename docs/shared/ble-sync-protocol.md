@@ -144,17 +144,25 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.16","schema":"cores3-telemetry-v5","cols":81,
- "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
- "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
+{"proto":3,"fw":"idf-cores3-parquet-v6.17","schema":"cores3-telemetry-v5","cols":81,
+ "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","desc":"<first 16 hex of desc>",
+ "station":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
 `waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
-and firmware `idf-waveshare-parquet-v2.10`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+and firmware `idf-waveshare-parquet-v2.11`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
+
+`desc` is the first 16 hex characters of the board descriptor digest, the
+SHA-256 of the exact template bytes that [GET_DESCRIPTOR](#get_descriptor)
+serves. It sits after `dict` and is always present. The phone fetches the
+template again only when this prefix changes. The key order is fixed and the
+document stays under 400 bytes. With the longest values a board can report
+(a 36 character station, 999 columns, 64 hex `dict`) CoreS3 is 314 bytes and
+Waveshare 329, checked by `pixi run ble-advert-test` with 48 bytes of headroom.
 
 ### `status` (read, notify)
 
@@ -259,6 +267,7 @@ by direction.
 | `0x0E` | `GET_DIAG` | empty (any body is `ERROR` 1) | `DIAG`, or `ERROR` 7 `detail="mtu"` when `payload_max` is below 38 |
 | `0x0F` | `ABORT` | empty (any body is `ERROR` 1) | `ABORTED` with the op it stopped, `op=0` when idle |
 | `0x10` | `LIST_SINCE` | cursor, 32 bytes. See [LIST_SINCE](#list_since) | `FILE` × n, then `LIST_SINCE_END`, or `ERROR`. Older firmware answers `ERROR` 11 |
+| `0x11` | `GET_DESCRIPTOR` | `offset` u32, `length` u16. See [GET_DESCRIPTOR](#get_descriptor) | one `DESCRIPTOR_CHUNK`, or `ERROR` 1, 6, 7 or 17 |
 
 | Frame | Type | Body |
 | --- | --- | --- |
@@ -284,6 +293,7 @@ by direction.
 | `DIAG` | `0x4C` | `boot_seq` u16, `counts` 17 × u16, `n` u8, then `n` × 16-byte events. 38 + 16n bytes. See [DIAG](#get_diag-and-diag) |
 | `ABORTED` | `0x4D` | `op` u8, the opcode that was stopped, 0 when nothing was running |
 | `LIST_SINCE_END` | `0x4E` | the 14 `LIST_END` body bytes, `flags` u8, then the next cursor (32 bytes). 48 bytes with the type. See [LIST_SINCE](#list_since) |
+| `DESCRIPTOR_CHUNK` | `0x4F` | `total` u32, `offset` u32, then template bytes. Only ever a reply to `GET_DESCRIPTOR`, never sent unsolicited. See [GET_DESCRIPTOR](#get_descriptor) |
 | `CONFIG_CHUNK` | `0x4A` | BLE only: `flags` u8 (same as CONFIG), `total_json_bytes` u16 LE, `offset` u16 LE, then a raw UTF-8 JSON slice. The header is 6 bytes; slices are at most 128 bytes and frames never exceed negotiated `payload_max`. A UTF-8 character may cross frames, so assemble bytes before decoding JSON. Require contiguous offsets from zero until `offset + slice_bytes = total_json_bytes`, with identical flags and total length on each chunk. There is no terminal frame; abandon an incomplete answer and make a fresh GET_CONFIG request |
 | `ERROR` | `0x7F` | `op` u8, `code` u8, `detail` utf8 |
 
@@ -291,7 +301,7 @@ The status JSON remains bounded to 480 bytes. The actual formatter retains every
 
 `ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU, another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` aborts LIST with error 7 (`detail="mtu"`) and is logged on serial as `BLE LIST SKIP`. An archive exceeding the u32 count capacity aborts LIST with error 7 (`detail="count"`). Filesystem enumeration failures (including an SD read failure after earlier entries) abort LIST with error 8. Neither case produces `LIST_END`. Clients commit a replacement listing only after a valid `LIST_END`; preceding `FILE` entries alone are an incomplete snapshot. The device clears its `new_files` hint only after a complete scan and accepted `LIST_END` delivery. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count, and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16 to 18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
 
-Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full on a secure link, transfer in progress, another LIST running, a LIST ended by a storage remount, or a LIST or READ stopped early so the device can close its open file on a critical battery, retry later) · 8 storage unavailable · 9 invalid epoch (outside 2020 to 2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (over LAN, a bad handshake token. Over BLE it is defense in depth and an unpaired client normally never sees it. NimBLE refuses an unencrypted Control write with ATT error 0x05, 0x0C or 0x0F before the firmware runs, and that error is what makes the phone pair. Its CCCD writes have no security flag, so it can subscribe to `response`, but nothing is sent there on an unpaired link except a possible ERROR 14. In this firmware the ATT check applies the same rule as the firmware check (encryption in every mode, plus authentication and a 16 byte Secure Connections key in the passkey modes), so ERROR 14 with `detail="auth"` is only a guarded fallback if the two ever disagree. Then the Control write is acknowledged, not run, and answered with that ERROR. Neither answer is busy, never retry it, pair again) · 15 Wi-Fi unavailable · 16 aborted (proto 3).
+Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full on a secure link, transfer in progress, another LIST running, a LIST ended by a storage remount, or a LIST or READ stopped early so the device can close its open file on a critical battery, retry later) · 8 storage unavailable · 9 invalid epoch (outside 2020 to 2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (over LAN, a bad handshake token. Over BLE it is defense in depth and an unpaired client normally never sees it. NimBLE refuses an unencrypted Control write with ATT error 0x05, 0x0C or 0x0F before the firmware runs, and that error is what makes the phone pair. Its CCCD writes have no security flag, so it can subscribe to `response`, but nothing is sent there on an unpaired link except a possible ERROR 14. In this firmware the ATT check applies the same rule as the firmware check (encryption in every mode, plus authentication and a 16 byte Secure Connections key in the passkey modes), so ERROR 14 with `detail="auth"` is only a guarded fallback if the two ever disagree. Then the Control write is acknowledged, not run, and answered with that ERROR. Neither answer is busy, never retry it, pair again) · 15 Wi-Fi unavailable · 16 aborted (proto 3) · 17 no descriptor (`GET_DESCRIPTOR` on an image built without a template).
 
 Rules:
 
@@ -673,6 +683,69 @@ The STATUS JSON stays at most 480 bytes. Since `ls` was added, `utc_ms` is
 clamped to 13 digits and `clk_age_s` and `miss` to the u32 range, values a
 valid 2020 to 2100 clock never reaches. The widest STATUS is 467 bytes, as in
 [the response frames](#control-write-and-response-notify).
+
+### GET_DESCRIPTOR
+
+`GET_DESCRIPTOR` (`0x11`) returns one slice of the board template, the
+`OpenSensorTemplate` JSON compiled into the image (`kTemplateJson`). It
+works over BLE and LAN through the same dispatch. The bytes come straight from
+flash, the board allocates nothing for it, and it never touches the card.
+
+The request is exactly 7 bytes, little-endian.
+
+| Offset | Field | Type |
+| --- | --- | --- |
+| 0 | op `0x11` | u8 |
+| 1 | `offset` | u32 |
+| 5 | `length` | u16, at least 1 |
+
+The answer is one `DESCRIPTOR_CHUNK` (`0x4F`).
+
+| Offset | Field | Type |
+| --- | --- | --- |
+| 0 | type `0x4F` | u8 |
+| 1 | `total` | u32, template size in bytes |
+| 5 | `offset` | u32, echoes the request |
+| 9 | bytes | `min(length, total − offset, payload_max − 9)` |
+
+`payload_max` over BLE is the negotiated MTU minus 3, up to 512, and over LAN
+it is 1024. A chunk therefore carries at most 503 bytes over BLE on an MTU 517
+link, fewer on a smaller MTU, and at most 1015 bytes over LAN. A phone may ask
+for more and gets the clamped amount.
+
+Golden request `11000200000004` is offset 512 and length 1024. On a 1300 byte
+template its answer starts `4f1405000000020000`, total 1300 and offset 512,
+followed over LAN by the 788 bytes from 512 to the end. Over BLE on an MTU
+517 link the same request returns 503 bytes.
+
+**Errors**, all with op `0x11`, checked in this order. The first match
+answers, so a 7 byte request with `length` 0 to an image without a template
+gets `ERROR` 17.
+
+| Order | Case | Answer |
+| --- | --- | --- |
+| 1 | Length not 7 | `ERROR` 1 `detail="descriptor"` |
+| 2 | Image built without a template | `ERROR` 17 |
+| 3 | `length` 0 | `ERROR` 1 `detail="length"` |
+| 4 | `offset` ≥ `total` | `ERROR` 6 `detail="offset"` |
+| 5 | `payload_max` of 9 or less | `ERROR` 7 `detail="mtu"` |
+
+**How a phone downloads it.** Each request returns exactly one chunk, and the
+board keeps no download state. The phone sends offset 0, learns `total`, then
+asks for the next missing offset until it holds `total` bytes. A lost or late
+reply costs one more request for the same offset. A chunk for an offset the
+phone did not ask for is dropped. If `total` changes between chunks, the phone
+drops what it holds and starts over from offset 0 once. A second change fails
+the download. It can also re-request any range later.
+
+**How a phone checks it.** `desc` is the SHA-256 of the exact downloaded bytes,
+with no trailing NUL and no reformatting. The template cannot carry its own
+hash, so the phone hashes what it received, checks that the hex digest starts
+with the 16 hex `desc` from `info`, and checks the full 64 hex against the
+template SHA-256 it already trusts, from the Parquet footer or the
+`file:checksum` of the template link on the station Collection. A mismatch
+means a corrupt download or a different image, and the phone discards the
+bytes. `pixi run ble-sync descriptor --out <file>` does the same from a host.
 
 ### Persistent log
 
