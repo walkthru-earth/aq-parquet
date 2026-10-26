@@ -2,11 +2,14 @@
 
 #include "pms5003t_identity.h"
 #include "telemetry_dictionary_digest.h"
+#include <algorithm>
 #include <aq_battery_health.h>
 #include <aq_logger.h>
+#include <aq_logger_live.h>
 #include <aq_max17048.h>
 #include <column_semantics.h>
 #include <cstring>
+#include <iterator>
 #include <pms_frame.h>
 #include <utc_clock.h>
 
@@ -19,8 +22,8 @@ namespace contract {
 // microseconds and added a Parquet field_id on every leaf for Iceberg v3.
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v5";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.7";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.8";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -55,7 +58,7 @@ constexpr const char *kTimeSemantics =
     "assignment";
 
 enum Field : std::size_t {
-#define FIELD(name, type, procedure, unit, validity, live) name,
+#define FIELD(name, type, procedure, unit, validity, live, decimals) name,
 #include "telemetry_fields.inc"
 #undef FIELD
   field_count
@@ -66,6 +69,15 @@ using Definition = aqlogger::Field;
 // field-table order.
 constexpr const char *live_or_null(const char *key) {
   return key[0] == '\0' ? nullptr : key;
+}
+// LIVE digits after the point, in the dictionary so the digest covers them.
+// Integer fields carry 0, a Float carries 0..kMaxLiveDecimals from its
+// sensor resolution.
+template <std::size_t N> constexpr bool decimals_fit(const Definition (&f)[N]) {
+  return std::all_of(std::begin(f), std::end(f), [](const Definition &field) {
+    return field.decimals <=
+           (field.type == PhysicalType::Float ? aqlogger::kMaxLiveDecimals : 0);
+  });
 }
 // Column semantics for the STAC template (#84). telemetry_semantics.inc stays
 // out of the dict digest. It is the single source of each FIELD property_uri,
@@ -91,19 +103,23 @@ static constexpr aq::semantics::Column kSemantics[] = {
 #undef SEM
 };
 constexpr Definition kFields[] = {
-#define FIELD(name, type, procedure, unit, validity, live)                     \
+#define FIELD(name, type, procedure, unit, validity, live, decimals)           \
   {#name,                                                                      \
    PhysicalType::type,                                                         \
    #procedure,                                                                 \
    unit,                                                                       \
    #validity,                                                                  \
    aq::semantics::property_of(kSemantics, #name),                              \
-   live_or_null(live)},
+   live_or_null(live),                                                         \
+   decimals},
 #include "telemetry_fields.inc"
 #undef FIELD
 };
 static_assert(field_count == 62, "Version the schema when changing fields");
 static_assert(field_count <= kMaxColumns, "Parquet schema capacity exceeded");
+static_assert(
+    decimals_fit(kFields),
+    "decimals is 0 for integer fields and at most kMaxLiveDecimals for Float");
 
 static_assert(aq::semantics::aligned(kFields, kSemantics),
               "telemetry_semantics.inc must list every FIELD in order");

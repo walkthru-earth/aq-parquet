@@ -17,7 +17,7 @@ struct Name {
 };
 
 constexpr Name kCores3Fields[] = {
-#define FIELD(name, type, procedure, unit, validity, live) {#name},
+#define FIELD(name, type, procedure, unit, validity, live, decimals) {#name},
 #include "../firmware/esp-idf-cores3/bringup/telemetry_fields.inc"
 #undef FIELD
 };
@@ -42,7 +42,7 @@ constexpr aq::semantics::Column kCores3Semantics[] = {
 };
 
 constexpr Name kWaveshareFields[] = {
-#define FIELD(name, type, procedure, unit, validity, live) {#name},
+#define FIELD(name, type, procedure, unit, validity, live, decimals) {#name},
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc"
 #undef FIELD
 };

@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures/live_keys"
@@ -26,7 +27,7 @@ BOARDS = ("cores3", "waveshare")
 # The wire value stayed nanoseconds, so both names are one field.
 FIELD_ALIASES = {"event_time_utc_ns": "event_time_utc_us"}
 # Builds that sent imu_temperature_c as `t` before the LIVE key stability rule.
-# They are listed by name in ble-sync-protocol.md. No later build may join them.
+# They are unsupported and stay here only as history. No later build may join them.
 PRE_RULE_EXCEPTIONS = {
     ("cores3", "20f850852413abb1165f3f7ca95b4831a0e90a34ae7c7fcb41c44b108d3513c3", "d38a971", "t"),
     ("cores3", "f35d73981ca65d9de587a4ec7988ccea19e71dce988c69eb4bb99713f2352bb3", "95ef33c", "t"),
@@ -89,9 +90,16 @@ def check(board: str, digest: str, firmware: str, payload: str) -> list[str]:
     return keys
 
 
+def parse_pairs(payload: str) -> list[tuple[str, object]]:
+    """Ordered key and value pairs of one LIVE object. Floats stay Decimal so 1.00 keeps its digits."""
+    return json.loads(payload, object_pairs_hook=lambda items: items, parse_float=Decimal)
+
+
 def render(pairs: list[tuple[str, object]]) -> str:
     """Rebuild one compact LIVE JSON object from ordered key and value pairs."""
-    return "{" + ",".join(f"{json.dumps(key)}:{json.dumps(value)}" for key, value in pairs) + "}"
+    def value(item: object) -> str:
+        return str(item) if isinstance(item, Decimal) else json.dumps(item)
+    return "{" + ",".join(f"{json.dumps(key)}:{value(item)}" for key, item in pairs) + "}"
 
 
 def assert_rejects_drift(board: str, digest: str, firmware: str, payload: str) -> None:
@@ -100,7 +108,7 @@ def assert_rejects_drift(board: str, digest: str, firmware: str, payload: str) -
     Cases come from the rendered keys, so they stay meaningful after any legitimate rename.
     """
     fixture = load(board)
-    pairs = json.loads(payload, object_pairs_hook=lambda items: items)
+    pairs = parse_pairs(payload)
     require(len(pairs) >= 3, f"{board} LIVE payload too short for drift cases")
     require(render(pairs) == payload, f"{board} LIVE payload does not round trip through render")
     keys = [key for key, _ in pairs]

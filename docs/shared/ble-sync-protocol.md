@@ -131,14 +131,15 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.13","schema":"cores3-telemetry-v5","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.14","schema":"cores3-telemetry-v5","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","station":"<uuid>",
  "dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
-is CoreS3, while Waveshare advertises its own 62-column schema and dictionary
-`waveshare-sim7670g-telemetry-v5` with firmware `idf-waveshare-parquet-v2.7`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+is CoreS3, while Waveshare advertises its own 62-column schema
+`waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
+and firmware `idf-waveshare-parquet-v2.8`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -180,9 +181,11 @@ BM8563 value as `clk=2`; a fresh host sync is still welcome.
 
 Notified once per sample. Each board declares a short `live_key` next to the fields it publishes, and the shared logger emits those keys in the board's field-table order.
 
-**LIVE rule.** Every LIVE key the board declares is present in every LIVE object. Its value is a number, or JSON `null` when the sample has no usable reading for it. That covers a value that is invalid or unavailable, a non-finite float (NaN or Inf), a value whose printed text is 32 characters or longer (only a float of magnitude 1e28 or more gets there), and a UTC instant whose nanosecond form overflows INT64. Null is never sent as zero. An absent key means only that the board has no such field. The set of keys a board can send comes from its dictionary, the `live_key` in its `telemetry_fields.inc` (later the template `firmware.live_keys`). Clients parse the object by key name and ignore keys they do not know. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
+**LIVE rule.** Every LIVE key the board declares is present in every LIVE object. Its value is a number, or JSON `null` when the sample has no usable reading for it. That covers a value that is invalid or unavailable, a non-finite float (NaN or Inf), a value whose printed text is 32 characters or longer (at the decimals the boards use today, only a float of magnitude 1e27 or more gets there), and a UTC instant whose nanosecond form overflows INT64. Null is never sent as zero. An absent key means only that the board has no such field. The set of keys a board can send comes from its dictionary, the `live_key` in its `telemetry_fields.inc` (later the template `firmware.live_keys`). Clients parse the object by key name and ignore keys they do not know. Breaking changes are listed in [mobile-migration.md](mobile-migration.md).
 
-Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (the folded v2.7 build) the `live_key` is part of each board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map. A client picks its reviewed LIVE profile by that digest. Older digests do not cover the keys, the first Waveshare v2.7 build `d0d01294…` included, and CoreS3 `22291d3a…` (firmware v6.12) is the one where that matters. Two builds sent different keys under it, `t` or `imu_t` for the IMU die temperature, and they cannot be told apart. The key set of each digest is recorded in `tools/fixtures/live_keys/`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest may still read the keys in the table below under the [LIVE key stability](#live-key-stability) rule.
+Each field's `live_key` and `decimals` are part of the board's `telemetry_fields.inc`, so the `info.dict` digest covers the LIVE key map and how each float prints. A client picks its reviewed LIVE profile by that digest. The current digests are CoreS3 `4f80c26c…` and Waveshare `6f567b38…`. The digest hashes raw bytes, so a comment, whitespace or line ending edit to `telemetry_fields.inc` moves it. A client that does not know the digest still syncs files but shows no LIVE, see [LIVE key stability](#live-key-stability).
+
+**Float precision.** Integers print with no point. A float prints rounded to the `decimals` its field declares, chosen from the sensor resolution, so `1.00` and `1.0` are both possible and both mean the number one. Today CoreS3 prints `t` with two decimals (SHT20 steps 0.01 degC) and `imu_t` and `rh` with one. Waveshare prints `t` and `rh` with one (PMS5003T steps 0.1). Clients parse the value as a number and keep their own display rounding.
 
 ```json
 {"seq":15021,"mono":150210000000,"utc":1757990410000000000,"pms":4,
@@ -207,15 +210,15 @@ Since CoreS3 digest `e5060fb7…` (v6.13) and Waveshare digest `67688d0f…` (th
 
 PM keys hold values only when `pms == 4` and are null otherwise. The snapshot is the same row that was queued for storage; it is a display convenience, not a substitute for the stored file.
 
-The whole object must fit 480 bytes. The firmware never sends a truncated object. When a row would need more, the device publishes the object with every declared key set to `null` for that sample over BLE and LAN, instead of keeping the previous snapshot. A phone gets that all-null object as its LIVE notification and as the cached value, so it never shows an old sample as current. The next row that fits restores the full object. The device logs `PARQUET LIVE overflow bytes=<n> max=480` to serial and `LOG_TAIL`, where `n` is the exact size the full object needed without the terminating NUL. The line repeats at most once an hour while overflows continue. The host contract tests build each board's widest real row, every declared key at the widest value its producer can write or at `null` where null is wider, with a 19 digit `utc`. Measured 2026-10-26 it is 332 bytes on CoreS3 and 270 bytes on Waveshare, and the all-null object is 265 and 211 bytes. The tests fail if any of them passes 480.
+The whole object must fit 480 bytes. The firmware never sends a truncated object. When a row would need more, the device publishes the object with every declared key set to `null` for that sample over BLE and LAN, instead of keeping the previous snapshot. A phone gets that all-null object as its LIVE notification and as the cached value, so it never shows an old sample as current. The next row that fits restores the full object. The device logs `PARQUET LIVE overflow bytes=<n> max=480` to serial and `LOG_TAIL`, where `n` is the exact size the full object needed without the terminating NUL. The line repeats at most once an hour while overflows continue. The host contract tests build each board's widest real row, every declared key at the widest value its producer can write or at `null` where null is wider, with a 19 digit `utc`. Measured 2026-10-26 with per field decimals it is 333 bytes on CoreS3 and 270 bytes on Waveshare, and the all-null object is 265 and 211 bytes. The tests fail if any of them passes 480.
 
 #### LIVE key stability
 
 - A LIVE key never changes meaning once released. Meaning is the quantity, the unit, the source (board or ambient air) and what each existing code value means. Adding a new code value is allowed and counts as a layout change below. Changing what an existing code value means is not allowed. A new meaning gets a new key. A retired key is never reused.
 - Each key in the table above means the same thing on every board. `imu_t` is always the IMU die temperature, never air. `t` is always ambient air temperature. A board that declares a key and has no valid value for it sends the key as null.
-- Firmware may add or drop keys. Clients read keys by name and ignore keys they do not know, so an app that meets an unknown digest can still show the keys in this table and hide the rest. It never guesses a meaning from a device name, a firmware string or a value.
-- CoreS3 digests `20f85085…` (Arduino, dictionary `cores3-telemetry-v2`) and `f35d7398…` (v6.9 to v6.11), and the e166978 build under `22291d3a…` (v6.12), sent the IMU die temperature as `t`. They predate this rule. Clients handle them by digest, and no later release may do the same. The digest alone cannot tell the two `22291d3a…` builds apart, so for that digest a client reads `imu_t`, and when it is missing reads `t` as board temperature (see the v6.13 entry in [mobile-migration.md](mobile-migration.md)).
-- Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, or a new code value. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry. Apps with the unknown digest fallback (opensensor-space-mobile #153) keep their live readings. Apps without it still show no live readings until they map the new digest.
+- Firmware may add or drop keys. Clients read keys by name and ignore keys they do not know. An app shows LIVE only for a dict digest it has a reviewed LIVE profile for (opensensor-space-mobile #184). An unknown or retired digest still syncs files, but the app has no LIVE profile for it and does not show LIVE. It never guesses a meaning from a device name, a firmware string or a value.
+- Older CoreS3 builds that sent the IMU die temperature as `t` predate this rule and are not supported. No release may do the same.
+- Every firmware release whose LIVE layout changes says **needs app update** in its release notes and in its [mobile-migration.md](mobile-migration.md) entry. A layout change is a key added, removed or renamed, a new code value, or a change in the decimals a float prints with. A digest that moves without a layout change still gets a fixture in `tools/fixtures/live_keys/` and a migration entry. The app shows no LIVE for the new digest until it maps it to a LIVE profile, and file sync is unaffected.
 
 ### `control` (write) and `response` (notify)
 

@@ -1,8 +1,9 @@
 #pragma once
 
 // Renders the board LIVE key map through the shared emitter for the host
-// contract tests. Every field is valid with integers 1 and floats 1.0, so the
-// JSON names every key the board can send, in emit order. The Python side
+// contract tests. Every field is valid with integers 1 and floats 1, so the
+// JSON names every key the board can send, in emit order, and each float shows
+// its field's decimals. The Python side
 // compares it with tools/fixtures/live_keys/<board>.json keyed by digest.
 #include <aq_logger_live.h>
 #include <cassert>

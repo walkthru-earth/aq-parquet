@@ -36,7 +36,7 @@ struct FieldDef {
 };
 
 constexpr FieldDef kFields[] = {
-#define FIELD(name, type, procedure, unit, validity, live)                     \
+#define FIELD(name, type, procedure, unit, validity, live, decimals)           \
   {#name, PhysicalType::type, unit},
 #include AQ_FIELDS_INC
 #undef FIELD

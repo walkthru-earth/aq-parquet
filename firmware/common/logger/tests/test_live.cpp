@@ -19,6 +19,7 @@ Field field(const char *name, PhysicalType type, const char *live_key) {
   result.validity = "always";
   result.property_uri = "urn:fixture";
   result.live_key = live_key;
+  result.decimals = type == PhysicalType::Float ? 1 : 0;
   return result;
 }
 
@@ -38,6 +39,36 @@ void keys() {
   }
   const Field longest[] = {field("a", PhysicalType::Int32, "fifteen_chars_x")};
   assert(aqlogger::valid_live_keys(longest, 1));
+  Field too_precise[] = {field("a", PhysicalType::Float, "ax")};
+  too_precise[0].decimals = aqlogger::kMaxLiveDecimals;
+  assert(aqlogger::valid_live_keys(too_precise, 1));
+  too_precise[0].decimals = aqlogger::kMaxLiveDecimals + 1;
+  assert(!aqlogger::valid_live_keys(too_precise, 1));
+}
+
+// Each Float prints with its own field's decimals, rounded, integers ignore it.
+void decimals() {
+  Field fields[] = {field("accel", PhysicalType::Float, "ax"),
+                    field("whole", PhysicalType::Float, "w"),
+                    field("fine", PhysicalType::Float, "f"),
+                    field("count", PhysicalType::Int32, "n")};
+  fields[0].decimals = 3;
+  fields[1].decimals = 0;
+  fields[2].decimals = aqlogger::kMaxLiveDecimals;
+  fields[3].decimals = 3;
+  aqlogger::Row row{};
+  row.set(0, -0.0123f);
+  row.set(1, 26.6f);
+  row.set(2, 1.0f);
+  row.set(3, std::int32_t{7});
+  char json[96];
+  assert(aqlogger::format_live(fields, 4, row, json, sizeof(json)));
+  assert(std::strcmp(json, "{\"ax\":-0.012,\"w\":27,\"f\":1.000000,"
+                           "\"n\":7}") == 0);
+  // A value too wide for the value buffer at its decimals is no reading.
+  row.set(2, 1e30f);
+  assert(aqlogger::format_live(fields, 4, row, json, sizeof(json)));
+  assert(std::strstr(json, ",\"f\":null,"));
 }
 
 // Prints each document for the runner to parse with a real JSON reader.
@@ -184,6 +215,7 @@ void overflow() {
 
 int main() {
   keys();
+  decimals();
   documents();
   utc_scale();
   overflow();

@@ -57,7 +57,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
     require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v5", "schema version")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v5",
+    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v6",
             "dictionary version tracks the field table bytes, now with LIVE keys")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
@@ -165,9 +165,12 @@ def main() -> None:
                 == "511b231ecdbf8f93fc3acbca42d5fceef7c3808551af1d035866cc0da4366135",
                 "original 77-column prefix changed")
         inc = (firmware / "telemetry_fields.inc").read_text()
-        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)"\)$', inc, re.M)
-        require(rows == [(f["name"], f["live"]) for f in fields], "dictionary carries every LIVE key")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.13", "firmware identity")
+        rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
+        require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],
+                "dictionary carries every LIVE key and decimals")
+        require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
+                "decimals is 0 for integer fields and at most 6 for Float")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.14", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==

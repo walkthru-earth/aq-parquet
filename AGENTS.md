@@ -116,11 +116,13 @@ file in `docs/README.md` after this one.
 
 ## Compatibility, licensing and reviews
 
-- Phone side code may break freely. Never change what a released wire contract
-  means, because boards in the field keep sending it and the phone must still
-  read it. Any change to LIVE keys, columns or field order ships under a new
-  dictionary digest, and a digest is never reused for a different key set. Keep
-  every `live_key` in the board `telemetry_fields.inc` so the digest covers it.
+- No backward compatibility for now (owner decision 14, 2026-10-26). The phone
+  does not keep reading older wire contracts. Each firmware change ships with a
+  matched app build and every board is reflashed with it. The contract tests and
+  digest gates stay. Any change to LIVE keys, decimals, columns or field order
+  ships under a new dictionary digest, and a digest is never reused for a
+  different key set. Keep every `live_key` and `decimals` in the board
+  `telemetry_fields.inc` so the digest covers them.
 - Every change the phone can observe (columns, units, field ids, LIVE keys, log
   lines, versions, digests) gets a newest-first entry in
   `docs/shared/mobile-migration.md` saying what changed, why, and what the app
