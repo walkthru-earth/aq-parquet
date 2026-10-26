@@ -11,6 +11,7 @@
 #include <cstring>
 #include <iterator>
 #include <numeric_sample.h>
+#include <pinned_uri.h>
 #include <span>
 #include <string_view>
 #include <utc_clock.h>
@@ -27,10 +28,18 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.17";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.19";
+// Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
+// the URI hash to kDictionarySha256. It is also the template describedby href.
+// Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://github.com/walkthru-earth/aq-parquet/blob/main/"
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "ada95144af0cf5191e95a35d0f80768fe58ac73b/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
+static_assert(opensensor::pinned::names(kDictionaryUri,
+                                        "firmware/esp-idf-cores3/bringup/"
+                                        "telemetry_fields.inc"),
+              "kDictionaryUri is the raw field table at a full commit");
 // Version the acquisition procedure separately from the physical file codec.
 constexpr const char *kConfigurationId = "cores3-acquisition-v3";
 constexpr const char *kConfiguration =
@@ -255,11 +264,6 @@ constexpr const char *kTemplateTitle =
     "and Lite-On LTR-553ALS-WA";
 static constexpr std::string_view kTemplateKeywords[] = {
     "air quality", "particulate matter", "PM2.5", "low-cost sensor"};
-// The template's describedby link. Raw text at the dict-bearing path on main,
-// so the href stays stable while file:checksum pins the exact bytes.
-constexpr const char *kTemplateDictionaryHref =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/main/"
-    "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
 
 // Inputs are a single coherent anchor snapshot taken under the clock mutex.
 // Caller provides a fresh zero-initialized row. Unknown UTC stays null.

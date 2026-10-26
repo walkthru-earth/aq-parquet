@@ -82,7 +82,7 @@ std::string board_template() {
       .id = kSchemaName,
       .title = kTemplateTitle,
       .keywords = kTemplateKeywords,
-      .dictionary_href = kTemplateDictionaryHref,
+      .dictionary_href = kDictionaryUri,
       .dict = kDictionarySha256,
       .sample_interval_ms = oslogger::cadence::kDefaultSampleIntervalMs,
       .proto_min = ble::kProtocolVersion,

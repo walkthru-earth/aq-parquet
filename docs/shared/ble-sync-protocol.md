@@ -144,7 +144,7 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.17","schema":"cores3-telemetry-v5","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.19","schema":"cores3-telemetry-v5","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","desc":"<first 16 hex of desc>",
  "station":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
@@ -152,7 +152,7 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
 `waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
-and firmware `idf-waveshare-parquet-v2.11`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+and firmware `idf-waveshare-parquet-v2.13`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 

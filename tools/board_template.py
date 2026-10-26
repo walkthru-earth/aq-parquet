@@ -123,11 +123,12 @@ def validate(template: dict, dictionary: dict, dictionary_uri: str) -> None:
     links = [link for link in template["links"] if link["rel"] == "describedby"]
     require(len(links) == 1 and links[0]["file:checksum"] == "1220" + dictionary["sha256"],
             "describedby checksum is 1220 plus dict")
-    # Same repository path as the footer dictionary_uri, served raw so the
-    # bytes at the link are the bytes hashed.
-    blob = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/blob/(.+)", dictionary_uri)
-    require(blob is not None and links[0]["href"] ==
-            f"https://raw.githubusercontent.com/{blob[1]}/{blob[2]}", "describedby href is the raw dictionary")
+    # The footer dictionary_uri itself, raw at a pinned commit (#89), so the
+    # bytes at the link are the bytes hashed. tools/pinned_uris.py proves the
+    # commit and the bytes with git.
+    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/aq-parquet/[0-9a-f]{40}/.+",
+                         dictionary_uri) is not None, "dictionary URI is raw at a full commit")
+    require(links[0]["href"] == dictionary_uri, "describedby href is the footer dictionary URI")
     columns = template["item_assets"]["data"]["table:columns"]
     require([c["name"] for c in columns] == [f["name"] for f in fields], "one column per FIELD, in order")
     types = {1: "int32", 2: "int64", 4: "float"}

@@ -12,6 +12,7 @@
 #include <column_semantics.h>
 #include <cstring>
 #include <iterator>
+#include <pinned_uri.h>
 #include <pms_frame.h>
 #include <span>
 #include <string_view>
@@ -27,11 +28,19 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.11";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.13";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
+// Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
+// the URI hash to kDictionarySha256. It is also the template describedby href.
+// Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://github.com/walkthru-earth/aq-parquet/blob/main/"
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "ada95144af0cf5191e95a35d0f80768fe58ac73b/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
+static_assert(opensensor::pinned::names(
+                  kDictionaryUri, "firmware/esp-idf-waveshare-sim7670g/logger/"
+                                  "telemetry_fields.inc"),
+              "kDictionaryUri is the raw field table at a full commit");
 constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v3";
 // Uncalibrated starting point. Change only with a dated discharge run and a
 // new configuration id; kConfiguration embeds the same numbers.
@@ -430,10 +439,5 @@ constexpr const char *kTemplateTitle =
 static constexpr std::string_view kTemplateKeywords[] = {
     "air quality",     "particulate matter", "PM2.5",
     "air temperature", "relative humidity",  "low-cost sensor"};
-// The template's describedby link. Raw text at the dict-bearing path on main,
-// so the href stays stable while file:checksum pins the exact bytes.
-constexpr const char *kTemplateDictionaryHref =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/main/"
-    "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
 } // namespace contract
 } // namespace telemetry

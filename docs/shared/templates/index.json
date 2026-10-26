@@ -1,26 +1,26 @@
 {
   "by_desc": {
-    "1b7d969abb670579cd1f34f0bd7e224f66b120ed178fbb2fcf024e14a46c3f08": {
-      "board": "m5stack-cores3",
-      "dict": "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94",
-      "href": "m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json"
-    },
-    "e6b32af089b5c0b8389999a09b4a81ffe36d15f908a2002765025f78853b7d32": {
+    "7f2bbf5314ce8d6f4d0e5ee518991a9c3d43ab7b66d973e8a5921e811059872a": {
       "board": "waveshare-esp32-s3-sim7670g",
       "dict": "6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb",
       "href": "waveshare-esp32-s3-sim7670g/6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json"
+    },
+    "bb0ab0a3eaafb05e45bbbf5216194ab808110df92e6ee277c8ef2af6f2f314b0": {
+      "board": "m5stack-cores3",
+      "dict": "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94",
+      "href": "m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json"
     }
   },
   "templates": {
     "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94": {
       "board": "m5stack-cores3",
-      "desc": "1b7d969abb670579cd1f34f0bd7e224f66b120ed178fbb2fcf024e14a46c3f08",
+      "desc": "bb0ab0a3eaafb05e45bbbf5216194ab808110df92e6ee277c8ef2af6f2f314b0",
       "href": "m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json",
       "schema": "cores3-telemetry-v5"
     },
     "6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb": {
       "board": "waveshare-esp32-s3-sim7670g",
-      "desc": "e6b32af089b5c0b8389999a09b4a81ffe36d15f908a2002765025f78853b7d32",
+      "desc": "7f2bbf5314ce8d6f4d0e5ee518991a9c3d43ab7b66d973e8a5921e811059872a",
       "href": "waveshare-esp32-s3-sim7670g/6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json",
       "schema": "waveshare-sim7670g-telemetry-v5"
     }
