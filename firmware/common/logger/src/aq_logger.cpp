@@ -60,6 +60,7 @@
 #include <fcntl.h>
 #include <new>
 #include <numeric>
+#include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
 // After the ESP-IDF headers, which bring in sdkconfig.h.
@@ -2509,9 +2510,11 @@ void storage_worker(void *) {
           station_text, codec_name(selected_codec), config.schema_name,
           config.configuration_id);
     } else if (std::strcmp(command.text, "parquet schema") == 0) {
-      aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s\n",
+      aqlog.printf("PARQUET SCHEMA BEGIN schema=%s columns=%u sha256=%s "
+                   "desc=%s desc_bytes=%u\n",
                    config.schema_name, unsigned(field_count),
-                   config.dictionary_sha256);
+                   config.dictionary_sha256, config.descriptor_sha256,
+                   unsigned(config.descriptor_bytes));
       for (std::size_t i = 0; i < field_count; ++i) {
         const auto &field = config.fields[i];
         aqlog.printf("PARQUET FIELD name=%s type=%u procedure=%s unit=%s "
@@ -2781,6 +2784,14 @@ bool path_within(const char *path, const char *root) {
          (path[length] == '\0' || path[length] == '/');
 }
 
+// True for a SHA-256 digest as 64 lowercase hex characters.
+bool sha256_hex(const char *text) {
+  return text && std::strlen(text) == 64 &&
+         std::ranges::all_of(std::string_view{text}, [](char c) {
+           return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+         });
+}
+
 #if CONFIG_AQ_LOGGER_WORKER_WDT
 // Watchdog state shared by begin(), poll() and the supervisor timer. The
 // supervisor state belongs to start_worker_watchdog() until the timer starts
@@ -2939,7 +2950,10 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       !cadence::valid_sample_interval(config.sample_interval_ms) ||
       !config.deployment_id || !config.deployment_id[0] ||
       !config.calibration_id || !config.calibration_id[0] ||
-      !ble::wire::valid_name_prefix(config.ble_name_prefix))
+      !ble::wire::valid_name_prefix(config.ble_name_prefix) ||
+      !config.descriptor || config.descriptor_bytes == 0 ||
+      std::strlen(config.descriptor) != config.descriptor_bytes ||
+      !sha256_hex(config.descriptor_sha256))
     return false;
   sample_us = std::int64_t{config.sample_interval_ms} * 1000;
   for (std::size_t i = 0; i < field_count; ++i) {

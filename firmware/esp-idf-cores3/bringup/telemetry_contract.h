@@ -1,7 +1,9 @@
 #pragma once
 
 #include "parquet_writer.h"
+#include "telemetry_descriptor_digest.h"
 #include "telemetry_dictionary_digest.h"
+#include "telemetry_template.h"
 #include <algorithm>
 #include <aq_logger_live.h>
 #include <column_semantics.h>
@@ -9,6 +11,8 @@
 #include <cstring>
 #include <iterator>
 #include <numeric_sample.h>
+#include <span>
+#include <string_view>
 #include <utc_clock.h>
 
 namespace telemetry {
@@ -23,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.14";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.15";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
@@ -159,6 +163,102 @@ enum ClockSource : std::int32_t {
   kClockRtc = aq::utc::Rtc,
   kClockNetwork = aq::utc::Network,
 };
+
+// Status codes collect() writes in telemetry_logger.cpp. telemetry_classes.inc
+// names each value for the board template (#85), and the footer legends below
+// must list the same pairs.
+enum PmsStatus : std::int32_t {
+  kPmsMissing = 0,
+  kPmsWarming = 1,
+  kPmsStale = 2,
+  kPmsSensorError = 3,
+  kPmsValid = 4,
+};
+enum LightStatus : std::int32_t {
+  kLightUnavailable = 0,
+  kLightNotFresh = 1,
+  kLightInvalid = 2,
+  kLightValid = 3,
+  kLightIoError = 4,
+};
+enum ProximityStatus : std::int32_t {
+  kProximityUnavailable = 0,
+  kProximityNotFresh = 1,
+  kProximitySaturated = 2,
+  kProximityValid = 3,
+  kProximityIoError = 4,
+};
+// M5Unified Power_Class::is_charging_t. This header stays free of M5Unified
+// for the host fixture, so telemetry_logger.cpp ties the two by static_assert.
+enum ChargingStatus : std::int32_t {
+  kChargingDischarging = 0,
+  kChargingCharging = 1,
+  kChargingUnknown = 2,
+};
+// The charging_status codes collect() writes, checked against the classes.
+constexpr const char *kChargingStatusLegend =
+    "0=discharging,1=charging,2=unknown";
+constexpr const char *kPmsStatusLegend =
+    "0=missing,1=warming,2=stale,3=sensor-error,4=valid";
+constexpr const char *kLightStatusLegend =
+    "0=unavailable,1=not-fresh,2=invalid,3=valid,4=io-error";
+constexpr const char *kProximityStatusLegend =
+    "0=unavailable,1=not-fresh,2=saturated,3=valid,4=io-error";
+
+// classification:classes for the board template (#85), out of the dict
+// digest like kSemantics.
+static constexpr aq::semantics::Class kClasses[] = {
+#define CLASS(column, value, name, nodata)                                     \
+  {#column, static_cast<std::int64_t>(value), name, nodata},
+#include "telemetry_classes.inc"
+#undef CLASS
+};
+// Code columns with no classes. pms_firmware and pms_error are raw PMSA003
+// frame bytes with no published code list, imu_fresh_mask is a bitmask.
+static constexpr std::string_view kClasslessColumns[] = {
+    "pms_firmware", "pms_error", "imu_fresh_mask"};
+static_assert(aq::semantics::classes_complete(kSemantics, kClasses,
+                                              kClasslessColumns),
+              "every code or boolean column needs telemetry_classes.inc rows");
+static_assert(aq::semantics::matches_legend(kClasses, "pms_status",
+                                            kPmsStatusLegend) &&
+                  aq::semantics::matches_legend(kClasses, "light_status",
+                                                kLightStatusLegend) &&
+                  aq::semantics::matches_legend(kClasses, "proximity_status",
+                                                kProximityStatusLegend) &&
+                  aq::semantics::matches_legend(kClasses, "charging_status",
+                                                kChargingStatusLegend),
+              "telemetry_classes.inc and the status legends differ");
+// The clock sources this board writes, in code order. clock_status rows
+// must be exactly these, each named by aq::utc::source_name.
+static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
+                                                 kClockRtc, kClockNetwork};
+static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
+                                           kClockSources,
+                                           [](std::int64_t code) {
+                                             return aq::utc::source_name(
+                                                 static_cast<std::int32_t>(
+                                                     code));
+                                           }),
+              "clock_status classes must be the board's clock sources");
+
+// No CoreS3 column is a modelResult, so no column needs opensensor:derived.
+static constexpr std::span<const aq::semantics::Derived> kDerived{};
+static_assert(aq::semantics::derived_complete(kFields, kSemantics, kDerived),
+              "every modelResult column needs one kDerived entry");
+
+// Board template title and keywords (#85). The title names the board and its
+// sensors by make and model. Keywords are generic search terms.
+constexpr const char *kTemplateTitle =
+    "M5Stack CoreS3 with Plantower PMSA003, Bosch Sensortec BMI270 and BMM150, "
+    "and Lite-On LTR-553ALS-WA";
+static constexpr std::string_view kTemplateKeywords[] = {
+    "air quality", "particulate matter", "PM2.5", "low-cost sensor"};
+// The template's describedby link. Raw text at the dict-bearing path on main,
+// so the href stays stable while file:checksum pins the exact bytes.
+constexpr const char *kTemplateDictionaryHref =
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/main/"
+    "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
 
 // Inputs are a single coherent anchor snapshot taken under the clock mutex.
 // Caller provides a fresh zero-initialized row. Unknown UTC stays null.

@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -362,9 +363,215 @@ void check_board(const char *board, const Fields &fields,
   }
 }
 
+// Classes and derived checks (#85) on a small table, since the board
+// telemetry_classes.inc rows name board enums this test does not include.
+struct Procedure {
+  const char *name;
+  const char *procedure;
+};
+constexpr Procedure kMiniFields[] = {{"status", "sensor"},
+                                     {"flag", "sensor"},
+                                     {"mask", "sensor"},
+                                     {"count", "sensor"},
+                                     {"model", "fit_v1"}};
+using aq::semantics::Aggregate;
+using aq::semantics::Role;
+constexpr aq::semantics::Column kMini[] = {
+    {"status", "{code}", Role::qualityInformation, "", Aggregate::mode, "", "",
+     0, "", "urn:walkthru-earth:property:status", "", ""},
+    {"flag", "{boolean}", Role::auxiliaryInformation, "", Aggregate::mode, "",
+     "", 0, "", "urn:walkthru-earth:property:flag", "", ""},
+    {"mask", "{bitmask}", Role::qualityInformation, "", Aggregate::mode, "", "",
+     0, "", "urn:walkthru-earth:property:mask", "", ""},
+    {"count", "{count}", Role::physicalMeasurement, "", Aggregate::mean, "", "",
+     0, "finite", "urn:walkthru-earth:property:count", "", ""},
+    {"model", "ug/m3", Role::modelResult, "", Aggregate::mean, "", "", 0,
+     "finite", "urn:walkthru-earth:property:model", "", ""},
+};
+constexpr aq::semantics::Class kMiniClasses[] = {
+    {"status", 0, "missing", true},
+    {"status", 1, "valid", false},
+    {"flag", 0, "off", false},
+    {"flag", 1, "on", false},
+};
+constexpr std::string_view kMiniClassless[] = {"mask"};
+constexpr std::string_view kMiniSources[] = {"count"};
+constexpr aq::semantics::Derived kMiniDerived[] = {
+    {"model", kMiniSources, "urn:walkthru-earth:method:fit_v1"}};
+
+void check_classes_and_derived() {
+  using aq::semantics::classes_complete;
+  using aq::semantics::derived_complete;
+  using aq::semantics::matches_legend;
+  const std::span<const aq::semantics::Column> rows{kMini};
+  expect(classes_complete(rows, kMiniClasses, kMiniClassless),
+         "real classes complete");
+  const auto classes = [] {
+    std::array<aq::semantics::Class, std::size(kMiniClasses)> out{};
+    for (std::size_t i = 0; i < out.size(); ++i)
+      out[i] = kMiniClasses[i];
+    return out;
+  };
+  expect(!classes_complete(rows, std::span{kMiniClasses}.subspan(2),
+                           kMiniClassless),
+         "code column without classes is caught");
+  expect(!classes_complete(rows, kMiniClasses, {}),
+         "bitmask column neither classed nor listed is caught");
+  {
+    constexpr std::string_view listed[] = {"mask", "status"};
+    expect(!classes_complete(rows, kMiniClasses, listed),
+           "listed column that has classes is caught");
+  }
+  {
+    constexpr std::string_view listed[] = {"mask", "gone"};
+    expect(!classes_complete(rows, kMiniClasses, listed),
+           "listed column that does not exist is caught");
+  }
+  {
+    auto broken = classes();
+    broken[1].value = 0;
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "repeated value is caught");
+  }
+  {
+    auto broken = classes();
+    broken[1].name = "missing";
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "repeated name is caught");
+  }
+  {
+    auto broken = classes();
+    broken[1].nodata = true;
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "two nodata values are caught");
+  }
+  {
+    auto broken = classes();
+    broken[3].value = 2;
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "boolean value outside 0 and 1 is caught");
+  }
+  expect(
+      !classes_complete(rows, std::span{kMiniClasses}.first(3), kMiniClassless),
+      "boolean column with only its 0 row is caught");
+  {
+    const aq::semantics::Class one_flag[] = {kMiniClasses[0], kMiniClasses[1],
+                                             kMiniClasses[3]};
+    expect(!classes_complete(rows, one_flag, kMiniClassless),
+           "boolean column with only its 1 row is caught");
+  }
+  {
+    auto broken = classes();
+    broken[2].column = "count";
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "class on a quantity column is caught");
+  }
+  {
+    auto broken = classes();
+    broken[0].name = "no spaces";
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "class name outside the pattern is caught");
+  }
+  {
+    auto broken = classes();
+    std::swap(broken[1], broken[2]);
+    expect(!classes_complete(rows, broken, kMiniClassless),
+           "split column is caught");
+  }
+  expect(matches_legend(kMiniClasses, "status", "0=missing,1=valid"),
+         "legend matches");
+  expect(matches_legend(kMiniClasses, "status", "0=missing,1=valid; note"),
+         "legend free text after ; is ignored");
+  expect(!matches_legend(kMiniClasses, "status", "0=missing,1=ok"),
+         "renamed legend entry is caught");
+  expect(!matches_legend(kMiniClasses, "status", "0=missing,2=valid"),
+         "renumbered legend entry is caught");
+  expect(!matches_legend(kMiniClasses, "status", "0=missing,1=valid,2=x"),
+         "extra legend entry is caught");
+  expect(!matches_legend(kMiniClasses, "status", "0=missing"),
+         "missing legend entry is caught");
+  expect(!matches_legend(kMiniClasses, "mask", "0=none"),
+         "legend for a column without classes is caught");
+  expect(!matches_legend(std::span{kMiniClasses}.first(1), "status",
+                         "0=missing,1=valid"),
+         "class row missing from a legend column is caught");
+  {
+    using aq::semantics::matches_codes;
+    const auto name_of = [](std::int64_t code) {
+      return code == 0 ? "missing" : code == 1 ? "valid" : "other";
+    };
+    static constexpr std::int64_t codes[] = {0, 1};
+    static constexpr std::int64_t more[] = {0, 1, 2};
+    static constexpr std::int64_t fewer[] = {0};
+    static constexpr std::int64_t skipped[] = {0, 2};
+    expect(matches_codes(kMiniClasses, "status", codes, name_of),
+           "codes match");
+    expect(!matches_codes(kMiniClasses, "status", more, name_of),
+           "code with no class row is caught");
+    expect(!matches_codes(kMiniClasses, "status", fewer, name_of),
+           "class row for a code never written is caught");
+    expect(!matches_codes(kMiniClasses, "status", skipped, name_of),
+           "class row with another value is caught");
+    expect(!matches_codes(kMiniClasses, "status", skipped,
+                          [](std::int64_t code) {
+                            return code == 0 ? "missing" : "valid";
+                          }),
+           "class row with another value and the same name is caught");
+    expect(!matches_codes(kMiniClasses, "status", codes,
+                          [](std::int64_t) { return "valid"; }),
+           "class name other than name_of is caught");
+    expect(!matches_codes(kMiniClasses, "mask", fewer, name_of),
+           "codes for a column without classes are caught");
+  }
+
+  expect(derived_complete(kMiniFields, rows, kMiniDerived),
+         "real derived complete");
+  expect(!derived_complete(kMiniFields, rows, {}),
+         "modelResult without derived is caught");
+  {
+    constexpr aq::semantics::Derived twice[] = {kMiniDerived[0],
+                                                kMiniDerived[0]};
+    expect(!derived_complete(kMiniFields, rows, twice),
+           "two derived entries for one column are caught");
+  }
+  {
+    constexpr aq::semantics::Derived wrong[] = {
+        {"count", kMiniSources, "urn:walkthru-earth:method:sensor"}};
+    expect(!derived_complete(kMiniFields, rows, wrong),
+           "derived on a measurement is caught");
+  }
+  {
+    static constexpr std::string_view sources[] = {"gone"};
+    constexpr aq::semantics::Derived wrong[] = {
+        {"model", sources, "urn:walkthru-earth:method:fit_v1"}};
+    expect(!derived_complete(kMiniFields, rows, wrong),
+           "unknown source column is caught");
+  }
+  {
+    static constexpr std::string_view sources[] = {"model"};
+    constexpr aq::semantics::Derived wrong[] = {
+        {"model", sources, "urn:walkthru-earth:method:fit_v1"}};
+    expect(!derived_complete(kMiniFields, rows, wrong),
+           "column derived from itself is caught");
+  }
+  {
+    constexpr aq::semantics::Derived wrong[] = {
+        {"model", {}, "urn:walkthru-earth:method:fit_v1"}};
+    expect(!derived_complete(kMiniFields, rows, wrong),
+           "empty source list is caught");
+  }
+  {
+    constexpr aq::semantics::Derived wrong[] = {
+        {"model", kMiniSources, "urn:walkthru-earth:method:fit_v2"}};
+    expect(!derived_complete(kMiniFields, rows, wrong),
+           "method that is not the FIELD procedure is caught");
+  }
+}
+
 } // namespace
 
 int main() {
+  check_classes_and_derived();
   expect(aq::semantics::is_decimal("-12.5"), "decimal with sign");
   expect(!aq::semantics::is_decimal("1."), "trailing point rejected");
   expect(!aq::semantics::is_decimal(""), "empty rejected");
@@ -373,6 +580,7 @@ int main() {
   check_board("waveshare-sim7670g", kWaveshareFields, kWaveshareSemantics);
   if (failures != 0)
     return 1;
-  std::puts("PASS column semantics align with both FIELD tables");
+  std::puts("PASS column semantics align with both FIELD tables, classes and "
+            "derived checks catch each defect");
   return 0;
 }

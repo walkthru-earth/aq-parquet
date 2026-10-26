@@ -30,6 +30,9 @@ C++ contract tests and cannot prove behavior on a physical board.
 | POWER STATE lines, one finalize per discharge, the report wake, emergency close outcomes, retry and pass lines | `logger-power-test` |
 | Battery close stopping LIST, READ and slow peer waits, the Retry remount recheck | `archive-sync-test`, `wifi-link-test` |
 | LIVE key set frozen per dictionary digest (`fixtures/live_keys/`) | `telemetry-contract-test`, `waveshare-contract-test` |
+| Board template (#85) built by `board_template.h` from the FIELD, SEM and CLASS tables, checked against the checked-in `telemetry_template.h` and `telemetry_descriptor_digest.h`, validated against the pinned stac-opensensor v0.1.0 schemas in `stac_opensensor/`. Regenerate with `--write-template` | `telemetry-contract-test`, `waveshare-contract-test` |
+| desc pre-build header check and post-build check that the app image holds the template bytes and their NUL, run by `build-idf-board.sh` | `check_board_template.py <board dir> [--build <dir>]`, `board-template-check-test` |
+| Column semantics, classes and derived tables against the FIELD tables, each defect proved by a negative case | `column-semantics-test` |
 | Formatting and static diagnostics, no board-name `#if` in `firmware/common` (`check_board_conditionals.py`), no product BLE name prefix literal in shared code or host tools (`check_name_prefix.py`) | `fmt-check`, `lint`, `board-conditionals-test` |
 | Sign app images with the owner key in `secrets/` (owner machine only, never CI), verify them and write SHA256SUMS. Tests use throwaway keys in a temp dir | `release-sign --out <dir> <app.bin>`, `release-sign-test` |
 | Tag release workflow keeps least privilege per job, no credentials, cache or secrets, the push tag gate, `--draft`, the existing release guard and the tag pattern, each rule proved by mutation | `release-workflow-test` |

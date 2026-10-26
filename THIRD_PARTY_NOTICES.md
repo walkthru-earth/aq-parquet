@@ -118,3 +118,11 @@ and are not part of any firmware image. Their dependencies, such as Python,
 pyarrow, DuckDB, bleak, pyserial, esptool, CMake, Ninja, clang-tools and
 cppcheck, are installed by [Pixi](pixi.toml) from conda-forge and PyPI under
 their own licenses and are not redistributed by this repository.
+
+The JSON Schemas in [`tools/stac_opensensor/v0.1.0`](tools/stac_opensensor/v0.1.0)
+(`template.json`, `profile.json`, `schema.json`) are unmodified copies of
+[stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) at commit
+`a017edf`, Copyright (c) 2025-2026 Walkthru.Earth, licensed
+[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). The host contract
+tests use them to validate the board templates. They are not in any firmware
+image.

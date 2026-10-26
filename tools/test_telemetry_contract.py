@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import duckdb
+import board_template
 import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -117,6 +118,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sanitize", action="store_true")
     parser.add_argument("--dictionary-out", type=Path)
+    parser.add_argument("--write-template", action="store_true",
+                        help="regenerate telemetry_template.h and telemetry_descriptor_digest.h")
     args = parser.parse_args()
     # Unrelated asynchronous status lines must not terminate a schema reply.
     response = iter(["PARQUET STATUS buffered=2", "PARQUET SCHEMA BEGIN",
@@ -154,6 +157,9 @@ def main() -> None:
         require(dictionary["sha256"] == hashlib.sha256((firmware / "telemetry_fields.inc").read_bytes()).hexdigest(),
                 "stale compiled dictionary digest")
         fields = dictionary["fields"]
+        if board_template.run(executable, firmware, dictionary, [firmware / "telemetry_logger.cpp"], args.write_template,
+                              "pixi run python tools/test_telemetry_contract.py --write-template") is None:
+            return
         baseline = [(f["name"], f["type"]) for f in fields[:73]]
         # Golden names/types/order from the 47d8f83 hardware-baseline schema, with
         # the two UTC instants renamed to *_utc_us for TIMESTAMP(MICROS, UTC).
@@ -170,7 +176,7 @@ def main() -> None:
                 "dictionary carries every LIVE key and decimals")
         require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= 6 for f in fields),
                 "decimals is 0 for integer fields and at most 6 for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.14", "firmware identity")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.15", "firmware identity")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)
         require(live_key_fixture.check("cores3", dictionary["sha256"], dictionary["firmware"], live) ==

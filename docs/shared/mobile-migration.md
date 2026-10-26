@@ -9,6 +9,35 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## Board template and desc digest in the firmware (fix/85-template-generator, issue #85)
+
+**No app update needed yet.** A matched reflash brings the template, nothing
+on BLE or LAN changes.
+
+**What changed.** Each board now embeds one stac-opensensor v0.1.0 board
+template, a minified JSON built on the host from `telemetry_fields.inc`,
+`telemetry_semantics.inc`, the new `telemetry_classes.inc` (code and boolean
+column classes, such as `pms_status` 0 `missing` with `nodata`) and the board
+title and keywords. `desc` is the SHA-256 of exactly the embedded bytes. The
+`parquet schema` console command now ends its BEGIN line with `desc=<sha256>
+desc_bytes=<n>`. The dict digests, the Parquet files, LIVE keys and every BLE
+reply other than the firmware identity are unchanged. The firmware identity
+moves to `idf-cores3-parquet-v6.15` and `idf-waveshare-parquet-v2.9`, the
+first builds that carry `desc`.
+
+- CoreS3 `desc` `1b7d969abb670579cd1f34f0bd7e224f66b120ed178fbb2fcf024e14a46c3f08`,
+  29,244 bytes, dict `4f80c26c...`.
+- Waveshare `desc` `e6b32af089b5c0b8389999a09b4a81ffe36d15f908a2002765025f78853b7d32`,
+  23,284 bytes, dict `6f567b38...`.
+
+**Why.** The STAC contract keys each board build by `desc`, so a reader can
+fetch one document that says what every column means, with its unit, role,
+classes, gates and ranges.
+
+**What the app must do.** Nothing today. When #86 puts `desc` on the wire,
+copy it verbatim and use it as the key for the template. Never hash a
+re-serialized copy, the digest covers the exact bytes.
+
 ## Per field LIVE precision and new dictionary digests (fix/91-live-precision, issue #91)
 
 **Needs app update.** Bench boards need a matched reflash with the app build

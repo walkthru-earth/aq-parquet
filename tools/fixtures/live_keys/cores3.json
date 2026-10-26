@@ -180,7 +180,7 @@
       "note": "Dictionary cores3-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as e5060fb7. t now prints two decimals, imu_t and rh one.",
       "builds": [
         {
-          "firmware": "idf-cores3-parquet-v6.14",
+          "firmware": "idf-cores3-parquet-v6.15",
           "emitter": "board field table through aqlogger::format_live",
           "fields": {
             "seq": "sequence",

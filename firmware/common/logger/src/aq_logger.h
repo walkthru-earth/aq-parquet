@@ -72,6 +72,12 @@ struct Config {
   // Required board constant for ble::Identity::name_prefix. The mDNS host is
   // the BLE name in lower case. CoreS3 and Waveshare pass "OS-".
   const char *ble_name_prefix = nullptr;
+  // Required stac-opensensor board template (#85), the generated kTemplateJson
+  // of telemetry_template.h without its NUL, and desc, its SHA-256 from
+  // telemetry_descriptor_digest.h. `parquet schema` reports both.
+  const char *descriptor = nullptr;
+  std::size_t descriptor_bytes = 0;
+  const char *descriptor_sha256 = nullptr;
 };
 // Shared default for each board's sampling and UI task: above the idle
 // housekeeping, below the storage worker (3), the LAN task (4) and the BLE

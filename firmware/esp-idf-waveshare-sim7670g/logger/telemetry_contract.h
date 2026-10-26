@@ -1,7 +1,9 @@
 #pragma once
 
 #include "pms5003t_identity.h"
+#include "telemetry_descriptor_digest.h"
 #include "telemetry_dictionary_digest.h"
+#include "telemetry_template.h"
 #include <algorithm>
 #include <aq_battery_health.h>
 #include <aq_logger.h>
@@ -11,6 +13,8 @@
 #include <cstring>
 #include <iterator>
 #include <pms_frame.h>
+#include <span>
+#include <string_view>
 #include <utc_clock.h>
 
 namespace telemetry {
@@ -23,7 +27,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.8";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.9";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"
@@ -273,12 +277,18 @@ inline GaugeSnapshot gauge_snapshot(const aq::Max17048Reading &reading) {
   return {true, reading.vcell_valid(), reading.soc_valid(), reading.millivolts,
           reading.percent};
 }
+enum GaugeStatus : std::int32_t {
+  kGaugeNotInstalled = 0,
+  kGaugeReadError = 1,
+  kGaugeValid = 2,
+};
 // gauge_status 2 needs both words. A good VCELL with a failed or implausible
 // SOC still writes battery_mv under status 1 and leaves battery_percent null.
 inline void apply_gauge(Sample &row, const GaugeSnapshot &gauge) {
-  row.integer(gauge_status, !gauge.battery_installed            ? 0
-                            : !(gauge.vcell_ok && gauge.soc_ok) ? 1
-                                                                : 2);
+  row.integer(gauge_status, !gauge.battery_installed ? kGaugeNotInstalled
+                            : !(gauge.vcell_ok && gauge.soc_ok)
+                                ? kGaugeReadError
+                                : kGaugeValid);
   if (!gauge.battery_installed)
     return;
   if (gauge.vcell_ok && gauge.millivolts > 0)
@@ -339,11 +349,87 @@ inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
   if (ext.status.ok)
     row.integer(gauge_status_flags, ext.status_flags());
   if (ext.mode.ok)
-    row.integer(gauge_hibernating, ext.hibernating() ? 1 : 0);
+    row.integer(gauge_hibernating, ext.hibernating());
   row.integer(battery_health_state,
               static_cast<std::int32_t>(health.assessment.state));
   if (health.assessment.minutes_to_empty >= 0)
     row.integer(battery_minutes_to_empty, health.assessment.minutes_to_empty);
 }
+
+// Footer legends of the code columns. main.cpp writes them as Parquet
+// key-value metadata. telemetry_classes.inc names the same values for the
+// board template (#85), and the static_assert below keeps the two equal.
+constexpr const char *kPmsStatusLegend =
+    "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch";
+constexpr const char *kGaugeStatusLegend =
+    "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
+    "gauge_status stays 1 when only VCELL is valid, battery_mv is still "
+    "written";
+constexpr const char *kBatteryHealthStateLegend =
+    "0=unknown,1=external-power-likely,2=ok,3=low,4=critical,5=settling; "
+    "VCELL thresholds in acquisition_config are uncalibrated";
+constexpr const char *kBatchCandidateStatusLegend =
+    "0=disabled,1=identity-mismatch,2=PMS-unavailable,3=candidate-only";
+
+// classification:classes for the board template (#85), out of the dict
+// digest like kSemantics.
+static constexpr aq::semantics::Class kClasses[] = {
+#define CLASS(column, value, name, nodata)                                     \
+  {#column, static_cast<std::int64_t>(value), name, nodata},
+#include "telemetry_classes.inc"
+#undef CLASS
+};
+// Code columns with no classes. pms_firmware and pms_error are raw PMS5003T
+// frame bytes with no published code list, gauge_status_flags is a bitmask.
+static constexpr std::string_view kClasslessColumns[] = {
+    "pms_firmware", "pms_error", "gauge_status_flags"};
+static_assert(aq::semantics::classes_complete(kSemantics, kClasses,
+                                              kClasslessColumns),
+              "every code or boolean column needs telemetry_classes.inc rows");
+static_assert(
+    aq::semantics::matches_legend(kClasses, "pms_status", kPmsStatusLegend) &&
+        aq::semantics::matches_legend(kClasses, "gauge_status",
+                                      kGaugeStatusLegend) &&
+        aq::semantics::matches_legend(kClasses, "battery_health_state",
+                                      kBatteryHealthStateLegend) &&
+        aq::semantics::matches_legend(kClasses, "pm25_batch_candidate_status",
+                                      kBatchCandidateStatusLegend),
+    "telemetry_classes.inc and the footer status legends differ");
+// The clock sources this board writes, in code order. clock_status rows
+// must be exactly these, each named by aq::utc::source_name.
+static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,
+                                                 kClockNetwork};
+static_assert(aq::semantics::matches_codes(kClasses, "clock_status",
+                                           kClockSources,
+                                           [](std::int64_t code) {
+                                             return aq::utc::source_name(
+                                                 static_cast<std::int32_t>(
+                                                     code));
+                                           }),
+              "clock_status classes must be the board's clock sources");
+
+// opensensor:derived of the modelResult columns (#85). apply_pms writes the
+// batch candidate as 0.003964 times the 0.3 um count.
+static constexpr std::string_view kBatchCandidateSources[] = {
+    "particles_gt03_per_01l"};
+static constexpr aq::semantics::Derived kDerived[] = {
+    {"pm25_batch_candidate_ug_m3", kBatchCandidateSources,
+     "urn:walkthru-earth:method:airgradient_20260408_count_candidate_v1"}};
+static_assert(aq::semantics::derived_complete(kFields, kSemantics, kDerived),
+              "every modelResult column needs one kDerived entry");
+
+// Board template title and keywords (#85). The title names the board and its
+// sensors by make and model. Keywords are generic search terms.
+constexpr const char *kTemplateTitle =
+    "Waveshare ESP32-S3-SIM7670G-4G V2.0 with Plantower PMS5003T and Analog "
+    "Devices MAX17048";
+static constexpr std::string_view kTemplateKeywords[] = {
+    "air quality",     "particulate matter", "PM2.5",
+    "air temperature", "relative humidity",  "low-cost sensor"};
+// The template's describedby link. Raw text at the dict-bearing path on main,
+// so the href stays stable while file:checksum pins the exact bytes.
+constexpr const char *kTemplateDictionaryHref =
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/main/"
+    "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
 } // namespace contract
 } // namespace telemetry
