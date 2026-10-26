@@ -21,7 +21,7 @@ The benchmarked logger has 73 columns and at most 90 rows; newer source has 77 c
 
 `parquet codec none` and `parquet codec lz4` first finalize pending normal rows under the old codec, then change the running session and save the choice in NVS, so it survives a reboot. A board with no saved choice boots LZ4_RAW (before #25 it booted UNCOMPRESSED). Existing files are never recompressed or overwritten. Uncompressed is an explicit user-selectable fallback, not silent fallback on codec failure.
 
-`parquet codec-test` writes two diagnostic copies of the **same buffered rows**, first uncompressed and then LZ4, under `output/benchmarks/boot=<boot>/`. It retains the original batch for normal rotation. Copies carry `purpose=codec-comparison-duplicate-rows` metadata; normal output carries `purpose=telemetry`. Do not include benchmark copies in station telemetry queries. The finalized-file counter includes these diagnostic writes.
+`parquet codec-test` writes two diagnostic copies of the **same buffered rows**, first uncompressed and then LZ4, under `output/benchmarks/boot=<boot>/`. It retains the original batch for normal rotation. Copies carry `purpose=codec-comparison-duplicate-rows` metadata; normal output carries `purpose=telemetry`. Do not include benchmark copies in Thing telemetry queries. The finalized-file counter includes these diagnostic writes.
 
 ## Host screening, not device timing
 

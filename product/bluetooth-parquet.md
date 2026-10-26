@@ -13,7 +13,7 @@ Illustrative SQL only — this scheme and extension do not exist in this project
 ```sql
 SELECT count(*)
 FROM read_parquet(
-  'bluet://sensor-id/output/station=example/year=2026/month=09/day=10/time.parquet'
+  'bluet://sensor-id/output/thing=example/year=2026/month=09/day=10/time.parquet'
 );
 ```
 

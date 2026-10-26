@@ -54,7 +54,7 @@ documents its [public NTP service](https://developers.cloudflare.com/time-servic
 Set `ntp.public_fallback=0` to restrict time acquisition to approved DHCP or
 configured endpoints. Disable `ntp.dhcp` too when an arbitrary router should
 not select the source. DNS country suffixes, country pool names, anycast and
-the station's declared country are not proof that traffic stays inside a
+the Thing's declared country are not proof that traffic stays inside a
 country. Select deployment-approved endpoints and network policy explicitly.
 An offline RTC or authenticated phone time remains available without an
 external server. See [configuration keys and pages](ble-sync-protocol.md#device-configuration-v2).
@@ -75,9 +75,9 @@ service. Generic `pool.ntp.org` and other vendors' zones are not embedded as
 appliance defaults: the [NTP Pool vendor rules](https://www.ntppool.org/en/vendors.html)
 require an appliance's own vendor zone.
 
-## Station location from the phone
+## Thing location from the phone
 
-Location means the monitoring device or station's location. It starts unset.
+Location means the monitoring device or Thing's location. It starts unset.
 In the Android/iOS mobile app's Device settings, the owner stands beside the
 sensor, chooses a resolution and taps **Use phone location**. Permission and a
 foreground one-shot fix are requested only from this tap. The phone converts

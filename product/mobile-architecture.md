@@ -38,11 +38,11 @@ Start with the phone. Add a hub or MCU analysis after a measured need. No genera
 
 | Product | Contents | Rules |
 | --- | --- | --- |
-| Private raw archive | Original Parquet and private deployment/provenance records | Preserve immutable files and station/UTC Hive contract |
+| Private raw archive | Original Parquet and private deployment/provenance records | Preserve immutable files and Thing/UTC Hive contract |
 | Private cloud backup | Client-encrypted files and manifest | Owner-held keys; opaque outer names; original Hive paths inside encryption |
 | Public release | Approved cell/window statistics, quality, method and license | New allowlisted schema; no private identifiers or paths |
 
-Current raw files contain MAC-derived identity, station UUIDs, boot IDs and timestamps in rows, metadata or paths. They are **not anonymous or encrypted**. H3 and compression do not change that. Phone encryption does not protect the current SD card.
+Current raw files contain MAC-derived identity, Thing UUIDs, boot IDs and timestamps in rows, metadata or paths. They are **not anonymous or encrypted**. H3 and compression do not change that. Phone encryption does not protect the current SD card.
 
 A server cannot expand an end-to-end encrypted backup without the owner's keys. Prefer generating a minimal provider export locally. Keep consent, backup receipts and delivery checkpoints separate from immutable observations.
 
@@ -71,7 +71,7 @@ flowchart TD
 
 Release fields: release/schema IDs, H3 cell/resolution, UTC window, property/unit, context, statistic/value, coverage/quality, method/privacy-policy versions and source/license. Counts follow the privacy policy too; private lineage stays restricted.
 
-Specify time/station weighting; never blindly average averages. Preserve units, measurement variants and indoor/outdoor boundaries. A cohort result describes contributing sensors, not every resident or venue. It cannot be expanded back into original observations.
+Specify time/Thing weighting; never blindly average averages. Preserve units, measurement variants and indoor/outdoor boundaries. A cohort result describes contributing sensors, not every resident or venue. It cannot be expanded back into original observations.
 
 ## Provider connectors
 
@@ -91,7 +91,7 @@ flowchart LR
 | OpenAQ | Provider-specific ingestion exists; establish an accepted feed. A read API is not an arbitrary upload endpoint. |
 | IQAir / AirVisual | One integration family. A suitable unrestricted third-party write API was not verified here. |
 
-Agree metrics, location, averaging, credentials, quotas and licenses per connector. Exact-location publication needs separate consent. Do not represent a cell average as a station at its centroid. If aggregates are unsupported, disable that route or offer a separately consented station export.
+Agree metrics, location, averaging, credentials, quotas and licenses per connector. Exact-location publication needs separate consent. Do not represent a cell average as a Thing at its centroid. If aggregates are unsupported, disable that route or offer a separately consented Thing export.
 
 Use destination-specific checkpoints, stable export IDs and bounded retries. Exactly-once delivery depends on destination support. Prevent re-export loops and double counting upstream observations. Connector outages never block local use.
 

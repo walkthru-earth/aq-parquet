@@ -55,7 +55,7 @@ belong to each board adapter.
   run on the host task. Keep public addressing, secure characteristic flags,
   UUIDs, long reads, MTU bounds and ordered response semantics. Successful SNTP
   callbacks alone publish network time. Existing Arduino-era bonds need native
-  reconnect/re-pairing qualification without erasing station/config NVS.
+  reconnect/re-pairing qualification without erasing Thing/config NVS.
 - Native DebugLog uses `LogOutput` and a function/context sink; radio hot-path
   `record_only()` writes stay in the ring without console IO. Pairing logs show
   mode only. Physical owner/provisioning replies use the console directly.

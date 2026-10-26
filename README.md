@@ -7,7 +7,7 @@ Each board owns its pins, peripherals, schema and acquisition callbacks. Five op
 - `AGENTS.md` is the entry point for humans and coding agents.
 - `docs/` routes to [shared contracts](docs/README.md#shared-contracts) and [board references](docs/README.md#boards), including the [telemetry and Parquet pipeline](docs/shared/telemetry-pipeline.md).
 - `product/` holds the [mobile app workflows](product/mobile-app.md), [architecture and privacy](product/mobile-architecture.md), and [Bluetooth SQL idea](product/bluetooth-parquet.md); these are proposals, not implemented features.
-- The [board options](product/board-options.md) page ranks ESP32-S3 boards for a LoRa, solar, RTC and SD station.
+- The [board options](product/board-options.md) page ranks ESP32-S3 boards for an outdoor Thing with LoRa, solar charging, an RTC and an SD card.
 - The [community extension shortlist](product/community-extension-shortlist.md) maps DuckDB candidates to these product ideas, with adoption limits and source references.
 - `firmware/<framework>-<variant>/` holds each self-contained trial.
 

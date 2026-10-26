@@ -85,7 +85,7 @@ Upstream caveats checked separately from registry metadata: [Valhalla work-in-pr
 
 Evaluate the **person/household privacy unit**, repeated-release composition, linkage, allowed queries, adversary assumptions and utility on our data. PAC privacy is not interchangeable with differential privacy, and adding noise does not establish end-to-end anonymous sharing. The registry declares **AGPL-3.0**; assess the exact adopted revision and distribution model. Compare the pin with [current upstream privacy documentation](https://github.com/cwida/privacy). Keep public sharing gated by the [separate release policy](mobile-architecture.md#community-privacy).
 
-[crypto](https://github.com/duckdb/community-extensions/blob/bad23978ec765e3153f22abdb29e2a8c37159707/extensions/crypto/description.yml) provides hashes/HMAC, not an encrypted-backup/key-recovery system. Hashing station IDs does not anonymize them. Likewise, sketches, H3 cells and table allowlists do not replace a privacy design.
+[crypto](https://github.com/duckdb/community-extensions/blob/bad23978ec765e3153f22abdb29e2a8c37159707/extensions/crypto/description.yml) provides hashes/HMAC, not an encrypted-backup/key-recovery system. Hashing Thing IDs does not anonymize them. Likewise, sketches, H3 cells and table allowlists do not replace a privacy design.
 
 ## Adoption rule
 

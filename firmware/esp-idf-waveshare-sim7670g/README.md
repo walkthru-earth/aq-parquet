@@ -63,7 +63,8 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin diagnostic
 ```
 
-Keep the `parquet` station namespace, keys and value types. Since v2.10 (#93)
+Keep the `parquet` namespace with its `thing` key and the unread old `station`
+key, and keep every key and value type. Since v2.10 (#93)
 settings live in the `oscfg` namespace and nothing is copied from the old one.
 It starts empty after that reflash, so the pairing mode and PIN, the display
 flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its default
@@ -75,7 +76,7 @@ identity is set again, Waveshare files carry no sensor identity and
 the phone may cache the old GATT table, so forget the board in the phone's
 Bluetooth settings and send `ble.clear_bonds=1` before pairing again. The old
 settings and crash log namespaces stay in flash with the old Wi-Fi password and
-LAN token, and only a full flash erase removes them. Do not erase station
+LAN token, and only a full flash erase removes them. Do not erase Thing
 identity or settings. Never write eFuses or format TF.
 
 ## Native board ownership and qualification
@@ -185,7 +186,7 @@ The PIN bypasses the debug ring and has no BLE/LAN retrieval opcode. Do not reta
 pixi run provision-usb --source-port <source-checked-port> --port <waveshare-checked-port>
 ```
 
-This explicit command writes destination settings. Credentials stay in host memory and are not printed or saved; pairing PINs, LAN tokens and station identities remain per device. BLE and token-authenticated LAN support the existing protocol; file sync needs no internet or SIM. Only one host process may own each serial port.
+This explicit command writes destination settings. Credentials stay in host memory and are not printed or saved; pairing PINs, LAN tokens and Thing identities remain per device. BLE and token-authenticated LAN support the existing protocol; file sync needs no internet or SIM. Only one host process may own each serial port.
 
 ## Verification scope
 
