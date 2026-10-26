@@ -8,6 +8,7 @@ Exit status is nonzero when a check fails.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import struct
 import sys
@@ -32,12 +33,23 @@ def inspect(path: Path) -> bool:
     meta = footer.read_footer(path)
     parquet = pq.ParquetFile(path)
     md = parquet.metadata
-    kv = {k.decode(): v.decode() for k, v in md.metadata.items()}
+    kv = {k.decode(): v.decode() for k, v in (md.metadata or {}).items()}
     print(f"{path.name}: {len(data)} bytes, footer {footer_length} ({100 * footer_length / len(data):.1f}%), "
           f"{md.num_rows} rows, {md.num_row_groups} row groups, {md.num_columns} columns")
-    print(f"  schema_version={kv.get('schema_version')} dictionary_version={kv.get('dictionary_version')} "
-          f"firmware={kv.get('firmware')} compression={kv.get('compression')} rotation_interval_s={kv.get('rotation_interval_s')} "
-          f"row_groups={kv.get('row_groups')} created_by={md.created_by!r}")
+    # The one `opensensor` footer key (#88), compact JSON.
+    if "opensensor" in kv:
+        doc = json.loads(kv["opensensor"])
+        firmware, dictionary, file = doc.get("firmware", {}), doc.get("dictionary", {}), doc.get("file", {})
+        print(f"  schema={firmware.get('schema')} dictionary_version={dictionary.get('version')} "
+              f"firmware={firmware.get('version')} compression={file.get('compression')} "
+              f"rotation_interval_s={file.get('rotation_interval_s')} row_groups={file.get('row_groups')} "
+              f"created_by={md.created_by!r}")
+    else:
+        # Not a current device file, for example a rebuilt partial. Show the
+        # raw pairs as they are, with no parsing of older layouts.
+        print(f"  no opensensor footer key, created_by={md.created_by!r}")
+        for key in sorted(kv):
+            print(f"  kv {key}={kv[key]!r}")
     schema = parquet.schema_arrow
     for name in ("event_time_utc_us", "clock_anchor_utc_us", "event_time_utc_ns", "clock_anchor_utc_ns"):
         if name in schema.names:

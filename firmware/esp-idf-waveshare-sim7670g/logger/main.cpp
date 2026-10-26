@@ -115,32 +115,6 @@ void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
   apply_battery_health(row, health);
 }
 
-const telemetry::KeyValue kMetadata[] = {
-    {"pms_status", kPmsStatusLegend},
-    {"gauge_status", kGaugeStatusLegend},
-    {"unavailable",
-     "charger STAT and USB VBUS are not wired to the ESP32-S3; external power "
-     "is inferred from VCELL only; no battery current; no onboard external "
-     "RTC; modem/GNSS/camera not sampled"},
-    {"battery_health_state", kBatteryHealthStateLegend},
-    {"gauge_status_flags",
-     "MAX17048 STATUS high byte: bit0=RI,bit1=VH,bit2=VL,bit3=VR,bit4=HD,"
-     "bit5=SC,bit6=EnVr"},
-    {"battery_minutes_to_empty",
-     "raw SOC divided by discharge CRATE; null when charging, settling, "
-     "external power likely or above 7 days; not a validated runtime"},
-    {"battery_presence",
-     kBatteryInstalled ? "owner-confirmed-installed" : "configured-absent"},
-    {"sensor_model", "PMS5003T"},
-    {"pm25_batch_candidate_formula",
-     "AirGradient PMS5003T-20260408 v1: 0.003964 * particles_gt03_per_01l + 0"},
-    {"pm25_batch_candidate_validation",
-     "owner-opt-in research candidate; not Cairo-reference-validated; raw PM "
-     "unchanged"},
-    {"pm25_batch_candidate_status", kBatchCandidateStatusLegend},
-    {"hardware_revision", "Waveshare ESP32-S3-SIM7670G-4G V2.0"},
-    {"storage_bus", "SDMMC one-bit CLK5 CMD4 D0=6; no automatic format"},
-};
 // OpenSensor BLE name prefix, so the board advertises OS-xxxx.
 constexpr char kBleNamePrefix[] = "OS-";
 const oslogger::Config kLoggerConfig{
@@ -156,14 +130,13 @@ const oslogger::Config kLoggerConfig{
     .configuration_id = kConfigurationId,
     .configuration = kConfiguration,
     .time_semantics = kTimeSemantics,
-    .board = "Waveshare ESP32-S3-SIM7670G-4G V2.0 ESP32-S3 rev0.2",
+    .board = kBoard,
     .output_directory = "/sd/output",
-    .metadata = kMetadata,
-    .metadata_count = sizeof(kMetadata) / sizeof(kMetadata[0]),
     .ble_name_prefix = kBleNamePrefix,
     .descriptor = kTemplateJson,
     .descriptor_bytes = sizeof(kTemplateJson) - 1,
     .descriptor_sha256 = kDescriptorSha256,
+    .template_href = kTemplateHref,
 };
 const oslogger::Hooks kHooks{
     .collect = collect,

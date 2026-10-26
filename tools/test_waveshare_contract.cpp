@@ -1,10 +1,12 @@
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include "board_template.h"
+#include "footer_fixture.h"
 #include "live_sample.h"
 #include "live_widest.h"
 #include <lz4_codec.h>
 
 #include <aq_logger_cadence.h>
+#include <aq_logger_footer.h>
 #include <aq_logger_live.h>
 #include <aq_logger_location.h>
 #include <array>
@@ -413,6 +415,10 @@ int main(int argc, char **argv) {
     livesample::print(kFields, field_count);
     return 0;
   }
+  if (argc == 2 && std::strcmp(argv[1], "footer") == 0) {
+    footerfixture::print();
+    return 0;
+  }
   if (argc == 2 && std::strcmp(argv[1], "dictionary") == 0) {
     std::printf("{\"schema\":\"%s\",\"schema_version\":%d,"
                 "\"dictionary\":\"%s\",\"firmware\":\"%s\",\"sha256\":\"%s\","
@@ -500,20 +506,10 @@ int main(int argc, char **argv) {
     apply_battery_health(row, health);
   }
   prepare_columns(columns, rows);
-  const oslogger::LocationMetadata location_metadata(location);
-  KeyValue metadata[18] = {{"schema_version", kSchemaName},
-                           {"firmware", kFirmware},
-                           {"dictionary_version", kDictionaryVersion},
-                           {"dictionary_uri", kDictionaryUri},
-                           {"dictionary_sha256", kDictionarySha256},
-                           {"acquisition_config_id", kConfigurationId},
-                           {"acquisition_config", kConfiguration},
-                           {"deployment_id", kUnknown},
-                           {"calibration_id", kUnknown},
-                           {"time_semantics", kTimeSemantics},
-                           {"purpose", "synthetic-contract-test"}};
-  for (std::size_t i = 0; i < location_metadata.entries.size(); ++i)
-    metadata[11 + i] = location_metadata.entries[i];
+  // The one footer key the logger writes, built by the firmware code.
+  static char json[oslogger::footer::kMaxJsonBytes + 1];
+  const KeyValue metadata[] = {
+      {oslogger::footer::kKey, footerfixture::build(json, 900, 1, compressed)}};
   FILE *file = std::fopen(argv[1], "wb");
   if (!file)
     return 3;
@@ -523,8 +519,8 @@ int main(int argc, char **argv) {
   if (result.ok)
     result = writer.row_group(90, sequence);
   if (result.ok)
-    result = writer.finish(metadata, sizeof(metadata) / sizeof(metadata[0]),
-                           kFirmware, kCreatedBy);
+    result =
+        writer.finish(metadata, std::size(metadata), kFirmware, kCreatedBy);
   const bool closed = std::fclose(file) == 0;
   return result.ok && closed ? 0 : 4;
 }

@@ -151,14 +151,6 @@ bool rtc_write(std::int64_t seconds, void *) {
          readback - seconds <= 1;
 }
 
-const KeyValue metadata[] = {
-    {"pms_status", kPmsStatusLegend},
-    {"light_status", kLightStatusLegend},
-    {"proximity_status", kProximityStatusLegend},
-    {"magnetic_units", "M5Unified BMI270 auxiliary raw counts; uncalibrated"},
-    {"unavailable", "SHT20 address collision; battery current unsupported; "
-                    "camera/audio not sampled"},
-};
 // OpenSensor BLE name prefix, so the board advertises OS-xxxx.
 constexpr char kBleNamePrefix[] = "OS-";
 oslogger::Config logger_config;
@@ -198,15 +190,14 @@ void begin_logger(bool sd_mounted) {
       .configuration_id = kConfigurationId,
       .configuration = kConfiguration,
       .time_semantics = kTimeSemantics,
-      .board = "CoreS3 ESP32-S3 rev0.2",
+      .board = kBoard,
       .output_directory = "/sd/output",
       .legacy_directory = "/sd/parquet",
-      .metadata = metadata,
-      .metadata_count = sizeof(metadata) / sizeof(metadata[0]),
       .ble_name_prefix = kBleNamePrefix,
       .descriptor = kTemplateJson,
       .descriptor_bytes = sizeof(kTemplateJson) - 1,
       .descriptor_sha256 = kDescriptorSha256,
+      .template_href = kTemplateHref,
   };
   const oslogger::Hooks hooks{
       .collect = collect,

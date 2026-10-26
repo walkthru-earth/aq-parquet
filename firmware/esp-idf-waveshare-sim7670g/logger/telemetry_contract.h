@@ -28,8 +28,11 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.13";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.14";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
+// Footer station.board.
+constexpr const char *kBoard =
+    "Waveshare ESP32-S3-SIM7670G-4G V2.0 ESP32-S3 rev0.2";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
@@ -367,9 +370,10 @@ inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
     row.integer(battery_minutes_to_empty, health.assessment.minutes_to_empty);
 }
 
-// Footer legends of the code columns. main.cpp writes them as Parquet
-// key-value metadata. telemetry_classes.inc names the same values for the
-// board template (#85), and the static_assert below keeps the two equal.
+// Status legends of the code columns. telemetry_classes.inc names the same
+// values for the board template (#85), and the static_assert below keeps the
+// two equal. The legends are compile time checks only, the footer carries no
+// code meanings (#88).
 constexpr const char *kPmsStatusLegend =
     "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch";
 constexpr const char *kGaugeStatusLegend =
@@ -378,7 +382,7 @@ constexpr const char *kGaugeStatusLegend =
     "written";
 constexpr const char *kBatteryHealthStateLegend =
     "0=unknown,1=external-power-likely,2=ok,3=low,4=critical,5=settling; "
-    "VCELL thresholds in acquisition_config are uncalibrated";
+    "VCELL thresholds in acquisition.config are uncalibrated";
 constexpr const char *kBatchCandidateStatusLegend =
     "0=disabled,1=identity-mismatch,2=PMS-unavailable,3=candidate-only";
 
@@ -407,7 +411,7 @@ static_assert(
         opensensor::semantics::matches_legend(kClasses,
                                               "pm25_batch_candidate_status",
                                               kBatchCandidateStatusLegend),
-    "telemetry_classes.inc and the footer status legends differ");
+    "telemetry_classes.inc and the status legends differ");
 // The clock sources this board writes, in code order. clock_status rows
 // must be exactly these, each named by opensensor::utc::source_name.
 static constexpr std::int64_t kClockSources[] = {kClockNone, kClockHost,

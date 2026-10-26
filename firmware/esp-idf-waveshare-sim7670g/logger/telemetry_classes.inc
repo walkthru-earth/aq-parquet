@@ -13,7 +13,7 @@
 //   clock_status rows are exactly kClockSources in telemetry_contract.h, the
 //   sources this board writes, named by opensensor::utc::source_name.
 //   pms_status, pm25_batch_candidate_status, gauge_status and
-//   battery_health_state names are the footer legends in
+//   battery_health_state names are the status legends in
 //   telemetry_contract.h, which apply_pms, apply_gauge and
 //   apply_battery_health write through the enums named here.
 //   gauge_hibernating is the bool MAX17048 hibernating() returns.

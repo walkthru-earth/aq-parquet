@@ -32,14 +32,16 @@ formatting, peripheral or controller initialization happens here. Output default
 to `/sd/output`; `legacy_directory` is opt-in for previous archives.
 
 `Config::sample_interval_ms` sets the sample period and the footer
-`sample_interval_ms`. The default is 10 s, which both boards keep.
+`acquisition.sample_interval_ms`. The default is 10 s, which both boards keep.
 It must pass `cadence::valid_sample_interval()` in `aq_logger_cadence.h`, 1 s
 to 300 s and a divisor of 300 s, so every rotation window stays whole. Row
 groups hold one rotation window of rows, at most `cadence::kMaxBatchRows` (90),
-which is also the footer `row_group_rows_max`. `Config::deployment_id` and
-`Config::calibration_id` fill the footer keys of the same name and default to
-`unknown`. The footer `sample_interval_ms` always comes from the live config
-value, never a build time default. `Config::ble_name_prefix` is a required
+which is also the footer `file.row_group_rows_max`. `Config::deployment_id`
+and `Config::calibration_id` fill `station.deployment_id` and
+`acquisition.calibration_id` and default to `unknown`. The footer sample
+period always comes from the live config value, never a build time default.
+`footer::build` in `aq_logger_footer.h` writes the one `opensensor` key, see
+[mobile-migration.md](../../../docs/shared/mobile-migration.md). `Config::ble_name_prefix` is a required
 board constant (`OS-` on both boards) that starts the BLE name, and the mDNS
 host is that name in lower case. `begin()` refuses a period, id or
 prefix that does not pass these checks. The shared caps a new board must check

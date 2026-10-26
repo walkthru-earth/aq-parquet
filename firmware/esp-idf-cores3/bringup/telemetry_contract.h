@@ -28,7 +28,7 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.19";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.20";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
@@ -49,6 +49,8 @@ constexpr const char *kConfiguration =
     "\"raw-v1\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
+// Footer station.board.
+constexpr const char *kBoard = "CoreS3 ESP32-S3 rev0.2";
 constexpr const char *kTimeSemantics =
     "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
     "bounds sequential reads; pms_received_mono_us is last checksum-valid UART "
@@ -174,8 +176,9 @@ enum ClockSource : std::int32_t {
 };
 
 // Status codes collect() writes in telemetry_logger.cpp. telemetry_classes.inc
-// names each value for the board template (#85), and the footer legends below
-// must list the same pairs.
+// names each value for the board template (#85), and the status legends below
+// must list the same pairs. The legends are compile time checks only, the
+// footer carries no code meanings (#88).
 enum PmsStatus : std::int32_t {
   kPmsMissing = 0,
   kPmsWarming = 1,

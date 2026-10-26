@@ -108,7 +108,7 @@ int main() {
   for (const char *code : {"", "A", "ZZ", "AA", "XK", "UK", "QM", "us", "USA"})
     assert(!valid_country(code));
   assert(!valid_country(nullptr));
-  // Exercise the exact production envelope/mapping/footer helper. A queued
+  // Exercise the exact production envelope and mapping helper. A queued
   // snapshot owns its settings; later owner changes cannot rewrite its values.
   config::LocationSettings current{0x85283473fffffffULL, 5, "US"};
   oslogger::LocationSample<opensensor::NumericSample<4>> captured{};
@@ -120,23 +120,13 @@ int main() {
   assert(captured.location.cell == 0x85283473fffffffULL);
   assert(captured.data[0] == 0x85283473fffffffULL && captured.data[1] == 5);
   assert(captured.data[2] == 373457934 && captured.data[3] == -1219763760);
-  const oslogger::LocationMetadata metadata(captured.location);
-  assert(std::strcmp(metadata.entries[0].value, "US") == 0);
-  assert(std::strcmp(metadata.entries[3].value, "85283473fffffff") == 0);
-  assert(std::strcmp(metadata.entries[4].value, "5") == 0);
-  assert(std::strcmp(metadata.entries[5].value, "5") == 0);
   // Reducing privacy precision must reject a non-coarsened fine snapshot.
   captured.location.resolution = 4;
   assert(!oslogger::apply_location(captured, captured.location, {0, 1, 2, 3}));
   for (const auto present : captured.valid)
     assert(!present);
-  const oslogger::LocationMetadata rejected(captured.location);
-  assert(std::strcmp(rejected.entries[3].value, "unknown") == 0);
-  assert(std::strcmp(rejected.entries[4].value, "unknown") == 0);
   captured.location = {};
   assert(!oslogger::apply_location(captured, captured.location, {0, 1, 2, 3}));
-  const oslogger::LocationMetadata absent(captured.location);
-  assert(std::strcmp(absent.entries[0].value, "unknown") == 0);
-  assert(std::strcmp(absent.entries[3].value, "unknown") == 0);
-  assert(std::strcmp(absent.entries[4].value, "unknown") == 0);
+  for (const auto present : captured.valid)
+    assert(!present);
 }

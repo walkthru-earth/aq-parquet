@@ -18,11 +18,13 @@ from test_location import compile_h3
 
 import duckdb
 import board_template
+import footer_contract
 import live_key_fixture
 import pyarrow as pa
 import pyarrow.parquet as pq
 from host_cxx import CXX_STD
 
+FIRMWARE = Path(__file__).resolve().parents[1] / "firmware/esp-idf-waveshare-sim7670g/logger"
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -43,24 +45,16 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
         require(field.type == expected and field.nullable, f"schema: {field.name}")
         require(field.metadata[b"PARQUET:field_id"] == str(definition["field_id"]).encode(),
                 f"Iceberg field_id: {field.name}")
-    metadata = parquet.metadata.metadata
-    require(metadata[b"country_iso3166_1_alpha2"] == (b"US" if located else b"unknown"), "declared country")
-    require(metadata[b"country_source"] == b"owner-declared", "country provenance")
-    require(metadata[b"location_source"] == b"owner-provisioned-h3-grid-center", "center provenance")
-    require(metadata[b"h3_cell_id"] == (b"85283473fffffff" if located else b"unknown"), "published cell metadata")
-    require(metadata[b"h3_resolution"] == (b"5" if located else b"unknown") and
-            metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
-    require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
-    require(metadata[b"schema_version"].decode() == dictionary["schema"] ==
-            "waveshare-sim7670g-telemetry-v5", "schema identity")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] ==
-            "waveshare-sim7670g-telemetry-v6", "dictionary identity")
-    require(metadata[b"dictionary_uri"].decode() == dictionary["uri"], "dictionary URI")
-    require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
+    # The one `opensensor` key, valid against the pinned footer.json (#88).
+    dict_sha, desc = footer_contract.board_digests(FIRMWARE)
+    footer = footer_contract.check_file(path, dict_sha=dict_sha, desc=desc)
+    footer_contract.check_document(footer, dictionary, "waveshare-esp32-s3-sim7670g", compressed=compressed,
+                                   rotation=900, row_groups=1)
+    require(dictionary["schema"] == "waveshare-sim7670g-telemetry-v5", "schema identity")
+    require(dictionary["dictionary"] == "waveshare-sim7670g-telemetry-v6", "dictionary identity")
     require(parquet.metadata.created_by ==
             f"aq-parquet version 0.1 (build {dictionary['firmware']})", "Waveshare writer identity")
-    require(metadata[b"deployment_id"] == metadata[b"calibration_id"] == b"unknown", "provenance")
-    config = json.loads(metadata[b"acquisition_config"])
+    config = json.loads(footer["acquisition"]["config"])
     require(config["sample_interval_ms"] == 10000 and config["pms_stale_after_ms"] == 5000 and
             config["pms_warmup_us"] == 30000000 and config["pms_model"] == "PMS5003T", "configuration")
     require((config["pms_uart_rx"], config["pms_uart_tx"], config["pms_baud"]) == (1, 2, 9600),
@@ -210,7 +204,8 @@ def main() -> None:
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.13", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.14", "firmware identity")
+        footer_contract.check_board(executable, firmware, dictionary, "waveshare-esp32-s3-sim7670g")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)
         live_key_fixture.check("waveshare", dictionary["sha256"], dictionary["firmware"], live)
