@@ -279,7 +279,7 @@ static constexpr std::string_view kTemplateKeywords[] = {
 // on main. Every other PR squashes.
 constexpr const char *kTemplateHref =
     "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
-    "1f37edf350ae5efab0caa59ab4ceedd07d0028e5/"
+    "9915aeca82370d7c599682a4384fc7452502eb16/"
     "docs/shared/templates/m5stack-cores3/"
     "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json";
 static_assert(opensensor::pinned::names_template(kTemplateHref,

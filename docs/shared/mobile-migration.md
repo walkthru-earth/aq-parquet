@@ -70,7 +70,7 @@ after the reflash.
 | Dictionary | `cores3-telemetry-v7` | `waveshare-sim7670g-telemetry-v7` |
 | Columns | 81 | 62 |
 | `dict` | `3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9` | `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` |
-| `desc` | `@DESC_CORES3@` | `@DESC_WAVESHARE@` |
+| `desc` | `1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a` | `1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472` |
 
 LIVE keys and decimals are unchanged, neither new column has a LIVE key.
 
