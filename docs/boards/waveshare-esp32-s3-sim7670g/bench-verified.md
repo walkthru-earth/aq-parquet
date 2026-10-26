@@ -461,7 +461,7 @@ chip erase or card format.
 | Cadence | `sequence` 0 to 88. `scheduled_us` steps exactly 10,000,000 us. `monotonic_us` intervals 9,999,087 to 10,000,913 us, at most 913 us from ten seconds. `rows_dropped`, `storage_errors` and `sample_deadlines_missed` are 0. `clock_status=0` and `event_time_utc_us` is null in every row |
 | Footer key order | The raw thrift `key_value_metadata` holds `opensensor` before `geo`. PyArrow 25 returns the keys in a different order, so the raw bytes are the evidence |
 | `geo` key | `{"version": "2.0.0", "primary_column": "geometry", "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}}}` |
-| Location columns | Column 56 `geometry` is BYTE_ARRAY with the Parquet `Geometry` logical type (PyArrow 25 prints `Geometry(crs=)`). Column 53 `h3_cell_id` and column 55 `location_source` (UINT8) are present. Location is unset, so all three are null in all 89 rows, and the `geometry` chunk statistics carry only `null_count=89` with no bounds |
+| Location columns | Column 56 `geometry` is BYTE_ARRAY with the Parquet `Geometry` logical type (PyArrow 25 prints `Geometry(crs=)`). Column 53 `h3_cell_id`, column 54 `h3_resolution` and column 55 `location_source` (UINT8) are present. Location is unset, so all four location columns are null in all 89 rows, and the `geometry` chunk statistics carry only `null_count=89` with no bounds |
 
 Limits. Location was unset, so a non-null `geometry` value and geospatial
 statistics with bounds are not proven on hardware. No BLE, LAN or phone sync
