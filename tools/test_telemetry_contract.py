@@ -169,6 +169,12 @@ def main() -> None:
                                          separators=(",", ":")).encode()).hexdigest()
                 == "511b231ecdbf8f93fc3acbca42d5fceef7c3808551af1d035866cc0da4366135",
                 "original 77-column prefix changed")
+        # The Thing release (#83) is the field table baseline. Later fields
+        # append only, so this 81-column prefix never changes.
+        thing_baseline = hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:81]],
+                                                   separators=(",", ":")).encode()).hexdigest()
+        require(thing_baseline == "c3ebd39ab723436c435c0fbec93cba449fae7544a7c3a04a1fbceb43ea0de4c3",
+                "Thing baseline 81-column prefix changed")
         inc = (firmware / "telemetry_fields.inc").read_text()
         rows = re.findall(r'^FIELD\((\w+), .*, "([a-z0-9_]*)", ([0-9])\)$', inc, re.M)
         require(rows == [(f["name"], f["live"], str(f["decimals"])) for f in fields],

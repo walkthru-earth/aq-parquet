@@ -34,6 +34,8 @@ import duckdb
 from jsonschema import Draft7Validator, FormatChecker
 import pyarrow.parquet as pq
 
+import parquet_footer
+
 PINNED = Path(__file__).resolve().parent / "stac_opensensor"
 SCHEMA = PINNED / "v0.1.0/footer.json"
 EXAMPLE = PINNED / "footers/cores3-telemetry-v5.json"
@@ -173,8 +175,10 @@ def kv_problems(kv: dict[str, str], *, dict_sha: str, desc: str, geometry: bool 
 
 
 def read_kv(path: Path) -> dict[str, str]:
-    raw = pq.ParquetFile(path).metadata.metadata or {}
-    return {k.decode(): v.decode() for k, v in raw.items()}
+    """Key-value metadata in footer order. pyarrow hands the keys back sorted,
+    so the raw Thrift list is decoded to check that opensensor comes first."""
+    entries = parquet_footer.read_footer(path).get(parquet_footer.FILE_KV, [])
+    return {entry[1].decode(): entry.get(2, b"").decode() for entry in entries}
 
 
 # The configured cell the board contract fixtures write when located.

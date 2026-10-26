@@ -183,9 +183,12 @@ def main() -> None:
                                          separators=(",", ":")).encode()).hexdigest()
                 == "01c9db4e628e33367f0bfd594afa10f088d5b1c75d3d64c8616fccdd23654209",
                 "original 52-column prefix changed")
-        require(hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:56]],
-                                         separators=(",", ":")).encode()).hexdigest()
-                == "10543fa0c92bb9fa2a1ed195fb3030c465dc6c58981d8b7d495c511722233798", "schema v4 56-column prefix changed")
+        # The Thing release (#83) is the field table baseline. Later fields
+        # append only, so this 62-column prefix never changes.
+        thing_baseline = hashlib.sha256(json.dumps([(f["name"], f["type"]) for f in fields[:62]],
+                                                   separators=(",", ":")).encode()).hexdigest()
+        require(thing_baseline == "c02fb9a145db666870c571b459ad2e86f862a4a296a70789e664727dc1c7593c",
+                "Thing baseline 62-column prefix changed")
         require([(f["name"], f["type"], f["live"]) for f in fields[56:]] == [
             ("battery_soc_raw_percent", 4, ""), ("battery_charge_rate_percent_per_h", 4, ""),
             ("gauge_status_flags", 1, ""), ("gauge_hibernating", 1, ""),
