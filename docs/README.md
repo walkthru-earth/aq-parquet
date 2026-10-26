@@ -24,8 +24,8 @@ together.
   sync over BLE and LAN for any sensor set.
 
 To add a board or a new sensor set, start with
-[board porting](shared/board-porting.md). A sensor plugin design is planned at
-`docs/shared/sensor-plugins.md`. Current board versions live in the
+[board porting](shared/board-porting.md). A sensor plugin design is proposed in
+[Sensor plugins](shared/sensor-plugins.md). Current board versions live in the
 [root README status table](../README.md#status).
 
 ## Shared contracts
