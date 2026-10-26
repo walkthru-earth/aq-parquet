@@ -500,16 +500,25 @@ Run these from the repository root, with `v1.2.0` standing for the new tag.
    ```
 
 2. Wait for the Release workflow to finish and the draft to appear. The run
-   can take a few seconds to show up after the push, so the loop waits for it.
+   can take a few seconds to show up after the push, so the loop looks for it
+   every 10 seconds and gives up after 5 minutes, also when `gh` keeps failing.
    `--exit-status` makes the watch fail when the run fails. The run is also on
    the repository Actions page under Release.
 
    ```sh
-   until run_id="$(gh run list --workflow release.yml --branch v1.2.0 --event push \
-       --limit 1 --json databaseId --jq '.[0].databaseId // empty')" && [ -n "$run_id" ]; do
+   run_id=""
+   for _ in $(seq 30); do
+     run_id="$(gh run list --workflow release.yml --branch v1.2.0 --event push \
+       --limit 1 --json databaseId --jq '.[0].databaseId // empty')" || run_id=""
+     [ -n "$run_id" ] && break
      sleep 10
    done
-   gh run watch "$run_id" --exit-status
+   if [ -n "$run_id" ]; then
+     gh run watch "$run_id" --exit-status
+   else
+     echo "no Release run for v1.2.0 after 5 minutes" >&2
+     false
+   fi
    ```
 
 3. Download the draft and check it against `SHA256SUMS`. Then check the
@@ -520,8 +529,8 @@ Run these from the repository root, with `v1.2.0` standing for the new tag.
    gh release download v1.2.0 --dir exports/release-v1.2.0/unsigned
    (cd exports/release-v1.2.0/unsigned && shasum -a 256 -c SHA256SUMS)
    for f in exports/release-v1.2.0/unsigned/*.bin exports/release-v1.2.0/unsigned/*.spdx.json; do
-     gh attestation verify "$f" --repo walkthru-earth/aq-parquet \
-       --signer-workflow walkthru-earth/aq-parquet/.github/workflows/release.yml
+     gh attestation verify "$f" --repo walkthru-earth/opensensor-space-firmware \
+       --signer-workflow walkthru-earth/opensensor-space-firmware/.github/workflows/release.yml
    done
    ```
 
