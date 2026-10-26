@@ -213,14 +213,21 @@ constexpr bool every_property_set(const Fields &fields) {
   return true;
 }
 
+// The one column with no UCUM code. stac-opensensor PROFILE (4408c4e) gives
+// the native GEOMETRY column `geometry` role coordinate and no unit.
+constexpr bool unitless_geometry(const Column &row) {
+  return row.name == "geometry" && row.role == Role::coordinate;
+}
+
 // Per row rules from the stac-opensensor v0.1.0 profile and issue #84. Every
-// column has a UCUM code and a board neutral property id, unique in the
-// table. A physical measurement also has a gate. A range is both bounds or
-// none, with min below max.
+// column but `geometry` has a UCUM code, and every column a board neutral
+// property id, unique in the table. A physical measurement also has a gate. A
+// range is both bounds or none, with min below max.
 template <typename Fields>
 constexpr bool well_formed(const Fields &fields, std::span<const Column> rows) {
   for (const auto &row : rows) {
-    if (row.name.empty() || row.ucum.empty() || !valid_gate(fields, row))
+    if (row.name.empty() || row.ucum.empty() != unitless_geometry(row) ||
+        !valid_gate(fields, row))
       return false;
     if (row.role == Role::physicalMeasurement && row.valid_when.empty())
       return false;

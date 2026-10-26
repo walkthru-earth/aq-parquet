@@ -290,7 +290,7 @@ std::string build(const Board &board, const Fields &fields,
   out.close(']');
   out.key("table:primary_datetime");
   out.value("event_time_utc_us");
-  // stac-opensensor 2f32104 PROFILE, SHOULD when the files have the column.
+  // stac-opensensor 4408c4e PROFILE, set when the files have the column.
   if (std::any_of(std::begin(fields), std::end(fields), [](const auto &field) {
         return std::string_view{field.name} == "geometry";
       })) {
@@ -308,8 +308,11 @@ std::string build(const Board &board, const Fields &fields,
     out.value(row.name);
     out.key("type");
     out.value(type_name(field.type, field.unit));
-    out.key("unit");
-    out.value(row.ucum);
+    // The GEOMETRY column has no unit (stac-opensensor 4408c4e PROFILE).
+    if (!row.ucum.empty()) {
+      out.key("unit");
+      out.value(row.ucum);
+    }
     out.key("roles");
     out.open('[');
     out.value(role_name(row.role));

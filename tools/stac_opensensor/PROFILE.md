@@ -25,7 +25,7 @@ One Thing is described by three layers. Each layer has one owner.
 
 | Layer | Owner | File | Holds |
 | --- | --- | --- | --- |
-| Board template | Firmware build | `templates/<schema>.json` | Columns and their meaning, sample interval, instruments, LIVE keys, protocol floor |
+| Board template | Firmware build | `templates/<board>/<dict>.json` | Columns and their meaning, sample interval, instruments, LIVE keys, protocol floor |
 | Thing Collection | Catalog publisher | `thing=<uuid>/collection.json` | Template columns plus titles, scales, mobility, location extent, license and links |
 | App profile | Mobile app | Outside this repository | Card order, hero card, display step and column labels in each language |
 
@@ -40,10 +40,13 @@ catalog.json                                          STAC Catalog, one child li
 thing=<uuid>/collection.json                          Thing Collection, columns in item_assets
 thing=<uuid>/year=YYYY/month=MM/day=DD/<file>.parquet one uploaded file, at most 1 hour
 thing=<uuid>/year=YYYY/month=MM/day=DD/<file>.json    its Item, same name
-templates/<schema>.json                               board template, cached forever by digest
+templates/<board>/<dict>.json                         board template, cached forever by digest
 ```
 
 `<file>` is the board's own name, `data_HHMM_<boot>_<first>-<last>-<attempt>`, where `HHMM` is the start of the UTC window.
+`<board>` is the board slug, such as `m5stack-cores3`.
+`<dict>` is the 64 hex `firmware.dict`, because one schema can ship with several dictionaries.
+Only dated `data_HHMM_` files are published. Unsynced, benchmark and other board paths stay on the device.
 A board closes a file at the end of its rotation window and uploads it at once, so the newest data is at most 1 hour old.
 Two files may share a window after a reboot or a retried upload. Readers order rows by time and drop repeats of the same Thing and time.
 Files written before the board knew UTC time get no Item until they are reconciled.
@@ -101,7 +104,7 @@ The rows hold the location. The footer `opensensor` key holds none.
 | Column | Type | Meaning |
 | --- | --- | --- |
 | `h3_cell_id` | int64, nullable | H3 cell of the row, null when there is no location |
-| `h3_resolution` | int32, nullable | Resolution of that cell, 8 by default and at most the board's `h3_max_resolution` |
+| `h3_resolution` | int32, nullable | Resolution of that cell, 8 by default, never finer than the owner's configured maximum |
 | `location_source` | uint8, nullable | Where the cell came from, see below |
 | `geometry` | Parquet GEOMETRY, nullable | WKB Point at the cell centre, longitude and latitude in OGC:CRS84, no `crs` member |
 
@@ -112,7 +115,10 @@ The rows hold the location. The footer `opensensor` key holds none.
 | 2 | The device's own GNSS fix |
 | 3 | A fix sent by the phone app |
 
-The board template lists these codes in `classification:classes`, like every other code column.
+In `table:columns`, `h3_cell_id` is type `int64` and `h3_resolution` type `int32`, both role `referenceInformation`.
+`location_source` is type `uint8`, role `qualityInformation`, aggregate `mode`.
+Its codes go in `classification:classes` like every other code column.
+`geometry` is type `geometry`, role `coordinate`, with no `unit`, and the data asset sets `table:primary_geometry` to `geometry`.
 A fixed Thing writes its configured cell in every row with `location_source` 1.
 A moving Thing writes the cell of each fix, so one file can hold many cells.
 The geometry is always the cell centre, never the raw fix, so the resolution sets how much a row reveals.
@@ -157,8 +163,8 @@ A file stands alone, so an indexer can build its Thing Collection and Item from 
 | Field | Type | Description |
 | --- | --- | --- |
 | version | `"0.1.0"` | **REQUIRED**. Readers refuse an unknown major version |
-| thing | object | **REQUIRED**. `id`, `device_id`, `board`, `mobility` (`fixed` or `moving`), and optional `deployment_id` |
-| firmware | object | **REQUIRED**. `version`, `schema` and `boot_id` |
+| thing | object | **REQUIRED**. `id` (the Thing UUID), `device_id`, `board` (the slug used in template paths), `mobility` (`fixed` or `moving`), and optional `deployment_id` |
+| firmware | object | **REQUIRED**. `version`, `schema` and `boot_id` (32 hex characters, the same token as in the file name) |
 | dictionary | object | **REQUIRED**. `sha256` equals `firmware.dict` in the template, plus optional `version` and `uri` |
 | template | object | **REQUIRED**. `href` and `sha256`, the SHA-256 of the exact template bytes, equal to the template link `file:checksum` without `1220` |
 | acquisition | object | **REQUIRED**. `sample_interval_ms` and `time_semantics`, plus optional `config_id`, `config` and `calibration_id` |
@@ -168,6 +174,7 @@ Numbers are JSON numbers. The footer `sample_interval_ms` is the truth for that 
 Code meanings, such as clock quality codes, belong in the template, not in the footer.
 DuckDB reads it with `SELECT value::JSON FROM parquet_kv_metadata('file.parquet') WHERE key = 'opensensor'`.
 Example [footers/cores3-telemetry-v5.json](footers/cores3-telemetry-v5.json).
+Firmware and app docs cite this profile by its full 40 character commit.
 
 ## Board template
 
@@ -199,7 +206,7 @@ The template lists 11 of its 81 columns, one or more of each kind. A generated t
 
 | File | Layer |
 | --- | --- |
-| [templates/cores3-telemetry-v5.json](templates/cores3-telemetry-v5.json) | Board template, `dict` `e5060fb7…` |
+| [templates/m5stack-cores3/e5060fb7….json](templates/m5stack-cores3/e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b.json) | Board template, `dict` `e5060fb7…` |
 | [examples/catalog.json](examples/catalog.json) | Root Catalog |
 | [examples/collection.json](examples/collection.json) | Thing Collection made from the template |
 | [examples/item.json](examples/item.json) | File Item, one hour |

@@ -15,9 +15,10 @@
 // The two Parquet key-value entries of every telemetry file.
 //
 // `opensensor` is compact UTF-8 JSON per stac-opensensor json-schema/
-// footer.json v0.1.0 (2f32104), pinned in tools/stac_opensensor/v0.1.0/
-// footer.json. Members follow the schema's property order, which matches its
-// example footers/cores3-telemetry-v5.json. It holds no location.
+// footer.json v0.1.0 at commit 4408c4e52366bb3d154d22bbfffc88ff09aed6f1,
+// pinned in tools/stac_opensensor/v0.1.0/footer.json. Members follow the
+// schema's property order, which matches its example
+// footers/cores3-telemetry-v5.json. It holds no location.
 //
 // `geo` is GeoParquet 2.0.0 file metadata for the native GEOMETRY column
 // `geometry`, validated against the GeoParquet schema.json pinned in
@@ -190,6 +191,28 @@ private:
   const std::string_view text{value};
   return text == "fixed" || text == "moving";
 }
+// PROFILE thing.board, the board slug used in template paths
+// (`templates/<board>/<dict>.json`), lowercase letters, digits and dashes.
+[[nodiscard]] constexpr bool slug(const char *value) {
+  std::size_t length = 0;
+  for (; value[length] != '\0'; ++length) {
+    const char c = value[length];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
+      return false;
+  }
+  return length != 0;
+}
+// PROFILE firmware.boot_id, 32 lowercase hex digits, the token in the file
+// name.
+[[nodiscard]] constexpr bool boot_hex(const char *value) {
+  std::size_t length = 0;
+  for (; value[length] != '\0'; ++length) {
+    const char c = value[length];
+    if (length == 32 || !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+      return false;
+  }
+  return length == 32;
+}
 // Degrees times 1e7 as an exact JSON decimal, 312345678 as 31.2345678 and
 // -50000000 as -5. The text parses to the same double as e7 / 1e7, which is
 // the WKB coordinate. Returns the length, at most 12.
@@ -242,7 +265,8 @@ private:
 // writes, must be non empty except dictionary.version, acquisition.config_id,
 // config and calibration_id, which the schema allows empty but must not be
 // null. dictionary.uri and template.href must be non empty because format uri
-// rejects "", and both digests must be 64 lowercase hex digits.
+// rejects "", and both digests must be 64 lowercase hex digits. board is the
+// board slug, never free text (stac-opensensor PROFILE).
 [[nodiscard]] constexpr std::expected<void, Error>
 check_config(const Config &config) {
   using detail::present;
@@ -257,7 +281,7 @@ check_config(const Config &config) {
   if (!detail::sha256_hex(config.dictionary_sha256) ||
       !detail::sha256_hex(config.descriptor_sha256))
     return std::unexpected(Error::Digest);
-  if (config.sample_interval_ms == 0)
+  if (!detail::slug(config.board) || config.sample_interval_ms == 0)
     return std::unexpected(Error::Range);
   return {};
 }
@@ -274,7 +298,7 @@ build(std::span<char> out, const Config &config, const Ids &ids,
   if (!present(ids.thing) || !present(ids.device) || !present(ids.boot) ||
       !present(ids.mobility) || !present(file.compression))
     return std::unexpected(Error::Missing);
-  if (!detail::mobility(ids.mobility))
+  if (!detail::mobility(ids.mobility) || !detail::boot_hex(ids.boot))
     return std::unexpected(Error::Range);
   if (file.rotation_seconds == 0 ||
       file.rotation_seconds > kMaxRotationSeconds || file.row_groups == 0)

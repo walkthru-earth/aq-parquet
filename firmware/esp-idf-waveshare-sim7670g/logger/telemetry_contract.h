@@ -35,9 +35,9 @@ constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v6";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v7";
 constexpr const char *kFirmware = "idf-waveshare-parquet-v2.15";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
-// Footer thing.board.
-constexpr const char *kBoard =
-    "Waveshare ESP32-S3-SIM7670G-4G V2.0 ESP32-S3 rev0.2";
+// Footer thing.board, the board slug of the template path. The free text name
+// is the template title (stac-opensensor 4408c4e).
+constexpr const char *kBoard = "waveshare-esp32-s3-sim7670g";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.

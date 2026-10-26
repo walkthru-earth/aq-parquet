@@ -68,8 +68,9 @@ oslogger::Config base_config() {
   };
 }
 
+constexpr const char *kBoot = "0123456789abcdef0123456789abcdef";
 constexpr oslogger::footer::Ids kIds{
-    .device = "d", .thing = "s", .boot = "b", .mobility = "fixed"};
+    .device = "d", .thing = "s", .boot = kBoot, .mobility = "fixed"};
 constexpr oslogger::footer::File kFile{.rotation_seconds = 900,
                                        .row_groups = 1,
                                        .compression = "LZ4_RAW",
@@ -90,7 +91,7 @@ void footer_bytes() {
       R"({"version":"0.1.0",)"
       R"("thing":{"id":"s","device_id":"d","board":"board","deployment_id":"unknown",)"
       R"("mobility":"fixed"},)"
-      R"("firmware":{"version":"firmware","schema":"schema","boot_id":"b"},)"
+      R"("firmware":{"version":"firmware","schema":"schema","boot_id":"0123456789abcdef0123456789abcdef"},)"
       R"("dictionary":{"sha256":"0000000000000000000000000000000000000000000000000000000000000001",)"
       R"("version":"dictionary","uri":"https://example.org/dictionary.json"},)"
       R"("template":{"href":"https://example.org/template.json",)"
@@ -116,9 +117,9 @@ void footer_bytes() {
       R"("purpose":"codec-comparison-duplicate-rows"}})"));
 
   // Quotes, backslashes and control bytes are escaped, UTF-8 passes through.
-  config.board = "a\"b\\c\n\x01 \xc3\xa9";
+  config.deployment_id = "a\"b\\c\n\x01 \xc3\xa9";
   check(footer::build(json, config, kIds, kFile).has_value());
-  check(std::string_view(json).find(R"("board":"a\"b\\c\n\u0001 )"
+  check(std::string_view(json).find(R"("deployment_id":"a\"b\\c\n\u0001 )"
                                     "\xc3\xa9\"") != std::string_view::npos);
   config = base_config();
 
@@ -162,25 +163,42 @@ void footer_bytes() {
   }
   check(!footer::build(
              json, config,
-             {.device = "d", .thing = "", .boot = "b", .mobility = "fixed"},
+             {.device = "d", .thing = "", .boot = kBoot, .mobility = "fixed"},
              kFile)
              .has_value());
+  // thing.board is the board slug, never free text (stac-opensensor 4408c4e).
+  for (const char *board :
+       {"CoreS3 ESP32-S3 rev0.2", "M5Stack-CoreS3", "a_b"}) {
+    auto bad = base_config();
+    bad.board = board;
+    config_fails(bad, footer::Error::Range);
+  }
+  // firmware.boot_id is the 32 hex token of the file name.
+  for (const char *boot : {"b", "0123456789abcdef0123456789abcde",
+                           "0123456789abcdef0123456789abcdef0",
+                           "0123456789ABCDEF0123456789ABCDEF"}) {
+    const auto bad = footer::build(
+        json, config,
+        {.device = "d", .thing = "s", .boot = boot, .mobility = "fixed"},
+        kFile);
+    check(!bad.has_value() && bad.error() == footer::Error::Range);
+  }
   // thing.mobility is required and one of fixed or moving.
   for (const char *mobility : {"", "parked", "Fixed"}) {
     const auto bad = footer::build(
         json, config,
-        {.device = "d", .thing = "s", .boot = "b", .mobility = mobility},
+        {.device = "d", .thing = "s", .boot = kBoot, .mobility = mobility},
         kFile);
     check(!bad.has_value() &&
           bad.error() == (*mobility == '\0' ? footer::Error::Missing
                                             : footer::Error::Range));
   }
-  check(!footer::build(json, config, {.device = "d", .thing = "s", .boot = "b"},
-                       kFile)
+  check(!footer::build(json, config,
+                       {.device = "d", .thing = "s", .boot = kBoot}, kFile)
              .has_value());
   check(footer::build(
             json, config,
-            {.device = "d", .thing = "s", .boot = "b", .mobility = "moving"},
+            {.device = "d", .thing = "s", .boot = kBoot, .mobility = "moving"},
             kFile)
             .has_value());
   check(std::string_view(json).find(R"("mobility":"moving"})") !=
@@ -418,7 +436,7 @@ void soil_board(const char *path) {
   config.fields = kSoilFields;
   config.column_count = std::size(kSoilFields);
   config.schema_name = "soil-fixture-v1";
-  config.board = "fixture soil board";
+  config.board = "fixture-soil-board";
   config.sample_interval_ms = 30000;
   config.deployment_id = "fixture-plot-7";
   config.calibration_id = "soil-cal-2026-10";
@@ -489,7 +507,7 @@ void soil_board(const char *path) {
   check(footer::build(json, config,
                       {.device = "0123456789ab",
                        .thing = "00000000-0000-4000-8000-000000000000",
-                       .boot = "0000beef",
+                       .boot = kBoot,
                        .mobility = "fixed"},
                       {.rotation_seconds = kRotation,
                        .row_groups = writer.row_groups(),

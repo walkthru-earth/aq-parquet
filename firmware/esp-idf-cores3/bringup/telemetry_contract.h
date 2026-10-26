@@ -54,8 +54,9 @@ constexpr const char *kConfiguration =
     "\"raw-v1\","
     "\"snapshot\":\"latest-available-not-average\"}";
 constexpr const char *kUnknown = "unknown";
-// Footer thing.board.
-constexpr const char *kBoard = "CoreS3 ESP32-S3 rev0.2";
+// Footer thing.board, the board slug of the template path. The free text name
+// is the template title (stac-opensensor 4408c4e).
+constexpr const char *kBoard = "m5stack-cores3";
 constexpr const char *kTimeSemantics =
     "event_time_utc_us estimates snapshot start; collection_completed_mono_us "
     "bounds sequential reads; pms_received_mono_us is last checksum-valid UART "

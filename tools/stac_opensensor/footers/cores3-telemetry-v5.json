@@ -10,14 +10,14 @@
   "firmware": {
     "version": "6.14.0",
     "schema": "cores3-telemetry-v5",
-    "boot_id": "0f3a"
+    "boot_id": "0f3a9c2e5b7d41e8a6c3f0b2d9e4a713"
   },
   "dictionary": {
     "sha256": "e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b",
     "version": "cores3-telemetry-v6"
   },
   "template": {
-    "href": "https://raw.githubusercontent.com/walkthru-earth/stac-opensensor/main/templates/cores3-telemetry-v5.json",
+    "href": "https://raw.githubusercontent.com/walkthru-earth/stac-opensensor/main/templates/m5stack-cores3/e5060fb7fedbcabf665b1c8a159a77f5fe9283ac34bd2d89f1bc98b0f027d38b.json",
     "sha256": "fb4230b3eb6e8eac881c719f900c8bd9c7e4bbd6ad247520a27368ec9d9a7218"
   },
   "acquisition": {

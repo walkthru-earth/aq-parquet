@@ -122,7 +122,7 @@ def main() -> None:
         assert footer["thing"]["deployment_id"] == "fixture-plot-7"
         assert acquisition["calibration_id"] == "soil-cal-2026-10"
         assert footer["firmware"]["schema"] == "soil-fixture-v1"
-        assert footer["thing"]["board"] == "fixture soil board"
+        assert footer["thing"]["board"] == "fixture-soil-board"
 
         groups = [parquet.metadata.row_group(i).num_rows
                   for i in range(parquet.metadata.num_row_groups)]

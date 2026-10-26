@@ -6,11 +6,13 @@ entries, `opensensor` then `geo`. A file without one, such as the soil fixture,
 carries only `opensensor`.
 
 `opensensor` is compact UTF-8 JSON valid against the pinned stac-opensensor
-json-schema/footer.json v0.1.0 (2f32104) in tools/stac_opensensor/v0.1.0. The
+json-schema/footer.json v0.1.0 (commit 4408c4e52366bb3d154d22bbfffc88ff09aed6f1)
+in tools/stac_opensensor/v0.1.0. The
 schema sets no additionalProperties, so problems() also holds every object to
 the schema's members in the schema's order, with at least the members of the
 pinned example footers/cores3-telemetry-v5.json. dict and desc come from the
-caller, read from the board digest headers, never hardcoded here.
+caller, read from the board digest headers, never hardcoded here. PROFILE
+also makes thing.board the board slug and firmware.boot_id 32 hex.
 
 `geo` is GeoParquet 2.0.0 file metadata valid against the GeoParquet
 schema.json pinned in tools/geoparquet/v2.0.0 (opengeospatial/geoparquet
@@ -35,7 +37,7 @@ import pyarrow.parquet as pq
 PINNED = Path(__file__).resolve().parent / "stac_opensensor"
 SCHEMA = PINNED / "v0.1.0/footer.json"
 EXAMPLE = PINNED / "footers/cores3-telemetry-v5.json"
-SPEC = "https://github.com/walkthru-earth/stac-opensensor (2f32104)"
+SPEC = "https://github.com/walkthru-earth/stac-opensensor (4408c4e52366bb3d154d22bbfffc88ff09aed6f1)"
 KEY = "opensensor"
 GEO_KEY = "geo"
 GEO_SCHEMA = PINNED.parent / "geoparquet/v2.0.0/schema.json"
@@ -147,6 +149,13 @@ def problems(text: str, *, dict_sha: str, desc: str) -> list[str]:
         found.append("dictionary.sha256 is not dict")
     if document.get("template", {}).get("sha256") != desc:
         found.append("template.sha256 is not desc")
+    # PROFILE rules the JSON schema leaves to prose.
+    board = document.get("thing", {}).get("board")
+    if not isinstance(board, str) or re.fullmatch(r"[a-z0-9-]+", board) is None:
+        found.append("thing.board is not a board slug")
+    boot = document.get("firmware", {}).get("boot_id")
+    if not isinstance(boot, str) or re.fullmatch(r"[0-9a-f]{32}", boot) is None:
+        found.append("firmware.boot_id is not 32 hex")
     return found
 
 
@@ -253,6 +262,12 @@ def mutation_proof(text: str, *, dict_sha: str, desc: str, geo: str = GEO_NO_BBO
     def missing(d: dict) -> None:
         del d["firmware"]["boot_id"]
 
+    def free_text_board(d: dict) -> None:
+        d["thing"]["board"] = "CoreS3 ESP32-S3 rev0.2"
+
+    def short_boot(d: dict) -> None:
+        d["firmware"]["boot_id"] = "0f3a"
+
     def long_rotation(d: dict) -> None:
         d["file"]["rotation_interval_s"] = 3601
 
@@ -296,6 +311,8 @@ def mutation_proof(text: str, *, dict_sha: str, desc: str, geo: str = GEO_NO_BBO
         "number written as a string": {KEY: mutated(string_number), GEO_KEY: geo},
         "wrong template.sha256": {KEY: mutated(wrong_desc), GEO_KEY: geo},
         "missing required field": {KEY: mutated(missing), GEO_KEY: geo},
+        "thing.board free text": {KEY: mutated(free_text_board), GEO_KEY: geo},
+        "firmware.boot_id not 32 hex": {KEY: mutated(short_boot), GEO_KEY: geo},
         "rotation_interval_s over 3600": {KEY: mutated(long_rotation), GEO_KEY: geo},
         "unspecified extra JSON member": {KEY: mutated(extra_member), GEO_KEY: geo},
         "thing.mobility outside the enum": {KEY: mutated(bad_mobility), GEO_KEY: geo},
@@ -341,6 +358,7 @@ def check_document(document: dict, dictionary: dict, templates: str, *, compress
     require(document["thing"]["deployment_id"] == document["acquisition"]["calibration_id"] == "unknown",
             "no fabricated deployment or calibration")
     require(document["thing"]["mobility"] == "fixed", "a board Thing defaults to fixed")
+    require(document["thing"]["board"] == templates, "thing.board is the template folder slug")
     require(document["acquisition"]["sample_interval_ms"] == 10000, "sample interval")
     require(document["acquisition"]["time_semantics"] != "", "time semantics")
     require(json.loads(document["acquisition"]["config"])["sample_interval_ms"] == 10000,
