@@ -6,7 +6,7 @@ controller initialization, power, mount policy, measurements and capabilities.
 Extend hooks or configuration for a new capability. Never branch on a board
 name inside common code or include a sibling trial.
 
-A proposal to compose boards from sensor modules is in [Sensor plugins](sensor-plugins.md).
+A proposal to declare sensor modules and boards as versioned manifests is in [Sensor plugins](sensor-plugins.md).
 
 ## Logger hooks and capabilities
 

@@ -1,212 +1,395 @@
 # Sensor plugins (proposal)
 
-Status. Proposal only, tracked under epic
-[#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111).
-Nothing here is implemented. No wire or file format changes in this document,
-and `dict` and `desc` stay where they are on both boards.
+| Item | Value |
+| --- | --- |
+| Title | OpenSensor plugin contract |
+| Proposed identifier | `https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json` |
+| Follows | [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) v0.1.0, vendored in [`tools/stac_opensensor/v0.1.0/`](../../tools/stac_opensensor/v0.1.0/) |
+| Maturity | Proposal, nothing implemented |
+| Tracking | [#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111) |
 
-The firmware already logs any numeric measurement. The logger, writer, sync and
-location code do not know what air quality is. What still ties a Thing to air
-quality is how each board spells its sensors, by hand, inside its own contract
-files. This proposal turns each sensor into a module that brings its own
-driver, collect step and dictionary rows. A board then composes an ordered list
-of modules plus the shared system rows. Composition happens at build time
-only, with no runtime registry and no heap.
+The firmware can already log any numeric reading. The logger, writer, sync
+and location code know nothing about air quality. What ties a Thing to air
+today is that each board writes its sensors by hand into its own contract
+files. This proposal puts one declarative, versioned contract in front of
+those files, in the layout stac-opensensor uses. Small manifests declare each
+sensor module and each board. Versioned JSON Schemas validate them. A host
+gate then generates or byte-checks the files the firmware compiles.
 
-The names below use the neutral `os_` spelling that Phase 2 of #111 gives the
-code. Where code is cited, the current `aq_` name is shown as well, for example
-`os_logger.h` (today `aq_logger.h`).
+Nothing here changes a wire or file format. The hashed `telemetry_fields.inc`
+bytes, `dict`, `desc`, append-only `field_id` and the NVS rules stay exactly
+as they are. Names use the neutral `os_` spelling from Phase 2 of #111, with
+today's `aq_` name shown where code is cited.
 
-## 1. What is neutral today and what still leaks
+## 1. Where the firmware stands
 
-### Already neutral
+| Already neutral | Where |
+| --- | --- |
+| FIELD X-macro dictionary, one row of name, type, procedure, unit, validity, LIVE key and decimals | Board `telemetry_fields.inc`, expanded in [CoreS3 `telemetry_contract.h`](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 |
+| `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`aq_logger.h`](../../firmware/common/logger/src/aq_logger.h) (`os_logger.h` after Phase 2) lines 35 to 119 |
+| `ossync::ServiceConfig`, board sdkconfig defaults, bus agnostic drivers | `Config::sync`, each board app, [`firmware/common/sensors/`](../../firmware/common/sensors/) |
+| A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 445 |
 
-| Piece | Where | Why it is neutral |
+| Still leaks | Where and effect |
+| --- | --- |
+| No circular mean, no counter delta | `enum class Aggregate` in [`column_semantics.h`](../../firmware/common/src/column_semantics.h) lines 34 to 41 mirrors the stac-opensensor enum. Both `telemetry_semantics.inc` files say at lines 78 to 80 that counters use `point` for this reason (#83, bridge open question 17) |
+| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 113, Waveshare [`main.cpp`](../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
+| Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
+| Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
+| One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
+| `aq_` names | Board components and about 40 common files. Phase 2 of #111 renames them, the CMake helpers already moved in #115 |
+
+## 2. One contract, laid out like stac-opensensor
+
+| Piece | Proposed path | Role |
 | --- | --- | --- |
-| FIELD dictionary | Board `telemetry_fields.inc`, expanded by the X-macros in [CoreS3 `telemetry_contract.h`](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 | A row is name, type, procedure, unit, validity, LIVE key and decimals. Nothing in the format assumes air |
-| Logger row | `opensensor::NumericSample` in [`numeric_sample.h`](../../firmware/common/src/numeric_sample.h) lines 21 to 23 | `integer`, `counter` and `number` write by column index |
-| Logger config and hooks | `oslogger::Config` and `oslogger::Hooks` in [`os_logger.h`](../../firmware/common/logger/src/aq_logger.h) (today `aq_logger.h`) lines 35 to 84 and 87 to 119 | The board passes the field table and one `collect(Row&, now, scheduled, context)` callback at line 91. The logger fills runtime, clock and location columns by name |
-| Sync config | `ossync::ServiceConfig` through `Config::sync` | BLE and LAN options, no board names |
-| Board sdkconfig defaults | Each board application | Flash, PSRAM, console and DFS stay per board |
-| Shared drivers | [`firmware/common/sensors/`](../../firmware/common/sensors/) | Bus agnostic `*Io` callbacks, no heap, no bus locks, raw values plus validity |
-| Semantics checks | [`column_semantics.h`](../../firmware/common/src/column_semantics.h) | `aligned`, `well_formed` and `board_neutral_property` hold for any column set |
-| Non air proof | Soil fixture in [`test_footer.cpp`](../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 445 | A four runtime column plus `soil_moisture_pct` and `soil_temperature_c` table writes a valid footer with a 30 s period and an `SL-` prefix, and the test asserts no column starts with `pm` |
+| Spec README with field tables | `docs/shared/plugins/README.md` (this file moves there when accepted) | What each manifest field means |
+| Module schema | `docs/shared/plugins/v0.1.0/module.json` | Validates one Sensor Module Manifest |
+| Board schema | `docs/shared/plugins/v0.1.0/board.json` | Validates one Board Manifest |
+| Examples | `docs/shared/plugins/examples/` | One module and one board, checked by the gate |
+| Changelog | `docs/shared/plugins/CHANGELOG.md` | Keep a Changelog, semver |
+| Module manifests | `firmware/common/sensors/modules/<id>/module.json`, board local ones under the board app | One per sensor model |
+| Board manifests | `firmware/esp-idf-<board>/<variant>/board.json` | One per board variant |
+| Gate | `tools/plugin_contract.py`, `pixi run plugin-contract-test`, added to `pixi run gate` | Validate, then generate or byte-check |
 
-### Still leaks air quality or a single board shape
+The schemas resolve offline. Like `board_template.validator()`, the gate loads
+the vendored stac-opensensor schemas into a `referencing` registry, so a
+`$ref` to a stac-opensensor `$id` never touches the network.
 
-| Leak | Where | Effect |
+## 3. Sensor Module Manifest
+
+| Field | Type | Description |
 | --- | --- | --- |
-| Aggregate kinds | `enum class Aggregate` in [`column_semantics.h`](../../firmware/common/src/column_semantics.h) lines 34 to 41 has `mean, minimum, maximum, sum, point, mode` | No circular mean for wind direction and no counter delta for rain or energy. Both boards note at `telemetry_semantics.inc` lines 78 to 80 that running counters use `point` because the profile has no counter delta. #83 records that the stac-opensensor enum needs a spec addition before a weather board |
-| Hand written collect | CoreS3 `collect()` in [`telemetry_logger.cpp`](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 113, Waveshare `collect()` in [`main.cpp`](../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116 | Each board maps its sensors to enum indices by hand. The Waveshare PMS mapping `apply_pms` sits in the board contract header at line 238, so it cannot be reused |
-| Duplicated SEM rows | Both `telemetry_semantics.inc` files | Of 52 shared column names, 30 SEM rows are byte identical (identity, clock, runtime, storage, H3) and the other 22 differ only in what the sensor owns (vendor, model, plausible range, `valid_when`). CoreS3 lines 81 to 90, 141 to 152 and 155 to 163 repeat Waveshare lines 81 to 90 and 116 to 136 |
-| Duplicated FIELD rows | Both `telemetry_fields.inc` files | The system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards, copied by hand |
-| Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals at CoreS3 position 71, and `pms5003t` with 1 decimal at Waveshare position 28 | Procedure, validity and decimals belong to the sensor, not the column name. A module must own its whole FIELD row |
-| Single sensor identity | `Settings::sensor_vendor`, `sensor_model`, `sensor_serial` and `sensor_batch_candidate` in [`device_config.h`](../../firmware/common/runtime/src/device_config.h) lines 53 to 56, `SensorPolicy` at lines 85 to 92 | One identity slot per Thing, shaped for one PMS sensor. NVS keys must not change, so a multi sensor Thing needs new keys added beside them |
-| Vendor deny list | `kProcedureWords` in [`column_semantics.h`](../../firmware/common/src/column_semantics.h) lines 159 to 164 | Keeps vendor words out of property ids, which is right, but the list is hand kept and names today's sensors only |
-| Template keywords | CoreS3 `telemetry_contract.h` line 273, Waveshare line 450 | "air quality" and "particulate matter" are correct for these two boards and stay. A new board writes its own |
-| `aq_` names | CMake helpers `aq_pin_cxx_standard` and `aq_map_source_paths`, board components `aq_cores3`, `aq_waveshare_logger`, `aq_waveshare_diagnostic`, and about 40 common `aq_*` files | Cosmetic only. Phase 2 of #111 renames them (2a CMake, 2d board components, 2e common files with the logger first) |
+| type | `"OpenSensorModule"` | **REQUIRED** |
+| module_version | `"0.1.0"` | **REQUIRED**. Plugin schema version |
+| stac_opensensor | `"0.1.0"` | **REQUIRED**. stac-opensensor version whose vocabulary the columns use |
+| id | string | **REQUIRED**. Module id, `^[a-z][a-z0-9_]{0,31}$` |
+| procedure | string | **REQUIRED**. `$ref` to stac-opensensor `opensensor:procedure`. Written to every FIELD row of the module |
+| vendor, model | string | Sensor identity, written to SEM rows |
+| buses | \[string] | **REQUIRED**. `i2c`, `spi`, `uart`, `adc`, `pcnt`, `gpio` or `onewire` |
+| requires | object | Capabilities the board must grant, such as `i2c_address`, `pcnt_units`, `adc_channels`, `uart_baud` |
+| settle_s | number | `$ref` to `opensensor:settle_s`. Warm-up for the whole sensor |
+| init_errors | \[string] | Ordered names of the module's `InitError` values |
+| status | object | Status column name and its codes, each with a value, name and `nodata` flag |
+| segments | Map\<string, \[Column]> | **REQUIRED**. Named, ordered column lists, such as `core` and `received` |
 
-## 2. Plugin model
+A Column object is a stac-opensensor column plus a `firmware` member.
 
-A sensor module is one sensor model, for example `bme280`, `pmsa003` or
-`pms5003t`. It bundles five things.
+| Column field | Source | Maps to |
+| --- | --- | --- |
+| name, unit (UCUM), roles, `cf:standard_name`, `classification:classes` | Table and classification vocabularies | Template column, SEM `ucum`, `role` and `cf_standard_name`, CLASS rows |
+| `opensensor:property`, `opensensor:aggregate`, `opensensor:plausible_range`, `opensensor:valid_when`, `opensensor:settle_s` | `$ref` to stac-opensensor `schema.json#/definitions/column` | SEM `property`, `aggregate`, `plausible_min`, `plausible_max`, `valid_when`, `settle_s` |
+| `firmware.type`, `firmware.unit`, `firmware.validity`, `firmware.live_key`, `firmware.decimals` | Plugin schema. `live_key` uses the stac-opensensor template `live_keys` pattern | FIELD `physical_type`, `unit`, `validity`, `live_key`, `decimals` |
 
-1. The bus agnostic driver, already in `firmware/common/sensors/`.
-2. `init`, which checks the chip and configures it.
-3. `collect`, which reads the latest value and writes its columns.
-4. A FIELD fragment, the exact FIELD rows the module owns.
-5. A SEM fragment, the exact SEM rows for those columns.
+`opensensor:field_id` and per column `opensensor:procedure` are forbidden in a
+manifest, as `template.json` forbids `title`. The board position sets the id
+and the module sets the procedure. So a manifest column maps 1:1 onto a
+template `table:columns` entry, and the board template stays the place where
+the profile role rules are checked.
 
-A board composes an ordered list of segments. A segment is a named slice of
-a module or of the shared system rows. The board still owns pins, buses, power
-and the `*Io` callbacks it hands to each module. A module never touches GPIO.
+The schema reuses rather than redefines.
 
-### Why segments, not one block per module
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json#",
+  "title": "OpenSensor Sensor Module Manifest",
+  "type": "object",
+  "required": ["type", "module_version", "stac_opensensor", "id", "procedure", "buses", "segments"],
+  "properties": {
+    "type": {"const": "OpenSensorModule"},
+    "module_version": {"const": "0.1.0"},
+    "stac_opensensor": {"const": "0.1.0"},
+    "procedure": {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column/properties/opensensor:procedure"},
+    "settle_s": {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column/properties/opensensor:settle_s"},
+    "segments": {
+      "type": "object",
+      "additionalProperties": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/column"}}
+    }
+  },
+  "definitions": {
+    "column": {
+      "allOf": [
+        {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/schema.json#/definitions/column"},
+        {"required": ["name", "roles", "firmware"],
+         "not": {"anyOf": [{"required": ["opensensor:field_id"]}, {"required": ["opensensor:procedure"]}]},
+         "properties": {"firmware": {"$ref": "#/definitions/firmware"}}}
+      ]
+    },
+    "firmware": {
+      "type": "object",
+      "required": ["type", "unit", "validity", "live_key", "decimals"],
+      "properties": {
+        "type": {"enum": ["Int32", "Int64", "Float", "ByteArray"]},
+        "live_key": {"anyOf": [
+          {"const": ""},
+          {"$ref": "https://walkthru-earth.github.io/stac-opensensor/v0.1.0/template.json#/properties/firmware/properties/live_keys/additionalProperties"}
+        ]},
+        "decimals": {"type": "integer", "minimum": 0, "maximum": 9}
+      },
+      "additionalProperties": false
+    }
+  }
+}
+```
 
-Field ids are append only, so a module that grows later adds rows at the end
-of the table. Both boards already show this. `pms_received_mono_us` sits at
-CoreS3 position 75, far from the other PMS rows, and the Waveshare MAX17048
-diagnostics at positions 57 to 60 came in schema v5. A module therefore owns
-one or more segments named by when they arrived, for example `core` and
-`received`.
+The excerpt leaves out `id`, `buses`, `requires`, `status` and the
+`name` pattern. Those follow the tables above.
 
-The two existing boards decompose like this.
+## 4. Board Manifest
 
-| CoreS3 positions | Segment | Waveshare positions | Segment |
+| Field | Type | Description |
+| --- | --- | --- |
+| type | `"OpenSensorBoard"` | **REQUIRED** |
+| board_version | `"0.1.0"` | **REQUIRED**. Plugin schema version |
+| board | string | **REQUIRED**. Board slug, as in `docs/shared/templates/<board>/` |
+| schema | string | **REQUIRED**. Firmware schema name, the template `id` |
+| sample_interval_s | number | **REQUIRED**. Written to the template `opensensor:sample_interval_s`, must equal the `oslogger::Config` value |
+| title, keywords | string, \[string] | Template title and keywords. CoreS3 and Waveshare keep "air quality" |
+| local_modules | \[path] | Module manifests that live in the board app, such as the CoreS3 M5 IMU, AXP2101, BM8563 and FT6336 |
+| segments | \[\{module, segment\}] | **REQUIRED**. Ordered segment list. `module` is a module id or `system` |
+
+Segments, not one block per module, because field ids are append only. A
+module that grows later adds a new segment at the end. Both boards already
+decompose this way.
+
+| CoreS3 | Segment | Waveshare | Segment |
 | --- | --- | --- | --- |
 | 1 to 10 | `system.head` | 1 to 10 | `system.head` |
 | 11 to 29 | `pmsa003.core` | 11 to 22 | `pms5003t.core` |
-| 30 to 40 | `m5_imu.core` (board local) | 23 to 25 | `pms_identity.core` (serial and batch candidate) |
-| 41 to 45 | `ltr553.core` | 26 to 32 | `pms5003t.tail` |
-| 46 to 52 | `axp2101.core` (board local) | 33 to 35 | `max17048.core` |
-| 53 to 55 | `bm8563.core` (board local) | 36 to 47 | `system.runtime` |
-| 56 to 58 | `ft6336.core` (board local) | 48 to 49 | `system.clock_close` |
-| 59 to 70 | `system.runtime` | 50 | `pms5003t.received` |
-| 71 to 72 | `sht20.core` | 51 to 52 | `system.clock_anchor` |
-| 73 to 74 | `system.clock_close` | 53 to 56 | `system.location` |
-| 75 | `pmsa003.received` | 57 to 60 | `max17048.v5` |
-| 76 to 77 | `system.clock_anchor` | 61 to 62 | `battery_health.core` |
-| 78 to 81 | `system.location` | | |
+| 30 to 58 | `m5_imu`, `ltr553`, `axp2101`, `bm8563`, `ft6336` `.core` | 23 to 25 | `pms_identity.core` |
+| 59 to 70 | `system.runtime` | 26 to 32 | `pms5003t.tail` |
+| 71 to 72 | `sht20.core` | 33 to 35 | `max17048.core` |
+| 73 to 74 | `system.clock_close` | 36 to 49 | `system.runtime`, `system.clock_close` |
+| 75 | `pmsa003.received` | 50 | `pms5003t.received` |
+| 76 to 77 | `system.clock_anchor` | 51 to 56 | `system.clock_anchor`, `system.location` |
+| 78 to 81 | `system.location` | 57 to 62 | `max17048.v5`, `battery_health.core` |
 
-Peripherals soldered to one board (the M5 IMU, AXP2101, BM8563 and FT6336 on
-CoreS3) stay board local modules in the board directory. Only sensors that
-another board could carry move to `firmware/common/sensors/`.
+The `system` segments belong to the logger, which fills those columns by name,
+so their manifest lives at `firmware/common/logger/system.module.json`.
 
-### C++23 sketch
+## 5. Generated or gated artifacts
 
-This is a sketch, not code to merge. It follows the root
-[AGENTS.md](../../AGENTS.md) rules. Columns resolve at build time, the module
-table is `static constexpr`, mutable module state is `constinit`, errors are a
-dedicated enum and nothing allocates.
+`tools/plugin_contract.py` runs four steps.
+
+1. Validate every module and board manifest against its schema.
+2. Check cross rules a schema cannot express. Column names are unique on a
+   board, LIVE keys keep one key to one column across boards
+   (`tools/live_key_fixture.py`), the board stays within `kMaxColumns` 96 and
+   the 480 byte LIVE cap, and a segment shipped on any board never changes its
+   FIELD rows.
+3. Expand each board's segment list into FIELD, SEM and CLASS rows and the
+   per module C++ column tables and status codes.
+4. Generate or byte-check, as below.
+
+| Option | What the firmware compiles | Gate |
+| --- | --- | --- |
+| A. Gate | The checked-in board `telemetry_fields.inc`, `telemetry_semantics.inc` and `telemetry_classes.inc`, unchanged | The generated rows equal the board file rows in order, comment and blank lines ignored. A new board gets its files written once, then they are frozen like any other |
+| B. Generate | Rows generated from manifests at build time | The generated table equals a frozen `.inc` copy byte for byte |
+
+**Recommendation, Option A.** The pinned `kDictionaryUri` exists so that the
+bytes behind the link are the bytes the image compiled and hashed. Option A
+keeps that, needs no build change and lets every migration step land as a
+host only PR. Option B makes the hashed file a copy of what the image really
+compiles, and the board comment prose, which is hashed into `dict`, cannot
+come from manifests without a special case.
+
+What stays fixed under either option.
+
+- `dict` stays the SHA-256 of the raw board `.inc` bytes, checked by
+  `tools/build-idf-board.sh` lines 20 to 24 and the contract test.
+- `desc` stays the SHA-256 of the template bytes `tools/board_template.h`
+  builds from those same files.
+- `field_id` stays the 1-based position, append only from the Thing baseline.
+- NVS namespaces, keys, types and partition offsets do not move.
+- Moving an existing board to manifests must reproduce today's bytes. If a
+  value cannot round trip, such as a plausible range spelled `0.5` against
+  `.5`, the gate fails and the generator gets fixed, never the board file.
+
+## 6. Extension points
+
+Every kind follows one pattern. A versioned schema under
+`docs/shared/plugins/vX.Y.Z/`, an example, a gate step in
+`plugin_contract.py` and a CHANGELOG line. A new kind is a new schema plus a
+gate, never ad hoc code.
+
+| Kind | Manifest | Contract it feeds |
+| --- | --- | --- |
+| Sensor module | `module.json` | FIELD, SEM and CLASS rows, module C++ tables |
+| Board | `board.json` | Segment order, template title, keywords, sample interval |
+| Transport, later | `transport.json` | For example a LoRa uplink, as an `ossync` option set |
+| Uploader, later | `uploader.json` | For example source.coop, its prefix and credential source, never the secret |
+
+## 7. Spec flow and versioning
+
+New semantics land upstream first. Circular mean and counter delta are a
+stac-opensensor change, raised through the bridge "Open questions" process
+(question 17 already asks it). Then the vendored copy in
+`tools/stac_opensensor/` is refreshed, then the plugin schema moves its
+`stac_opensensor` const and `$ref` URLs to the new version, then
+`column_semantics.h` and `aggregate_name()` in `tools/board_template.h` gain
+the enumerators. Mobile already reads an unknown aggregate as `point`.
+
+The plugin schemas use semver. Before 1.0.0 a breaking change bumps the minor
+and anything else the patch. Maturity follows the STAC extension labels.
+Proposal now, Pilot once both boards pass the byte gate, Candidate once a
+third board ships with a dated bench record, Stable by owner decision.
+
+| Change | `dict` | `desc` | Plugin schema |
+| --- | --- | --- | --- |
+| A FIELD value in a shipped segment (name, type, unit label, validity, LIVE key, decimals) | Forbidden by the gate. Add a new segment instead | | |
+| A new segment appended to a board | New on that board | New, the template carries `dict` | No change |
+| Board `.inc` comment prose | New, comments are hashed | New | No change |
+| SEM or class values (property, aggregate, range, `valid_when`, settle, roles, vendor) | Same | New on every board using that segment, the gate lists them | No change |
+| A new optional manifest field or extension kind | Same | Same | Patch |
+| A new stac-opensensor version adopted | Same until a board uses a new value | Same until then | Minor, following upstream |
+| A manifest field renamed, removed or made required | Same if output bytes match | Same | Minor before 1.0.0, major after |
+
+Any `dict` change also follows the two pin procedure in the
+[templates README](templates/README.md), a new LIVE fixture digest, the LIVE
+table in [the sync protocol](ble-sync-protocol.md) and a newest first entry in
+[mobile migration notes](mobile-migration.md). A new board is always a new
+dictionary.
+
+## 8. Where the contract lives
+
+In this repo first, under `docs/shared/plugins/`, next to the board templates
+it feeds and gated by the same `pixi run gate`. A separate public repo, as
+stac-opensensor is, stays an open question for the owner, since AGENTS.md says
+to ask before creating one.
+
+## 9. Worked example, a weather board
+
+A hypothetical ESP32-S3 weather Thing with a BME280, a cup anemometer with a
+wind vane and a tipping bucket rain gauge, plus the existing MAX17048 module.
+
+```json
+{
+  "type": "OpenSensorBoard",
+  "board_version": "0.2.0",
+  "board": "example-weather-s3",
+  "schema": "example-weather-s3-telemetry-v1",
+  "sample_interval_s": 10,
+  "title": "Example weather Thing, BME280, cup anemometer, rain gauge",
+  "keywords": ["weather", "wind", "rainfall", "air pressure"],
+  "segments": [
+    {"module": "system", "segment": "head"},
+    {"module": "bme280", "segment": "core"},
+    {"module": "cup_anemometer", "segment": "core"},
+    {"module": "tipping_bucket", "segment": "core"},
+    {"module": "max17048", "segment": "core"},
+    {"module": "system", "segment": "runtime"},
+    {"module": "system", "segment": "clock_close"},
+    {"module": "system", "segment": "clock_anchor"},
+    {"module": "system", "segment": "location"}
+  ]
+}
+```
+
+The anemometer module needs the two new aggregates, so it validates only
+against a plugin schema that follows a stac-opensensor release with them.
+`0.2.0` below marks that future version.
+
+```json
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.2.0",
+  "stac_opensensor": "0.2.0",
+  "id": "cup_anemometer",
+  "procedure": "cup_anemometer",
+  "buses": ["pcnt", "adc"],
+  "requires": {"pcnt_units": 1, "adc_channels": 1},
+  "init_errors": ["pcnt_unavailable", "adc_unavailable"],
+  "status": {"column": "anemometer_status", "codes": [
+    {"value": 0, "name": "ok"},
+    {"value": 1, "name": "vane_out_of_range"},
+    {"value": 2, "name": "missing", "nodata": true}
+  ]},
+  "segments": {"core": [
+    {"name": "anemometer_status", "unit": "{code}", "roles": ["qualityInformation"],
+     "opensensor:property": "urn:walkthru-earth:property:anemometer_status",
+     "opensensor:aggregate": "mode",
+     "firmware": {"type": "Int32", "unit": "code", "validity": "always", "live_key": "", "decimals": 0}},
+    {"name": "wind_speed_m_s", "unit": "m/s", "roles": ["physicalMeasurement"],
+     "cf:standard_name": "wind_speed",
+     "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/wind_speed/",
+     "opensensor:aggregate": "mean", "opensensor:plausible_range": [0, 75],
+     "opensensor:valid_when": {"column": "anemometer_status", "equals": 0},
+     "firmware": {"type": "Float", "unit": "m/s", "validity": "anemometer_ok", "live_key": "ws", "decimals": 1}},
+    {"name": "wind_direction_deg", "unit": "deg", "roles": ["physicalMeasurement"],
+     "cf:standard_name": "wind_from_direction",
+     "opensensor:property": "http://vocab.nerc.ac.uk/standard_name/wind_from_direction/",
+     "opensensor:aggregate": "circular_mean", "opensensor:plausible_range": [0, 360],
+     "opensensor:valid_when": {"column": "anemometer_status", "equals": 0},
+     "firmware": {"type": "Float", "unit": "deg", "validity": "anemometer_ok", "live_key": "wd", "decimals": 0}},
+    {"name": "wind_pulses_total", "unit": "{count}", "roles": ["qualityInformation"],
+     "opensensor:property": "urn:walkthru-earth:property:anemometer_pulse_count",
+     "opensensor:aggregate": "delta",
+     "firmware": {"type": "Int64", "unit": "count", "validity": "always", "live_key": "", "decimals": 0}}
+  ]}
+}
+```
+
+The gate expands that segment into these rows of the new board's files.
+
+```text
+FIELD(anemometer_status, Int32, cup_anemometer, "code", always, "", 0)
+FIELD(wind_speed_m_s, Float, cup_anemometer, "m/s", anemometer_ok, "ws", 1)
+FIELD(wind_direction_deg, Float, cup_anemometer, "deg", anemometer_ok, "wd", 0)
+FIELD(wind_pulses_total, Int64, cup_anemometer, "count", always, "", 0)
+
+SEM(anemometer_status, "{code}", qualityInformation, "", mode, , , 0, "", "urn:walkthru-earth:property:anemometer_status", "", "")
+SEM(wind_speed_m_s, "m/s", physicalMeasurement, "wind_speed", mean, 0, 75, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_speed/", "", "")
+SEM(wind_direction_deg, "deg", physicalMeasurement, "wind_from_direction", circular_mean, 0, 360, 0, "anemometer_status == 0", "http://vocab.nerc.ac.uk/standard_name/wind_from_direction/", "", "")
+SEM(wind_pulses_total, "{count}", qualityInformation, "", delta, , , 0, "", "urn:walkthru-earth:property:anemometer_pulse_count", "", "")
+```
+
+The board comes to about 44 columns and 12 LIVE keys, well inside the caps. It
+gets its own `dict`, `desc`, template, pinned URIs, LIVE fixture, sync protocol
+LIVE rows (`hpa`, `ws`, `wg`, `wd`, `rain`), mobile migration entry and bench
+record. CoreS3 and Waveshare files and digests do not change.
+
+## 10. What the generator emits in C++
+
+This part is secondary. It is what step 3 of the gate generates next to each
+manifest, or checks when the header already exists. It follows the root
+[AGENTS.md](../../AGENTS.md) rules. Columns resolve at build time, tables are
+`static constexpr`, errors are an error only enum and nothing allocates.
 
 ```cpp
-// Proposed firmware/common/sensors/src/os_sensor_module.h
-#pragma once
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <expected>
-#include <span>
-#include <string_view>
+// GENERATED from firmware/common/sensors/modules/cup_anemometer/module.json
+namespace ossensor::cup_anemometer {
+enum class [[nodiscard]] InitError : std::uint8_t { pcnt_unavailable, adc_unavailable };
+enum class Column : std::uint8_t { status, wind_speed, wind_direction, pulses_total };
+inline constexpr std::array<std::string_view, 4> kColumns{
+    "anemometer_status", "wind_speed_m_s", "wind_direction_deg", "wind_pulses_total"};
+inline constexpr std::int32_t kStatusOk = 0;
+inline constexpr std::int32_t kStatusVaneOutOfRange = 1;
+inline constexpr std::int32_t kStatusMissing = 2;
+} // namespace ossensor::cup_anemometer
+```
 
-#include "os_logger.h" // today aq_logger.h, for oslogger::Row
+The hand written module code uses that header. `ossensor::resolve` is a
+`consteval` lookup that maps `kColumns` to board column indices and stops the
+build when a name is missing. The board hook loops over a `static constexpr`
+module table, so the logger and `Hooks::collect` keep their signatures.
 
-namespace ossensor {
-
-// Error only, no ok value.
-enum class [[nodiscard]] InitError : std::uint8_t {
-  bus_unavailable,
-  no_response,
-  wrong_chip_id,
-  config_rejected,
-};
-
-template <std::size_t N> using Slots = std::array<std::uint8_t, N>;
-
-// Never defined. Calling it inside consteval stops the build with its name.
-void module_column_missing_from_board_dictionary();
-
-// Map each module column name to its board column index at build time.
-template <std::size_t N, typename Definition, std::size_t F>
-consteval Slots<N> resolve(const std::array<std::string_view, N> &names,
-                           std::span<const Definition, F> fields) {
-  Slots<N> slots{};
-  for (std::size_t i = 0; i < N; ++i) {
-    std::size_t at = F;
-    for (std::size_t f = 0; f < F; ++f)
-      if (std::string_view{fields[f].name} == names[i])
-        at = f;
-    if (at == F)
-      module_column_missing_from_board_dictionary();
-    slots[i] = static_cast<std::uint8_t>(at);
-  }
-  return slots;
-}
-
+```cpp
 struct Module {
-  std::string_view procedure; // equals the FIELD procedure of its rows
-  std::expected<void, InitError> (*init)(void *context);
+  std::string_view procedure;
+  std::expected<void, InitErrorCode> (*init)(void *context);
   void (*collect)(oslogger::Row &row, std::int64_t now_us, void *context);
   void *context;
 };
 
-} // namespace ossensor
-```
-
-A module writes only its own columns, through its slots.
-
-```cpp
-// Proposed firmware/common/sensors/modules/bme280/os_bme280_module.h
-namespace ossensor::bme280 {
-
-enum class Column : std::uint8_t { status, temperature, humidity, pressure };
-inline constexpr std::array<std::string_view, 4> kColumns{
-    "bme280_status", "ambient_temperature_c", "relative_humidity_percent",
-    "air_pressure_hpa"};
-
-struct Context {
-  const Bme280Io *io;          // board owned bus callbacks
-  Slots<kColumns.size()> slots; // resolved at build time
-  Bme280 driver;               // static storage, no heap
-};
-
-std::expected<void, InitError> init(void *context);
-
-inline void collect(oslogger::Row &row, std::int64_t, void *context) {
-  auto &c = *static_cast<Context *>(context);
-  const auto at = [&c](Column column) {
-    return c.slots[std::to_underlying(column)];
-  };
-  const auto reading = c.driver.read(); // std::expected<Reading, ReadError>
-  row.integer(at(Column::status),
-              reading ? 0 : 1 + std::to_underlying(reading.error()));
-  if (!reading)
-    return; // measurement columns stay null
-  row.number(at(Column::temperature), reading->temperature_c);
-  row.number(at(Column::humidity), reading->relative_humidity_percent);
-  row.number(at(Column::pressure), reading->pressure_hpa);
-}
-
-} // namespace ossensor::bme280
-```
-
-The board composes modules into its existing `collect` hook. The hook keeps
-its current signature and the logger does not change.
-
-```cpp
-// Board application, weather example
-constinit ossensor::bme280::Context bme{
-    .io = &kI2c0Io,
-    .slots = ossensor::resolve(ossensor::bme280::kColumns,
-                               std::span{telemetry::kFields}),
+constinit cup_anemometer::Context wind{
+    .io = &kWindIo,
+    .slots = ossensor::resolve(cup_anemometer::kColumns, std::span{telemetry::kFields}),
 };
 
 static constexpr std::array kModules{
-    ossensor::Module{.procedure = "bme280",
-                     .init = ossensor::bme280::init,
-                     .collect = ossensor::bme280::collect,
-                     .context = &bme},
-    // anemometer, tipping_bucket, max17048 ...
+    Module{.procedure = "cup_anemometer", .init = cup_anemometer::init,
+           .collect = cup_anemometer::collect, .context = &wind},
 };
 
 void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
@@ -215,252 +398,70 @@ void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
 }
 ```
 
-Rules the sketch keeps.
+`collect` stays on the main loop. Pulses are counted in PCNT hardware and read
+there. A failed `init` leaves the module columns null and sets its status, so
+sampling never stops.
 
-- No virtual calls, no RTTI, no exceptions. Function pointers match the
-  existing `Hooks` style.
-- `collect` runs on the main loop only, like `Hooks::collect` today. A module
-  with an interrupt source (anemometer pulses) counts in hardware (PCNT) and
-  reads the count in `collect`.
-- A failed `init` leaves the module columns null and the status column set.
-  It never stops sampling. That keeps the absent or null rule.
-- No `std::format`, no ranges pipeline, no `.value()`.
-- One module per peripheral. Two modules never share a column.
+## 11. Migration plan
 
-### Fragments
+One PR per step, after the Phase 2 renames. No step through 7 changes a wire
+or file format, `dict` or `desc`.
 
-A fragment uses the same FIELD and SEM macros, so each fragment row is a
-literal line of the board file. The BME280 FIELD fragment would read as below.
-
-```text
-FIELD(bme280_status, Int32, bme280, "code", always, "", 0)
-FIELD(ambient_temperature_c, Float, bme280, "degC", bme280_valid, "t", 2)
-FIELD(relative_humidity_percent, Float, bme280, "%", bme280_valid, "rh", 1)
-FIELD(air_pressure_hpa, Float, bme280, "hPa", bme280_valid, "hpa", 2)
-```
-
-A board lists its segments in order in a small manifest.
-
-```text
-// telemetry_modules.inc, weather board
-SEGMENT(system, head)
-SEGMENT(bme280, core)
-SEGMENT(anemometer, core)
-SEGMENT(tipping_bucket, core)
-SEGMENT(max17048, core)
-SEGMENT(system, runtime)
-SEGMENT(system, clock_close)
-SEGMENT(system, clock_anchor)
-SEGMENT(system, location)
-```
-
-The SEM measurement above supports this split. Every SEM difference between
-the two boards is a sensor property (vendor, model, plausible range,
-`valid_when`), so it moves into the sensor fragment and no per board SEM
-override is needed for the shared rows.
-
-## 3. Contract safety
-
-The contract today, which must not move.
-
-- `dict` is the SHA-256 of the raw board `telemetry_fields.inc` bytes, comments
-  and whitespace included. `tools/build-idf-board.sh` lines 20 to 22 and
-  `tools/test_telemetry_contract.py` check it.
-- `field_id` is the 1-based FIELD position, append only from the Thing
-  baseline (#83).
-- `desc` is the SHA-256 of the minified board template, built from FIELD, SEM,
-  CLASS and board constants by `tools/board_template.h` and checked by
-  `tools/board_template.py`. SEM rows must follow FIELD order (`aligned`).
-- `kDictionaryUri` points at the raw `.inc` at a pinned commit, so the bytes at
-  that link are the bytes hashed.
-
-### Option A. The board file stays the hashed artifact
-
-The board `telemetry_fields.inc` and `telemetry_semantics.inc` stay checked
-in, hand reviewed, compiled and hashed exactly as now. Fragments and the
-manifest are a second, host side description. A new gate, for example
-`pixi run module-compose-test`, expands the manifest and proves that the FIELD
-rows of the board file, in order and ignoring comment and blank lines, equal
-the concatenated fragment rows. It proves the same for SEM rows. For a new
-board, a generator writes the board files once from the manifest. After that
-the files are frozen like any other board and only the check runs.
-
-### Option B. Build from fragments, gate against a frozen copy
-
-The firmware build includes the fragments in manifest order inside the
-X-macros, so the compiled table comes from fragments. The board `.inc` stays
-only as the frozen hashed copy, and a gate proves the composed table equals it
-byte for byte.
-
-### Comparison
-
-| Concern | Option A | Option B |
+| Step | PR | Proof |
 | --- | --- | --- |
-| Moves `dict` on existing boards | No, the file is untouched | No, if the gate holds |
-| Bytes at `kDictionaryUri` are what the image compiled | Yes, as today | No, the image compiles fragments and the link holds a copy |
-| Board comments (hashed prose) | Stay in the board file | Cannot come from fragments, so byte equality needs a special case |
-| Firmware build change | None | Include order, new CMake inputs on both boards |
-| What breaks when someone edits a fragment | The gate, before any build | The gate, and both board images change at once |
-| New board authoring | Generator writes the file once | Same, plus the copy |
-| Review surface | One file per board, as today | Fragments plus a copy that must never drift |
+| 1 | `docs/shared/plugins/` README, CHANGELOG, v0.1.0 schemas, examples, `plugin_contract.py` and its pixi task | Validates examples only, no firmware file touched |
+| 2 | `system.module.json` | Both boards contain its FIELD and SEM rows verbatim |
+| 3 | Sensor and board local module manifests, `board.json` for both boards | Full FIELD, SEM and CLASS reproduction, status constants match |
+| 4 | Generated module headers and `os_sensor_module.h`, with a host test | No board source changes |
+| 5 | Waveshare `collect` moves to modules | Row equality fixture for the same inputs, both boards build |
+| 6 | CoreS3 `collect` moves to modules | Same |
+| 7 | Generator write mode, new boards only | Refuses to write an existing board file |
+| 8 | Aggregates, upstream first (section 7) | Existing templates byte identical |
+| 9 | The weather board, if wanted | New dictionary, existing boards unchanged |
 
-### Recommendation
+Steps 5 and 6 touch firmware, so both boards build and get proportional
+readback before any hardware claim.
 
-Option A. It keeps the one property the pinned dictionary URI exists for, that
-the bytes behind the link are the bytes the image compiled and hashed. It needs
-no firmware build change, so it can land as host only PRs, and it never
-regenerates an existing board file. Option B buys nothing at run time, because
-modules already find their columns by name at build time through `resolve`.
-
-### The rest of the contract
-
-- `desc`. The template is built from the board files, which do not change, so
-  `desc` does not move. Moving SEM rows into fragments changes no template
-  byte while the gate proves equality.
-- LIVE keys. They stay in the FIELD rows, so `dict` keeps covering them.
-  `tools/live_key_fixture.py` keeps one key to one column name across all
-  boards. Reusing `t` and `rh` for `ambient_temperature_c` and
-  `relative_humidity_percent` on a new board is allowed. A new key must be
-  added to the LIVE table in [the sync protocol](ble-sync-protocol.md) and to a
-  new fixture digest.
-- Mobile migration. Any phone visible change, which includes a new board,
-  gets a newest first entry in [mobile migration notes](mobile-migration.md).
-  The refactor phases below are not phone visible and add no entry.
-- A new board is a new dictionary. It gets its own `.inc`, `dict`, schema
-  string, template, pinned URIs and published template under
-  `docs/shared/templates/<board>/`. Adding a module to an existing board appends
-  rows, moves that board's `dict` and follows the two pin procedure in the
-  [templates README](templates/README.md).
-
-## 4. Worked example, a weather board
-
-A hypothetical ESP32-S3 weather Thing with a BME280 on I2C, a cup anemometer
-with a wind vane, and a tipping bucket rain gauge, plus an optional MAX17048
-gauge reused as is.
-
-### Modules
-
-| Segment | Columns (type, LIVE key, aggregate) |
-| --- | --- |
-| `system.head` | The same 10 rows as both boards today |
-| `bme280.core` | `bme280_status` (Int32, mode), `ambient_temperature_c` (Float, `t`, mean), `relative_humidity_percent` (Float, `rh`, mean), `air_pressure_hpa` (Float, `hpa`, mean) |
-| `anemometer.core` | `anemometer_status` (Int32, mode), `wind_speed_m_s` (Float, `ws`, mean), `wind_gust_m_s` (Float, `wg`, maximum), `wind_direction_deg` (Float, `wd`, circular mean), `wind_pulses_total` (Int64, counter delta) |
-| `tipping_bucket.core` | `rain_tips_total` (Int64, counter delta), `rainfall_total_mm` (Float, `rain`, counter delta) |
-| `max17048.core` | `gauge_status`, `battery_mv`, `battery_percent`, reused from Waveshare |
-| `system.runtime`, `system.clock_close`, `system.clock_anchor`, `system.location` | The same rows as both boards today |
-
-That is 44 columns, well under `kMaxColumns` 96. The LIVE JSON for
-about 12 keys stays far below the 480 byte cap.
-
-### New aggregate kinds
-
-- Circular mean for `wind_direction_deg`. An arithmetic mean of 350 and 10
-  degrees gives 180, which is wrong.
-- Counter delta for `wind_pulses_total`, `rain_tips_total` and
-  `rainfall_total_mm`. The value per window is the increase, with a reset
-  (reboot, rollover) handled by the reader.
-
-Both need a stac-opensensor spec addition first, then a refresh of the vendored
-schemas under `tools/stac_opensensor/`, then two new `Aggregate` enumerators in
-`column_semantics.h` and their names in `aggregate_name()` in
-`tools/board_template.h`. Existing boards do not use them, so their templates
-and `desc` stay the same. Whether the existing running counters later move from
-`point` to counter delta is an owner question, because that would move `desc`
-on both boards.
-
-### New dictionary
-
-The weather board gets its own `telemetry_fields.inc`, written once by the
-generator, a new schema string, a new `dict`, a new template and `desc`, new
-fixtures under `tools/fixtures/live_keys/`, the LIVE keys `hpa`, `ws`, `wg`, `wd`
-and `rain` in the sync protocol table, its own template keywords (weather, not
-air quality), a mobile migration entry and a dated bench record before any
-hardware claim. CoreS3 and Waveshare files, digests and pinned URIs do not
-change.
-
-## 5. Migration plan
-
-Each step is one PR. None changes a wire or file format, and `dict` and `desc`
-stay fixed on both boards through step 7. All steps come after the Phase 2
-renames of #111, so the new files use `os_` names from the start.
-
-| Step | PR | Proof it changes nothing on the wire |
-| --- | --- | --- |
-| 1 | Fragment and manifest format plus the compose gate, with fragments for the five system segments only. Host only | Board files untouched, gate proves both contain the segments verbatim |
-| 2 | SEM fragments for the 30 identical system rows | Board SEM files untouched, gate proves equality |
-| 3 | Sensor fragments (`pmsa003`, `pms5003t`, `pms_identity`, `ltr553`, `sht20`, `max17048`, `battery_health`) and board local fragments for the CoreS3 M5 peripherals. Full manifests for both boards | Gate proves the whole FIELD and SEM order of both boards |
-| 4 | `os_sensor_module.h` with `Module`, `InitError` and `resolve`, plus a host test with a fake board table. No board uses it yet | No board source changes |
-| 5 | Waveshare `collect` moves to modules, starting with `apply_pms`, `apply_gauge` and `apply_battery_health` | Contract test plus a host fixture that compares rows from old and new collect for the same inputs. Both boards build |
-| 6 | CoreS3 `collect` moves to modules | Same row equality fixture. Both boards build |
-| 7 | Generator mode that writes board files for a board with no frozen file and refuses to touch an existing one | Gate run on both boards, no file written |
-| 8 | Aggregate kinds. Spec addition in stac-opensensor first, then the vendored schema refresh and enumerators | Existing templates byte identical, `desc` unchanged |
-| 9 | The weather board itself, if the owner wants one | A new board with a new dictionary. Existing boards unchanged |
-
-Steps 5 and 6 touch firmware, so they need both board builds and proportional
-readback before any hardware claim, per the root [AGENTS.md](../../AGENTS.md).
-
-## 6. Flow
+## 12. Flow
 
 ```mermaid
 flowchart LR
-  subgraph MOD["Sensor module, one per sensor model"]
-    DRV["Driver with board Io callbacks"]
-    OPS["init and collect"]
-    FF["FIELD fragment"]
-    SF["SEM fragment"]
-    DRV --> OPS
-  end
-  subgraph BRD["Board application"]
-    PINS["Pins, buses, power"]
-    MAN["Ordered segment manifest"]
-    INC["telemetry_fields.inc, frozen"]
-    SEMINC["telemetry_semantics.inc, frozen"]
-    KF["kFields and kSemantics, constexpr"]
-    HOOK["Hooks collect loops kModules"]
-  end
-  GATE{{"Compose gate, host"}}
-  PINS --> DRV
-  FF --> GATE
-  SF --> GATE
-  MAN --> GATE
-  GATE -. "proves equal" .-> INC
-  GATE -. "proves equal" .-> SEMINC
-  INC --> KF
-  SEMINC --> KF
-  KF -- "resolve slots at build time" --> OPS
-  OPS --> HOOK
+  MM["Module manifests"] --> V
+  BM["Board manifest"] --> V
+  S["Plugin schemas v0.1.0, refs to vendored stac-opensensor"] --> V
+  V{{"plugin_contract.py validates"}} --> X["Expand ordered segments"]
+  X -- "byte check, Option A" --> INC["Board telemetry_fields.inc, semantics and classes .inc"]
+  X -- "generate" --> HDR["Module C++ column tables"]
   INC --> DICT["dict SHA-256"]
-  KF --> TPL["Board template"] --> DESC["desc SHA-256"]
-  KF --> CFG["oslogger Config"]
-  CFG --> LOG["OSLogger main loop, 10 s"]
-  HOOK -- "writes Row" --> LOG
-  LOG --> Q["Sample queue"] --> W["Storage worker and Parquet writer"]
+  INC --> KF["kFields and kSemantics, constexpr"]
+  HDR --> MOD["Module collect"]
+  KF -- "resolve at build time" --> MOD
+  KF --> TPL["Board template"]
+  DICT --> TPL
+  TPL --> DESC["desc SHA-256"]
+  MOD --> LOG["OSLogger, Hooks collect"]
+  LOG --> W["Storage worker and Parquet writer"]
   DICT --> W
   DESC --> W
-  W --> PQ["Immutable Parquet with dict and desc in the footer"]
+  W --> PQ["Immutable Parquet, footer names dict and template"]
 ```
 
 ## Open questions for the owner
 
-1. Do you accept Option A, with the board files frozen and a host compose gate,
-   over building the firmware from fragments?
-2. Should we propose `circular_mean` and a counter delta kind to
-   stac-opensensor, and under what exact names? The enum spelling must equal
-   the published value.
-3. Once counter delta exists, should the running counters on CoreS3 and
-   Waveshare move from `point` to it? That moves `desc` on both boards and needs
-   a release.
-4. Where do shared module fragments live, `firmware/common/sensors/modules/<model>/`
-   or next to each driver file?
-5. How should two identical sensors on one Thing be named (two soil probes, for
-   example)? The contract test requires a unique property per column, so this
-   also needs a property id rule.
-6. A multi sensor Thing needs an identity per module. The current single slot in
-   `device_config.h` keeps its NVS keys. Do you want new per module keys added
-   beside it?
-7. Optional sensors. Should a board dictionary list every module it may carry,
-   with absent modules null, or should each sensor mix get its own dictionary?
-   This proposal assumes the first, which keeps the null rule and the digest
-   count low.
-8. Should `kProcedureWords` move from a hand kept list to vendor words declared
-   by each module fragment?
+1. Do you accept Option A, board files frozen and gated, over generating them
+   at build time?
+2. Should we raise `circular_mean` and `delta` in stac-opensensor now, under
+   bridge question 17, and with those exact names?
+3. Once `delta` exists, should the running counters on both boards move from
+   `point`? That moves `desc` on both.
+4. Should the plugin contract stay in this repo, or become a separate public
+   repo like stac-opensensor?
+5. Who hosts the schema `$id`? The proposal assumes GitHub Pages for this repo,
+   and the gate never fetches it.
+6. How are two identical sensors on one Thing named, given the unique property
+   per column rule?
+7. Do you want per module identity keys added in NVS beside the current single
+   sensor slot?
+8. Should a board list every module it may carry, with absent ones null, or
+   should each sensor mix get its own dictionary? This proposal assumes the
+   first.
