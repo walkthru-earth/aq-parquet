@@ -926,12 +926,15 @@ Parquet readback were not run. Logs and the image are in ignored
 ## Main 689bb61 USB reflash, Thing id and first `geo` footer (2026-10-26)
 
 CoreS3 MAC `44:1b:f6:e2:6b:40`, checked native USB port `/dev/cu.usbmodem11101`.
-`pixi run ports`, `chip`, `flash-id` and `efuse` ran before the flash. Only the
-eFuse summary was kept in the artifact directory. It shows
-`SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0` and `DIS_DOWNLOAD_MODE=False`,
-and the esptool header in the flash log shows ESP32-S3 QFN56 rev v0.2. The
-ports, chip and flash-id output was not kept, so this entry does not quote a
-flash ID readback. The owner waived a new backup. The flash helper still needs
+`pixi run ports`, `chip`, `flash-id` and `efuse` ran before the flash. The
+ports listing from the same session is kept with the Waveshare artifacts in
+`firmware/esp-idf-waveshare-sim7670g/artifacts/bench-20261026/01-ports.txt`
+and shows `/dev/cu.usbmodem11101` as `USB JTAG/serial debug unit`, VID:PID
+`303A:1001`, with the CoreS3 MAC as its serial number. The CoreS3 eFuse summary
+shows `SECURE_BOOT_EN=False`, `SPI_BOOT_CRYPT_CNT=0` and
+`DIS_DOWNLOAD_MODE=False`, and the esptool header in the flash log shows
+ESP32-S3 QFN56 rev v0.2. The CoreS3 chip and flash-id output was not kept, so
+this entry does not quote a flash ID readback. The owner waived a new backup. The flash helper still needs
 a backup path for its NVS layout check, so
 `backup/m5stack-cores3-flash-20261025T220032Z.bin` from 2026-10-25 was passed
 only to satisfy that check.
@@ -950,7 +953,7 @@ chip erase or card format.
 | Thing id | Both captured boots (`boot_seq=5` and `boot_seq=6`) and `parquet status` print the same Thing id, which differs from the station id in the 2026-10-18 entry. The id itself is left out of this record |
 | Time | `PARQUET TIME ... source=rtc` on both boots. Every row of the first file has `clock_status=2` and a non-null `event_time_utc_us` |
 | Watchdog and SD | `PARQUET WATCHDOG mode=armed ... consecutive=0`, `PARQUET STORAGE state=ready`, `PARQUET RECOVERY quarantined=0 repaired=0 deleted=0`, `PARQUET SCAN files=15` before the archive reset |
-| Core dump | The first boot of this image printed `Core dump data checksum is correct` and `Found core dump 25376 bytes in flash @ 0xc10000`. The dump was written before this image ran and was not decoded |
+| Core dump | Both captured boots, `boot_seq=5` and `boot_seq=6`, printed `Core dump data checksum is correct` and `Found core dump 25376 bytes in flash @ 0xc10000`. The 2026-10-25 backup `backup/m5stack-cores3-flash-20261025T220032Z.bin` already holds a dump of 25,376 bytes at 0xc10000, so it predates this image. It was not decoded |
 | Archive reset (owner requested) | `parquet erase-archive CONFIRM` returned `PARQUET ERASE_ARCHIVE ok=1 files=15 directories=6 reboot_required=1`. The capture tool refuses that command, so a one-off pyserial script sent it. After a reset the board printed `PARQUET SCAN files=0 retained_partials=0 quarantine_files=0`. Card not formatted |
 | Sensors | PMSA003 valid frames with `checksum_failures=0 length_failures=0`, for example PM2.5 35 ug/m3 atmospheric |
 

@@ -6,8 +6,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
 
 - Use `pixi run idf-setup`, `pixi run waveshare-build [logger|diagnostic]`
   and the backup-gated `waveshare-flash` task. No Arduino APIs or components.
-  Native migration has no real-board evidence yet; earlier Arduino image
-  results remain historical and require native readback to extend.
+  Native v2.15 has a dated USB Parquet readback from 2026-10-26 in the board
+  bench record. Earlier Arduino image results remain historical and require
+  native readback to extend.
 - Exact board: ESP32-S3-SIM7670G-4G **V2.0**, ESP32-S3R8 rev0.2, 16 MB Quad
   flash and 8 MB Octal PSRAM. OPI was qualified by an allocated-region memory
   test. Preserve UART0 console through CH343; USB CDC is not the console.
@@ -34,7 +35,7 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   `battery_health_state`, which is always written and reads 0 when unknown.
   Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
-- Current firmware is `idf-waveshare-parquet-v2.14`, schema v5/dictionary v6
+- Current firmware is `idf-waveshare-parquet-v2.15`, schema v6/dictionary v7
   with 62 fields. Fields 57 to 62 hold MAX17048 diagnostics and the shared
   `power/` battery health state. Battery thresholds live in
   `telemetry_contract.h` (`kBatteryThresholds`) and are uncalibrated until a

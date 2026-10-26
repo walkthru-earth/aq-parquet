@@ -1,10 +1,11 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.14`**, with **62-column** schema
-`waveshare-sim7670g-telemetry-v5` and dictionary `waveshare-sim7670g-telemetry-v6`.
-The original 52 columns retain their order and types, with four nullable H3
-location fields and, since v2.7, six battery health columns appended (raw SOC,
+**`idf-waveshare-parquet-v2.15`**, with **62-column** schema
+`waveshare-sim7670g-telemetry-v6` and dictionary `waveshare-sim7670g-telemetry-v7`.
+The original 52 columns retain their order and types, with four nullable
+location fields (`h3_cell_id`, `h3_resolution`, `location_source` and the WKB
+Point `geometry`) and, since v2.7, six battery health columns appended (raw SOC,
 CRATE, gauge STATUS flags, hibernation, `battery_health_state` and
 `battery_minutes_to_empty`). The shared `power/` classifier reports
 unknown, external power likely, ok, low, critical or settling. A critical
