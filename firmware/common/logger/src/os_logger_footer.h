@@ -1,7 +1,7 @@
 #pragma once
 
-#include "aq_logger.h"
-#include "aq_logger_cadence.h"
+#include "os_logger.h"
+#include "os_logger_cadence.h"
 
 #include <array>
 #include <charconv>

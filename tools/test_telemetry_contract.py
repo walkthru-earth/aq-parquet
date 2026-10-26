@@ -148,7 +148,7 @@ def main() -> None:
         command += [*compile_h3(root, directory, args.sanitize),
                     str(root / "firmware/common/location/src/aq_location.cpp"),
                     str(root / "tools/telemetry_contract_fixture.cpp"),
-                    str(root / "firmware/common/logger/src/aq_logger_live.cpp"),
+                    str(root / "firmware/common/logger/src/os_logger_live.cpp"),
                     str(common / "parquet_writer.cpp"), str(common / "lz4_codec.cpp"),
                     "-o", str(executable)]
         subprocess.run(command, check=True)

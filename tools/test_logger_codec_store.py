@@ -44,7 +44,7 @@ def check_wiring(source: str) -> None:
     code = " ".join(strip_comments(source).split())
     for call in ("const auto boot_codec = codec_store::apply_boot(selected_codec);",
                  "const auto saved = codec_store::select(selected_codec, requested);"):
-        assert code.count(call) == 1, f"aq_logger.cpp must call `{call}` exactly once"
+        assert code.count(call) == 1, f"os_logger.cpp must call `{call}` exactly once"
     writes = re.findall(r"\bselected_codec\s*(?:=(?!=)|\.store\s*\()", code)
     assert not writes, "selected_codec is only written by apply_boot and select"
     assert "codec=UNCOMPRESSED" not in code, "a boot line still hard codes the codec"
@@ -88,7 +88,7 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     logger = root / "firmware/common/logger"
-    check_wiring((logger / "src/aq_logger.cpp").read_text())
+    check_wiring((logger / "src/os_logger.cpp").read_text())
     check_host_command()
     with tempfile.TemporaryDirectory(prefix="aq-codec-store-") as directory:
         executable = Path(directory) / "codec-store-test"

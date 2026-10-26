@@ -429,7 +429,7 @@ def check_internal_stacks(root: Path) -> None:
 
 def check_runtime_report() -> None:
     """`parquet mem` is answered on the board task and parquet_device waits for the heap line."""
-    source = (sb.ROOT / "firmware" / "common" / "logger" / "src" / "aq_logger.cpp").read_text()
+    source = (sb.ROOT / "firmware" / "common" / "logger" / "src" / "os_logger.cpp").read_text()
     code = " ".join(source.split())
     assert 'std::strcmp(input.text, "parquet mem") == 0) report_runtime(input.received_mono_us, true);' in code
     # New fields go at the end so a reader of the older lines keeps working.

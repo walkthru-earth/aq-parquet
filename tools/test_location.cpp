@@ -1,6 +1,6 @@
 #include "aq_location.h"
-#include <aq_logger_location.h>
 #include <numeric_sample.h>
+#include <os_logger_location.h>
 
 #include <cassert>
 #include <cmath>

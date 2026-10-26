@@ -5,7 +5,7 @@
 // oslogger::begin. Include after the board telemetry_contract.h. Ids are
 // placeholders, never a real thing.
 
-#include <aq_logger_footer.h>
+#include <os_logger_footer.h>
 
 #include <cstdio>
 #include <cstdlib>

@@ -66,16 +66,16 @@ cppcheck "${options[@]}" \
   firmware/common/src/lz4_codec.cpp \
   firmware/common/sensors/src/pms_frame.cpp \
   firmware/common/power/src/aq_battery_health.cpp \
-  firmware/common/logger/src/aq_logger.cpp \
-  firmware/common/logger/src/aq_logger_status.cpp \
-  firmware/common/logger/src/aq_logger_provision.cpp \
-  firmware/common/logger/src/aq_logger_live.cpp \
+  firmware/common/logger/src/os_logger.cpp \
+  firmware/common/logger/src/os_logger_status.cpp \
+  firmware/common/logger/src/os_logger_provision.cpp \
+  firmware/common/logger/src/os_logger_live.cpp \
   firmware/esp-idf-waveshare-sim7670g/diagnostic/main.cpp
 # The diagnostic explicitly rejects PSRAM; the application explicitly needs it.
 # Check each sketch in the configuration it is actually compiled with.
 cppcheck "${options[@]}" -DCONFIG_SPIRAM=1 \
   firmware/esp-idf-waveshare-sim7670g/logger/main.cpp
 # The bench only parquet bench-stall branch is off in every shipped image, so
-# check aq_logger.cpp once more with it on (CONFIG_OS_LOGGER_BENCH_STALL).
+# check os_logger.cpp once more with it on (CONFIG_OS_LOGGER_BENCH_STALL).
 cppcheck "${options[@]}" -DCONFIG_OS_LOGGER_BENCH_STALL=1 \
-  firmware/common/logger/src/aq_logger.cpp
+  firmware/common/logger/src/os_logger.cpp

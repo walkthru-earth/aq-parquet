@@ -2,7 +2,7 @@
 // fixture board (no PMS, 30 s period, SL- prefix) writes a real Parquet file
 // through the shared writer, and tools/test_logger_footer.py reads it with
 // PyArrow and DuckDB. The default `opensensor` footer JSON is pinned (#88).
-#include "aq_logger_footer.h"
+#include "os_logger_footer.h"
 #include <ble_advert.h>
 
 #include <array>

@@ -10,7 +10,6 @@
 #include <sd_transfer_buffer.h>
 
 #include "aq_console.h"
-#include <aq_logger.h>
 #include <driver/sdspi_host.h>
 #include <driver/uart.h>
 #include <esp_chip_info.h>
@@ -25,6 +24,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
+#include <os_logger.h>
 #include <sdkconfig.h>
 #include <sdmmc_cmd.h>
 

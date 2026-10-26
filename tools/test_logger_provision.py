@@ -23,7 +23,7 @@ def main() -> None:
         for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_provision.cpp"),
-                    str(common / "logger/src/aq_logger_provision.cpp"),
+                    str(common / "logger/src/os_logger_provision.cpp"),
                     str(common / "runtime/src/device_config.cpp"),
                     str(common / "runtime/src/debug_log.cpp"),
                     str(root / "tools/host_fakes/config/aq_console.cpp"),

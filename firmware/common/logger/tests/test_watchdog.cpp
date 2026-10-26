@@ -1,8 +1,8 @@
 // Fake-clock tests for the storage-worker watchdog supervisor. The rig calls
 // the same watchdog::prepare(), launch(), tick() and apply() that
-// aq_logger.cpp calls, over a fake task watchdog with the IDF feed rule.
-#include "aq_logger_watchdog.h"
-#include "aq_logger_watchdog_apply.h"
+// os_logger.cpp calls, over a fake task watchdog with the IDF feed rule.
+#include "os_logger_watchdog.h"
+#include "os_logger_watchdog_apply.h"
 
 #include <cassert>
 #include <cstdint>
@@ -64,7 +64,7 @@ struct FakeTwdt {
     reset(idle[1]);
   }
 
-  // The Twdt interface of aq_logger_watchdog_apply.h.
+  // The Twdt interface of os_logger_watchdog_apply.h.
   bool add_user() {
     calls += 'a';
     if (fail_add || user.present)
@@ -194,7 +194,7 @@ struct Rig {
   }
 };
 
-// apply() calls the task watchdog in the order aq_logger.cpp relies on. Arm
+// apply() calls the task watchdog in the order os_logger.cpp relies on. Arm
 // registers before it resets, and Recover restores before it feeds.
 void apply_calls_in_order() {
   std::int64_t clock = 0;

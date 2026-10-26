@@ -14,11 +14,11 @@ the server waits for socket readiness instead of polling and then sleeping
 100 ms timeout bounds radio/settings, expiry and snapshot housekeeping. With
 no listening socket, the task still sleeps; socket errors also back off.
 
-In [aq_logger.cpp](../../firmware/common/logger/src/aq_logger.cpp), the storage
+In [os_logger.cpp](../../firmware/common/logger/src/os_logger.cpp), the storage
 worker checks one sample before one command per pass instead of waiting
 50 ms for a sample before each command. Successful sample, serial and radio
 enqueues copy into their bounded queue and then signal a binary semaphore,
-created before task startup. [The wakeup helper](../../firmware/common/logger/src/aq_logger_work_queue.h)
+created before task startup. [The wakeup helper](../../firmware/common/logger/src/os_logger_work_queue.h)
 waits only when no queued sample remains and no command was received. Signals
 remain pending across the idle-check/wait race and can coalesce because the
 queues retain every item. A one-second idle timeout maintains the worker

@@ -10,7 +10,7 @@ Sensor modules and boards are declared as versioned manifests, gated against the
 
 ## Logger hooks and capabilities
 
-The source contracts are [`aq_logger.h`](../../firmware/common/logger/src/aq_logger.h)
+The source contracts are [`os_logger.h`](../../firmware/common/logger/src/os_logger.h)
 and [`sync_service.h`](../../firmware/common/connectivity/src/sync_service.h).
 Descriptors, identity strings and callback contexts must outlive the services.
 

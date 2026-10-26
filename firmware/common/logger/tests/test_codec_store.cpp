@@ -1,7 +1,7 @@
 // Persisted codec tests. The real codec_store load, store, resolve, apply_boot
 // and select run over a host NVS fake that keeps namespaces, types and staged
 // commits.
-#include "aq_logger_codec_store.h"
+#include "os_logger_codec_store.h"
 
 #include <atomic>
 #include <cassert>

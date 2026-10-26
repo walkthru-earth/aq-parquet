@@ -7,7 +7,7 @@ versions are pinned by the shared toolchain lock and component manifests.
 
 ## Adapter contract
 
-Include `aq_logger.h`. Define a static `oslogger::Field[]` dictionary and fill
+Include `os_logger.h`. Define a static `oslogger::Field[]` dictionary and fill
 `Config` with its schema/dictionary identity, digest, acquisition configuration,
 board identity and optional board metadata. The runtime requires `sequence`,
 `monotonic_us` and `event_time_utc_us` as INT64, and `clock_epoch` as INT32. Other
@@ -33,14 +33,14 @@ to `/sd/output`; `legacy_directory` is opt-in for previous archives.
 
 `Config::sample_interval_ms` sets the sample period and the footer
 `acquisition.sample_interval_ms`. The default is 10 s, which both boards keep.
-It must pass `cadence::valid_sample_interval()` in `aq_logger_cadence.h`, 1 s
+It must pass `cadence::valid_sample_interval()` in `os_logger_cadence.h`, 1 s
 to 300 s and a divisor of 300 s, so every rotation window stays whole. Row
 groups hold one rotation window of rows, at most `cadence::kMaxBatchRows` (90),
 which is also the footer `file.row_group_rows_max`. `Config::deployment_id`
 and `Config::calibration_id` fill `thing.deployment_id` and
 `acquisition.calibration_id` and default to `unknown`. The footer sample
 period always comes from the live config value, never a build time default.
-`footer::build` in `aq_logger_footer.h` writes the one `opensensor` key, see
+`footer::build` in `os_logger_footer.h` writes the one `opensensor` key, see
 [mobile-migration.md](../../../docs/shared/mobile-migration.md). `Config::ble_name_prefix` is a required
 board constant (`OS-` on both boards) that starts the BLE name, and the mDNS
 host is that name in lower case. `begin()` refuses a period, id or
@@ -81,7 +81,7 @@ releases them so the next READ reopens by path. OPEN takes the CRC-32 from a
 reads the whole file only on a miss. The boot `PARQUET BEGIN` line reports
 `crc32_check=ok` when the ROM CRC routine returns the standard check value.
 LIVE emits the `Field::live_key` of every field that declares one, in
-field-table order, through `aq_logger_live.h`. Absent, invalid and non-finite
+field-table order, through `os_logger_live.h`. Absent, invalid and non-finite
 measurements are sent as null. Floats print with `Field::decimals` digits after
 the point. `begin()` rejects malformed or duplicate keys and decimals above 6.
 
@@ -183,9 +183,9 @@ exclude it from captures and artifacts.
 
 A critical battery asks the storage worker to finish the open Parquet file
 so the rows already buffered survive a brownout. The pure parts live in
-`aq_logger_power.h` (when to ask and the main loop report),
-`aq_logger_emergency_close.h` (the intent, outcomes, retry, the worker pass
-and its log line) and `aq_logger_transfer_gate.h` (how a due close stops a
+`os_logger_power.h` (when to ask and the main loop report),
+`os_logger_emergency_close.h` (the intent, outcomes, retry, the worker pass
+and its log line) and `os_logger_transfer_gate.h` (how a due close stops a
 transfer). `pixi run logger-power-test` covers the first two, and
 `archive-sync-test` and `wifi-link-test` drive the gate through the real
 archive session and LAN transport.
@@ -249,7 +249,7 @@ discharge calibration in issue #28.
 
 A BLE or LAN `LIST` runs as a job of bounded steps on the storage worker
 (`archive_sync.h`). The worker glue around it lives in
-`aq_logger_list_job.h` as pure decisions that `archive-sync-test` drives with
+`os_logger_list_job.h` as pure decisions that `archive-sync-test` drives with
 the real session and storage governor. It covers three things. Periodic
 remounts wait for the job, so a full card is measured without a remount and
 a card in Retry is probed without one, and the skipped remount runs after the
@@ -344,11 +344,11 @@ writes nothing looking alive.
   clears the RTC record.
 - The supervisor decision (`watchdog::supervise`, which returns Nothing, Feed,
   Arm, Trip or Recover), its unwinding (`watchdog::failed`), the guard and the
-  expiry rule are pure in `aq_logger_watchdog.h`. The start steps
+  expiry rule are pure in `os_logger_watchdog.h`. The start steps
   (`watchdog::prepare`, `watchdog::launch`) and the tick that applies each
   decision (`watchdog::tick`, `watchdog::apply`) live in
-  `aq_logger_watchdog_apply.h` behind an injected task watchdog and timer, and
-  `aq_logger.cpp` only wraps the ESP-IDF calls. `pixi run logger-watchdog-test`
+  `os_logger_watchdog_apply.h` behind an injected task watchdog and timer, and
+  `os_logger.cpp` only wraps the ESP-IDF calls. `pixi run logger-watchdog-test`
   runs that same code with a fake clock and a fake task watchdog that keeps the
   IDF feed rule, where the timer is fed only once every entry, the two idle
   tasks included, has reset. `pixi run logger-work-queue-test` keeps the guard
@@ -370,11 +370,11 @@ and core dump above. `1` to `3600` is a returning stall that prints
 `PARQUET BENCH stall-end`. Anything else gets
 `PARQUET ERROR operation=bench-stall reason=invalid-seconds` or
 `reason=seconds-out-of-range` and no stall. The parser and the deadline are
-pure in `aq_logger_bench_stall.h`, and `pixi run logger-bench-stall-test` runs
+pure in `os_logger_bench_stall.h`, and `pixi run logger-bench-stall-test` runs
 them with sanitizers. It also fails when the Kconfig default is not n, when
 any shipped `sdkconfig.defaults` sets the option, or when bench code in
-`aq_logger.cpp` sits outside `#if CONFIG_OS_LOGGER_BENCH_STALL`. With the
-option off the compiled `aq_logger.cpp` object is the same as before the
+`os_logger.cpp` sits outside `#if CONFIG_OS_LOGGER_BENCH_STALL`. With the
+option off the compiled `os_logger.cpp` object is the same as before the
 command existed.
 
 Any serial user can stop logging with it, so it never ships. Build a bench

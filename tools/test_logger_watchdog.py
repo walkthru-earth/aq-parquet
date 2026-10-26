@@ -55,14 +55,14 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     logger = root / "firmware/common/logger"
     # The decision logic and the steps that apply it stay pure so they build
-    # and run on the host, and aq_logger.cpp must go through them.
-    for name in ("aq_logger_watchdog.h", "aq_logger_watchdog_apply.h"):
+    # and run on the host, and os_logger.cpp must go through them.
+    for name in ("os_logger_watchdog.h", "os_logger_watchdog_apply.h"):
         header = logger / "src" / name
         include = re.search(r'#include\s*[<"](esp_|freertos/|driver/|soc/)', header.read_text())
         assert include is None, f"{name} includes {include.group(0)}"
-    source = (logger / "src/aq_logger.cpp").read_text()
+    source = (logger / "src/os_logger.cpp").read_text()
     for call in ("watchdog::tick(", "watchdog::prepare(", "watchdog::launch("):
-        assert call in source, f"aq_logger.cpp no longer calls {call}"
+        assert call in source, f"os_logger.cpp no longer calls {call}"
     # begin() seeds the heartbeat before the worker exists, so a worker that
     # never stamps still ages out.
     seed = source.find("worker_heartbeat_us = esp_timer_get_time();\n  if (xTaskCreate(storage_worker")

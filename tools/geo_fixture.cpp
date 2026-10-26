@@ -11,7 +11,7 @@
 // located ones, so its chunk holds no GeospatialStatistics.
 // tools/test_geoparquet.py repeats the same row rule and checks every value.
 // The fixture also proves the writer refuses bad annotations and values.
-#include "aq_logger_footer.h"
+#include "os_logger_footer.h"
 #include "parquet_writer.h"
 
 #include <array>

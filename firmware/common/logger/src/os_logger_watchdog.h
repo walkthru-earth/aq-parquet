@@ -3,7 +3,7 @@
 #include <cstdint>
 
 // Pure storage-worker watchdog logic. It has no ESP-IDF headers so the host
-// tests can drive it with a fake clock. The board side in aq_logger.cpp owns
+// tests can drive it with a fake clock. The board side in os_logger.cpp owns
 // the task-watchdog user, the supervisor timer and the RTC record, and only
 // applies the actions decided here.
 namespace oslogger::watchdog {

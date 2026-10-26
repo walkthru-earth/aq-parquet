@@ -8,4 +8,4 @@ set(SDKCONFIG_DEFAULTS "${OS_REPO}/tools/idf-sdkconfig.defaults;${OS_REPO}/tools
 include("${OS_REPO}/firmware/cmake/os_cxx_standard.cmake")
 include("${OS_REPO}/firmware/cmake/os_source_paths.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(aq_logger_fixture)
+project(os_logger_fixture)

@@ -1,8 +1,8 @@
-#include <aq_logger_provision.h>
 #include <ble_sync.h>
 #include <cassert>
 #include <cstring>
 #include <debug_log.h>
+#include <os_logger_provision.h>
 #include <string>
 #include <wifi_link.h>
 

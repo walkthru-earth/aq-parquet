@@ -22,7 +22,7 @@ from pathlib import Path
 FIXTURES = Path(__file__).resolve().parent / "fixtures/live_keys"
 PROTOCOL = Path(__file__).resolve().parents[1] / "docs/shared/ble-sync-protocol.md"
 BOARDS = ("cores3", "waveshare")
-LIVE_HEADER = Path(__file__).resolve().parents[1] / "firmware/common/logger/src/aq_logger_live.h"
+LIVE_HEADER = Path(__file__).resolve().parents[1] / "firmware/common/logger/src/os_logger_live.h"
 
 
 def _max_live_decimals() -> int:

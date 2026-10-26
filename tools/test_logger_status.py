@@ -21,7 +21,7 @@ def main() -> None:
         for library in ["src", "runtime/src", "connectivity/src", "logger/src", "power/src"]:
             command += ["-I", str(common / library)]
         command += [str(common / "logger/tests/test_status.cpp"),
-                    str(common / "logger/src/aq_logger_status.cpp"),
+                    str(common / "logger/src/os_logger_status.cpp"),
                     "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

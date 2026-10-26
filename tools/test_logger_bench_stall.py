@@ -21,12 +21,12 @@ def guarded_lines(source: str) -> list[tuple[str, bool]]:
         if directive.startswith("#if"):
             stack.append(directive == f"#if {GUARD}")
         elif directive.startswith("#endif"):
-            assert stack, "unbalanced #endif in aq_logger.cpp"
+            assert stack, "unbalanced #endif in os_logger.cpp"
             stack.pop()
         elif directive.startswith(("#else", "#elif")):
             assert not (stack and stack[-1]), f"{GUARD} blocks must not have an #else branch"
         out.append((line, any(stack)))
-    assert not stack, "unbalanced #if in aq_logger.cpp"
+    assert not stack, "unbalanced #if in os_logger.cpp"
     return out
 
 
@@ -38,15 +38,15 @@ def check_wiring(root: Path) -> None:
     assert entry, "Kconfig lost OS_LOGGER_BENCH_STALL"
     assert re.search(r"^\s+default n$", entry.group(1), re.M), "OS_LOGGER_BENCH_STALL must default to n"
 
-    lines = guarded_lines((logger / "src/aq_logger.cpp").read_text())
+    lines = guarded_lines((logger / "src/os_logger.cpp").read_text())
     bench = [(line, inside) for line, inside in lines
-             if "aq_logger_bench_stall.h" in line or "bench::" in line or "bench_stall" in line]
-    assert bench, "aq_logger.cpp no longer uses the bench stall helpers"
+             if "os_logger_bench_stall.h" in line or "bench::" in line or "bench_stall" in line]
+    assert bench, "os_logger.cpp no longer uses the bench stall helpers"
     outside = [line.strip() for line, inside in bench if not inside]
     assert not outside, f"bench stall code outside #if {GUARD}: {outside}"
     code = "\n".join(line for line, inside in lines if inside)
     for call in ("bench::parse_stall_seconds(", "bench::stall_continues(", "bench::is_stall_command("):
-        assert call in code, f"aq_logger.cpp must call {call} under {GUARD}"
+        assert call in code, f"os_logger.cpp must call {call} under {GUARD}"
     # The stall must not stamp, or the watchdog never sees it.
     assert "stamp_heartbeat" not in code, "the bench stall must not stamp the heartbeat"
 

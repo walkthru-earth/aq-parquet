@@ -1,4 +1,4 @@
-#include <aq_logger_rotation.h>
+#include <os_logger_rotation.h>
 #include <utc_clock.h>
 
 #include <cassert>

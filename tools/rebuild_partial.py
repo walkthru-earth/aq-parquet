@@ -448,7 +448,7 @@ def column_chunk(out: Out, f: Field, chunk: Chunk, rows: int, codec: int) -> Non
 
 
 def e7_text(degrees: float) -> str:
-    """A coordinate as aq_logger_footer.h e7_decimal writes it."""
+    """A coordinate as os_logger_footer.h e7_decimal writes it."""
     e7 = round(degrees * 1e7)
     sign = "-" if e7 < 0 else ""
     whole, fraction = divmod(abs(e7), 10_000_000)

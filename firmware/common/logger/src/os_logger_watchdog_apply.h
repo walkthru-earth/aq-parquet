@@ -1,10 +1,10 @@
 #pragma once
 
-#include "aq_logger_watchdog.h"
+#include "os_logger_watchdog.h"
 
 #include <cstdint>
 
-// The steps aq_logger.cpp takes to start the supervisor and to apply each of
+// The steps os_logger.cpp takes to start the supervisor and to apply each of
 // its decisions, written against injected interfaces so the host tests run
 // this exact code. No ESP-IDF headers.
 //
