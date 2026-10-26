@@ -22,7 +22,7 @@ namespace contract {
 // microseconds and added a Parquet field_id on every leaf for Iceberg v3.
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v5";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
 constexpr const char *kFirmware = "idf-waveshare-parquet-v2.8";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
 constexpr const char *kDictionaryUri =

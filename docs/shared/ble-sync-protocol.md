@@ -137,8 +137,9 @@ Base UUID `c0a5e9f0-XXXX-4b1a-9c3e-2d7f8a6b4e01`; the 16-bit field selects the a
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
-is CoreS3, while Waveshare advertises its own 62-column schema and dictionary
-`waveshare-sim7670g-telemetry-v5` with firmware `idf-waveshare-parquet-v2.8`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
+is CoreS3, while Waveshare advertises its own 62-column schema
+`waveshare-sim7670g-telemetry-v5`, dictionary `waveshare-sim7670g-telemetry-v6`
+and firmware `idf-waveshare-parquet-v2.8`. Clients use that identity to interpret shortened LIVE keys. `station`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 

@@ -57,7 +57,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
             metadata[b"h3_max_resolution"] == b"5", "location resolution metadata")
     require(metadata[b"h3_center_units"] == b"1e-7 degrees", "fixed point center units")
     require(metadata[b"schema_version"].decode() == dictionary["schema"] == "cores3-telemetry-v5", "schema version")
-    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v5",
+    require(metadata[b"dictionary_version"].decode() == dictionary["dictionary"] == "cores3-telemetry-v6",
             "dictionary version tracks the field table bytes, now with LIVE keys")
     require(metadata[b"dictionary_sha256"].decode() == dictionary["sha256"], "dictionary digest")
     require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",

@@ -177,7 +177,7 @@
       ]
     },
     "4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94": {
-      "note": "Dictionary cores3-telemetry-v5 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as e5060fb7. t now prints two decimals, imu_t and rh one.",
+      "note": "Dictionary cores3-telemetry-v6 with per field LIVE decimals (#91). Each FIELD row ends with its live_key and decimals, so this digest covers both. Same key set and order as e5060fb7. t now prints two decimals, imu_t and rh one.",
       "builds": [
         {
           "firmware": "idf-cores3-parquet-v6.14",

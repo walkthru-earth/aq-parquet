@@ -19,9 +19,10 @@ namespace contract {
 // the file. The dictionary version tracks the field bytes and schema v5 tracks
 // the reader contract. Dictionary v5 (firmware v6.13) adds each LIVE key to the
 // field table so the digest covers it. Columns are unchanged from v4.
+// Dictionary v6 (firmware v6.14) adds per field LIVE decimals, columns stay v5.
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "cores3-telemetry-v5";
-constexpr const char *kDictionaryVersion = "cores3-telemetry-v5";
+constexpr const char *kDictionaryVersion = "cores3-telemetry-v6";
 constexpr const char *kFirmware = "idf-cores3-parquet-v6.14";
 constexpr const char *kDictionaryUri =
     "https://github.com/walkthru-earth/aq-parquet/blob/main/"

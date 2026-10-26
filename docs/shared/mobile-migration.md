@@ -26,8 +26,9 @@ rounded, so `1.00` and `1.0` both mean one. LIVE keys, key order, the null
 rule, the all-null overflow and every other key are unchanged.
 
 The new row argument moves the `info.dict` digest on both boards, and the
-firmware identity moves with the release image. The dictionary and schema
-strings stay at `-v5`.
+dictionary string moves with it, to `cores3-telemetry-v6` and
+`waveshare-sim7670g-telemetry-v6`. The schema strings stay at `-v5` because the
+columns are unchanged.
 
 - CoreS3 `4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94`,
   firmware `idf-cores3-parquet-v6.14`.
