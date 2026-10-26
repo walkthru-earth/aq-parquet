@@ -62,7 +62,11 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin diagnostic
 ```
 
-Keep station/config namespaces, keys and value types. Existing Arduino-era BLE
+Keep the `parquet` station namespace, keys and value types. Since v2.10 (#93)
+settings live in the `oscfg` namespace, which starts empty after the reflash.
+Nothing is copied from the old namespace, so the sync token, the pairing mode
+and PIN, Wi-Fi profiles, location and NTP settings must be provisioned again.
+Existing Arduino-era BLE
 bond compatibility requires qualification and may need phone re-pairing; do
 not erase station identity or settings. Never write eFuses or format TF.
 

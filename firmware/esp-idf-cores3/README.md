@@ -54,8 +54,12 @@ pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
 ```
 
 This uses pinned Pixi esptool and the validated `flash_args` to flash the
-verified build without an implicit rebuild or NVS erase. Keep
-station/config namespaces, keys and types and existing partition offsets. BLE
+verified build without an implicit rebuild or NVS erase. Keep the
+`parquet` station namespace, keys and types and existing partition offsets.
+Since v6.16 (#93) settings live in the `oscfg` namespace, which starts empty
+after the reflash. Nothing is copied from the old namespace, so the sync token,
+the pairing mode and PIN, Wi-Fi profiles, location and NTP settings must be
+provisioned again. BLE
 bond compatibility across the migration needs qualification; phone re-pairing
 may be necessary. Do not erase station identity, credentials or owner data to
 make pairing pass. Native USB full-flash readback uses esptool's default baud;

@@ -70,6 +70,11 @@ The device **never** deletes, rewrites or renames a finalized file because of th
 
 The mode and PIN are stored in NVS (`oscfg` namespace) and are **applied at the next boot**, because the NimBLE security parameters are fixed at stack start; `SET_CONFIG` answers with `reboot_required` set and the phone offers `REBOOT`. The first-boot auto-detection result is stored, so removing the display later does not silently change the mode (again like Meshtastic — change the mode before removing the screen). A lost phone is handled by re-pairing or by `ble.clear_bonds=1`.
 
+The `oscfg` namespace replaced the old settings namespace in #93 with no
+migration. It starts empty after that reflash, so the sync token, the pairing
+mode and PIN, Wi-Fi profiles, location and NTP settings must be provisioned
+again, as on a new board. The `parquet` namespace with the station UUID stays.
+
 The native server handles `BLE_GAP_EVENT_PASSKEY_ACTION` and supplies display
 passkeys with `ble_sm_inject_io`: random mode generates per-attempt digits,
 fixed mode uses the stored per-device PIN. Pairing UI state is updated in that
