@@ -6,11 +6,17 @@ The C++ part pins the default `opensensor` footer JSON (10000, 90, unknown,
 host. It then writes a file for a non air quality fixture board (no PMS, 30 s
 period, SL- prefix). PyArrow and DuckDB read it here and its one footer key
 validates against the pinned stac-opensensor footer.json.
+
+A source check also pins the begin() gate. footer::check_config() runs in
+logger::begin() before the writer state, the storage worker or any file open,
+and a failure logs `PARQUET ERROR operation=footer-config` and returns false.
+Removing the call, the log line or the early return fails here.
 """
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -26,6 +32,62 @@ from host_cxx import CXX_STD  # noqa: E402
 DICT_SHA = "0" * 63 + "1"
 DESC_SHA = "0" * 63 + "2"
 
+FOOTER_GATE = re.compile(
+    r"if \(const auto footer_config = footer::check_config\(config\); "
+    r"!footer_config\) \{\s*"
+    r"oslog\.printf\(\"PARQUET ERROR operation=footer-config reason=%s \"\s*"
+    r"\"logging=false\\n\",\s*"
+    r"footer::error_name\(footer_config\.error\(\)\)\);\s*"
+    r"return false;\s*\}")
+# Anything in begin() that opens a file or starts the code that does.
+FILE_WORK = ("fopen(", "::open(", "opendir(", "mkdir(", "create_file(",
+             "heap_caps_calloc(", "xTaskCreate(", "storage_worker")
+
+
+def begin_body(source: str) -> str:
+    start = source.find("\nbool begin(const Config &configuration")
+    assert start >= 0, "logger::begin() not found in aq_logger.cpp"
+    end = source.find("\n}\n", start)
+    assert end > start, "end of logger::begin() not found"
+    return source[start:end]
+
+
+def check_footer_gate(source: str) -> None:
+    """footer::check_config() gates begin() before any file work (#88)."""
+    body = begin_body(source)
+    gates = list(FOOTER_GATE.finditer(body))
+    assert len(gates) == 1, "begin() must call footer::check_config(config) once, " \
+        "log PARQUET ERROR operation=footer-config reason=<name> logging=false " \
+        "and return false"
+    before = body[:gates[0].start()]
+    early = [token for token in FILE_WORK if token in before]
+    assert not early, f"begin() reaches {early} before footer::check_config()"
+    assert "xTaskCreate(storage_worker" in body[gates[0].end():], \
+        "storage worker start not found after the footer gate"
+
+
+def prove_footer_gate(source: str) -> None:
+    check_footer_gate(source)
+    body = begin_body(source)
+    gate = FOOTER_GATE.search(body)
+    assert gate
+    text = gate.group(0)
+    mutants = {
+        "call removed": source.replace(text, ""),
+        "log removed": source.replace(text, text.replace(
+            "operation=footer-config", "operation=footer")),
+        "return removed": source.replace(text, text.replace("return false;", "")),
+        "moved after the worker": source.replace(text, "").replace(
+            "  if (xTaskCreate(storage_worker", text + "\n  if (xTaskCreate(storage_worker"),
+    }
+    for name, mutant in mutants.items():
+        assert mutant != source, name
+        try:
+            check_footer_gate(mutant)
+        except AssertionError:
+            continue
+        raise AssertionError(f"footer gate check missed the mutant: {name}")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -33,6 +95,7 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     common = root / "firmware/common"
+    prove_footer_gate((common / "logger/src/aq_logger.cpp").read_text())
     with tempfile.TemporaryDirectory(prefix="aq-logger-footer-") as directory:
         executable = Path(directory) / "footer-test"
         output = Path(directory) / "soil.parquet"
@@ -85,7 +148,8 @@ def main() -> None:
             "SELECT list(decode(key)), any_value(decode(value)::JSON->>'$.acquisition.sample_interval_ms') "
             "FROM parquet_kv_metadata(?)", [str(output)]).fetchone()
         assert keys == ["opensensor"] and interval == "30000", (keys, interval)
-    print("Default opensensor footer JSON pinned, OS- BLE name and os- mDNS host. "
+    print("begin() runs footer::check_config() before any file work and fails closed. "
+          "Default opensensor footer JSON pinned, OS- BLE name and os- mDNS host. "
           "SL- soil fixture at 30 s wrote 90 + 30 rows with matching "
           "sample_interval_ms in one valid opensensor key, read by PyArrow and DuckDB")
 

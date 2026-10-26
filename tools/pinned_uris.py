@@ -16,8 +16,9 @@ at the commit hash to the digest. It needs full history (CI checks out with
 fetch-depth 0) and fails on a shallow clone, it never skips.
 
 write() (pixi run pin-uris) pins each URL to the commit that last changed its
-path, after checking those bytes against the digest. It refuses while a
-pinned file or a digest header has uncommitted changes. A commit URL cannot name
+path, after checking those bytes against the digest. It refuses while any
+file it reads or writes has uncommitted changes, the pinned files, the digest
+headers, telemetry_template.h and telemetry_contract.h. A commit URL cannot name
 the commit it is in, so a PR that moves dict or desc lands in two steps. The
 content commit holds the new bytes, then pin-uris and a pin commit point the
 URLs at it. That PR lands with a merge commit, so the content commit stays on
@@ -160,11 +161,14 @@ def write(root: Path = ROOT) -> list[str]:
     """Pin each URL to the commit that last changed its path. Return the changed pins."""
     check_history(root)
     todo = pins(root)
-    # The pinned bytes and the digests they are checked against must be
-    # committed, so the commit that last changed a path holds what is on disk.
-    digests = [f"{b.firmware}/{name}" for b in published_templates.BOARDS
-               for name in ("telemetry_dictionary_digest.h", "telemetry_descriptor_digest.h")]
-    dirty = git(root, "status", "--porcelain", "--", *(p.path for p in todo), *digests).stdout.decode().strip()
+    # Every file pin-uris reads or writes must be committed. The pinned bytes
+    # and their digests, so the commit that last changed a path holds what is
+    # on disk. The template header the digests describe, and the contract this
+    # rewrites, so a pin never lands on top of an uncommitted edit.
+    headers = [f"{b.firmware}/{name}" for b in published_templates.BOARDS
+               for name in ("telemetry_dictionary_digest.h", "telemetry_descriptor_digest.h",
+                            "telemetry_template.h", "telemetry_contract.h")]
+    dirty = git(root, "status", "--porcelain", "--", *(p.path for p in todo), *headers).stdout.decode().strip()
     require(not dirty, f"pin-uris needs the pinned files committed, commit the content first, {dirty}")
     changed: list[str] = []
     # The template embeds kDictionaryUri, so the dictionary pins come first.
