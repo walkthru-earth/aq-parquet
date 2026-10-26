@@ -165,9 +165,12 @@ def check_gitignore(root: Path) -> None:
             (repo / "secrets").symlink_to(target, target_is_directory=True)
         else:
             (repo / "secrets").write_text("placeholder\n")
+        # A control file, so a rule that ignores everything cannot pass.
+        (repo / "control.txt").write_text("placeholder\n")
         result = subprocess.run(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=all"],
                                 check=True, capture_output=True, text=True)
         assert "secrets" not in result.stdout, (kind, result.stdout)
+        assert "control.txt" in result.stdout, (kind, result.stdout)
 
 
 def check_errors(root: Path) -> None:

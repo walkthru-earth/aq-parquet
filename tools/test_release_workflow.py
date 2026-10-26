@@ -53,17 +53,20 @@ def uses(step: dict) -> str:
 
 
 def if_blocks(run: str, opener: re.Pattern[str]) -> list[list[str]]:
-    """The stripped body lines of every `if` whose first line matches opener,
-    up to its closing fi. Nested ifs are not used in release.yml."""
-    blocks, body = [], None
+    """The stripped `then` branch lines of every `if` whose first line matches
+    opener. An `else` or `elif` branch is left out, so an `exit 1` there cannot
+    pass for the failure exit. Nested ifs are not used in release.yml."""
+    blocks, body, in_then = [], None, False
     for line in (raw.strip() for raw in run.splitlines()):
         if body is None:
             if opener.match(line):
-                body = []
+                body, in_then = [], True
         elif line == "fi":
             blocks.append(body)
             body = None
-        else:
+        elif line == "else" or line.startswith("elif "):
+            in_then = False
+        elif in_then:
             body.append(line)
     if body is not None:
         blocks.append(body)
@@ -190,6 +193,9 @@ MUTATIONS = [
      'must match v[0-9A-Za-z._-]+"\n              true'),
     ("release tag check exit lost", 'must match v[0-9A-Za-z._-]+"\n            exit 1',
      'must match v[0-9A-Za-z._-]+"\n            true'),
+    ("guard exit moved to else", 'then re-run."\n            exit 1', 'then re-run."\n            else\n            exit 1'),
+    ("release tag check exit moved to else", 'must match v[0-9A-Za-z._-]+"\n            exit 1',
+     'must match v[0-9A-Za-z._-]+"\n            else\n            exit 1'),
     ("all secrets as JSON", "GH_TOKEN: ${{ github.token }}\n          TAG",
      "GH_TOKEN: ${{ github.token }}\n          ALL: ${{ toJSON(secrets) }}\n          TAG"),
     ("publish through the REST API", '--notes "${notes}"',
