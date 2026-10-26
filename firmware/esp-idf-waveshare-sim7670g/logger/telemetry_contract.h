@@ -12,6 +12,7 @@
 #include <column_semantics.h>
 #include <cstring>
 #include <iterator>
+#include <pinned_uri.h>
 #include <pms_frame.h>
 #include <span>
 #include <string_view>
@@ -27,11 +28,19 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 5;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v5";
 constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.11";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.13";
 constexpr const char *kCreatedBy = "aq-parquet version 0.1";
+// Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
+// the URI hash to kDictionarySha256. It is also the template describedby href.
+// Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://github.com/walkthru-earth/aq-parquet/blob/main/"
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "ada95144af0cf5191e95a35d0f80768fe58ac73b/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
+static_assert(opensensor::pinned::names(
+                  kDictionaryUri, "firmware/esp-idf-waveshare-sim7670g/logger/"
+                                  "telemetry_fields.inc"),
+              "kDictionaryUri is the raw field table at a full commit");
 constexpr const char *kConfigurationId = "waveshare-sim7670g-acquisition-v3";
 // Uncalibrated starting point. Change only with a dated discharge run and a
 // new configuration id; kConfiguration embeds the same numbers.
@@ -430,10 +439,21 @@ constexpr const char *kTemplateTitle =
 static constexpr std::string_view kTemplateKeywords[] = {
     "air quality",     "particulate matter", "PM2.5",
     "air temperature", "relative humidity",  "low-cost sensor"};
-// The template's describedby link. Raw text at the dict-bearing path on main,
-// so the href stays stable while file:checksum pins the exact bytes.
-constexpr const char *kTemplateDictionaryHref =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/main/"
-    "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
+// Footer template href (#88, #89). The published template of this dict at
+// the commit that last wrote it, whose bytes hash to kDescriptorSha256. It is
+// outside the template, so pinning it never moves desc. Written by
+// `pixi run pin-uris` after the template commit, checked by pinned-uris-test.
+// A PR that moves dict or desc lands with a merge commit so that commit stays
+// on main. Every other PR squashes.
+constexpr const char *kTemplateHref =
+    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "1f37edf350ae5efab0caa59ab4ceedd07d0028e5/"
+    "docs/shared/templates/waveshare-esp32-s3-sim7670g/"
+    "6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json";
+static_assert(opensensor::pinned::names_template(kTemplateHref,
+                                                 "waveshare-esp32-s3-sim7670g",
+                                                 kDictionarySha256),
+              "kTemplateHref is the published template of this dict at a "
+              "full commit");
 } // namespace contract
 } // namespace telemetry

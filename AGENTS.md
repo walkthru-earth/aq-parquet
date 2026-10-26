@@ -130,6 +130,16 @@ file in `docs/README.md` after this one.
   string and digest move when `telemetry_fields.inc` changes. The schema string
   moves when columns, types or annotations change. The firmware identity moves
   with each release image.
+- The footer `dictionary.uri` (`kDictionaryUri`), the template describedby
+  link and the template href (`kTemplateHref`, in the footer from #88) are raw GitHub URLs at a
+  full 40 hex commit on main, never `main` or a branch (#89).
+  `pixi run pinned-uris-test` proves each commit is on HEAD and holds bytes that
+  hash to `dict` or `desc`. A commit URL cannot name its own commit, so a change
+  that moves `desc` takes a content commit and then a pin commit written by
+  `pixi run pin-uris`. A change that moves `dict` pins twice, the steps are in
+  `docs/shared/templates/README.md`. PRs that move dict or desc land with a
+  merge commit, everything else squashes. A squash would drop the pinned commit
+  from main.
 - Parquet columns keep stable `field_id` values (1-based position in the board
   `telemetry_fields.inc`. Append only, never reorder, remove or reuse a
   position). Parquet UTC columns (`*_utc_us`) use `TIMESTAMP(MICROS, UTC)` so

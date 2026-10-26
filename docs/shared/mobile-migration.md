@@ -9,6 +9,58 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. Dictionary and template URLs pinned to commits (fix/89-pin-uris, issue #89)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that bundles the new templates. The firmware identity moves to
+`idf-cores3-parquet-v6.19` and `idf-waveshare-parquet-v2.13`. Both `dict`
+digests are unchanged. Both `desc` digests move, because the template embeds
+the dictionary URL.
+
+**What changed.**
+
+- The footer `dictionary_uri` (`kDictionaryUri`) and the template
+  `describedby` href are now the same raw GitHub URL at a full 40 hex commit,
+  no longer a blob URL on `main`. The bytes at the URL hash to `dict`.
+- New `kTemplateHref` in `telemetry_contract.h`, the raw published template at
+  a full commit whose bytes hash to `desc`. It is outside the template, so it
+  never moves `desc`. The footer carries it once #88 lands, nothing on the
+  wire carries it yet.
+- `pixi run pinned-uris-test` fails on a `main`, branch or tag URL, a short
+  sha, a commit that is not on `main` and a commit whose bytes miss the
+  digest.
+
+| Board | `dict` (unchanged) | New `desc` | Old `desc` |
+| --- | --- | --- | --- |
+| CoreS3 | `4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94` | `bb0ab0a3eaafb05e45bbbf5216194ab808110df92e6ee277c8ef2af6f2f314b0` | `1b7d969abb670579cd1f34f0bd7e224f66b120ed178fbb2fcf024e14a46c3f08` |
+| Waveshare | `6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb` | `7f2bbf5314ce8d6f4d0e5ee518991a9c3d43ab7b66d973e8a5921e811059872a` | `e6b32af089b5c0b8389999a09b4a81ffe36d15f908a2002765025f78853b7d32` |
+
+Published files, byte exact, SHA-256 equal to the new `desc`.
+
+- `docs/shared/templates/m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json`
+- `docs/shared/templates/waveshare-esp32-s3-sim7670g/6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json`
+
+The file paths keep their names because `dict` is unchanged. Only the bytes
+and `desc` move, and `index.json` maps the new `desc` values.
+
+| Board | `kDictionaryUri` | `kTemplateHref` |
+| --- | --- | --- |
+| CoreS3 | `https://raw.githubusercontent.com/walkthru-earth/aq-parquet/ada95144af0cf5191e95a35d0f80768fe58ac73b/firmware/esp-idf-cores3/bringup/telemetry_fields.inc` | `https://raw.githubusercontent.com/walkthru-earth/aq-parquet/1f37edf350ae5efab0caa59ab4ceedd07d0028e5/docs/shared/templates/m5stack-cores3/4f80c26cde8d7ea78c2160225d98386009a8651d9a049b4bf68a75da96015e94.json` |
+| Waveshare | `https://raw.githubusercontent.com/walkthru-earth/aq-parquet/ada95144af0cf5191e95a35d0f80768fe58ac73b/firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc` | `https://raw.githubusercontent.com/walkthru-earth/aq-parquet/1f37edf350ae5efab0caa59ab4ceedd07d0028e5/docs/shared/templates/waveshare-esp32-s3-sim7670g/6f567b38fecc165f544626168931b3dc3d674482da87ed78cb0bec5bf3dc6ceb.json` |
+
+**Why.** A URL on `main` moves on, so the bytes behind it stop matching the
+digest. A commit URL always serves the bytes the digest names.
+
+**What the app must do.**
+
+1. Copy both published files byte for byte into the bundled templates and pin
+   each full SHA-256 to the new `desc`. Drop the old `desc` entries.
+2. Resolve templates by `desc` first, then `dict`, as before. A board on
+   v6.19 or v2.13 reports the new `desc` prefix in `info.desc`.
+3. Show or follow `dictionary_uri` only as a link. Trust `dictionary_sha256`
+   and `desc`, never the URL. Files written before this change carry a blob
+   URL on `main`, which may have moved since.
+
 ## BREAKING. Board template over GET_DESCRIPTOR 0x11 and `info.desc` (fix/87-get-descriptor, issue #87)
 
 **Needs app update.** Every board needs a matched reflash with the app build
