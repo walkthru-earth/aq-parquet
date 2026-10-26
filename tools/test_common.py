@@ -18,7 +18,7 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     # The second build swaps crc32_update to the ROM routine's semantics.
-    for variant, extra in (("loop", []), ("rom", ["-DAQ_SYNC_ROM_CRC", "-I", str(root / "tools/rom_crc_host_fake")])):
+    for variant, extra in (("loop", []), ("rom", ["-DOS_SYNC_ROM_CRC", "-I", str(root / "tools/rom_crc_host_fake")])):
         with tempfile.TemporaryDirectory(prefix="aq-common-test-") as directory:
             executable = Path(directory) / f"common-test-{variant}"
             command = [

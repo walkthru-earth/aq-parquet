@@ -379,15 +379,15 @@ command existed.
 
 Any serial user can stop logging with it, so it never ships. Build a bench
 image only through the overlay `tools/idf-bench-stall-sdkconfig.defaults`,
-which `AQ_BENCH=stall` appends after the board defaults. The image lands in
+which `OS_BENCH=stall` appends after the board defaults. The image lands in
 its own `build/<variant>-bench-stall` directory, so the shipped
 `build/<variant>` sdkconfig never picks it up, and the flash script only
-writes it with the same `AQ_BENCH=stall`.
+writes it with the same `OS_BENCH=stall`.
 
 ```sh
-AQ_BENCH=stall pixi run waveshare-build logger
-AQ_BENCH=stall pixi run waveshare-flash <checked port> <full backup> logger
-AQ_BENCH=stall pixi run cores3-build
+OS_BENCH=stall pixi run waveshare-build logger
+OS_BENCH=stall pixi run waveshare-flash <checked port> <full backup> logger
+OS_BENCH=stall pixi run cores3-build
 ```
 
 Keep the bench ELF, since a core dump decodes only against the exact ELF

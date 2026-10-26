@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
 set(IDF_TARGET esp32s3)
 set(EXTRA_COMPONENT_DIRS "../common" "../common/runtime" "../common/connectivity" "../common/logger" "../common/location" "../common/sensors" "../common/power")
-set(AQ_VARIANT bringup)
+set(OS_VARIANT bringup)
 set(COMPONENTS aq_cores3)
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components/aq_cores3")
 set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
 set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/../../tools/idf-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/../../tools/idf-connectivity-sdkconfig.defaults;${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
-# Bench images only. tools/build-idf-board.sh sets it from AQ_BENCH and builds
+# Bench images only. tools/build-idf-board.sh sets it from OS_BENCH and builds
 # in a separate directory, so a shipped build never picks it up.
-set(AQ_SDKCONFIG_OVERLAY "" CACHE FILEPATH "Bench sdkconfig defaults appended last")
-if(AQ_SDKCONFIG_OVERLAY)
-    list(APPEND SDKCONFIG_DEFAULTS "${AQ_SDKCONFIG_OVERLAY}")
+set(OS_SDKCONFIG_OVERLAY "" CACHE FILEPATH "Bench sdkconfig defaults appended last")
+if(OS_SDKCONFIG_OVERLAY)
+    list(APPEND SDKCONFIG_DEFAULTS "${OS_SDKCONFIG_OVERLAY}")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/os_cxx_standard.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/os_source_paths.cmake")

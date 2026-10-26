@@ -24,8 +24,8 @@ def run_case(script: Path, fake_bin: Path, mode: str, source: Path) -> subproces
     environment = os.environ.copy()
     environment.update(
         PATH=f"{fake_bin}{os.pathsep}{environment['PATH']}",
-        AQ_FAKE_ESPTOOL_MODE=mode,
-        AQ_FAKE_SOURCE=str(source),
+        OS_FAKE_ESPTOOL_MODE=mode,
+        OS_FAKE_SOURCE=str(source),
     )
     return subprocess.run(
         [str(script), "--board", BOARD, "--port", "/dev/fake-checked-port"],
@@ -50,10 +50,10 @@ def main() -> None:
         (fake_bin / "python").write_text(
             "#!/bin/sh\n"
             "for arg do output=$arg; done\n"
-            "case \"$AQ_FAKE_ESPTOOL_MODE\" in\n"
+            "case \"$OS_FAKE_ESPTOOL_MODE\" in\n"
             "  fail) printf partial > \"$output\"; exit 8 ;;\n"
             "  short) printf short > \"$output\"; exit 0 ;;\n"
-            "  complete) cp \"$AQ_FAKE_SOURCE\" \"$output\" ;;\n"
+            "  complete) cp \"$OS_FAKE_SOURCE\" \"$output\" ;;\n"
             "  *) exit 9 ;;\n"
             "esac\n"
         )

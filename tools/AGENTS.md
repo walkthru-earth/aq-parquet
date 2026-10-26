@@ -21,7 +21,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | Per-file C++ dialect and source path map of an SDK fixture build, and every fixture entry point calling it without swallowing its exit | `check_idf_target.py --compile-dialect <build>`, `compile-dialect-test` |
 | One board built from two checkout paths gives the same images (SDK, CI job) | `repro-paths-check [board] [variant]`, `repro-paths-test` |
 | Native SDK and affected board builds | `idf-setup`, `cores3-build`, `waveshare-build [logger|diagnostic]` |
-| Bench only `parquet bench-stall` image, parser bounds and default-off guard | `AQ_BENCH=stall cores3-build` or `waveshare-build logger`, `logger-bench-stall-test` |
+| Bench only `parquet bench-stall` image, parser bounds and default-off guard | `OS_BENCH=stall cores3-build` or `waveshare-build logger`, `logger-bench-stall-test` |
 | Shared sensor drivers on fake buses | `pms-frame-test`, `ltr553-test`, `max17048-test` |
 | Battery health states, thresholds, debounce, settling and the boot Low or Critical tie | `battery-health-test` |
 | COREDUMP line once per saved core dump, NVS record and its read or write failures | `coredump-report-test` |
@@ -56,7 +56,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 
 - `.github/workflows/ci.yml` runs `pixi run gate` and the board image builds on
   every pull request. Keep the gate free of tasks that need hardware, Bluetooth,
-  a LAN peer or the SDK. Each gate task is bounded by `AQ_GATE_TASK_TIMEOUT`
+  a LAN peer or the SDK. Each gate task is bounded by `OS_GATE_TASK_TIMEOUT`
   (300 s), and the gate fails if a pixi `*-test` task is missing from its list.
   `CI result` is the only required check, so a new CI job must join its
   `needs` list, see `docs/shared/development.md#required-checks`.
