@@ -7,8 +7,9 @@ files, with no network. A main URL, a branch URL, a tag, a short sha, a blob
 URL, another path, a commit absent from the clone, a commit off HEAD, a commit
 whose bytes differ, a shallow clone and a describedby link that is not the
 dictionary URI must each fail with their own message. pin-uris must pin the
-commits that hold the bytes, refuse uncommitted content and change nothing on a
-second run. The firmware static_assert helpers in pinned_uri.h are compiled
+commits that hold the bytes, refuse an uncommitted change to any file it reads
+or writes (pinned files, digest headers, telemetry_template.h and
+telemetry_contract.h) and change nothing on a second run. The firmware static_assert helpers in pinned_uri.h are compiled
 with the same accepted and rejected URLs.
 """
 
@@ -171,6 +172,19 @@ def main() -> None:
         # A template changed on disk but not committed cannot be pinned.
         (repo / template.path).write_bytes((repo / template.path).read_bytes() + b" ")
         rejects(lambda: gate.write(repo), "needs the pinned files committed", "pin-uris with uncommitted content")
+        run(repo, "checkout", "-q", "--", template.path)
+        # Nor with any other file pin-uris reads or writes left uncommitted.
+        for board in published_templates.BOARDS:
+            for name in ("telemetry_contract.h", "telemetry_template.h", "telemetry_dictionary_digest.h",
+                         "telemetry_descriptor_digest.h"):
+                header = repo / board.firmware / name
+                original = header.read_bytes()
+                header.write_bytes(original + b"\n")
+                rejects(lambda: gate.write(repo), "needs the pinned files committed",
+                        f"pin-uris with uncommitted {board.name} {name}")
+                header.write_bytes(original)
+        gate.require(gate.write(repo) == [], "pin-uris runs once the headers are clean again")
+        (repo / template.path).write_bytes((repo / template.path).read_bytes() + b" ")
         # Committed bytes that do not hash to desc are refused, never pinned.
         stale = commit(repo, "stale template")
         rejects(lambda: gate.write(repo), "Commit the regenerated files", "pin-uris on bytes that miss desc")
