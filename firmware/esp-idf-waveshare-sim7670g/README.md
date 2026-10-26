@@ -63,7 +63,7 @@ pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<time
 pixi run waveshare-flash <checked-port> backup/waveshare-sim7670g-v2-flash-<timestamp>.bin diagnostic
 ```
 
-Keep the `parquet` Thing namespace, keys and value types. Since v2.10 (#93)
+Keep the `parquet` namespace, its `thing` key, keys and value types. Since v2.10 (#93)
 settings live in the `oscfg` namespace and nothing is copied from the old one.
 It starts empty after that reflash, so the pairing mode and PIN, the display
 flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its default

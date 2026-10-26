@@ -57,7 +57,7 @@ pixi run cores3-flash <checked-port> backup/m5stack-cores3-flash-<timestamp>.bin
 
 This uses pinned Pixi esptool and the validated `flash_args` to flash the
 verified build without an implicit rebuild or NVS erase. Keep the `parquet`
-Thing namespace, keys and types and existing partition offsets. Since v6.16
+namespace, its `thing` key, keys and types and existing partition offsets. Since v6.16
 (#93) settings live in the `oscfg` namespace and nothing is copied from the old
 one. It starts empty after that reflash, so the pairing mode and PIN, the
 display flag, Wi-Fi on, the SSID and password, the `lan.on` switch (back to its
