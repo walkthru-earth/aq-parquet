@@ -14,7 +14,8 @@ Source-checked 2026-09-28 for PCB revision **V2.0**, as confirmed by the owner. 
 | Battery gauge MAX17048 | SDA GPIO15, SCL GPIO16 on V2 | Logger adapter owns this I²C bus with explicit installed-battery configuration; V1 GPIO3/GPIO2 mapping is wrong here. A bounded USB-attached readback succeeded on 2026-09-30. |
 | Camera | V2 mapping includes XCLK GPIO39 and PCLK GPIO46 | Camera and TF card detect need a conflict check before use together |
 | RGB LED | GPIO38 | Logger implements startup/card/sensor state; visual operation unverified; no file-copy or durability claim |
-| SIM7670G, camera, GNSS | Onboard | Not initialized by the diagnostic or current logger adapter |
+| SIM7670G GNSS AT port | ESP TX GPIO18 to modem RXD, ESP RX GPIO17 from modem TXD, through the TXB0104 level shifter. Modem supply enable GPIO21, active high | Logger v2.17 owns `UART_NUM_2` at 115200 8N1 for GNSS AT queries only and latches GPIO21 high. It never drives GPIO21 low, because the pin ORs with the 4G DIP switch. GPIO45 (DTR, a strapping pin) and GPIO40 stay unconfigured. The diagnostic does not touch the modem |
+| SIM7670G data, camera | Onboard | Not initialized by the diagnostic or current logger adapter. No network, SIM, band, NVM, CFUN or reset command is sent |
 
 Waveshare identifies the module as ESP32-S3R8 with **16 MB flash and 8 MB PSRAM**. Its FAQ gives conflicting PSRAM-mode advice. The first diagnostic leaves PSRAM disabled. A separate 2026-09-28 OPI build booted on this unit, reported initialized physical/heap capacity of **8,388,608 bytes**, and passed four patterns over a 512 KiB allocation. The logger consequently selects **Quad/QIO flash with OPI PSRAM** (native `CONFIG_SPIRAM_MODE_OCT`; historical Arduino `qio_opi` SDK), checks initialized physical capacity before starting, and puts its bounded writer workspace in PSRAM. The full logger subsequently booted and wrote/read Parquet files; this establishes bounded operation, not all-address or endurance coverage. Evidence and image identities belong in [bench-verified.md](bench-verified.md). Do not reuse CoreS3's Quad-PSRAM setting.
 
@@ -23,6 +24,14 @@ Before any first flash write on another unit, run the root `ports`, `chip`, `fla
 The board's UART download and BOOT+RESET recovery are described in the [Waveshare FAQ](https://docs.waveshare.com/ESP32-S3-SIM7670G-4G/FAQ). Verify the actual port and recovery behavior on this V2 unit before treating CoreS3 serial-control observations as portable. Strapping pin GPIO46 is already used for card detect in the vendor example; do not add a pull or driver to it.
 
 The pictured PMS power connection uses the exposed 5 V and GND. Confirm the selected 5 V rail is present under the board's chosen USB/battery supply mode before attributing absent UART frames to the sensor. No board power measurement has been made here.
+
+### GNSS (logger v2.17, owner approved 2026-10-27)
+
+Pins come from the [V2.0 schematic](https://files.waveshare.com/wiki/ESP32-S3-A-SIM7670X-4G-HAT/ESP32-S3-A-SIM7670X-4G-V2.pdf) (SHA-256 `91877a6627b21acb8e20c08a7b3667ad4879a06d9883a878be1abfced57671ca`). The TXB0104 shifter is powered from the modem VDD_EXT rail, so the UART is silent until the modem is powered. UART0 is the console and UART1 the PMS5003T, so GNSS takes UART2.
+
+The board code only fills `opensensor::gnss::ReaderConfig` with these pins and a GPIO21 power callback. The reader task, the SIMCom dialect and the row rule live in `firmware/common/gnss` and `firmware/common/gnss_reader`. The task polls `AT+CGNSSPWR?` until the engine reports on, sends `AT+CGNSSPWR=1` when it is off, and then sends `AT+CGNSSINFO` about every 10 s, per the [SIM767XX AT manual](https://files.waveshare.com/wiki/SIM7670G-LTE-Cat-1-GNSS-HAT/SIM767XX_Series_AT_Command_Manual_V1.01.pdf). It does not wait for the `+CGNSSPWR: READY!` URC.
+
+Bench status. On 2026-10-27 module firmware V1.9.05 answered `+CGNSSPWR: 1` and the empty no-fix reply `+CGNSSINFO: ,,,,,,,,` indoors. No fixed line has been read from this unit yet, so the fixed field layout is taken from the AT manual and stays unverified on this firmware until a dated bench record in [bench-verified.md](bench-verified.md) shows one. The parser finds the latitude, N or S, longitude, E or W run wherever it sits, so a different number of leading fields still parses.
 
 The current logger has no external RTC adapter. UTC stays null after boot until an explicit host anchor or successful native Wi-Fi SNTP response arrives; GNSS/modem time is not substituted. The owner subsequently installed an 18650 and verified battery-only boot. The logger explicitly configures it as installed and samples MAX17048 cell voltage and estimated SOC; an I²C acknowledgement alone still would not establish battery presence. The V2 schematic routes ETA6098 `STAT` and solar-charger `CHRG` to indicator circuits without a verified ESP32 input, so the logger does not infer charging from voltage or USB attachment.
 

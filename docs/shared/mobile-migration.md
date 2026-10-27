@@ -9,6 +9,39 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## Moving Things write GNSS cells or nulls (yharby/gnss-moving-thing, issue #83)
+
+**Needs a matched reflash, app change is small.** Waveshare firmware moves to
+`idf-waveshare-parquet-v2.17`. Columns, field ids, LIVE keys, decimals,
+CONFIG keys and the schema and dictionary strings do not change. The `dict`
+and `desc` digests do not move. CoreS3 stays at `idf-cores3-parquet-v6.22`.
+
+**What changed.**
+
+- `thing.mobility=moving` now changes what each row holds. A fixed Thing still
+  writes the configured cell with `location_source` 1. A moving Waveshare V2
+  writes the GNSS cell coarsened to `location.resolution` with
+  `location_source` 2 while the fix is at most 15 s old, and four location
+  nulls (`location_source` null too) otherwise. A moving Thing never writes `location.cell`. A
+  moving CoreS3 has no receiver, so all its rows are null.
+- A GNSS cell change does not split a file. One file from a moving Thing holds
+  many cells. A change of `thing.mobility`, `location.cell`,
+  `location.resolution` or `location.country` still splits.
+- No raw latitude or longitude is logged, stored or sent. Only the H3 cell
+  leaves the parser.
+- New serial lines on Waveshare, `OS GNSS state=<unknown|no-reply|off|on|fix|no-fix>
+  uart=2 tx=18 rx=17` on each state change, `OS ERROR operation=gnss-start
+  reason=<n>` when the reader cannot start and `OS ERROR
+  operation=gnss-power-on` when the modem supply cannot be switched on. None
+  carries a position.
+
+**What the app must do.** Read `location_source` per row, never per file, and
+draw a moving Thing as a track of cells. Treat null location rows from a
+moving Thing as no fix, not as an error, and never fill them from the
+configured cell. Show the owner that `moving` without a receiver writes no
+location. The phone cell path (`location.phone_cell`, source 3) is still
+reserved.
+
 ## LAN OTA requests and a boot self test (yharby/ota-software, issue #40)
 
 **No app update needed.** Sync, CONFIG, LIVE and the file list do not change.

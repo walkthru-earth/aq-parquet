@@ -66,8 +66,10 @@ second footer key, `geo`, holds compact GeoParquet 2.0 JSON naming `geometry`
 as the primary column, with a bbox only when the file has a location. Firmware
 derives the centre from the published cell, no raw GPS is stored. The
 `opensensor` footer key carries no location (#88). Country is not written to
-the file and is not inferred from H3. Today every located row has
-`location_source` 1, because the firmware has no GNSS or phone path yet.
+the file and is not inferred from H3. A fixed Thing writes
+`location_source` 1. A moving Thing with a GNSS hook writes 2 with a fresh fix
+and four nulls without one ([moving Things](time-and-location.md#moving-things-and-gnss)).
+No phone path writes 3 yet.
 
 Acquisition snapshots cell, maximum precision and country into each queued row.
 The worker splits the RAM batch and open file before appending a different
