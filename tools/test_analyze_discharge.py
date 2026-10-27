@@ -355,6 +355,32 @@ def test_overlapping_polls(work: Path) -> None:
                            ("capture.log", f"PARQUET BEGIN boot={e}\n" + ok_low + close)])
     require([x["boot"] for x in boots] == [None, e], f"a held one line poll stays apart, {boots}")
 
+    # Card out, loop boots print no BEGIN. Two loop boots of one log, both
+    # held by a later named capture, stay two boots, since boots of one log
+    # never join, and every close counts.
+    rom = "ESP-ROM:esp32s3-20210327\n"
+    boots = ad.parse_logs([("loop.log", rom + close + rom + close),
+                           ("capture.log", f"{rom}PARQUET BEGIN boot={e}\nPOWER STATE state=low mv=3480\n"
+                                           + close + "PARQUET READY name=x rows=2 row_groups=1 first=1 last=2\n")])
+    require([x["source"] for x in boots] == ["loop.log", "loop.log, capture.log"], f"one log stays split, {boots}")
+    require(sum(x["closed"] for x in boots) == 2, f"{boots}")
+    # The capture holds an earlier boot of its own log as well. That boot is
+    # not taken in either.
+    boots = ad.parse_logs([("ble-log-1.txt", "POWER STATE state=low mv=3480\n"
+                                             "POWER STATE state=critical mv=3290 action=finalize\n"),
+                           ("capture.log", rom + close + f"{rom}PARQUET BEGIN boot={e}\n"
+                                           "POWER STATE state=low mv=3480\n" + close)])
+    require([x["source"] for x in boots] == ["ble-log-1.txt, capture.log", "capture.log"],
+            f"a boot of the capture's own log stays apart, {boots}")
+    require([x["boot"] for x in boots] == [e, None] and [x["closed"] for x in boots] == [1, 1], f"{boots}")
+    # The target comes from a third log, so the two loop boots share no log
+    # with it. Once it takes in one of them, the other is from a log it holds.
+    boots = ad.parse_logs([("loop.log", rom + close + rom + close),
+                           ("ble-log-1.txt", ok_low),
+                           ("capture.log", f"{rom}PARQUET BEGIN boot={e}\n" + ok_low + close)])
+    require([x["source"] for x in boots] == ["loop.log", "loop.log, ble-log-1.txt, capture.log"],
+            f"only one boot of a log is taken in, {boots}")
+
 
 def test_clean_single_boot(work: Path) -> None:
     """One boot discharging to cutoff, then a recharge boot hours later, with nothing to flag."""

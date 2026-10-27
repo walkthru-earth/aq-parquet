@@ -424,12 +424,17 @@ def merge_boots(chunks: list[dict]) -> list[dict]:
             target["events"] = list(new)
             # Polls without an id that share no line stay apart until a piece
             # holds them all, so it takes in every one of them, not only the
-            # newest, or an older poll's lines would count twice.
+            # newest, or an older poll's lines would count twice. Boots of one
+            # log never join, so it skips any boot from a log the target
+            # already holds, checked as the target grows.
+            taken = {chunk["sources"][0], *target["sources"]}
             for boot in [b for b in merged if b is not target and b["boot"] is None
-                         and chunk["sources"][0] not in b["sources"]
                          and len(b["events"]) >= 2 and contains(new, b["events"])]:
+                if taken & set(boot["sources"]):
+                    continue
                 merged.remove(boot)
                 target["sources"] = [*boot["sources"], *target["sources"]]
+                taken.update(boot["sources"])
         elif not contains(old, new):
             target["events"] = old + new[overlap(old, new):]
         target["boot"] = target["boot"] or chunk["boot"]
