@@ -133,6 +133,9 @@ namespace bme = ossensor::bme280;
 static_assert(bme::kColumns.size() == 3);
 constexpr auto kSlots = ossensor::resolve(bme::kColumns, std::span{kTable});
 static_assert(kSlots == ossensor::Slots<3>{1, 2, 4});
+// A module column at index 0, so a search that skips the first row fails.
+constexpr Name kFirst[] = {{"air_pressure_hpa"}, {"bme280_status"}, {"sequence"}, {"air_temperature_c"}};
+static_assert(ossensor::resolve(bme::kColumns, std::span{kFirst}) == ossensor::Slots<3>{1, 3, 0});
 static_assert(std::to_underlying(bme::InitError::not_found) == 0);
 static_assert(std::to_underlying(bme::InitError::bad_chip_id) == 1);
 static_assert(bme::kStatusColumn == bme::Column::bme280_status);

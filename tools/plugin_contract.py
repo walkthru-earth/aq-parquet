@@ -16,13 +16,18 @@ schemas. It then expands each board's segments and requires (Option A) that
   against its own history and against the base branch lock, and names only
   releases that docs/shared/mobile-migration.md names.
 
-The board .inc files stay frozen and hand written. Nothing here writes them.
+The board .inc files stay frozen. The gate never rewrites them.
+--write-board writes them once for a new board only (section 11 step 7). It
+renders telemetry_fields.inc, telemetry_semantics.inc, telemetry_classes.inc
+and a first shipped.lock from the new board.json, and refuses when any of
+the four already exists. From then on they are frozen like any other.
 
 Each shared and board local module manifest also has a checked-in C++ header
 beside it, <id>_module.h, with the module's Column enum, kColumns, status
 constants and InitError (README section 10). The gate requires every header
 to equal what module_header() renders, byte for byte, and no header without
-a manifest. --write-headers rewrites them from the manifests.
+a manifest. --write-headers rewrites them from the manifests, and removes an
+orphan only when it starts with the generated preamble.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ COMMON_MODULES = Path("firmware/common/sensors/modules")
 BOARD_GLOB = "firmware/esp-idf-*/*/board.json"
 FIELDS_GLOB = "firmware/esp-idf-*/*/telemetry_fields.inc"
 LOCK = "shipped.lock"
+SENSOR_GLUE = Path("firmware/common/logger/src/os_sensor_module.h")
 
 # Template column types, as tools/board_template.py maps them.
 PHYSICAL_TYPES = {"Int32": "int32", "Int64": "int64", "Float": "float"}
@@ -251,6 +257,10 @@ def load_module(root: Path, path: Path, checks: dict) -> Module:
     manifest = load_json(path)
     validate(checks["module"], manifest, str(path.relative_to(root)))
     module = Module(path, manifest)
+    # Checked on load, so it fails before any board row that names the module.
+    require(module.id not in reserved_ids(root), f"{path.relative_to(root)}: module id {module.id!r} is reserved, "
+                                                 f"ossensor::{module.id} would collide with a name in {SENSOR_GLUE} "
+                                                 f"or a namespace it uses")
     names = [c["name"] for cols in manifest["segments"].values() for c in cols]
     require(len(names) == len(set(names)), f"{module.id}: a column name repeats inside the module")
     status = manifest.get("status")
@@ -605,10 +615,58 @@ this thread_local throw true try typedef typeid typename union unsigned using vi
 while xor xor_eq
 """.split())
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
+# Every generated header starts with these bytes. Only a file that does is
+# ever removed or overwritten, so a hand written *_module.h is never lost.
+GENERATED_HEAD = b"// clang-format off\n// GENERATED from "
+# Namespaces a module namespace ossensor::<id> would shadow inside its own
+# header or inside os_sensor_module.h, on top of the names that file declares.
+SHADOWED = frozenset({"ossensor", "std", "telemetry", "oslogger"})
+TOKEN = re.compile(r"[A-Za-z_]\w*|\S")
 
 
 def header_path(module: Module) -> Path:
     return module.path.parent / f"{module.id}{HEADER_SUFFIX}"
+
+
+def reserved_ids(root: Path) -> frozenset[str]:
+    """Lower case names declared directly in namespace ossensor by
+    os_sensor_module.h, such as detail, resolve and init_error, plus SHADOWED.
+    A module id equal to one would collide with ossensor::<id>.
+
+    It is a token scan, not a C++ parser. At the ossensor block's own brace
+    depth and outside parentheses it takes a name followed by "(" (a
+    function) or preceded by namespace, struct, class, union or using. Upper
+    case k and CamelCase names cannot match a module id. It fails closed when
+    the braces do not balance or detail and resolve are not found. A lower
+    case variable, plain enum or concept added there needs this scan
+    extended."""
+    code = re.sub(r"//[^\n]*|/\*.*?\*/", " ", (root / SENSOR_GLUE).read_text(), flags=re.DOTALL)
+    tokens = TOKEN.findall(code)
+    names: set[str] = set()
+    depth = parens = 0
+    inside = None  # brace depth of the ossensor block, once open
+    for index, token in enumerate(tokens):
+        following = tokens[index + 1] if index + 1 < len(tokens) else ""
+        previous = tokens[index - 1] if index else ""
+        if token == "{":
+            depth += 1
+            if inside is None and tokens[index - 2:index] == ["namespace", "ossensor"]:
+                inside = depth
+        elif token == "}":
+            if depth == inside:
+                inside = None
+            depth -= 1
+        elif token == "(":
+            parens += 1
+        elif token == ")":
+            parens -= 1
+        elif inside is not None and depth == inside and parens == 0 and IDENTIFIER.match(token) and \
+                token not in CXX_KEYWORDS and (following == "(" or previous in ("namespace", "struct", "class",
+                                                                                "union", "using")):
+            names.add(token)
+    require(inside is None and depth == 0, f"{SENSOR_GLUE}: braces do not balance")
+    require("detail" in names and "resolve" in names, f"{SENSOR_GLUE}: namespace ossensor declarations not found")
+    return frozenset(names | SHADOWED)
 
 
 def identifier(name: str, where: str) -> str:
@@ -690,13 +748,26 @@ def header_modules(common: dict[str, Module], boards: list[Board]) -> list[Modul
     return sorted(out, key=lambda m: m.path)
 
 
-def check_headers(root: Path, modules: list[Module], write: bool = False) -> list[str]:
+def header_roots(root: Path, modules: list[Module], boards: list[Board]) -> set[Path]:
+    """Every folder that holds or held module manifests. A board's modules/
+    folder counts after it drops its last local module."""
+    return {root / COMMON_MODULES, *(b.directory / "modules" for b in boards), *(m.path.parent.parent for m in modules)}
+
+
+def generated(path: Path) -> bool:
+    with path.open("rb") as handle:
+        return handle.read(len(GENERATED_HEAD)) == GENERATED_HEAD
+
+
+def check_headers(root: Path, modules: list[Module], boards: list[Board], write: bool = False) -> list[str]:
     expected = {header_path(m): module_header(root, m) for m in modules}
-    roots = {m.path.parent.parent for m in modules}
-    found = {p for directory in roots for p in directory.glob(f"*/*{HEADER_SUFFIX}")}
+    found = {p for directory in header_roots(root, modules, boards) if directory.is_dir()
+             for p in directory.rglob(f"*{HEADER_SUFFIX}")}
     orphans = sorted(found - set(expected))
     for path in orphans:
         relative = path.relative_to(root).as_posix()
+        require(generated(path), f"{relative}: hand written file with the generated {HEADER_SUFFIX} suffix and no "
+                                 f"module manifest, rename it, nothing removes it")
         if write:
             path.unlink()
             print(f"REMOVED {relative}, no module manifest beside it", flush=True)
@@ -708,6 +779,8 @@ def check_headers(root: Path, modules: list[Module], write: bool = False) -> lis
         relative = path.relative_to(root).as_posix()
         if write:
             if not path.is_file() or path.read_bytes() != text.encode():
+                require(not path.exists() or generated(path),
+                        f"{relative}: hand written file where the generated header goes, nothing overwrites it")
                 path.write_bytes(text.encode())
                 print(f"WROTE {relative}", flush=True)
         else:
@@ -750,7 +823,7 @@ def check(root: Path = ROOT, base_lock: BaseLock | None = None,
     live_keys_across(expanded)
     modules = header_modules(common, boards)
     if write_headers:
-        check_headers(root, modules, write=True)
+        check_headers(root, modules, boards, write=True)
     results = []
     for board in boards:
         columns = expanded[board.manifest["board"]]
@@ -758,9 +831,121 @@ def check(root: Path = ROOT, base_lock: BaseLock | None = None,
         results.append(Result(board.manifest["board"], len(columns), len(newest["segments"]), newest["dict"]))
     # After the board files, so a manifest edit that also moves a board row
     # names that row first.
-    headers = check_headers(root, modules)
+    headers = check_headers(root, modules, boards)
     examples = check_examples(root, checks, common, cap)
     return results, examples, headers
+
+
+# Write mode for a new board (README section 11 step 7). Option A keeps every
+# board file frozen, so this writes a board's files once and never again.
+
+NEW_BOARD_FILES = ("telemetry_fields.inc", "telemetry_semantics.inc", "telemetry_classes.inc", LOCK)
+WRITE_BOARD = "pixi run plugin-new-board"
+
+
+def class_value(column: Column, value: int) -> str:
+    """A boolean column ({boolean} unit) prints its 0 and 1 classes as false
+    and true, as the shipped telemetry_classes.inc files do."""
+    if column.spec.get("unit") == "{boolean}":
+        require(value in (0, 1), f"{column.name}: boolean class value {value!r} is not 0 or 1")
+        return "true" if value else "false"
+    return number(value, column.name)
+
+
+def board_texts(root: Path, board: Board, columns: list[Column], checks: dict) -> dict[str, bytes]:
+    """The four files of a new board. Each FIELD, SEM and CLASS row is the one
+    check_board() compares, so the gate accepts them as written."""
+    source = board.path.resolve().relative_to(root.resolve()).as_posix()
+    once = [f"// Written once from {source} by `{WRITE_BOARD}`.",
+            "// Hand kept from then on. The plugin gate compares every row with the",
+            "// manifests, and nothing rewrites this file."]
+    fields = [
+        "// FIELD(name, physical_type, procedure, unit, validity, live_key, decimals).",
+        *once,
+        "// live_key is the short LIVE JSON key, or \"\" for fields that stay out of",
+        "// LIVE. decimals is the number of digits after the point when a Float",
+        "// prints, and 0 for integer fields. Both are part of the dict digest.",
+        "// Parquet/Iceberg field_id = 1-based order of the FIELD entries below.",
+        "// Append new fields only, never reorder, remove or reuse a position.",
+        *(field_row(c) for c in columns),
+    ]
+    semantics = [
+        "// SEM(name, ucum, role, cf_standard_name, aggregate, plausible_min,",
+        "//     plausible_max, settle_s, valid_when, property, sensor_vendor,",
+        "//     sensor_model).",
+        *once,
+        "// One row per FIELD row in telemetry_fields.inc, same order, same name.",
+        "// Not part of the dict digest, which hashes telemetry_fields.inc only.",
+        *(sem_row(c) for c in columns),
+    ]
+    subsets = board.manifest.get("class_subsets", {})
+    classes_text = [
+        "// CLASS(column, value, name, nodata).",
+        *once,
+        "// One row per value of each code and boolean column, grouped by column",
+        "// in value order. value is the manifest value. The board code may name",
+        "// it by its enum later, the gate compares names and nodata only.",
+        *(f"CLASS({c.name}, {class_value(c, k['value'])}, {literal(k['name'], c.name)}, "
+          f"{'true' if k.get('nodata', False) else 'false'})" for c in columns for k in classes(c, subsets)),
+    ]
+    texts = {name: ("\n".join(lines) + "\n").encode() for name, lines in
+             zip(NEW_BOARD_FILES, (fields, semantics, classes_text))}
+    for index, column in enumerate(columns):
+        template_column(column, index + 1, subsets)
+    rows = inc_rows(texts["telemetry_fields.inc"].decode(), "FIELD")
+    require(rows == [field_row(c) for c in columns], f"{board.manifest['board']}: a rendered FIELD row did not parse")
+    require(inc_rows(texts["telemetry_semantics.inc"].decode(), "SEM") == [sem_row(c) for c in columns],
+            f"{board.manifest['board']}: a rendered SEM row did not parse")
+    require(class_rows(texts["telemetry_classes.inc"].decode()) ==
+            [(c.name, k["name"], k.get("nodata", False)) for c in columns for k in classes(c, subsets)],
+            f"{board.manifest['board']}: a rendered CLASS row did not parse")
+    lock = {"board": board.manifest["board"], "releases": [{
+        "dict": hashlib.sha256(texts["telemetry_fields.inc"]).hexdigest(),
+        "rows": len(columns),
+        "segments": lock_segments(columns, rows),
+    }]}
+    validate(checks["lock"], lock, f"{source} {LOCK}")
+    texts[LOCK] = (json.dumps(lock, indent=2) + "\n").encode()
+    return texts
+
+
+def write_board(root: Path, path: Path) -> list[str]:
+    """Write the four files of the new board at path, a board.json. Refuse
+    when any of them exists, before writing anything, so an existing board
+    file or lock is never touched."""
+    root = root.resolve()
+    path = path.resolve()
+    boards = {p.resolve() for p in root.glob(BOARD_GLOB)}
+    require(path in boards, f"{path}: not a board manifest, write mode takes {BOARD_GLOB} under {root}")
+    targets = [path.parent / name for name in NEW_BOARD_FILES]
+    present = [t.relative_to(root).as_posix() for t in targets if t.exists() or t.is_symlink()]
+    require(not present, f"refusing to write a board file that exists, {', '.join(present)}. Board files are "
+                         f"written once for a new board, then frozen (Option A)")
+    checks = validators(root)
+    common = common_modules(root, checks)
+    cap = max_columns(root)
+    board = load_board(root, path, checks, common)
+    label = board.manifest["board"]
+    others = [load_board(root, p, checks, common) for p in sorted(root.glob(BOARD_GLOB)) if p.resolve() != path]
+    require(label not in {b.manifest["board"] for b in others}, f"{label}: the board slug already exists")
+    columns = expand(board, common)
+    cross_rules(label, columns, board, cap)
+    live_keys_across({**{b.manifest["board"]: expand(b, common) for b in others}, label: columns})
+    texts = board_texts(root, board, columns, checks)
+    created: list[Path] = []
+    try:
+        for name, data in texts.items():
+            # Exclusive create, so a file that appeared since the check above
+            # is still never overwritten.
+            with (path.parent / name).open("xb") as handle:
+                created.append(path.parent / name)
+                handle.write(data)
+    except BaseException:
+        # Leave no partial board. Remove only what this run created.
+        for made in created:
+            made.unlink(missing_ok=True)
+        raise
+    return [(path.parent / name).relative_to(root).as_posix() for name in texts]
 
 
 def main() -> None:
@@ -768,7 +953,20 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--write-headers", action="store_true",
                         help="rewrite each module's generated C++ header from its manifest, then check")
+    parser.add_argument("--write-board", type=Path, metavar="BOARD_JSON",
+                        help="write telemetry_*.inc and a first shipped.lock beside a new board.json, "
+                             "refusing when any of them exists")
     args = parser.parse_args()
+    if args.write_board is not None:
+        written = write_board(args.root, args.write_board)
+        for relative in written:
+            print(f"WROTE {relative}", flush=True)
+        digest = hashlib.sha256((args.root.resolve() / written[0]).read_bytes()).hexdigest()
+        print(f"dict {digest}. These files are now frozen. Next add telemetry_contract.h, the digest headers, "
+              f"the published template, a mobile migration entry naming the dict, the LIVE fixture and the "
+              f"pinned URIs, as docs/shared/board-porting.md lists. Run `pixi run plugin-headers` when the board "
+              f"has local modules, then `pixi run plugin-contract`", flush=True)
+        return
     results, examples, headers = check(args.root, write_headers=args.write_headers)
     for r in results:
         print(f"PASS {r.board} {r.columns} columns in {r.segments} segments reproduce FIELD, SEM, CLASS and the "

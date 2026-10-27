@@ -51,7 +51,7 @@ def scratch_copy(scratch: Path) -> Path:
     out = scratch / "repo"
     for directory in (gate.PLUGINS, gate.STAC, gate.TEMPLATES, gate.COMMON_MODULES):
         shutil.copytree(ROOT / directory, out / directory)
-    for path in (gate.MIGRATION, gate.WRITER, gate.SYSTEM_MODULE):
+    for path in (gate.MIGRATION, gate.WRITER, gate.SYSTEM_MODULE, gate.SENSOR_GLUE):
         (out / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / path, out / path)
     for board in (CORES3, WAVESHARE):
@@ -378,6 +378,227 @@ def main() -> None:
         gate.require((root / identity_header).is_file(), "the write path restored the deleted header")
         shutil.rmtree(root)
         print("PASS the write path regenerates, removes the orphan, then the check passes", flush=True)
+
+        # Only a file that starts with the generated preamble is ever removed
+        # or overwritten. A hand written *_module.h fails in both modes and stays.
+        handmade = gate.COMMON_MODULES / "handmade/handmade_module.h"
+
+        def hand_written(root: Path) -> None:
+            (root / handmade).parent.mkdir()
+            (root / handmade).write_text("#pragma once\n// hand written module code\n")
+
+        mutate(scratch, hand_written, "hand written file with the generated _module.h suffix",
+               "a hand written orphan module header")
+        root = scratch_copy(scratch)
+        hand_written(root)
+        rejects(lambda: gate.check(root, no_base, write_headers=True), "nothing removes it",
+                "a hand written orphan under the write path")
+        gate.require((root / handmade).read_text() == "#pragma once\n// hand written module code\n",
+                     "the write path left the hand written orphan alone")
+        (root / handmade).unlink()
+        (root / identity_header).write_text("#pragma once\n// hand written in place of the generated header\n")
+        rejects(lambda: gate.check(root, no_base, write_headers=True), "nothing overwrites it",
+                "a hand written file where a generated header goes, under the write path")
+        gate.require((root / identity_header).read_text().endswith("in place of the generated header\n"),
+                     "the write path did not overwrite the hand written file")
+        shutil.rmtree(root)
+        print("PASS the write path never removes or overwrites a hand written module header", flush=True)
+
+        # The orphan scan covers a header straight under modules/ and a board
+        # modules/ folder whose last local module is gone.
+        def loose(root: Path) -> None:
+            shutil.copy(root / pmsa003_header, root / gate.COMMON_MODULES / "loose_module.h")
+
+        mutate(scratch, loose, "generated module header without a module manifest",
+               "a generated header straight under modules/")
+        root = scratch_copy(scratch).resolve()
+        checks = gate.validators(root)
+        common = gate.common_modules(root, checks)
+        boards = [gate.load_board(root, path, checks, common) for path in sorted(root.glob(gate.BOARD_GLOB))]
+        for b in boards:
+            if b.directory == root / WAVESHARE:
+                b.modules.clear()  # as if board.json dropped its last local module
+        modules = gate.header_modules(common, boards)
+        rejects(lambda: gate.check_headers(root, modules, boards), "waveshare_module.h: generated module header "
+                "without a module manifest", "a header left behind by a board's last local module")
+        with contextlib.redirect_stdout(io.StringIO()) as written:
+            gate.check_headers(root, modules, boards, write=True)
+        gate.require(not (root / identity_header).exists() and "REMOVED" in written.getvalue(),
+                     "the write path removed the header the board no longer lists")
+        shutil.rmtree(root)
+        print("PASS rejects then removes a header whose board dropped its last local module", flush=True)
+
+        # A module id that names something in namespace ossensor would collide
+        # with ossensor::<id> (#127 review).
+        reserved = gate.reserved_ids(ROOT)
+        gate.require({"detail", "resolve", "init_error", "std", "telemetry", "oslogger"} <= reserved,
+                     f"reserved ids come from os_sensor_module.h, {sorted(reserved)}")
+
+        def module_id(new: str):
+            def apply(root: Path) -> None:
+                old = root / gate.COMMON_MODULES / "sht20"
+                edit_json(old.relative_to(root) / "module.json", lambda d: d.update(id=new))(root)
+                shutil.move(old, old.parent / new)
+                (old.parent / new / "sht20_module.h").unlink()
+                text = (root / CORES3 / "board.json").read_text().replace('"sht20"', f'"{new}"')
+                (root / CORES3 / "board.json").write_text(text)
+            return apply
+
+        for name in ("detail", "resolve", "std"):
+            mutate(scratch, module_id(name), f"module id {name!r} is reserved", f"a module id {name}")
+        # A name os_sensor_module.h adds later is reserved with no list to edit.
+        mutate(scratch, both(module_id("write_row"), replace_text(
+            gate.SENSOR_GLUE, "namespace detail {", "void write_row();\nnamespace detail {")),
+               "module id 'write_row' is reserved", "a module id a new ossensor function takes")
+        root = scratch_copy(scratch)
+        module_id("write_row")(root)
+        # The renamed module changes the lock segment names, so a free id
+        # gets past every manifest rule and fails at the lock.
+        rejects(lambda: gate.check(root, no_base), "segments differ from the board manifest",
+                "a free module id passing the reserved rule")
+        shutil.rmtree(root)
+        print("PASS a free module id passes the reserved rule and fails only at the lock", flush=True)
+
+        # Write mode for a new board (#17 step 7), the section 9 weather
+        # example with the example BME280 as a board local module.
+        new_board = Path("firmware/esp-idf-example-weather-s3/app")
+
+        def weather(root: Path) -> None:
+            directory = root / new_board
+            (directory / "modules/bme280").mkdir(parents=True)
+            shutil.copy(root / gate.EXAMPLES / "bme280.module.json", directory / "modules/bme280/module.json")
+            document = read(root / gate.EXAMPLES / "weather.board.json")
+            document["local_modules"] = ["modules/bme280/module.json"]
+            (directory / "board.json").write_text(json.dumps(document, indent=2) + "\n")
+
+        root = scratch_copy(scratch)
+        weather(root)
+        board_json = root / new_board / "board.json"
+        written = gate.write_board(root, board_json)
+        gate.require(written == [(new_board / n).as_posix() for n in gate.NEW_BOARD_FILES],
+                     f"write mode wrote the four board files, {written}")
+        files = {n: (root / new_board / n).read_bytes() for n in gate.NEW_BOARD_FILES}
+        weather_lock = json.loads(files[gate.LOCK])
+        digest = gate.hashlib.sha256(files["telemetry_fields.inc"]).hexdigest()
+        gate.require(weather_lock["board"] == "example-weather-s3" and len(weather_lock["releases"]) == 1
+                     and weather_lock["releases"][0]["dict"] == digest and "baseline" not in weather_lock["releases"][0],
+                     "the first lock has one release at the written dict")
+        gate.require([(s["module"], s["segment"]) for s in weather_lock["releases"][0]["segments"]] ==
+                     [(s["module"], s["segment"]) for s in read(root / gate.EXAMPLES / "weather.board.json")["segments"]],
+                     "the first lock lists the board segments in order")
+        rows = files["telemetry_fields.inc"].decode().splitlines()
+        gate.require(rows.count("FIELD(bme280_status, Int32, bme280, \"code\", always, \"\", 0)") == 1,
+                     "the BME280 status FIELD row is written")
+        gate.require('CLASS(bme280_status, 0, "missing", true)' in files["telemetry_classes.inc"].decode(),
+                     "the BME280 status classes are written")
+        # The full gate accepts every written row and the lock. Without a
+        # migration entry it stops at the lock, and with one it stops only at
+        # the template the new board has not published yet.
+        rejects(lambda: gate.check(root, no_base), f"example-weather-s3: {gate.MIGRATION} never names dict {digest}",
+                "a written board with no migration entry")
+        notes = root / gate.MIGRATION
+        notes.write_text(notes.read_text() + f"\n## Example weather board\n\nNew dict `{digest}`.\n")
+        rejects(lambda: gate.check(root, no_base), f"example-weather-s3: no published template for dict {digest}",
+                "a written board, which passes FIELD, SEM, CLASS and the lock")
+        print("PASS write mode writes the weather board, and the gate accepts its rows and first lock", flush=True)
+
+        # Once written, the board files are frozen. A second run refuses and
+        # changes nothing, and an existing lock alone blocks every write.
+        rejects(lambda: gate.write_board(root, board_json), "refusing to write a board file that exists",
+                "a second write of the same board")
+        gate.require({n: (root / new_board / n).read_bytes() for n in gate.NEW_BOARD_FILES} == files,
+                     "a refused write changed no board file")
+        for name in gate.NEW_BOARD_FILES:
+            for other in gate.NEW_BOARD_FILES:
+                (root / new_board / other).unlink(missing_ok=True)
+            (root / new_board / name).write_bytes(b"kept\n")
+            rejects(lambda: gate.write_board(root, board_json), f"{(new_board / name).as_posix()}. Board files",
+                    f"a write over an existing {name}")
+            gate.require((root / new_board / name).read_bytes() == b"kept\n", f"a refused write kept {name}")
+            gate.require([n for n in gate.NEW_BOARD_FILES if (root / new_board / n).exists()] == [name],
+                         f"a write refused for {name} wrote no other file")
+        print("PASS write mode refuses any existing board file, an existing lock included, and writes nothing",
+              flush=True)
+        for name in gate.NEW_BOARD_FILES:
+            (root / new_board / name).unlink(missing_ok=True)
+
+        # A lock that appears after the exists check is still never
+        # overwritten, because each file opens for exclusive create.
+        render = gate.board_texts
+
+        def racing(*args, **kwargs):
+            (root / new_board / gate.LOCK).write_bytes(b"raced\n")
+            return render(*args, **kwargs)
+
+        gate.board_texts = racing
+        try:
+            try:
+                gate.write_board(root, board_json)
+            except FileExistsError:
+                pass
+            else:
+                raise AssertionError("a lock created during the write was overwritten")
+        finally:
+            gate.board_texts = render
+        gate.require((root / new_board / gate.LOCK).read_bytes() == b"raced\n", "a racing lock is kept")
+        gate.require([n for n in gate.NEW_BOARD_FILES if (root / new_board / n).exists()] == [gate.LOCK],
+                     "a failed write removed the files it created and left no partial board")
+        print("PASS write mode never overwrites a lock that appears during the write and leaves no partial board",
+              flush=True)
+        (root / new_board / gate.LOCK).unlink()
+
+        # Write mode takes a board manifest at firmware/esp-idf-*/*/board.json
+        # only. Any other board.json in the repo is refused, nothing written.
+        for elsewhere in (Path("docs/not-a-board"), Path(".")):
+            (root / elsewhere).mkdir(parents=True, exist_ok=True)
+            stray = read(board_json)
+            stray["board"] = "example-stray"
+            (root / elsewhere / "board.json").write_text(json.dumps(stray, indent=2) + "\n")
+            shutil.copytree(root / new_board / "modules", root / elsewhere / "modules")
+            rejects(lambda: gate.write_board(root, root / elsewhere / "board.json"), "not a board manifest",
+                    f"a board.json at {elsewhere.as_posix()}")
+            gate.require(not any((root / elsewhere / n).exists() for n in gate.NEW_BOARD_FILES),
+                         f"a refused write at {elsewhere.as_posix()} wrote nothing")
+            (root / elsewhere / "board.json").unlink()
+            shutil.rmtree(root / elsewhere / "modules")
+        print("PASS write mode refuses a board.json outside firmware/esp-idf-*/*/", flush=True)
+
+        # Boolean columns print false and true, as the shipped files do. Each
+        # boolean CLASS row rendered for CoreS3 is a row of its shipped file.
+        resolved = root.resolve()
+        checks = gate.validators(resolved)
+        common = gate.common_modules(resolved, checks)
+        cores3 = gate.load_board(resolved, resolved / CORES3 / "board.json", checks, common)
+        rendered = gate.board_texts(resolved, cores3, gate.expand(cores3, common), checks)
+        flags = [line for line in rendered["telemetry_classes.inc"].decode().splitlines()
+                 if line.startswith("CLASS(") and line.split(", ")[1] in ("false", "true")]
+        shipped = (resolved / CORES3 / "telemetry_classes.inc").read_text().splitlines()
+        gate.require(len(flags) >= 4 and all(line in shipped for line in flags),
+                     f"boolean CLASS rows match the shipped CoreS3 rows, {flags}")
+        print("PASS write mode prints boolean classes as false and true like the shipped boards", flush=True)
+
+        # Refusals that need the manifests.
+        for path in (CORES3, WAVESHARE):
+            before = {n: (root / path / n).read_bytes() for n in BOARD_FILES}
+            rejects(lambda: gate.write_board(root, root / path / "board.json"),
+                    "refusing to write a board file that exists", f"a write over the shipped {path.parent.name}")
+            gate.require({n: (root / path / n).read_bytes() for n in BOARD_FILES} == before,
+                         f"a refused write left {path.parent.name} unchanged")
+        edit_json(new_board / "board.json", lambda d: d.update(board="m5stack-cores3"))(root)
+        rejects(lambda: gate.write_board(root, board_json), "the board slug already exists", "a new board reusing a slug")
+        edit_json(new_board / "board.json", lambda d: d.update(board="example-weather-s3"))(root)
+        edit_json(new_board / "modules/bme280/module.json", lambda d: column(d, "core", "air_temperature_c")[
+            "firmware"].update(live_key="pm25"))(root)
+        rejects(lambda: gate.write_board(root, board_json), "LIVE key pm25", "a new board taking another board's LIVE key")
+        edit_json(new_board / "modules/bme280/module.json", lambda d: column(d, "core", "air_temperature_c")[
+            "firmware"].update(live_key="ta"))(root)
+        edit_json(new_board / "board.json", lambda d: d["segments"].append({"module": "system", "segment": "head"}))(root)
+        rejects(lambda: gate.write_board(root, board_json), "segment system.head repeats",
+                "a new board that repeats a segment")
+        gate.require(not any((root / new_board / n).exists() for n in gate.NEW_BOARD_FILES),
+                     "a refused new board wrote no file")
+        shutil.rmtree(root)
+        print("PASS write mode refuses shipped boards, a reused slug, a LIVE key clash and a bad manifest", flush=True)
 
         # The base loader fails closed when the ref is missing.
         os.environ["PLUGIN_CONTRACT_BASE"] = "refs/heads/plugin-contract-no-such-ref"

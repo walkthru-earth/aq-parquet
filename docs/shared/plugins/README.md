@@ -5,7 +5,7 @@
 | Title | OpenSensor plugin contract |
 | Identifier | `https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json` |
 | Follows | [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) v0.1.0, vendored in [`tools/stac_opensensor/v0.1.0/`](../../../tools/stac_opensensor/v0.1.0/) |
-| Maturity | Pilot. Steps 1 to 4 of section 11 landed and both boards pass the byte gate |
+| Maturity | Pilot. Steps 1 to 4 and 7 of section 11 landed and both boards pass the byte gate |
 | Tracking | [#17](https://github.com/walkthru-earth/opensensor-space-firmware/issues/17), [#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111) |
 
 The firmware can already log any numeric reading. The logger, writer, sync
@@ -23,9 +23,11 @@ today's `aq_` name shown where code is cited.
 
 ## What landed
 
-Steps 1 to 5 of section 11 are in. Step 5 moves the Waveshare collect into
-sensor modules. Its image code changes, and `dict`, `desc` and every row
-stay the same. The CoreS3 image still compiles what it did before.
+Steps 1 to 5 and step 7 of section 11 are in. Step 5 moves the Waveshare
+collect into sensor modules. Its image code changes, and `dict`, `desc` and
+every row stay the same. The CoreS3 image still compiles what it did before.
+Step 7 is host only. It writes the files of a new board once and never
+touches an existing one.
 
 | Part | Path |
 | --- | --- |
@@ -38,6 +40,7 @@ stay the same. The CoreS3 image still compiles what it did before.
 | Gate | [`tools/plugin_contract.py`](../../../tools/plugin_contract.py), `pixi run plugin-contract`, proved by mutation in `pixi run plugin-contract-test`, part of `pixi run gate` |
 | Generated module headers, step 4 | `<id>_module.h` beside each module manifest but `system`, checked in, gated byte for byte, rewritten by `pixi run plugin-headers` |
 | Module glue, step 4 | [`firmware/common/logger/src/os_sensor_module.h`](../../../firmware/common/logger/src/os_sensor_module.h), `ossensor::Module`, `init_error` and `consteval` `resolve` |
+| Board write mode, step 7 | `pixi run plugin-new-board <board.json>`, which is `plugin_contract.py --write-board`. It writes the three `telemetry_*.inc` files and a first `shipped.lock` beside a new `board.json`, and refuses when any of them exists |
 | Host test, step 4 | [`tools/test_sensor_module.py`](../../../tools/test_sensor_module.py), `pixi run sensor-module-test`, part of `pixi run gate` |
 | Waveshare modules, step 5 | [`logger/sensor_modules.h`](../../../firmware/esp-idf-waveshare-sim7670g/logger/sensor_modules.h), the module table `main.cpp` loops over |
 | Write helpers, step 5 | `ossensor::Writer`, the runtime `integer`, `counter` and `number` and `init_module` in `os_sensor_module.h`, section 10 |
@@ -243,6 +246,27 @@ in the Waveshare app with per column procedures.
 | --- | --- | --- |
 | A. Gate | The checked-in board `telemetry_fields.inc`, `telemetry_semantics.inc` and `telemetry_classes.inc`, unchanged | The generated rows equal the board file rows in order, and the whole `telemetry_fields.inc` is hashed against the lock. A new board gets its files written once, then they are frozen like any other |
 | B. Generate | Rows generated from manifests at build time | The generated table equals a frozen `.inc` copy byte for byte |
+
+### Writing a new board, once
+
+`pixi run plugin-new-board firmware/esp-idf-<board>/<variant>/board.json`
+writes `telemetry_fields.inc`, `telemetry_semantics.inc`,
+`telemetry_classes.inc` and a first `shipped.lock` beside that `board.json`.
+Each row is the row step 3 compares, and the lock has one release whose
+`dict` is the SHA-256 of the new `telemetry_fields.inc`. It refuses before
+writing anything when any of the four files exists, when the board slug is
+taken, or when a cross rule fails, a LIVE key clash with another board
+included. It takes only a board manifest at
+`firmware/esp-idf-*/*/board.json`. Each file opens for exclusive create, so
+a file that appears during the run is never overwritten, and on any failure
+the run removes the files it created, so no partial board is left. Boolean
+columns print their classes as `false` and `true`, as the shipped files do. From then on the files are frozen like
+any other board file under Option A, and no command rewrites them. The
+command prints the new `dict` and the steps left, which are the board
+`telemetry_contract.h`, the digest headers, the published template, a mobile
+migration entry naming the dict, the LIVE fixture and the pinned URIs, as
+[board-porting.md](../board-porting.md) lists. `pixi run plugin-contract`
+then fails until each one is in.
 
 **Decided 2026-10-27, Option A.** The pinned `kDictionaryUri` exists so that the
 bytes behind the link are the bytes the image compiled and hashed. Option A
@@ -489,7 +513,17 @@ This part is secondary. Step 3 of the gate generates it as
 `<id>_module.h` next to each module manifest. The headers are checked in, and
 the gate fails when one is missing, stale or has no manifest.
 `pixi run plugin-headers` rewrites them. `system` has no header, because the
-logger fills its columns by name. It follows the root
+logger fills its columns by name. The gate scans `firmware/common/sensors/modules/`
+and each board `modules/` folder at any depth, so a header directly under
+`modules/` or in a folder whose manifest is gone is an orphan. The write
+path removes an orphan only when it starts with the generated preamble,
+`// clang-format off` then `// GENERATED from`. Any other file with the
+`_module.h` suffix fails the gate and stays, and so does a hand written
+file where a generated header goes. A module id may not be a name that
+`os_sensor_module.h` declares in `ossensor`, such as `detail`, `resolve` or
+`init_error`, nor `ossensor`, `std`, `telemetry` or `oslogger`, because
+`ossensor::<id>` would collide with it. The gate reads that list from the
+header, so a name added there is reserved at once. It follows the root
 [AGENTS.md](../../../AGENTS.md) rules. Columns resolve at build time, tables are
 `static constexpr`, errors are an error only enum and nothing allocates.
 
@@ -618,7 +652,7 @@ or file format, `dict` or `desc`.
 | 4 | Generated module headers and `os_sensor_module.h`, with a host test | No board source changes |
 | 5 | Waveshare `collect` moves to modules | Row equality fixture for the same inputs, both boards build |
 | 6 | CoreS3 `collect` moves to modules | Same |
-| 7 | Generator write mode, new boards only | Refuses to write an existing board file |
+| 7 | Generator write mode, new boards only | Refuses to write an existing board file. The section 9 weather board, written into a temp copy, passes the FIELD, SEM, CLASS and lock checks |
 | 8 | Aggregates, upstream first (section 7) | Existing templates byte identical |
 | 9 | The weather board, if wanted | New dictionary, existing boards unchanged |
 

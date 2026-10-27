@@ -2,7 +2,7 @@
 
 Newest first. Versions follow section 7 of the [README](README.md).
 
-## 0.1.3, 2026-10-27
+## 0.1.4, 2026-10-27
 
 - Step 5 of section 11. The Waveshare logger collect runs a `static
   constexpr` module table of `pms5003t`, the waveshare identity module,
@@ -17,7 +17,31 @@ Newest first. Versions follow section 7 of the [README](README.md).
   Waveshare contract header. They live on as the test reference in
   `tools/waveshare_collect_reference.h`, and a row equality fixture in
   `waveshare-contract-test` compares both.
+- Under the 0.1.3 reserved id scan, `integer`, `counter`, `number` and
+  `init_module` are now reserved module ids too.
 - No schema change. No `dict`, `desc` or row moves.
+
+## 0.1.3, 2026-10-27
+
+- Step 7 of section 11. `pixi run plugin-new-board <board.json>`
+  (`plugin_contract.py --write-board`) writes `telemetry_fields.inc`,
+  `telemetry_semantics.inc`, `telemetry_classes.inc` and a first
+  `shipped.lock` for a new board. It refuses when any of them exists, when
+  the slug is taken, when a cross rule fails or when the path is not a
+  `firmware/esp-idf-*/*/board.json`, and it writes nothing then. A failure
+  mid write removes the files that run created.
+  The files are frozen afterwards under Option A.
+- `plugin-contract-test` writes the section 9 weather board into a temp
+  copy and proves its rows and lock pass the gate. No real board is added.
+- The orphan header scan covers headers directly under `modules/` and in a
+  folder with no manifest left. `pixi run plugin-headers` removes an orphan
+  only when it starts with the generated preamble, and fails on any other.
+- Module ids that `os_sensor_module.h` declares in `ossensor`, such as
+  `detail` and `resolve`, plus `ossensor`, `std`, `telemetry` and
+  `oslogger`, are reserved.
+- `sensor-module-test` resolves a module column at index 0.
+- No schema change, so the schemas stay under `v0.1.0/`. No board file,
+  header, lock, `dict` or `desc` moves.
 
 ## 0.1.2, 2026-10-27
 
