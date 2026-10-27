@@ -3,6 +3,8 @@
 #include "telemetry_contract.h"
 #include <debug_log.h>
 #include <device_config.h>
+#include <driver/gpio.h>
+#include <driver/uart.h>
 #include <esp_flash.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
@@ -13,10 +15,12 @@
 #include <log_persist.h>
 #include <nvs_flash.h>
 #include <os_console.h>
+#include <os_gnss_reader.h>
 #include <os_logger.h>
 #include <os_max17048.h>
 #include <pms_frame.h>
 #include <power.h>
+#include <utility>
 
 #ifndef CONFIG_SPIRAM
 #error The Waveshare logger requires the qualified 8 MB OPI PSRAM target.
@@ -31,6 +35,13 @@ constexpr int kSdCmd = 4;
 constexpr int kSdData0 = 6;
 constexpr int kGaugeSda = 15;
 constexpr int kGaugeScl = 16;
+// SIM7670G GNSS on UART2, ESP32-S3-A-SIM7670X-4G-HAT V2.0 schematic. ESP TX
+// GPIO18 to modem RXD, ESP RX GPIO17 from modem TXD. GPIO21 enables the modem
+// supply, wired OR with the 4G DIP switch, so it is driven high and never low.
+// GPIO45 (DTR, a strapping pin) and GPIO40 (RI) stay unconfigured.
+constexpr int kGnssTx = 18;
+constexpr int kGnssRx = 17;
+constexpr gpio_num_t kModemPower = GPIO_NUM_21;
 // The owner installed an 18650 and verified battery-only operation. A gauge
 // ACK alone cannot prove presence; set false if this image is used without it.
 constexpr bool kBatteryInstalled = true;
@@ -135,6 +146,23 @@ const oslogger::Config kLoggerConfig{
     .template_href = kTemplateHref,
     .self_test_field = "pm25_atmospheric_ug_m3",
 };
+bool modem_power_on(void *) {
+  // Latch the output high before the pin becomes an output, so it never
+  // drives low, not even for one instruction.
+  gpio_set_level(kModemPower, 1);
+  const gpio_config_t pin{.pin_bit_mask = 1ULL << kModemPower,
+                          .mode = GPIO_MODE_OUTPUT};
+  return gpio_config(&pin) == ESP_OK &&
+         gpio_set_level(kModemPower, 1) == ESP_OK;
+}
+const opensensor::gnss::ReaderConfig kGnss{
+    .uart_port = UART_NUM_2,
+    .tx_pin = kGnssTx,
+    .rx_pin = kGnssRx,
+    .baud = 115200,
+    .dialect = &opensensor::gnss::simcom_dialect(),
+    .power_on = modem_power_on,
+};
 const oslogger::Hooks kHooks{
     .collect = collect,
     .storage_total_bytes = [](void *) { return board::storage_total_bytes(); },
@@ -146,6 +174,8 @@ const oslogger::Hooks kHooks{
     .storage_cluster_bytes = [](void *) { return board::cluster_bytes(); },
     .storage_volume_serial = [](void *) { return board::volume_serial(); },
     .storage_remount = [](void *) { return board::remount_card(); },
+    .gnss_fix = [](opensensor::gnss::Fix &fix,
+                   void *) { return opensensor::gnss::latest(fix); },
 };
 } // namespace
 
@@ -196,6 +226,9 @@ bool init_board() {
                "clk=%d cmd=%d d0=%d width=1 format_attempted=false\n",
                mounted, static_cast<unsigned long long>(board::card_bytes()),
                sensor_ready, kSdClk, kSdCmd, kSdData0);
+  if (const auto gnss = opensensor::gnss::start(kGnss); !gnss)
+    oslog.printf("OS ERROR operation=gnss-start reason=%u\n",
+                 static_cast<unsigned>(std::to_underlying(gnss.error())));
   logging = oslogger::begin(kLoggerConfig, kHooks, mounted);
   config::set_sensor_policy(kSensorPolicy);
   if (logging && !oslogger::start_links(false))

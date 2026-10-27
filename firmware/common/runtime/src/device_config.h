@@ -95,6 +95,8 @@ struct SensorPolicy {
 void set_sensor_policy(const SensorPolicy &policy);
 
 Settings get();
+// Only the location settings, for tasks that must not copy credentials.
+LocationSettings location_settings();
 // Runtime view for JSON/UI: whether a `ble.*` change is waiting for a reboot.
 bool reboot_required();
 

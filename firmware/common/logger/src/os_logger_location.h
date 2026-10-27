@@ -19,30 +19,44 @@ template <typename Row> struct LocationSample : Row {
 
 // Nullable fields, in order: cell ID, actual resolution, location_source and
 // the GEOMETRY slot, a 2D point at the cell centre packed by
-// telemetry::pack_point_e7. Invalid/unset snapshots produce four nulls. The
-// point is always calculated from the persisted cell, never from an incoming
-// GPS position.
+// telemetry::pack_point_e7. Source None or an invalid cell produces four
+// nulls. The point is always calculated from the published cell, never from
+// an incoming GPS position. The caller has already coarsened the cell to the
+// row's resolution cap, see opensensor::gnss::select_location.
 template <typename Row>
-bool apply_location(Row &row, const config::LocationSettings &snapshot,
-                    const std::array<std::size_t, 4> &fields) {
+bool apply_cell(Row &row, opensensor::location::Cell published,
+                telemetry::LocationSource source,
+                const std::array<std::size_t, 4> &fields) {
   for (auto index : fields)
     row.valid[index] = 0;
-  opensensor::location::Cell published = 0;
   std::int64_t lat = 0, lon = 0;
-  if (!opensensor::location::coarsen(snapshot.cell, snapshot.resolution,
-                                     published) ||
-      published != snapshot.cell ||
+  if (source == telemetry::LocationSource::None ||
       !opensensor::location::center_e7(published, lat, lon))
     return false;
   row.counter(fields[0], static_cast<std::int64_t>(published));
   row.integer(fields[1], opensensor::location::resolution(published));
-  row.integer(fields[2],
-              std::to_underlying(telemetry::LocationSource::Configured));
+  row.integer(fields[2], std::to_underlying(source));
   // center_e7 keeps latitude within 90 and longitude within 180 degrees, so
   // both fit an int32.
   row.counter(fields[3],
               telemetry::pack_point_e7(static_cast<std::int32_t>(lon),
                                        static_cast<std::int32_t>(lat)));
   return true;
+}
+
+// The configured cell, source 1. Invalid or unset snapshots, and a cell finer
+// than the snapshot's cap, produce four nulls.
+template <typename Row>
+bool apply_location(Row &row, const config::LocationSettings &snapshot,
+                    const std::array<std::size_t, 4> &fields) {
+  opensensor::location::Cell published = 0;
+  if (!opensensor::location::coarsen(snapshot.cell, snapshot.resolution,
+                                     published) ||
+      published != snapshot.cell)
+    published = 0;
+  return apply_cell(row, published,
+                    published ? telemetry::LocationSource::Configured
+                              : telemetry::LocationSource::None,
+                    fields);
 }
 } // namespace oslogger

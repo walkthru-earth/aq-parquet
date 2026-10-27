@@ -1,0 +1,267 @@
+// Host tests for firmware/common/gnss. Parser dialect, fix to cell,
+// freshness, the per row source rule and that a GNSS cell never splits files.
+#include <device_config.h>
+#include <numeric_sample.h>
+#include <os_gnss.h>
+#include <os_logger_location.h>
+
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <initializer_list>
+#include <optional>
+#include <string_view>
+
+using namespace opensensor;
+using gnss::ParseError;
+using telemetry::LocationSource;
+
+namespace {
+const gnss::Dialect &simcom = gnss::simcom_dialect();
+
+ParseError error_of(std::string_view line) {
+  const auto reading = simcom.parse_fix(line);
+  assert(!reading);
+  return reading.error();
+}
+
+gnss::Reading reading_of(std::string_view line) {
+  const auto reading = simcom.parse_fix(line);
+  assert(reading);
+  return *reading;
+}
+
+void parser() {
+  // Bench, SIM7670G-MNGV V1.9.05 without a fix, 2026-10-27.
+  assert(error_of("+CGNSSINFO: ,,,,,,,,") == ParseError::NoFix);
+  assert(error_of("+CGNSSINFO: ,,,,,,,,\r") == ParseError::NoFix);
+  // Manual V1.01 no fix form, 18 empty fields.
+  assert(error_of("+CGNSSINFO: ,,,,,,,,,,,,,,,,,") == ParseError::NoFix);
+  assert(error_of("+CGNSSINFO:") == ParseError::NoFix);
+
+  // Manual V1.01 fix example. 31 deg 13.330650 min N, 121 deg 21.262554 min E.
+  auto fix = reading_of("+CGNSSINFO: 2,09,05,00,00,3113.330650,N,12121.262554,"
+                        "E,131117,091918.00,32.9,0.0,255.0,1.1,0.8,0.7,14");
+  assert(fix.mode == 2 && fix.satellites == 14);
+  assert(std::abs(fix.latitude - (31 + 13.330650 / 60)) < 1e-9);
+  assert(std::abs(fix.longitude - (121 + 21.262554 / 60)) < 1e-9);
+  // 3D fix, southern and western hemispheres, empty per system counts.
+  fix = reading_of("+CGNSSINFO: 3,,,,,3001.500000,S,03114.250000,W,271026,"
+                   "101500.0,10.0,0.0,0.0,1.0,1.0,1.0,7");
+  assert(fix.mode == 3 && fix.satellites == -1);
+  assert(std::abs(fix.latitude + (30 + 1.5 / 60)) < 1e-9);
+  assert(std::abs(fix.longitude + (31 + 14.25 / 60)) < 1e-9);
+  // Tolerant layout. The CGPSINFO style run with no mode field, and a layout
+  // with only the mode before the latitude.
+  fix = reading_of("+CGNSSINFO: 3113.343286,N,12121.234064,E,250311,072809.33,"
+                   "44.1,0.0,0");
+  assert(fix.mode == 0 && fix.satellites == -1);
+  assert(std::abs(fix.latitude - (31 + 13.343286 / 60)) < 1e-9);
+  fix = reading_of("+CGNSSINFO: 3,3002.0,N,3114.0,E");
+  assert(fix.mode == 3 && std::abs(fix.longitude - (31 + 14.0 / 60)) < 1e-9);
+  // Exactly on the limits.
+  fix = reading_of("+CGNSSINFO: 2,,,,,9000.0,N,18000.0,W");
+  assert(fix.latitude == 90 && fix.longitude == -180);
+
+  // Not a CGNSSINFO reply.
+  for (std::string_view line :
+       {"", "OK", "ERROR", "AT+CGNSSINFO", "+CGNSSPWR: 1",
+        "+CGPSINFO: ,,,,,,,,", "+CGNSSPWR: READY!",
+        " CGNSSINFO: 2,,,,,3113.0,N,12121.0,E"})
+    assert(error_of(line) == ParseError::NotThisLine);
+  // Malformed, never a fix.
+  for (std::string_view line : {
+           "+CGNSSINFO: garbage",
+           "+CGNSSINFO: 2,09,05,00,00,3113.330650,X,12121.262554,E",
+           "+CGNSSINFO: 2,09,05,00,00,3113.330650,N,12121.262554,Q",
+           "+CGNSSINFO: 2,09,05,00,00,3113.330650,N,,E",
+           "+CGNSSINFO: 2,09,05,00,00,3113,N,12121.262554,E",
+           "+CGNSSINFO: 2,09,05,00,00,31a3.330650,N,12121.262554,E",
+           "+CGNSSINFO: 2,09,05,00,00,-3113.330650,N,12121.262554,E",
+           "+CGNSSINFO: 2,09,05,00,00,3113.330650,NN,12121.262554,E",
+           // A mode other than 2D or 3D in front of a position.
+           "+CGNSSINFO: 1,09,05,00,00,3113.330650,N,12121.262554,E",
+           "+CGNSSINFO: ,09,05,00,00,3113.330650,N,12121.262554,E",
+           "+CGNSSINFO: x,3113.330650,N,12121.262554,E",
+           // Too many integer digits, a ddmm with 5 or dddmm with 6.
+           "+CGNSSINFO: 2,,,,,31130.0,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,121210.0,E",
+           // Fraction longer than ten digits.
+           "+CGNSSINFO: 2,,,,,3113.12345678901,N,12121.0,E",
+           // More than 24 fields.
+           "+CGNSSINFO: 2,,,,,3113.0,N,12121.0,E,,,,,,,,,,,,,,,,,,,,,,,,,,",
+       })
+    assert(error_of(line) == ParseError::Malformed);
+  // Out of range, never a fix.
+  for (std::string_view line : {
+           "+CGNSSINFO: 2,,,,,9100.0,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,9000.1,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,3160.0,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,18100.0,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,18000.5,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,12199.0,E",
+       })
+    assert(error_of(line) == ParseError::OutOfRange);
+  // Zeros before a first fix are no fix, not Null Island.
+  assert(error_of("+CGNSSINFO: 2,,,,,0000.0,N,00000.0,E") == ParseError::NoFix);
+
+  // Engine power replies.
+  assert(simcom.parse_power("+CGNSSPWR: 1") == true);
+  assert(simcom.parse_power("+CGNSSPWR: 0\r") == false);
+  assert(simcom.parse_power("+CGNSSPWR: READY!") == true);
+  assert(simcom.parse_power("+CGNSSPWR: 2").error() == ParseError::Malformed);
+  assert(simcom.parse_power("OK").error() == ParseError::NotThisLine);
+  assert(simcom.power_query() == "AT+CGNSSPWR?");
+  assert(simcom.power_on() == "AT+CGNSSPWR=1");
+  assert(simcom.fix_query() == "AT+CGNSSINFO");
+}
+
+void conversion() {
+  // H3 quick start fixture, San Francisco, res 9 0x8928308280fffff.
+  const gnss::Reading reading{.latitude = 37.775938728915946,
+                              .longitude = -122.41795063018799,
+                              .mode = 3,
+                              .satellites = 9};
+  auto fix = gnss::to_fix(reading, 9, 1'000'000);
+  assert(fix && fix->cell == 0x8928308280fffffULL && fix->resolution == 9);
+  assert(fix->fix_mono_us == 1'000'000 && fix->mode == 3 &&
+         fix->satellites == 9);
+  // Converted straight at the owner resolution, never finer.
+  fix = gnss::to_fix(reading, 5, 1);
+  assert(fix && fix->cell == 0x85283083fffffffULL && fix->resolution == 5);
+  for (int bad : {-1, 16})
+    assert(gnss::to_fix(reading, bad, 1).error() == ParseError::OutOfRange);
+  assert(!gnss::to_fix({.latitude = 91}, 5, 1));
+}
+
+void freshness() {
+  const gnss::Fix fix{.cell = 0x85283083fffffffULL,
+                      .resolution = 5,
+                      .fix_mono_us = 100'000'000};
+  assert(gnss::fresh(fix, 100'000'000));
+  assert(gnss::fresh(fix, 100'000'000 + gnss::kFixMaxAgeUs));
+  assert(!gnss::fresh(fix, 100'000'001 + gnss::kFixMaxAgeUs));
+  assert(gnss::fresh(fix, 100'000'000 - gnss::kFixClockSkewUs));
+  assert(!gnss::fresh(fix, 99'999'999 - gnss::kFixClockSkewUs));
+  auto empty = fix;
+  empty.cell = 0;
+  assert(!gnss::fresh(empty, 100'000'000));
+  auto unset = fix;
+  unset.fix_mono_us = 0;
+  assert(!gnss::fresh(unset, 1));
+}
+
+constexpr location::Cell kConfigured = 0x85283473fffffffULL; // res 5
+constexpr location::Cell kFineFix = 0x8928308280fffffULL;    // res 9
+constexpr location::Cell kFixAt5 = 0x85283083fffffffULL;
+
+void source_rule() {
+  const std::int64_t now = 50'000'000;
+  const gnss::Fix fresh_fix{
+      .cell = kFineFix, .resolution = 9, .fix_mono_us = now - 1'000'000};
+  const gnss::Fix stale_fix{.cell = kFineFix,
+                            .resolution = 9,
+                            .fix_mono_us = now - gnss::kFixMaxAgeUs - 1};
+  config::LocationSettings fixed{.cell = kConfigured,
+                                 .resolution = 5,
+                                 .country = "US",
+                                 .mobility = config::Mobility::Fixed};
+  // Fixed keeps the configured cell, with or without a fix.
+  for (const auto &fix : {std::optional<gnss::Fix>{}, std::optional{fresh_fix},
+                          std::optional{stale_fix}}) {
+    const auto chosen = gnss::select_location(fixed, fix, now);
+    assert(chosen.cell == kConfigured);
+    assert(chosen.source == LocationSource::Configured);
+  }
+  // A fixed snapshot finer than its cap, or unset, gives nulls.
+  auto fine = fixed;
+  fine.resolution = 4;
+  assert(gnss::select_location(fine, fresh_fix, now).source ==
+         LocationSource::None);
+  assert(gnss::select_location({}, fresh_fix, now).source ==
+         LocationSource::None);
+
+  auto moving = fixed;
+  moving.mobility = config::Mobility::Moving;
+  // Moving with a fresh fix, coarsened to the row cap, source 2.
+  auto chosen = gnss::select_location(moving, fresh_fix, now);
+  assert(chosen.cell == kFixAt5 && chosen.source == LocationSource::Gnss);
+  // A fix already coarser than the cap is kept as it is, never upsampled.
+  moving.resolution = 12;
+  chosen = gnss::select_location(moving, fresh_fix, now);
+  assert(chosen.cell == kFineFix && chosen.source == LocationSource::Gnss);
+  moving.resolution = 5;
+  // Moving with a stale fix or none writes nulls, never the configured cell.
+  for (const auto &fix :
+       {std::optional<gnss::Fix>{}, std::optional{stale_fix}}) {
+    chosen = gnss::select_location(moving, fix, now);
+    assert(chosen.cell == 0 && chosen.source == LocationSource::None);
+  }
+  // Moving with an unconfigured cell still takes a fresh fix.
+  auto unconfigured = moving;
+  unconfigured.cell = 0;
+  chosen = gnss::select_location(unconfigured, fresh_fix, now);
+  assert(chosen.cell == kFixAt5 && chosen.source == LocationSource::Gnss);
+}
+
+void row_mapping() {
+  oslogger::LocationSample<NumericSample<4>> row{};
+  // Source 2 lands in location_source with the cell centre as the point.
+  assert(
+      oslogger::apply_cell(row, kFixAt5, LocationSource::Gnss, {0, 1, 2, 3}));
+  assert(row.data[0] == static_cast<std::int64_t>(kFixAt5) && row.data[1] == 5);
+  assert(row.data[2] == 2 && row.valid[0] && row.valid[1] && row.valid[2] &&
+         row.valid[3]);
+  std::int64_t lat = 0, lon = 0;
+  assert(location::center_e7(kFixAt5, lat, lon));
+  assert(row.data[3] ==
+         telemetry::pack_point_e7(static_cast<std::int32_t>(lon),
+                                  static_cast<std::int32_t>(lat)));
+  // None clears every location field.
+  assert(
+      !oslogger::apply_cell(row, kFixAt5, LocationSource::None, {0, 1, 2, 3}));
+  for (const auto present : row.valid)
+    assert(!present);
+  assert(!oslogger::apply_cell(row, 0, LocationSource::Gnss, {0, 1, 2, 3}));
+  for (const auto present : row.valid)
+    assert(!present);
+}
+
+// The logger splits a file when same_location() is false between the open
+// batch and a new row. A GNSS cell lives only in the row columns, so two
+// moving rows with different fixes share one snapshot and one file. A
+// mobility change still splits.
+void no_split() {
+  const std::int64_t now = 50'000'000;
+  config::LocationSettings moving{.cell = kConfigured,
+                                  .resolution = 5,
+                                  .country = "EG",
+                                  .mobility = config::Mobility::Moving};
+  oslogger::LocationSample<NumericSample<4>> first{}, second{};
+  first.location = second.location = moving;
+  const gnss::Fix here{.cell = kFineFix, .resolution = 9, .fix_mono_us = now};
+  location::Cell elsewhere = 0;
+  assert(location::from_degrees(30.0444, 31.2357, 9, elsewhere));
+  const gnss::Fix there{.cell = elsewhere, .resolution = 9, .fix_mono_us = now};
+  const auto a = gnss::select_location(first.location, here, now);
+  const auto b = gnss::select_location(second.location, there, now);
+  assert(oslogger::apply_cell(first, a.cell, a.source, {0, 1, 2, 3}));
+  assert(oslogger::apply_cell(second, b.cell, b.source, {0, 1, 2, 3}));
+  assert(first.data[0] != second.data[0]);
+  assert(config::same_location(first.location, second.location));
+  auto parked = second.location;
+  parked.mobility = config::Mobility::Fixed;
+  assert(!config::same_location(first.location, parked));
+}
+} // namespace
+
+int main() {
+  parser();
+  conversion();
+  freshness();
+  source_rule();
+  row_mapping();
+  no_split();
+  std::puts("gnss host tests passed");
+}
