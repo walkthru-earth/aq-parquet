@@ -186,14 +186,16 @@ Outcome Session::put(std::string_view name, std::uint64_t bytes,
   const std::string_view encoded(path.data(), *path_size);
 
   const std::string_view hex(payload_hex.data(), payload_hex.size());
-  const std::array headers = {
-      Header{.name = "content-type", .value = kParquetContentType},
-      Header{.name = "host", .value = config_.host},
-      Header{.name = "if-none-match", .value = "*"},
-      Header{.name = "x-amz-content-sha256", .value = hex},
-      Header{.name = "x-amz-date", .value = amz_date},
-      Header{.name = "x-amz-security-token", .value = creds_.token()},
-  };
+  // Named, so the signed list and the sent list cannot drift by index.
+  const Header content_type{.name = "content-type",
+                            .value = kParquetContentType};
+  const Header host{.name = "host", .value = config_.host};
+  const Header if_none_match{.name = "if-none-match", .value = "*"};
+  const Header content_sha{.name = "x-amz-content-sha256", .value = hex};
+  const Header date_header{.name = "x-amz-date", .value = amz_date};
+  const Header token{.name = "x-amz-security-token", .value = creds_.token()};
+  const std::array headers = {content_type, host,        if_none_match,
+                              content_sha,  date_header, token};
   std::array<char, kAuthorizationMax> auth_header{};
   const auto auth_size = authorization(hash_,
                                        {.method = "PUT",
@@ -210,13 +212,14 @@ Outcome Session::put(std::string_view name, std::uint64_t bytes,
   if (!auth_size)
     return Outcome::RequestRejected;
 
-  // Everything signed, plus the Authorization header itself.
+  // Everything signed except Host, which the transport writes, plus the
+  // Authorization header itself.
   const std::array sent = {
-      headers[0],
-      headers[2],
-      headers[3],
-      headers[4],
-      headers[5],
+      content_type,
+      if_none_match,
+      content_sha,
+      date_header,
+      token,
       Header{.name = "authorization",
              .value = std::string_view(auth_header.data(), *auth_size)},
   };

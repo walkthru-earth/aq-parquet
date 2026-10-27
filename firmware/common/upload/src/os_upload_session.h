@@ -62,7 +62,7 @@ struct HttpResponse {
   }
 };
 
-enum class TransportError : std::uint8_t { Connect, Io, Body };
+enum class TransportError : std::uint8_t { Connect, Io, Body, Busy };
 
 class Transport {
 public:

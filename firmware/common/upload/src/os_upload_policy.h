@@ -12,6 +12,8 @@
 //      key never loops.
 //   5. The `Dev` target can never write outside the dev prefix.
 
+#include "utc_clock.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -92,6 +94,8 @@ protected:
 
 // Picks the oldest eligible file from an archive listing, one offer at a
 // time, in O(1) memory. The ledger is asked only about a better candidate.
+// Files in the same minute tie break by name, so counter 10 sorts before 9.
+// Order inside one minute does not matter for oldest first.
 class NextFile {
 public:
   explicit NextFile(const LedgerView &ledger) : ledger_(ledger) {}
@@ -110,8 +114,12 @@ private:
   std::uint32_t order_ = 0;
 };
 
-// Mirrors utc::Source so this header needs no logger include.
+// Mirrors utc::Source value for value, pinned below.
 enum class ClockSource : std::uint8_t { None, Host, Rtc, Network };
+static_assert(static_cast<int>(ClockSource::None) == utc::None &&
+              static_cast<int>(ClockSource::Host) == utc::Host &&
+              static_cast<int>(ClockSource::Rtc) == utc::Rtc &&
+              static_cast<int>(ClockSource::Network) == utc::Network);
 
 // Host and network time only. The RTC can drift or hold a stale battery
 // backed value, so it does not count yet (#81 owner note).
@@ -122,6 +130,8 @@ enum class ClockSource : std::uint8_t { None, Host, Rtc, Network };
 inline constexpr std::uint32_t kBackoffFirstMs = 30000;
 inline constexpr std::uint32_t kBackoffMaxMs = 3600000;
 
+// RAM only. A reboot clears a stop, so a revoked key gets one STS attempt
+// per boot before it stops again.
 struct PolicyState {
   std::uint32_t failures = 0;
   std::uint64_t retry_at_ms = 0;

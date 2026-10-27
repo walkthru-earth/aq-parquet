@@ -1,5 +1,7 @@
 #include "os_upload_device.h"
 
+#include "os_upload_scratch.h"
+
 #include "sdkconfig.h"
 
 #include <esp_crt_bundle.h>
@@ -68,14 +70,9 @@ esp_err_t on_event(esp_http_client_event_t *event) {
 }
 
 // Buffers for one request. Static, so send() adds no large stack frame to
-// the task that calls it. Only one upload runs at a time.
-struct Scratch {
-  std::array<char, 8 + 255 + 1 + 1800> url{};
-  std::array<char, 64> name{};
-  std::array<char, 2100> value{};
-  std::array<std::uint8_t, kChunkBytes> chunk{};
-};
-Scratch scratch;
+// the task that calls it. A ScratchLease allows one request at a time and
+// wipes every buffer when send() returns.
+TransportScratch scratch;
 
 } // namespace
 
@@ -121,6 +118,9 @@ HttpsTransport::send(const HttpRequest &request, std::span<char> body_out) {
       (request.body_bytes > 0 && request.body == nullptr) ||
       !request.path.starts_with('/'))
     return std::unexpected(TransportError::Body);
+  const ScratchLease lease(scratch);
+  if (!lease.owned())
+    return std::unexpected(TransportError::Busy);
   esp_http_client_method_t method = HTTP_METHOD_GET;
   if (request.method == "PUT")
     method = HTTP_METHOD_PUT;
@@ -156,9 +156,9 @@ HttpsTransport::send(const HttpRequest &request, std::span<char> body_out) {
   esp_http_client_handle_t client = esp_http_client_init(&config);
   if (client == nullptr)
     return std::unexpected(TransportError::Connect);
+  // The lease wipes the scratch after this returns.
   const auto fail = [&](TransportError error) {
     esp_http_client_cleanup(client);
-    std::fill(scratch.value.begin(), scratch.value.end(), '\0');
     return std::unexpected(error);
   };
 
@@ -172,7 +172,8 @@ HttpsTransport::send(const HttpRequest &request, std::span<char> body_out) {
                                    scratch.value.data()) != ESP_OK)
       return fail(TransportError::Body);
   }
-  std::fill(scratch.value.begin(), scratch.value.end(), '\0');
+  // The token and signature are copied by the client, drop ours now.
+  text::secure_zero(scratch.value);
 
   const int length = static_cast<int>(request.body_bytes);
   if (esp_http_client_open(client, length) != ESP_OK)

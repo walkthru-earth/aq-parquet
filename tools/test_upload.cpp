@@ -9,10 +9,12 @@
 
 #include "../firmware/common/upload/src/os_upload_ledger.h"
 #include "../firmware/common/upload/src/os_upload_policy.h"
+#include "../firmware/common/upload/src/os_upload_scratch.h"
 #include "../firmware/common/upload/src/os_upload_session.h"
 #include "../firmware/common/upload/src/os_upload_sigv4.h"
 #include "../firmware/common/upload/src/os_upload_sts.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -877,7 +879,26 @@ struct FakeLedger final : Ledger {
 
 constexpr std::string_view kApiKey = "<sck-key>";
 
+// Signatures of every PUT the session tests make. They were computed by a
+// separate Python SigV4 written from the AWS spec, not by this signer. The
+// first one also matches the independent review of #129.
+std::string_view expected_signature(std::string_view tail,
+                                    std::string_view date) {
+  constexpr std::string_view kName =
+      "_0123456789abcdef0123456789abcdef_0-59-0.parquet";
+  const std::string day26 = "/day%3D26/data_2300" + std::string(kName);
+  const std::string day27 = "/day%3D27/data_0905" + std::string(kName);
+  if (tail == day26 && date == "20261027T090507Z")
+    return "69dd2231b35cbcc137c57d10eeb9d27bc673b3552adebd8e404a44108bb0caee";
+  if (tail == day27 && date == "20261027T090507Z")
+    return "55fb4093e202d73dfb0d2debed58c56db3ce126bde73c44b4f085551ea5cb66b";
+  if (tail == day27 && date == "20261027T090607Z")
+    return "06f7197886ad05c3d38b22998cf5a761f074f398e0378137c165b56ebf45949a";
+  return {};
+}
+
 struct FakeCloud final : Transport {
+  int signatures_checked = 0;
   std::map<std::string, std::string> objects;
   int sts_calls = 0;
   int put_calls = 0;
@@ -928,20 +949,31 @@ struct FakeCloud final : Transport {
     CHECK(std::string_view(r.path).starts_with(prefix));
     bool if_none_match = false;
     bool token = false;
-    bool auth = false;
+    std::string_view date;
+    std::string_view auth;
     for (const Header &h : r.headers) {
       if_none_match |= h.name == "if-none-match" && h.value == "*";
       token |= h.name == "x-amz-security-token" &&
                h.value == "AQoDYXdzEE0a8ANXXXXXXXXNO1ewxE5TijQyp+IEXAMPLE";
-      auth |= h.name == "authorization" &&
-              h.value.starts_with("AWS4-HMAC-SHA256 Credential="
-                                  "ASIAIOSFODNN7EXAMPLE/20261027/us-west-2/s3/"
-                                  "aws4_request, SignedHeaders=content-type;"
-                                  "host;if-none-match;x-amz-content-sha256;"
-                                  "x-amz-date;x-amz-security-token, "
-                                  "Signature=");
+      if (h.name == "x-amz-date")
+        date = h.value;
+      if (h.name == "authorization")
+        auth = h.value;
     }
-    CHECK(if_none_match && token && auth);
+    CHECK(if_none_match && token);
+    // The whole Authorization value is pinned, so any signer change fails.
+    const std::string_view tail = std::string_view(r.path).substr(
+        std::string_view(r.path).find("/day%3D"));
+    const std::string_view signature = expected_signature(tail, date);
+    CHECK(!signature.empty());
+    CHECK(auth == std::string("AWS4-HMAC-SHA256 Credential="
+                              "ASIAIOSFODNN7EXAMPLE/20261027/us-west-2/s3/"
+                              "aws4_request, SignedHeaders=content-type;"
+                              "host;if-none-match;x-amz-content-sha256;"
+                              "x-amz-date;x-amz-security-token, "
+                              "Signature=") +
+                      std::string(signature));
+    ++signatures_checked;
     if (put_status != 0)
       return reply(put_status, put_body);
     if (objects.contains(std::string(r.path)))
@@ -1011,7 +1043,7 @@ void test_session_happy_and_rerun() {
     CHECK(cloud.sts_calls == 1 && cloud.put_calls == 2);
     r = s.step(running(3000), kNow + 120);
     CHECK(r.outcome == Outcome::NothingPending);
-    CHECK(cloud.put_calls == 2);
+    CHECK(cloud.put_calls == 2 && cloud.signatures_checked == 2);
   }
   CHECK(ledger.text.find(dated(26, 2300) + " 2500 ") == 0);
   CHECK(ledger.text.find(" 9b2cf535f27731c974343645a3985328 ") !=
@@ -1177,7 +1209,60 @@ void test_session_config_guard() {
 
 } // namespace
 
+// The device transport takes a ScratchLease first thing in send(). Every
+// exit, early or late, must leave no byte of the key, token or signature.
+bool scratch_clean(const TransportScratch &s) {
+  const auto zero = [](const auto &a) {
+    return std::ranges::all_of(a, [](auto v) { return v == decltype(v){}; });
+  };
+  return zero(s.url) && zero(s.name) && zero(s.value) && zero(s.chunk) &&
+         !s.busy.load();
+}
+
+// Mirrors the send() shape. `exit_at` picks which stage returns.
+int leased_send(TransportScratch &s, int exit_at) {
+  const ScratchLease lease(s);
+  if (!lease.owned())
+    return -1;
+  constexpr std::string_view form = "Action=AssumeRoleWithWebIdentity&"
+                                    "WebIdentityToken=%3Csck-key%3E";
+  std::memcpy(s.url.data(), "https://data.source.coop/.sts", 29);
+  if (exit_at == 0)
+    return 0;
+  std::memcpy(s.name.data(), "x-amz-security-token", 20);
+  std::memcpy(s.value.data(), "AQoDYXdzEE0a8ANXXXXXXXXNO1ewxE5TijQyp+IEXAMPLE",
+              46);
+  if (exit_at == 1)
+    return 1;
+  std::memcpy(s.chunk.data(), form.data(), form.size());
+  if (exit_at == 2)
+    return 2;
+  return 3;
+}
+
+void test_scratch_wipe() {
+  static TransportScratch s;
+  for (int exit_at = 0; exit_at <= 3; ++exit_at) {
+    s.chunk.fill(0x5a);
+    s.value.fill('k');
+    CHECK(leased_send(s, exit_at) == exit_at);
+    CHECK(scratch_clean(s));
+  }
+  // One request at a time. A second lease is refused and wipes nothing early.
+  {
+    const ScratchLease first(s);
+    CHECK(first.owned());
+    s.chunk[0] = 1;
+    CHECK(leased_send(s, 3) == -1);
+    CHECK(s.chunk[0] == 1);
+  }
+  CHECK(scratch_clean(s));
+  CHECK(leased_send(s, 3) == 3);
+  CHECK(scratch_clean(s));
+}
+
 int main() {
+  test_scratch_wipe();
   test_sha256_and_hmac();
   test_sigv4_vectors();
   test_sigv4_rejects();
