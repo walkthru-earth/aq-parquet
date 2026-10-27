@@ -49,7 +49,7 @@ BOARD_FIELDS = {
     "waveshare": ROOT / "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc",
     "cores3": ROOT / "firmware/esp-idf-cores3/bringup/telemetry_fields.inc",
 }
-TOOL_ID = "aq-parquet rebuild_partial version 1"
+TOOL_ID = "opensensor-space-firmware rebuild_partial version 1"
 MAX_ROW_GROUPS = 8  # telemetry::kMaxRowGroups
 MAX_ROWS = 65536  # telemetry::kMaxRows
 

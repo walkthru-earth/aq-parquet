@@ -32,6 +32,7 @@ CLASS(pms_status, kPmsStale, "stale", false)
 CLASS(pms_status, kPmsSensorError, "sensor-error", false)
 CLASS(pms_status, kPmsValid, "valid", false)
 CLASS(pms_status, kPmsModelMismatch, "model-mismatch", false)
+CLASS(pms_status, kPmsSleeping, "sleeping", false)
 CLASS(pm25_batch_candidate_status, kBatchDisabled, "disabled", false)
 CLASS(pm25_batch_candidate_status, kBatchIdentityMismatch, "identity-mismatch",
       false)

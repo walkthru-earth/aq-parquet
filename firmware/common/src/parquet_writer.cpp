@@ -33,7 +33,8 @@ constexpr uint8_t kTrue = 1, kFalse = 2, kByte = 3, kI16 = 4, kI32 = 5,
 constexpr size_t kWkbPointBytes = 1 + 4 + 8 + 8;
 constexpr uint32_t kWkbPoint = 1;        // ISO WKB and Geospatial.md type code
 constexpr uint64_t kConvertedUint8 = 11; // ConvertedType UINT_8
-constexpr const char *kLegacyCreatedBy = "m5stack-aq-parquet version 0.2";
+constexpr const char *kDefaultCreatedBy =
+    "opensensor-space-firmware version 0.3";
 
 class Output {
 public:
@@ -576,7 +577,7 @@ void footer(Output &out, const Column *columns, size_t count,
   }
   file.field(6, kBinary);
   if (!created_by)
-    created_by = kLegacyCreatedBy;
+    created_by = kDefaultCreatedBy;
   if (build && build[0])
     out.string(created_by, " (build ", build, ")");
   else

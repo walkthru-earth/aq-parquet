@@ -54,9 +54,9 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     footer_contract.check_document(footer, dictionary, "waveshare-esp32-s3-sim7670g", compressed=compressed,
                                    rotation=900, row_groups=1)
     require(dictionary["schema"] == "waveshare-sim7670g-telemetry-v6", "schema identity")
-    require(dictionary["dictionary"] == "waveshare-sim7670g-telemetry-v7", "dictionary identity")
+    require(dictionary["dictionary"] == "waveshare-sim7670g-telemetry-v8", "dictionary identity")
     require(parquet.metadata.created_by ==
-            f"aq-parquet version 0.1 (build {dictionary['firmware']})", "Waveshare writer identity")
+            f"opensensor-space-firmware version 0.3 (build {dictionary['firmware']})", "Waveshare writer identity")
     config = json.loads(footer["acquisition"]["config"])
     require(config["sample_interval_ms"] == 10000 and config["pms_stale_after_ms"] == 5000 and
             config["pms_warmup_us"] == 30000000 and config["pms_model"] == "PMS5003T", "configuration")
@@ -210,7 +210,7 @@ def main() -> None:
         require(not names.intersection({"particles_gt50_per_01l", "particles_gt100_per_01l",
                                         "imu_temperature_c", "accel_x_g", "rtc_read_ok", "touch_points"}),
                 "no invented PMS5003T bins or CoreS3 peripherals")
-        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.15", "firmware identity")
+        require(dictionary["firmware"] == "idf-waveshare-parquet-v2.16", "firmware identity")
         footer_contract.check_board(executable, firmware, dictionary, "waveshare-esp32-s3-sim7670g")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("waveshare", dictionary["sha256"], dictionary["firmware"], live)

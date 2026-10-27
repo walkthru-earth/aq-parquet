@@ -136,7 +136,7 @@ def validate(template: dict, dictionary: dict, dictionary_uri: str) -> None:
     # The footer dictionary_uri itself, raw at a pinned commit (#89), so the
     # bytes at the link are the bytes hashed. tools/pinned_uris.py proves the
     # commit and the bytes with git.
-    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/aq-parquet/[0-9a-f]{40}/.+",
+    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/opensensor-space-firmware/[0-9a-f]{40}/.+",
                          dictionary_uri) is not None, "dictionary URI is raw at a full commit")
     require(links[0]["href"] == dictionary_uri, "describedby href is the footer dictionary URI")
     columns = template["item_assets"]["data"]["table:columns"]

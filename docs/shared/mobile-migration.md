@@ -9,6 +9,67 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## BREAKING. Gauge validity tokens, pms_status 6, created_by and repo URLs (yharby/contract-bump, issues #28 #39 #111)
+
+**Needs app update.** Every board needs a matched reflash with the app build
+that bundles the new templates. Firmware moves to `idf-cores3-parquet-v6.22`
+and `idf-waveshare-parquet-v2.16`. The Waveshare dictionary moves to
+`waveshare-sim7670g-telemetry-v8`. Schemas, columns, field order, LIVE keys
+and decimals do not change. Old archives are not read (owner decision 14).
+
+**What changed.**
+
+- Waveshare validity tokens (#28). `battery_mv` reads
+  `battery_installed_vcell_read_ok`, `battery_percent` reads
+  `battery_installed_soc_read_ok_range_0_100` and `battery_soc_raw_percent`
+  reads `battery_installed_soc_read_ok_uncapped`. The old token
+  `battery_installed_gauge_read_ok` claimed both words had to read, which the
+  code never required. Only the field table moves, so the Waveshare `dict`
+  moves. Its `shipped.lock` gains a `baseline` release that names this entry.
+- Waveshare `pms_status` gains class 6 `sleeping` (#39). It is reserved for the
+  PMS duty cycle. No image writes it yet. CoreS3 stays at 0 to 4.
+- Parquet `created_by` is `opensensor-space-firmware version 0.3 (build
+  <firmware>)` on both boards (#111). It was `m5stack-aq-parquet version 0.2`
+  on CoreS3 and `aq-parquet version 0.1` on Waveshare. The partial rebuild
+  tool writes `opensensor-space-firmware rebuild_partial version 1`.
+- Pinned URLs use the renamed repository,
+  `https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/<commit>/...`
+  (#111). The template embeds the dictionary URL, so both `desc` digests move.
+  The CoreS3 `dict` does not.
+
+| Board | New `dict` | Old `dict` | New `desc` | Old `desc` |
+| --- | --- | --- | --- | --- |
+| CoreS3 | `3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9` (unchanged) | same | `4dd6c4b1ef19187ed2c011ab86018e43be0f28edc3af63a0f6a27b70ff203ef3` | `1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a` |
+| Waveshare | `a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809` | `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` | `d4e4fa499e20c414b3b1fd61343982e5735687d67cfb8b4591efaa5ed5f96bd4` | `1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472` |
+
+Published files, byte exact, SHA-256 equal to the new `desc`.
+
+- `docs/shared/templates/m5stack-cores3/3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json`
+- `docs/shared/templates/waveshare-esp32-s3-sim7670g/a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809.json`
+
+**Why.** Owner decisions of 2026-10-27. One PR moves `dict` and `desc` once
+for all four changes.
+
+**What the app must do.**
+
+1. Copy both published files byte for byte into the bundled templates and pin
+   each SHA-256 to the new `desc`. Drop the old Waveshare `dict` and both old
+   `desc` entries.
+2. Accept the new Waveshare `dict` in the LIVE layout table. The keys and
+   decimals equal those of `waveshare-sim7670g-telemetry-v7`.
+3. Add `pms_status` codes 5 `model-mismatch` and 6 `sleeping` to `PmsStatus`.
+   Today `PmsStatus.fromCode` has 0 to 4, so a Waveshare board that reports 5
+   shows as waiting. Treat 5 and 6 as not ready, PM values are null for both.
+   Read the names from the template `classification:classes`.
+4. If the app matches `created_by`, match the prefix
+   `opensensor-space-firmware version `. Never parse it for identity, use the
+   `opensensor` footer key.
+5. Show the `dictionary_uri` and describedby links only. They now name
+   `walkthru-earth/opensensor-space-firmware`. Trust the digests, never the
+   URL.
+6. `location_source` 3 `phone` (#83) is unchanged. The class was already in
+   both templates. No image writes it yet, see #83.
+
 ## Settings no longer read per-key values (issue #111)
 
 **No app update needed.** Wire, `GET_CONFIG` and `SET_CONFIG` do not change.

@@ -409,6 +409,40 @@ def git_base_lock(root: Path) -> BaseLock:
     return load
 
 
+def check_baseline(label: str, older: dict, newer: dict, notes: str) -> None:
+    """An owner approved break (no backward compatibility, owner decision 14).
+
+    Only the segments its baseline lists may differ from their shipped form.
+    Every other shipped segment keeps its place, rows and hash, and the release
+    still keeps every shipped segment in order and adds new ones only after
+    them. Its migration entry must start a line with the exact heading and name
+    its dict.
+    """
+    short = newer["dict"][:12]
+    baseline = newer["baseline"]
+    heading = f"## {baseline['migration']}"
+    found = re.search(rf"^{re.escape(heading)}$", notes, re.MULTILINE)
+    require(found is not None, f"{label} {LOCK}: baseline {short} names no {MIGRATION} entry {heading!r}")
+    entry = notes[found.end():].split("\n## ", 1)[0]
+    require(newer["dict"] in entry, f"{label} {LOCK}: the {MIGRATION} entry of baseline {short} never names its dict")
+
+    def key(segment: dict) -> tuple[str, str]:
+        return segment["module"], segment["segment"]
+
+    shipped = older["segments"]
+    kept = newer["segments"][:len(shipped)]
+    require([key(s) for s in kept] == [key(s) for s in shipped],
+            f"{label} {LOCK}: baseline {short} reorders or removes a shipped segment")
+    allowed = {key(s) for s in baseline["segments"]}
+    changed = {key(old) for old, new in zip(shipped, kept) if (old["rows"], old["sha256"]) != (new["rows"], new["sha256"])}
+    for name in sorted(changed - allowed):
+        raise AssertionError(f"{label} {LOCK}: baseline {short} edits shipped segment {'/'.join(name)}, "
+                             f"which its baseline does not list")
+    for name in sorted(allowed - changed):
+        raise AssertionError(f"{label} {LOCK}: baseline {short} lists {'/'.join(name)}, "
+                             f"which is not a shipped segment it edits")
+
+
 def check_lock(root: Path, board: Board, raw: bytes, columns: list[Column], rows: list[str], checks: dict,
                base_lock: BaseLock) -> dict:
     path = board.directory / LOCK
@@ -427,9 +461,14 @@ def check_lock(root: Path, board: Board, raw: bytes, columns: list[Column], rows
             require(entry["first"] == first, f"{label} {LOCK}: segments of {release['dict'][:12]} are not contiguous")
             first += entry["rows"]
         require(first - 1 == release["rows"], f"{label} {LOCK}: rows of {release['dict'][:12]} do not add up")
+    notes = (root / MIGRATION).read_text()
+    require("baseline" not in releases[0], f"{label} {LOCK}: the first release cannot be a baseline")
     for older, newer in zip(releases, releases[1:]):
-        require(newer["segments"][:len(older["segments"])] == older["segments"],
-                f"{label} {LOCK}: release {newer['dict'][:12]} reorders, removes or edits a shipped segment")
+        if "baseline" in newer:
+            check_baseline(label, older, newer, notes)
+        else:
+            require(newer["segments"][:len(older["segments"])] == older["segments"],
+                    f"{label} {LOCK}: release {newer['dict'][:12]} reorders, removes or edits a shipped segment")
         require(newer["rows"] >= older["rows"], f"{label} {LOCK}: release {newer['dict'][:12]} drops rows")
     newest = releases[-1]
     digest = hashlib.sha256(raw).hexdigest()
@@ -438,7 +477,6 @@ def check_lock(root: Path, board: Board, raw: bytes, columns: list[Column], rows
     require(newest["rows"] == len(columns), f"{label}: newest {LOCK} rows differ from the manifests")
     require(newest["segments"] == lock_segments(columns, rows),
             f"{label}: newest {LOCK} segments differ from the board manifest")
-    notes = (root / MIGRATION).read_text()
     for release in releases:
         require(release["dict"] in notes, f"{label}: {MIGRATION} never names dict {release['dict']}")
     base = base_lock(path)

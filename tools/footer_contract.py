@@ -367,9 +367,9 @@ def check_document(document: dict, dictionary: dict, templates: str, *, compress
                                        "uri": dictionary["uri"]}, "dictionary group")
     # Both URIs are raw at a full commit (#89). pinned-uris-test proves the
     # commit is on HEAD and its bytes hash to dict and desc.
-    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/aq-parquet/[0-9a-f]{40}/.+",
+    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/opensensor-space-firmware/[0-9a-f]{40}/.+",
                          document["dictionary"]["uri"]) is not None, "dictionary.uri is raw at a full commit")
-    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/aq-parquet/[0-9a-f]{40}/"
+    require(re.fullmatch(r"https://raw\.githubusercontent\.com/walkthru-earth/opensensor-space-firmware/[0-9a-f]{40}/"
                          + re.escape(f"docs/shared/templates/{templates}/{dictionary['sha256']}.json"),
                          document["template"]["href"]) is not None,
             "template.href is the published template of dict at a full commit")

@@ -42,7 +42,7 @@ OPTIONAL_NAMES = {
     "optional_extreme",
     "all_present",
 }
-CREATED_BY = "m5stack-aq-parquet version 0.2 (build fixture)"
+CREATED_BY = "opensensor-space-firmware version 0.3 (build fixture)"
 
 
 def require(condition: bool, description: str) -> None:

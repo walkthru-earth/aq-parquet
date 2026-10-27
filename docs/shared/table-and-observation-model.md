@@ -194,8 +194,9 @@ The clock anchor pair in each row supports auditing the UTC mapping without rely
 | `sd_mounted_cached` | Startup mount succeeded; size values are cached KiB-resolution reports, not hotplug proof |
 | `unavailable` | Intentionally null: unsupported battery current or unresolved SHT20 isolation |
 | `battery_installed` | Waveshare v5. The image declares an installed battery. `battery_health_state` is then always written, with code 0 when no valid cell voltage has been classified yet |
-| `battery_installed_gauge_read_ok`, `battery_installed_gauge_read_ok_range_0_100` | Waveshare. Battery declared and the matching MAX17048 word read and passed its own range check, VCELL for `battery_mv` and SOC for `battery_percent`. A good VCELL is published even when SOC failed, with `gauge_status=1` and a null percent |
-| `battery_installed_gauge_read_ok_uncapped` | Waveshare v5. Battery declared and the MAX17048 SOC read passed its range check, independent of VCELL. The raw percentage is not capped and can exceed 100 on external power |
+| `battery_installed_vcell_read_ok` | Waveshare. Battery declared and the MAX17048 VCELL word read and passed its range check, for `battery_mv`. A good VCELL is published even when SOC failed, with `gauge_status=1` and a null percent |
+| `battery_installed_soc_read_ok_range_0_100` | Waveshare. Battery declared and the MAX17048 SOC word read and passed its range check, capped to 0 to 100, for `battery_percent` |
+| `battery_installed_soc_read_ok_uncapped` | Waveshare v5. Battery declared and the MAX17048 SOC read passed its range check, independent of VCELL. The raw percentage is not capped and can exceed 100 on external power |
 | `battery_installed_crate_read_ok`, `battery_installed_status_read_ok`, `battery_installed_mode_read_ok` | Waveshare v5. Battery declared and the matching MAX17048 CRATE, STATUS or MODE register read succeeded. Each register read is independent |
 | `battery_soc_trusted_discharging_within_7_days` | Waveshare v5. SOC read is valid, at most 100%, not settling after a gauge reset, CRATE is negative and the estimate is at most 10080 minutes. A planning estimate, not a measured runtime |
 

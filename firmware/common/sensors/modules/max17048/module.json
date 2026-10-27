@@ -64,7 +64,7 @@
         "firmware": {
           "type": "Int32",
           "unit": "mV",
-          "validity": "battery_installed_gauge_read_ok",
+          "validity": "battery_installed_vcell_read_ok",
           "live_key": "bat",
           "decimals": 0
         }
@@ -84,7 +84,7 @@
         "firmware": {
           "type": "Int32",
           "unit": "%",
-          "validity": "battery_installed_gauge_read_ok_range_0_100",
+          "validity": "battery_installed_soc_read_ok_range_0_100",
           "live_key": "pct",
           "decimals": 0
         }
@@ -110,7 +110,7 @@
         "firmware": {
           "type": "Float",
           "unit": "%",
-          "validity": "battery_installed_gauge_read_ok_uncapped",
+          "validity": "battery_installed_soc_read_ok_uncapped",
           "live_key": "",
           "decimals": 2
         }

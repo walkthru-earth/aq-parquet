@@ -179,7 +179,8 @@ public:
                const Compression *compression = nullptr);
   Result row_group(size_t row_count, int sorted_by = -1);
   // build is appended to created_by as "(build <build>)" when given. Omitting
-  // created_by preserves the existing CoreS3 file identity.
+  // created_by writes "opensensor-space-firmware version 0.3", the name both
+  // boards use (#111).
   Result finish(const KeyValue *metadata = nullptr, size_t metadata_count = 0,
                 const char *build = nullptr, const char *created_by = nullptr);
   bool active() const { return active_; }

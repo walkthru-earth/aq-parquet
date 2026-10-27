@@ -45,6 +45,10 @@
           {
             "value": 5,
             "name": "model-mismatch"
+          },
+          {
+            "value": 6,
+            "name": "sleeping"
           }
         ],
         "opensensor:property": "urn:walkthru-earth:property:particle_sensor_status",

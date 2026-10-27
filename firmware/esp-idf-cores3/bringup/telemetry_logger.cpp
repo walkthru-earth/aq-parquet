@@ -183,7 +183,7 @@ void begin_logger(bool sd_mounted) {
       .schema_version = kSchemaVersion,
       .schema_name = kSchemaName,
       .firmware = kFirmware,
-      .created_by = "m5stack-aq-parquet version 0.2",
+      .created_by = kCreatedBy,
       .dictionary_version = kDictionaryVersion,
       .dictionary_uri = kDictionaryUri,
       .dictionary_sha256 = kDictionarySha256,

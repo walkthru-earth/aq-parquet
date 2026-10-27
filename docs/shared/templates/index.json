@@ -1,27 +1,27 @@
 {
   "by_desc": {
-    "1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472": {
-      "board": "waveshare-esp32-s3-sim7670g",
-      "dict": "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7",
-      "href": "waveshare-esp32-s3-sim7670g/50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7.json"
-    },
-    "1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a": {
+    "4dd6c4b1ef19187ed2c011ab86018e43be0f28edc3af63a0f6a27b70ff203ef3": {
       "board": "m5stack-cores3",
       "dict": "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9",
       "href": "m5stack-cores3/3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json"
+    },
+    "d4e4fa499e20c414b3b1fd61343982e5735687d67cfb8b4591efaa5ed5f96bd4": {
+      "board": "waveshare-esp32-s3-sim7670g",
+      "dict": "a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809",
+      "href": "waveshare-esp32-s3-sim7670g/a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809.json"
     }
   },
   "templates": {
     "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9": {
       "board": "m5stack-cores3",
-      "desc": "1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a",
+      "desc": "4dd6c4b1ef19187ed2c011ab86018e43be0f28edc3af63a0f6a27b70ff203ef3",
       "href": "m5stack-cores3/3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json",
       "schema": "cores3-telemetry-v6"
     },
-    "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7": {
+    "a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809": {
       "board": "waveshare-esp32-s3-sim7670g",
-      "desc": "1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472",
-      "href": "waveshare-esp32-s3-sim7670g/50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7.json",
+      "desc": "d4e4fa499e20c414b3b1fd61343982e5735687d67cfb8b4591efaa5ed5f96bd4",
+      "href": "waveshare-esp32-s3-sim7670g/a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809.json",
       "schema": "waveshare-sim7670g-telemetry-v6"
     }
   }
