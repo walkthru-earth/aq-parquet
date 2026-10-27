@@ -38,8 +38,8 @@ they are reconciled.
 These come from the #81 plan and its comments, the firmware and the spec.
 
 - Board credentials are upload only (owner, 2026-10-19 on #81). No read, no
-  delete. On the generic `s3` target the board sends `If-None-Match: *` and keeps
-  its upload ledger on SD, so it never lists or reads the bucket. A Collection
+  delete. On every target the board sends `If-None-Match: *` and keeps its
+  upload ledger on SD, so it never lists or reads the bucket. A Collection
   needs a read, modify and write on every file, which an upload only key cannot do.
 - source.coop grants are per product, `ReadOnly` or `FullAccess`, with no prefix
   scoping (docs.source.coop, read 2026-10-19). Until an upload only role exists,
