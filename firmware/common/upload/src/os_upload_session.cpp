@@ -209,8 +209,10 @@ Outcome Session::put(std::string_view name, std::uint64_t bytes,
                                         .access_key_id = creds_.key_id(),
                                         .secret_access_key = creds_.secret()},
                                        auth_header);
-  if (!auth_size)
+  if (!auth_size) {
+    text::secure_zero(auth_header);
     return Outcome::RequestRejected;
+  }
 
   // Everything signed except Host, which the transport writes, plus the
   // Authorization header itself.

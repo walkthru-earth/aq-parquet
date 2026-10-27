@@ -1,9 +1,13 @@
 // Host tests for the device uploader (#81), firmware/common/upload.
 //
 // The SigV4 vectors below come from the AWS signing test suite in
-// awslabs/aws-c-auth (tests/aws-signing-test-suite/v4), Apache-2.0,
-// "AWS C Auth, Copyright Amazon.com, Inc. or its affiliates". They use the
-// public AKIDEXAMPLE example credentials, which sign nothing real.
+// awslabs/aws-c-auth (tests/aws-signing-test-suite/v4), Apache-2.0. The
+// upstream NOTICE reads, verbatim:
+//   AWS C Auth
+//   Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+//   SPDX-License-Identifier: Apache-2.0.
+// They use the public AKIDEXAMPLE example credentials, which sign nothing
+// real.
 //
 // Never put a real or realistic API key, PSK, PIN or token in this file.
 
