@@ -2,6 +2,22 @@
 
 Newest first. Versions follow section 7 of the [README](README.md).
 
+## 0.1.3, 2026-10-27
+
+- Step 5 of section 11. The Waveshare logger collect runs a `static
+  constexpr` module table of `pms5003t`, the waveshare identity module,
+  `max17048` and `battery_health`, in
+  `firmware/esp-idf-waveshare-sim7670g/logger/sensor_modules.h`. The logger
+  and `Hooks::collect` keep their signatures.
+- `os_sensor_module.h` adds `ossensor::Writer` with typed writes checked
+  against the board field type at build time, runtime writes that skip
+  `kNoSlot`, and a `[[nodiscard]]` `init_module`. Section 10 documents them.
+- The old `apply_pms`, `apply_gauge` and `apply_battery_health` leave the
+  Waveshare contract header. They live on as the test reference in
+  `tools/waveshare_collect_reference.h`, and a row equality fixture in
+  `waveshare-contract-test` compares both.
+- No schema change. No `dict`, `desc` or row moves.
+
 ## 0.1.2, 2026-10-27
 
 - Step 4 of section 11. The gate generates one C++ header per module

@@ -23,9 +23,9 @@ today's `aq_` name shown where code is cited.
 
 ## What landed
 
-Steps 1 to 4 of section 11 are in. The firmware compiles exactly what it did
-before. Step 4 adds C++ headers that no board includes yet, so both app
-images stay byte identical.
+Steps 1 to 5 of section 11 are in. Step 5 moves the Waveshare collect into
+sensor modules. Its image code changes, and `dict`, `desc` and every row
+stay the same. The CoreS3 image still compiles what it did before.
 
 | Part | Path |
 | --- | --- |
@@ -39,6 +39,9 @@ images stay byte identical.
 | Generated module headers, step 4 | `<id>_module.h` beside each module manifest but `system`, checked in, gated byte for byte, rewritten by `pixi run plugin-headers` |
 | Module glue, step 4 | [`firmware/common/logger/src/os_sensor_module.h`](../../../firmware/common/logger/src/os_sensor_module.h), `ossensor::Module`, `init_error` and `consteval` `resolve` |
 | Host test, step 4 | [`tools/test_sensor_module.py`](../../../tools/test_sensor_module.py), `pixi run sensor-module-test`, part of `pixi run gate` |
+| Waveshare modules, step 5 | [`logger/sensor_modules.h`](../../../firmware/esp-idf-waveshare-sim7670g/logger/sensor_modules.h), the module table `main.cpp` loops over |
+| Write helpers, step 5 | `ossensor::Writer`, the runtime `integer`, `counter` and `number` and `init_module` in `os_sensor_module.h`, section 10 |
+| Row equality fixture, step 5 | [`tools/waveshare_collect_reference.h`](../../../tools/waveshare_collect_reference.h), the old collect, checked against the table in `pixi run waveshare-contract-test` |
 | Changes | [CHANGELOG](CHANGELOG.md) |
 
 Four details differ from the proposal text below, and the schemas win.
@@ -67,7 +70,7 @@ Four details differ from the proposal text below, and the schemas win.
 | Still leaks | Where and effect |
 | --- | --- |
 | No circular mean, no counter delta | `enum class Aggregate` in [`column_semantics.h`](../../../firmware/common/src/column_semantics.h) lines 34 to 41 mirrors the stac-opensensor enum. Both `telemetry_semantics.inc` files say at lines 78 to 80 that counters use `point` for this reason (#83, bridge open question 17) |
-| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 115, Waveshare [`main.cpp`](../../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
+| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 115. Waveshare moved to modules in step 5 |
 | Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
 | Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
 | One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
@@ -567,6 +570,40 @@ void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
 there. A failed `init` leaves the module columns null and sets its status, so
 sampling never stops.
 
+### Write helpers, step 5
+
+Module code writes a column through these, never through `Row::set` or a
+raw index. `NumericSample::set` has no bounds check, and slot 255 is
+`kNoSlot`.
+
+| Helper | Does |
+| --- | --- |
+| `ossensor::Writer<kFields, kSlots>` | Typed writes by generated `Column`. `integer<C>` writes Int32, `counter<C>` Int64 and `number<C>` Float. The build stops with `module_column_type_differs_from_board_field` when the board field has another type. A `kNoSlot` column compiles to no write |
+| `ossensor::integer`, `counter`, `number` | Runtime writes by `Slot`. They skip `kNoSlot` and any slot past the row |
+| `ossensor::init_module` | Runs `Module::init` and returns its result as `[[nodiscard]]`, so a dropped init result warns. A module with no init succeeds |
+
+The generated headers carry no column type. `Writer` checks the board
+field type instead, and the gate already holds the manifest type equal to
+the board field.
+
+```cpp
+static constexpr auto kSlots =
+    ossensor::resolve(max17048::kColumns, std::span{telemetry::contract::kFields});
+
+void write_gauge(oslogger::Row &row, const BatteryHealth &health) {
+  using enum max17048::Column;
+  const ossensor::Writer<telemetry::contract::kFields, kSlots> out{row};
+  out.integer<gauge_status>(max17048::kStatusValid);
+  out.integer<battery_mv>(health.reading.millivolts);
+}
+```
+
+The Waveshare board shows the whole pattern in `sensor_modules.h`. Hardware
+reads come in through a `Sources` context of callbacks, so the same table
+runs on the host with fakes. Modules that share one read keep it in that
+context, and the table order runs the reader first, max17048 before
+battery_health. `init` stays in the board init for now.
+
 ## 11. Migration plan
 
 One PR per step, after the Phase 2 renames. No step through 7 changes a wire
@@ -585,7 +622,10 @@ or file format, `dict` or `desc`.
 | 9 | The weather board, if wanted | New dictionary, existing boards unchanged |
 
 Steps 5 and 6 touch firmware, so both boards build and get proportional
-readback before any hardware claim.
+readback before any hardware claim. Step 5 proves row equality on 720 input
+sets, every PMS status including warming and model mismatch, the gauge read
+failures and six sensor identities, against the old collect in
+`tools/waveshare_collect_reference.h`.
 
 ## 12. Flow
 
