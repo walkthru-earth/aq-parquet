@@ -376,6 +376,34 @@ def test_account() -> None:
     require([e.get("operation") for e in failed["errors"]] == ["allocate"], f"a boot with no BEGIN {failed}")
     require(d["errors"] == [], f"boot D {d}")
 
+    # A begin() that fails after CODEC never prints BEGIN. When the reset
+    # banner after it was missed, the next CODEC still opens a new boot.
+    retried = bpc.account(bpc.parse_line(l) for l in [
+        "PARQUET CODEC codec=LZ4_RAW source=nvs",
+        "PARQUET ERROR operation=allocate logging=false",
+        "PARQUET CODEC codec=LZ4_RAW source=nvs",
+        "PARQUET BEGIN boot=E columns=62",
+    ])
+    names = [b["boot"] for b in retried["boots"]]
+    require(names == ["unknown", "E"], f"a second CODEC with no BEGIN starts a boot {names}")
+    require([e.get("operation") for e in retried["boots"][0]["errors"]] == ["allocate"]
+            and retried["boots"][1]["errors"] == [], f"the failed begin() keeps its error {retried['boots']}")
+
+    # A boot opened at BEGIN because its CODEC was missed is already named, so
+    # the next CODEC belongs to a later boot whose banner was missed.
+    late = bpc.account(bpc.parse_line(l) for l in [
+        "PARQUET BEGIN boot=F columns=62",
+        "PARQUET ROW sequence=0 buffered=1 dropped=0",
+        "PARQUET CODEC codec=LZ4_RAW source=nvs",
+        reset_line,
+        "PARQUET BEGIN boot=G columns=62",
+    ])
+    names = [b["boot"] for b in late["boots"]]
+    require(names == ["F", "G"], f"CODEC after a named boot starts a new one {names}")
+    require(late["boots"][0]["errors"] == [] and late["boots"][0]["rows_seen"] == 1
+            and [e.get("operation") for e in late["boots"][1]["errors"]] == ["worker-watchdog-reset"],
+            f"the reset error lands in boot G {late['boots']}")
+
 
 def test_classify_and_plan() -> None:
     lines = [(1.0, "PARQUET ROW sequence=0"), (2.0, "PARQUET GROUP file=x first=0 last=0"),

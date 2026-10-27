@@ -145,6 +145,9 @@ def collect(events: Iterable[dict]) -> list[Boot]:
     # so RECOVERY, QUARANTINE and SCAN always follow their boot's BEGIN.
     # Lines before any of those markers, from a capture that started late, go
     # to an "unknown" boot and never to a named one.
+    # PARQUET ERROR operation=thing-identity prints before CODEC, and the boot
+    # that prints it stops there with no CODEC or BEGIN. So when its banner
+    # was missed, the error is counted under the previous boot.
     boots: list[Boot] = []
     current: Boot | None = None
 
