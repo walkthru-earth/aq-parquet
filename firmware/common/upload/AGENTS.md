@@ -21,4 +21,14 @@
   object key is the prefix plus the SD relative name verbatim.
 - The dev prefix lives in one constant, `kDevPrefix` in `os_upload_policy.h`.
 - Host gate is `pixi run upload-test` with ASan and UBSan. The SigV4 vectors
-  come from aws-c-auth under Apache-2.0, keep their attribution.
+  come from aws-c-auth under Apache-2.0, keep their attribution in the test
+  and in THIRD_PARTY_NOTICES.md section 6. FakeCloud pins the full PUT
+  signature, computed by a separate Python SigV4.
+- The transport scratch is static. `ScratchLease` allows one request at a
+  time and wipes every buffer on every exit. The STS body holds the key, so
+  never read or log the scratch outside a lease.
+- esp_http_client copies header values, the session token and the
+  Authorization header among them, to its own heap and frees them without
+  zeroing. That is outside our code, so never claim full zeroing on device.
+- `PolicyState` is RAM only. A reboot clears a stop, so a revoked key gets
+  one STS attempt per boot.

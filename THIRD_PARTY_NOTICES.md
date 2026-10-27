@@ -139,3 +139,12 @@ Copyright the GeoParquet contributors, licensed
 [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0). The host tests use
 it to validate the `geo` Parquet footer each board writes. It is not in any
 firmware image.
+
+The four SigV4 test vectors in [`tools/test_upload.cpp`](tools/test_upload.cpp)
+(their canonical requests, strings to sign and signatures) are test data from
+the AWS signing test suite `tests/aws-signing-test-suite/v4` in
+[awslabs/aws-c-auth](https://github.com/awslabs/aws-c-auth), "AWS C Auth,
+Copyright Amazon.com, Inc. or its affiliates", licensed
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0). They use the public
+`AKIDEXAMPLE` example credentials, which sign nothing real. The host upload
+test uses them to check the signer. They are not in any firmware image.
