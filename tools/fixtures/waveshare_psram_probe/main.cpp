@@ -1,4 +1,3 @@
-#include <aq_console.h>
 #include <cstddef>
 #include <cstdint>
 #include <esp_chip_info.h>
@@ -8,6 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <initializer_list>
+#include <os_console.h>
 
 // Physical-board qualification fixture, not a logger/framework trial. Only
 // writes a region it allocated; never touches card data, pins or flash fuses.

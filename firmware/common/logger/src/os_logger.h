@@ -1,11 +1,11 @@
 #pragma once
 
 #include "os_logger_cadence.h"
-#include <aq_battery_health.h>
 #include <ble_sync.h>
 #include <cstddef>
 #include <cstdint>
 #include <numeric_sample.h>
+#include <os_battery_health.h>
 #include <parquet_writer.h>
 #include <sync_service.h>
 

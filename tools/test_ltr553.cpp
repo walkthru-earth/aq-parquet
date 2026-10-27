@@ -1,4 +1,4 @@
-#include "../firmware/common/sensors/src/aq_ltr553.h"
+#include "../firmware/common/sensors/src/os_ltr553.h"
 
 #include <algorithm>
 #include <array>

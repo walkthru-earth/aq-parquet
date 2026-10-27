@@ -1,6 +1,6 @@
 #include "device_config.h"
-#include "aq_location.h"
 #include "debug_log.h"
+#include "os_location.h"
 
 #ifdef ESP_PLATFORM
 #include <lwip/sockets.h>
@@ -28,23 +28,6 @@ std::uint32_t random_pin() { return esp_random() % 1000000U; }
 
 bool committed(nvs_handle_t store, esp_err_t result) {
   return result == ESP_OK && nvs_commit(store) == ESP_OK;
-}
-
-std::uint8_t read_u8(nvs_handle_t store, const char *key,
-                     std::uint8_t fallback) {
-  std::uint8_t value;
-  return nvs_get_u8(store, key, &value) == ESP_OK ? value : fallback;
-}
-
-std::uint32_t read_u32(nvs_handle_t store, const char *key,
-                       std::uint32_t fallback) {
-  std::uint32_t value;
-  return nvs_get_u32(store, key, &value) == ESP_OK ? value : fallback;
-}
-
-bool read_string(nvs_handle_t store, const char *key, char *out,
-                 std::size_t size) {
-  return nvs_get_str(store, key, out, &size) == ESP_OK;
 }
 
 bool sensor_serial_chars(const char *value) {
@@ -262,10 +245,9 @@ bool same_ntp(const NtpSettings &a, const NtpSettings &b) {
 
 // The complete configuration is one NVS blob under `cfg`. A single
 // nvs_set_blob replaces the whole record or leaves the previous one, and the
-// CRC rejects anything else. Older images stored one typed key per setting
-// (pair, pin, disp, wifion, ssid, psk, lanon, token, sensor, location, ntp).
-// Those keys are read when `cfg` is missing or damaged and are never erased.
-// Text records reuse the per-key encoders so both layouts share validation.
+// CRC rejects anything else. A missing or damaged `cfg` is a first boot and
+// gets fresh defaults (#111, no backward compatibility). No per-key layout is
+// read, and nothing in the namespace is erased.
 constexpr const char *kBlobKey = "cfg";
 constexpr std::uint8_t kBlobMagic[4] = {'A', 'Q', 'C', 'F'};
 constexpr std::uint16_t kBlobVersion = 1;
@@ -380,7 +362,7 @@ void encode_blob(Blob &blob, const Settings &settings) {
 }
 
 // Structural checks only. A record that passes still goes through the same
-// value validation as the legacy keys.
+// value validation as a SET_CONFIG value.
 bool blob_intact(const Blob &blob, std::size_t size) {
   const BlobPayload &payload = blob.payload;
   return size == sizeof(Blob) &&
@@ -402,7 +384,7 @@ bool save_locked(const Settings &settings) {
   if (nvs_open(kNamespace, NVS_READWRITE, &store) != ESP_OK)
     return false;
   encode_blob(staged_blob, settings);
-  // One write and one commit. Legacy per-key values are left untouched.
+  // One write and one commit.
   bool ok = committed(
       store, nvs_set_blob(store, kBlobKey, &staged_blob, sizeof(staged_blob)));
   std::size_t length = sizeof(readback_blob);
@@ -457,38 +439,6 @@ void load_blob(BlobPayload &payload, Settings &settings) {
     clear_sensor(settings);
   apply_location(true, payload.location, settings);
   apply_ntp(true, payload.ntp, settings);
-}
-
-// Pre-blob layout, kept for migration and as the fallback for a torn record.
-void load_legacy(nvs_handle_t store, bool display_detected,
-                 Settings &settings) {
-  settings.pair = stored_pair_mode(read_u8(store, "pair", 0));
-  settings.pin = read_u32(store, "pin", kLegacyDefaultPin) % 1000000U;
-  settings.display = read_u8(store, "disp", display_detected ? 1 : 0) != 0;
-  settings.wifi_on = read_u8(store, "wifion", 0) != 0;
-  read_string(store, "ssid", settings.ssid, sizeof(settings.ssid));
-  read_string(store, "psk", settings.psk, sizeof(settings.psk));
-  settings.lan_on = read_u8(store, "lanon", 1) != 0;
-  std::size_t token_size = kTokenBytes;
-  if (nvs_get_blob(store, "token", settings.token, &token_size) != ESP_OK ||
-      token_size != kTokenBytes)
-    esp_fill_random(settings.token, kTokenBytes);
-  char sensor[kSensorRecordBytes]{};
-  if (read_string(store, "sensor", sensor, sizeof(sensor)) &&
-      !decode_sensor(sensor, settings))
-    clear_sensor(settings);
-  // Missing records on a legacy image receive defaults.
-  char location[kLocationRecordBytes]{};
-  std::size_t location_size = sizeof(location);
-  const auto location_result =
-      nvs_get_str(store, "location", location, &location_size);
-  if (location_result != ESP_ERR_NVS_NOT_FOUND)
-    apply_location(location_result == ESP_OK, location, settings);
-  char ntp[kNtpRecordBytes]{};
-  std::size_t ntp_size = sizeof(ntp);
-  const auto ntp_result = nvs_get_str(store, "ntp", ntp, &ntp_size);
-  if (ntp_result != ESP_ERR_NVS_NOT_FOUND)
-    apply_ntp(ntp_result == ESP_OK, ntp, settings);
 }
 
 void publish(const Settings &settings) {
@@ -581,23 +531,18 @@ bool load(bool display_detected) {
   const bool from_blob =
       blob_result == ESP_OK && blob_intact(readback_blob, blob_size);
   if (blob_result != ESP_ERR_NVS_NOT_FOUND && !from_blob)
-    oslog.println("CONFIG BLOB invalid=true fallback=legacy");
-  std::uint8_t stored_pair;
-  const bool first_boot =
-      !from_blob &&
-      nvs_get_u8(store, "pair", &stored_pair) == ESP_ERR_NVS_NOT_FOUND;
+    oslog.println("CONFIG BLOB invalid=true fallback=defaults");
+  const bool first_boot = !from_blob;
   bool migrated_pin = false;
   if (first_boot) {
     settings.display = display_detected;
     settings.pair = display_detected ? PairMode::Random : PairMode::Fixed;
     settings.pin = random_pin();
     esp_fill_random(settings.token, kTokenBytes);
-  } else if (from_blob) {
-    load_blob(readback_blob.payload, settings);
   } else {
-    load_legacy(store, display_detected, settings);
+    load_blob(readback_blob.payload, settings);
   }
-  if (!first_boot && settings.pin == kLegacyDefaultPin) {
+  if (!first_boot && settings.pin == kFactoryDefaultPin) {
     settings.pin = random_pin();
     migrated_pin = true;
     oslog.println("CONFIG SECURITY legacy_pin_rotated=true");
@@ -612,7 +557,7 @@ bool load(bool display_detected) {
                "wifi_on=%s ssid_set=%s lan_on=%s\n",
                first_boot ? "true" : "false",
                settings.display ? "true" : "false", pair_name(settings.pair),
-               settings.pin == kLegacyDefaultPin ? "true" : "false",
+               settings.pin == kFactoryDefaultPin ? "true" : "false",
                settings.wifi_on ? "true" : "false",
                settings.ssid[0] ? "true" : "false",
                settings.lan_on ? "true" : "false");
@@ -844,7 +789,7 @@ bool apply_lines(const char *text, std::size_t length, char *bad_key,
   oslog.printf(
       "CONFIG SET pair=%s pin_default=%s wifi_on=%s ssid_set=%s "
       "lan_on=%s clear_bonds=%s rotate_token=%s reboot_required=%s\n",
-      pair_name(next.pair), next.pin == kLegacyDefaultPin ? "true" : "false",
+      pair_name(next.pair), next.pin == kFactoryDefaultPin ? "true" : "false",
       next.wifi_on ? "true" : "false", next.ssid[0] ? "true" : "false",
       next.lan_on ? "true" : "false", pending.clear_bonds ? "true" : "false",
       pending.rotate_token ? "true" : "false",
@@ -875,7 +820,7 @@ std::size_t build_json(char *out, std::size_t size, const WifiView &wifi) {
       "\"sensor\":{\"vendor\":\"%s\",\"model\":\"%s\",\"serial\":\"%s\","
       "\"batch_candidate\":%u}}",
       pair_name(settings.pair), settings.pin <= 999999U ? 1U : 0U,
-      settings.pin == kLegacyDefaultPin ? 1U : 0U, wifi.bonds,
+      settings.pin == kFactoryDefaultPin ? 1U : 0U, wifi.bonds,
       settings.display ? 1U : 0U, settings.wifi_on ? 1U : 0U, ssid,
       settings.psk[0] ? 1U : 0U, wifi.state, wifi.ip, wifi.rssi, wifi.mac,
       settings.lan_on ? 1U : 0U, unsigned(kLanPort), wifi.host, wifi.clients,

@@ -56,10 +56,10 @@
 //   range is 0 to 99 %, and the firmware writes 0 to 100, so the bound is
 //   0 to 100. Counts are one unsigned 16 bit frame word, so 0 to 65535.
 //   MAX17048 (Analog Devices) bounds come from firmware/common/sensors
-//   aq_max17048.h. VCELL 2500 to 4500 mV is the read check, raw SOC is
+//   os_max17048.h. VCELL 2500 to 4500 mV is the read check, raw SOC is
 //   checked against 120 %, and battery_percent is written only within 0 to
 //   100. battery_minutes_to_empty is capped at 7 days (10080 min) by
-//   kMaxMinutesToEmpty in firmware/common/power aq_battery_health.cpp.
+//   kMaxMinutesToEmpty in firmware/common/power os_battery_health.cpp.
 //   The batch candidate is a modelResult (0.003964 times
 //   particles_gt03_per_01l). The opensensor:derived object it needs is
 //   written by the template generator (#85), not here.

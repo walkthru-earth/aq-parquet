@@ -57,7 +57,7 @@ def main() -> None:
                    "-I", str(root / "firmware/common/runtime/src"),
                    "-I", str(root / "firmware/common/src"),
                    str(root / "tools/test_location.cpp"),
-                   str(helper / "aq_location.cpp"), "-I", str(directory / "h3"),
+                   str(helper / "os_location.cpp"), "-I", str(directory / "h3"),
                    *objects, "-o", str(executable)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

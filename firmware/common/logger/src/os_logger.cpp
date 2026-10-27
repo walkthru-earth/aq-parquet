@@ -34,7 +34,7 @@
 #include <time_sync.h>
 #include <utc_clock.h>
 
-#include "aq_console.h"
+#include "os_console.h"
 #include <esp_attr.h>
 #include <esp_heap_caps.h>
 #include <esp_mac.h>

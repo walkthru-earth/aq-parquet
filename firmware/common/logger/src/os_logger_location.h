@@ -1,7 +1,7 @@
 #pragma once
 
-#include <aq_location.h>
 #include <device_config.h>
+#include <os_location.h>
 #include <parquet_writer.h>
 #include <telemetry_logical.h>
 

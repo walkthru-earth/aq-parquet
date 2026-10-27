@@ -1,4 +1,4 @@
-#include <aq_console.h>
+#include <os_console.h>
 
 namespace opensensor::console {
 bool begin() { return true; }

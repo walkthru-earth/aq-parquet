@@ -1,10 +1,10 @@
 #pragma once
 
 #include <M5Unified.h>
-#include <aq_ltr553.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <os_ltr553.h>
 
 namespace telemetry {
 

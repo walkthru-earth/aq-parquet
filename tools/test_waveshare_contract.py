@@ -164,10 +164,10 @@ def main() -> None:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
         command += ["-I", str(common / "power/src"), "-I", str(directory / "h3"),
                     *compile_h3(root, directory, args.sanitize),
-                    str(common / "location/src/aq_location.cpp"),
+                    str(common / "location/src/os_location.cpp"),
                     str(root / "tools/test_waveshare_contract.cpp"),
                     str(common / "logger/src/os_logger_live.cpp"),
-                    str(common / "power/src/aq_battery_health.cpp"),
+                    str(common / "power/src/os_battery_health.cpp"),
                     str(common / "src/parquet_writer.cpp"), str(common / "src/lz4_codec.cpp"),
                     str(common / "sensors/src/pms_frame.cpp"), "-o", str(executable)]
         subprocess.run(command, check=True)

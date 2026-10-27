@@ -1,4 +1,4 @@
-#include "../firmware/common/sensors/src/aq_max17048.h"
+#include "../firmware/common/sensors/src/os_max17048.h"
 
 #include <array>
 #include <cassert>

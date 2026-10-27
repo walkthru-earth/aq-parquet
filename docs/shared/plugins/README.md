@@ -67,7 +67,7 @@ Four details differ from the proposal text below, and the schemas win.
 | Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
 | Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
 | One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
-| `aq_` names | The location, power, console and sensor files in `firmware/common` and a few host test file stems. Phase 2e of #111 renames the common files. The CMake helpers are `os_` since #115, the build variables and manifests since #118, the board components since #122 and the logger sources since #123 |
+| `aq_` names | Only a few host test file stems are left. The CMake helpers are `os_` since #115, the build variables and manifests since #118, the board components since #122, the logger sources since #123 and the location, power, console and sensor files since #124 |
 
 ## 2. One contract, laid out like stac-opensensor
 

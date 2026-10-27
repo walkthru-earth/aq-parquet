@@ -1,6 +1,6 @@
 # Optional native H3 location component
 
-`src/aq_location.*` is board-neutral, stateless C++ wrapping the official H3 C
+`src/os_location.*` is board-neutral, stateless C++ wrapping the official H3 C
 library. It does not initialize controllers, read GPS, perform network lookups,
 write NVS or infer country. Missing location remains missing.
 

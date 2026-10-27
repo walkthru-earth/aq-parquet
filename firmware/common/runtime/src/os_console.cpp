@@ -1,4 +1,4 @@
-#include "aq_console.h"
+#include "os_console.h"
 
 #include <sdkconfig.h>
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG

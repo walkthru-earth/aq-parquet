@@ -13,9 +13,10 @@
 
 namespace config {
 enum class PairMode : std::uint8_t { Random = 0, Fixed = 1, None = 2 };
-// Marker used only to migrate legacy installations that stored the old
-// universal PIN. New devices receive a random per-device fixed PIN.
-constexpr std::uint32_t kLegacyDefaultPin = 123456;
+// The factory default PIN that older images shipped. A saved record that still
+// holds it is rotated on load. New devices receive a random per-device fixed
+// PIN.
+constexpr std::uint32_t kFactoryDefaultPin = 123456;
 constexpr std::uint16_t kLanPort = 47390;
 constexpr std::size_t kTokenBytes = 32;
 constexpr std::size_t kSsidMax = 32;

@@ -40,7 +40,7 @@ def main() -> None:
             "-I", str(root / "firmware/common/src"), "-I", str(connectivity),
             str(root / "firmware/common/connectivity/tests/test_disconnect.cpp"),
             str(connectivity / "disconnect.cpp"), str(runtime / "debug_log.cpp"),
-            str(root / "tools/host_fakes/config/aq_console.cpp"),
+            str(root / "tools/host_fakes/config/os_console.cpp"),
             "-o", str(executable),
         ]
         if args.sanitize:

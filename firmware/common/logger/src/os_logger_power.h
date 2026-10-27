@@ -2,10 +2,10 @@
 
 #include "os_logger_emergency_close.h"
 
-#include <aq_battery_health.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <os_battery_health.h>
 
 // Pure power-state bookkeeping for the logger runtime. No IO, no clocks.
 namespace oslogger::power {

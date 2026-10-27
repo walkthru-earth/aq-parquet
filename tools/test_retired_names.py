@@ -70,6 +70,11 @@ FIRES = [
     "project(" + "aq" + "_logger_fixture)",
     "project(" + "aq" + "_connectivity_fixture)",
     "project(" + "aq" + "_psram_probe)",
+    "#include \"" + "aq" + "_location.h\"",
+    "#include <" + "aq" + "_battery_health.h>",
+    "    SRCS \"src/" + "aq" + "_console.cpp\"",
+    "#include \"../firmware/common/sensors/src/" + "aq" + "_ltr553.h\"",
+    "#include <" + "aq" + "_max17048.h>",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -102,6 +107,9 @@ QUIET = [
     "artifacts/reflash-20261011/" + "aq" + "_waveshare.elf",
     "#include \"os_logger_live.h\"",
     "project(os_logger_fixture)",
+    "#include <os_battery_health.h>",
+    "str(root / \"tools/host_fakes/config/os_console.cpp\"),",
+    "aq_location_cell is not a name we use.",
 ]
 
 
