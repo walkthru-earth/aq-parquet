@@ -155,6 +155,10 @@ plugin-contract = "python tools/plugin_contract.py"
 plugin-contract-test = "python tools/test_plugin_contract.py"
 # Rewrite the generated module C++ headers beside each module manifest (#17 step 4).
 plugin-headers = "python tools/plugin_contract.py --write-headers"
+# Write telemetry_*.inc and a first shipped.lock for a NEW board from its
+# board.json, once (#17 step 7). Refuses when any of them exists.
+# Usage, pixi run plugin-new-board firmware/esp-idf-<board>/<variant>/board.json
+plugin-new-board = "python tools/plugin_contract.py --write-board"
 # The generated module headers and ossensor::resolve compiled against both boards' field tables (#17 step 4).
 sensor-module-test = "python tools/test_sensor_module.py --sanitize"
 # Pinned dictionary and template URIs, raw at a commit on main whose bytes hash to dict and desc (#89).
