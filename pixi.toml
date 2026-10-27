@@ -145,6 +145,10 @@ published-templates-test = "python tools/test_published_templates.py"
 # board telemetry .inc byte for byte, and shipped.lock stays append only.
 plugin-contract = "python tools/plugin_contract.py"
 plugin-contract-test = "python tools/test_plugin_contract.py"
+# Rewrite the generated module C++ headers beside each module manifest (#17 step 4).
+plugin-headers = "python tools/plugin_contract.py --write-headers"
+# The generated module headers and ossensor::resolve compiled against both boards' field tables (#17 step 4).
+sensor-module-test = "python tools/test_sensor_module.py --sanitize"
 # Pinned dictionary and template URIs, raw at a commit on main whose bytes hash to dict and desc (#89).
 pinned-uris-test = "python tools/test_pinned_uris.py"
 # Pin kDictionaryUri and kTemplateHref to the commits that last wrote their bytes (#89).

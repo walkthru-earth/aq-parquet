@@ -118,9 +118,11 @@ def cores3_base(document: dict):
 
 
 def main() -> None:
-    results, examples = gate.check()
+    results, examples, headers = gate.check()
     for r in results:
         print(f"PASS {r.board} {r.columns} columns in {r.segments} segments, dict {r.dict}", flush=True)
+    gate.require(len(headers) > 0, "the gate checks generated module headers")
+    print(f"PASS {len(headers)} generated module headers", flush=True)
     for line in examples:
         print(f"PASS example {line}", flush=True)
 
@@ -224,7 +226,7 @@ def main() -> None:
 
         root = scratch_copy(scratch)
         with_history()(root)
-        results, _ = gate.check(root, cores3_base({"board": "m5stack-cores3", "releases": [older_release(today)]}))
+        results, _, _ = gate.check(root, cores3_base({"board": "m5stack-cores3", "releases": [older_release(today)]}))
         gate.require(results[0].dict == today["releases"][-1]["dict"], "the newest release is today's")
         shutil.rmtree(root)
         print("PASS accepts a release that appends to an older one", flush=True)
@@ -335,6 +337,47 @@ def main() -> None:
                base=cores3_base(edited))
         mutate(scratch, lambda r: None, "names another board", "a base lock of another board",
                base=cores3_base({**today, "board": "other"}))
+
+        # The generated module headers equal their manifests byte for byte (#17 step 4).
+        pmsa003_header = PMSA003.parent / "pmsa003_module.h"
+        imu_header = IMU.parent / "m5_imu_module.h"
+        identity_header = IDENTITY.parent / "waveshare_module.h"
+        mutate(scratch, replace_text(pmsa003_header, "kStatusValid = 4;", "kStatusValid = 5;"),
+               "stale generated module header", "a hand edited common module header")
+        mutate(scratch, replace_text(imu_header, "\n} // namespace", "\n// local note\n} // namespace"),
+               "stale generated module header", "a hand edited board local module header")
+        mutate(scratch, lambda r: (r / identity_header).unlink(), "missing generated module header",
+               "a deleted module header")
+        mutate(scratch, edit_json(PMSA003, lambda d: d.update(init_errors=["not_found"])),
+               "pmsa003_module.h: stale generated module header", "a manifest edit without a regenerated header")
+
+        def orphan(root: Path) -> None:
+            stray = root / gate.COMMON_MODULES / "gone"
+            stray.mkdir()
+            shutil.copy(root / pmsa003_header, stray / "gone_module.h")
+
+        mutate(scratch, orphan, "generated module header without a module manifest",
+               "a module header whose manifest was removed")
+
+        # The write path regenerates every header, removes the orphan, and the
+        # check then passes on the same tree.
+        root = scratch_copy(scratch)
+        edit_json(PMSA003, lambda d: d.update(init_errors=["not_found"]))(root)
+        (root / identity_header).unlink()
+        orphan(root)
+        with contextlib.redirect_stdout(io.StringIO()) as written:
+            gate.check(root, no_base, write_headers=True)
+        gate.require("WROTE firmware/common/sensors/modules/pmsa003/pmsa003_module.h" in written.getvalue(),
+                     f"the write path rewrote the stale header, {written.getvalue()!r}")
+        gate.require(not any((root / gate.COMMON_MODULES / "gone").glob("*_module.h")),
+                     "the write path removed the orphan header")
+        gate.check(root, no_base)
+        text = (root / pmsa003_header).read_text()
+        gate.require("enum class [[nodiscard]] InitError : std::uint8_t { not_found };" in text,
+                     "the regenerated header carries the new InitError")
+        gate.require((root / identity_header).is_file(), "the write path restored the deleted header")
+        shutil.rmtree(root)
+        print("PASS the write path regenerates, removes the orphan, then the check passes", flush=True)
 
         # The base loader fails closed when the ref is missing.
         os.environ["PLUGIN_CONTRACT_BASE"] = "refs/heads/plugin-contract-no-such-ref"
