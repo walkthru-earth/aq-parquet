@@ -1,0 +1,24 @@
+# Decision records
+
+Short records of design choices that span firmware, the uploader, the mobile
+app or the STAC spec. Each one names the options, the choice, who owns which
+part and what would reopen it. Code and contracts are the truth. A record says
+why they look the way they do.
+
+A record is Proposed until the owner signs it off on its issue, then Accepted.
+A later record can supersede an earlier one, and the old one stays as history.
+
+| Record | Issue | Status |
+| --- | --- | --- |
+| [0001 Who writes STAC for a standalone Wi-Fi Thing](0001-standalone-thing-stac.md) | [#109](https://github.com/walkthru-earth/opensensor-space-firmware/issues/109) | Proposed, pending owner sign off |
+| [0002 Small Parquet files, compaction and range reads](0002-small-parquet-files.md) | [#25](https://github.com/walkthru-earth/opensensor-space-firmware/issues/25) | Proposed, pending owner sign off |
+
+## Writing a record
+
+- Name it `NNNN-short-slug.md` with the next free number.
+- Open with a small table of status, date, issue and the sources it rests on.
+- Cite code and docs by repo path and spec text by full commit. Use numbers
+  only from the repo, its bench records or the issue threads.
+- Add a row to the table above and link the record from the pages it affects.
+- Bridge questions that touch the mobile app or stac-opensensor go under "Open
+  questions for the owner" in `.handoff/ecosystem-bridge.md`, outside this repo.

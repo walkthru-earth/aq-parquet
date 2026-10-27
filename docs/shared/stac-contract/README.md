@@ -9,6 +9,8 @@ Research snapshot from 2026-10-25 at commit `2b49114`. Nothing here is implement
 
 The app-side design is `docs/superpowers/specs/2026-10-25-sensor-agnostic-stac-contract.md` in walkthru-earth/opensensor-space-mobile, tracked by walkthru-earth/opensensor-space-mobile#182. Firmware work is tracked by epic #83 and issues #84 to #93.
 
+Who writes the STAC Items, Collections and Catalog for a standalone Wi-Fi Thing is proposed in [decision 0001](../decisions/0001-standalone-thing-stac.md) (#109).
+
 When any part lands, move the settled contract into `table-and-observation-model.md` and `ble-sync-protocol.md`, and keep this folder as history.
 
 ## Field names are superseded

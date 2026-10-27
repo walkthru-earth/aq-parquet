@@ -1,0 +1,156 @@
+# 0001 Who writes STAC for a standalone Wi-Fi Thing
+
+| | |
+| --- | --- |
+| Status | Proposed, pending owner sign off |
+| Date | 2026-10-27 |
+| Issue | [#109](https://github.com/walkthru-earth/opensensor-space-firmware/issues/109) |
+| Related | [#81](https://github.com/walkthru-earth/opensensor-space-firmware/issues/81) uploader, [#83](https://github.com/walkthru-earth/opensensor-space-firmware/issues/83) STAC epic, mobile #181 and #190, walkthru-earth/stac-opensensor#1 |
+| Spec | stac-opensensor `PROFILE.md` at `815fc45cce64d477ea4268f42ace79aed8877a98` (bridge decisions 33 and 40) |
+| Bridge | decisions 12, 13, 16, 33 and 40 in `.handoff/ecosystem-bridge.md` |
+
+## Context
+
+A Wi-Fi Thing can run with no phone. It logs to SD and, once #81 lands, uploads
+each closed file of at most one hour by itself (bridge decision 16). Bridge
+decision 12 says only Parquet leaves the board and a footer reading indexer
+builds STAC, with the phone writing STAC for its own uploads until that indexer
+exists. No indexer exists yet and a standalone Thing has no phone, so its files
+would land on source.coop with no STAC at all.
+
+The spec names four pieces.
+
+| Piece | Path | Changes when |
+| --- | --- | --- |
+| File Item | `thing=<uuid>/year=YYYY/month=MM/day=DD/<file>.json` | once per uploaded file, never after |
+| Thing Collection | `thing=<uuid>/collection.json` | every file (extent, summaries), a mobility or location change, a template change |
+| Root Catalog | `catalog.json` | a new Thing appears |
+| Item mirror, optional | `thing=<uuid>/items.parquet` | every file, exactly in sync with the Item JSON or absent |
+
+PROFILE already places the Thing Collection with a "catalog publisher" and says a
+file stands alone, so an indexer can build its Collection and Item from the
+footer, the rows and the template it names. PROFILE also publishes only dated
+`data_HHMM_` files, and files written before the board knew UTC get no Item until
+they are reconciled.
+
+## Facts that constrain the choice
+
+These come from the #81 plan and its comments, the firmware and the spec.
+
+- Board credentials are upload only (owner, 2026-10-19 on #81). No read, no
+  delete. On the generic `s3` target the board sends `If-None-Match: *` and keeps
+  its upload ledger on SD, so it never lists or reads the bucket. A Collection
+  needs a read, modify and write on every file, which an upload only key cannot do.
+- source.coop grants are per product, `ReadOnly` or `FullAccess`, with no prefix
+  scoping (docs.source.coop, read 2026-10-19). Until an upload only role exists,
+  field boards write to a private intake product and a GitHub Action signed in
+  through OIDC validates each file and copies it to the public product (#81
+  stage 4). That Action is already planned to update the catalog.
+- The uploader skips uploads until UTC is trusted, because SigV4 rejects a skewed
+  clock (#81 stage 3). Undated files stay on the SD card, so a standalone node
+  has no file that needs reconciling before it can get an Item.
+- The firmware already starts a new file on any change of location cell,
+  resolution, country or mobility (`same_location` in
+  `firmware/common/runtime/src/device_config.cpp`). One file never spans two
+  fixed cells, so a file level Item geometry is always well defined.
+- Every finalized file carries the `opensensor` footer key and the `geo` key
+  (`docs/shared/table-and-observation-model.md`), so the Item and Collection
+  inputs are all inside the file plus the template it names.
+- The vendored H3 v4.5.0 sources include `cellToBoundary`, but
+  `firmware/common/location/CMakeLists.txt` relies on section GC to drop unused
+  polygon code, and no board calls it today. A board Item writer would pull it in.
+  Its flash and RAM cost is not measured.
+
+## Options
+
+| Option | Board writes | Indexer writes | Main cost or risk |
+| --- | --- | --- | --- |
+| A | File Item | Collection, Catalog, mirror | JSON writer, H3 boundary, SHA-256 and a frozen profile version in the image. The Item lands in intake, not public, so the Action still has to copy it |
+| B | File Item and its Collection | Catalog | Needs read access and a conditional read, modify and write per upload. Conflicts with upload only keys. Two writers can lose updates without `If-Match` |
+| C | Nothing, Parquet only | Item, Collection, Catalog, mirror | Needs a job that runs and an owner for it. Matches decision 12 |
+| D | File Item as a cache | Rewrites Items and Collections, its output is the reference | Pays the on device cost of A and still needs the job of C |
+
+## Recommendation (proposal)
+
+Option C, with the #81 stage 4 publish Action as the indexer. This is a proposal
+pending owner sign off on #109.
+
+1. The board writes Parquet only. Each uploaded file is self describing, as
+   decision 16 already requires.
+2. The publish Action reads each new intake file, validates schema, `dict`,
+   `desc` and Thing, copies it to `thing=<uuid>/...` in the public product and
+   then writes, in this order, the File Item beside the file, the Thing
+   Collection, and the root Catalog link for a new Thing. The Item mirror is
+   written only if it can be kept exactly in sync.
+3. Writes run Parquet first and Item second, so an Item never points at a missing
+   file. The Item id is the file name, so a retry or a new `<attempt>` overwrites
+   the same Item and never adds one.
+4. The Action is the only writer of Collections and the Catalog. That removes the
+   multi writer race from option B without needing conditional writes on
+   source.coop.
+5. The phone keeps writing STAC for the files it uploads until the indexer runs,
+   as decision 12 says. After that the indexer's output is the reference for
+   every Thing, phone synced or standalone.
+6. The indexer builds everything from the Parquet footer, the rows and the
+   template. It must be able to rebuild the whole catalog from the files alone,
+   so any STAC a board or phone wrote is at most a cache.
+
+Why not A or D now. They add an unmeasured image and RAM cost, pull H3 polygon
+code and a profile version into every image, need a reflash for every spec
+change, and the Item would still land in intake and need the Action to publish
+it. The board gains nothing a footer reading job cannot produce from the same
+bytes.
+
+Why not B. It needs bucket read access and conditional writes that upload only
+keys do not have, and it reopens the race between many boards on one
+Collection.
+
+## Who owns what
+
+| Part | Owns | Does not own |
+| --- | --- | --- |
+| Firmware logger | Self describing Parquet with the `opensensor` and `geo` footer keys, dated file names, a new file on any location change, immutable finalized files, the board template at build time | Any STAC JSON at runtime |
+| Uploader on the board (#81) | Upload of dated finalized files only, oldest first, one at a time, the SD upload ledger, conditional puts where the store has them | Reading the bucket, Collections, the Catalog, any STAC write |
+| Publish Action, the indexer | Validation, the copy from intake to public, File Item, Thing Collection, root Catalog, optional Item mirror, `file:size`, `file:checksum`, `statistics`, `providers` and the `partition:*` fields from decision 40 | Changing or deleting board files |
+| Mobile app | Upload settings over BLE (mobile #181), STAC for its own uploads until the indexer runs (mobile #190), app profile labels | Writing STAC for a standalone Thing |
+| stac-opensensor | The profile, `footer.json`, the example layout, `check-profile.mjs` | Running any job |
+
+## Consequences
+
+- No firmware or contract change. The firmware already emits everything the
+  indexer needs.
+- The #109 acceptance item for measured on device Item writer cost is not done,
+  because no board writer is proposed. It returns only if this record is reopened.
+- A standalone Thing gets STAC only once the publish Action exists. Until then its
+  public files are plain Parquet with full footers, readable by any client.
+- A board on the generic `s3` target uploads to its owner's bucket with no Action,
+  so it gets no STAC unless that owner runs the indexer.
+
+## Reopen when
+
+- A deployment needs STAC with no host job at all, for example the generic `s3`
+  target with no indexer the owner can run.
+- source.coop offers a per prefix, upload only role that lets boards write the
+  public product directly with no intake copy.
+- A measured Item writer on CoreS3 and Waveshare V2 fits the image, DIRAM and
+  PSRAM budget, and a host generator and the firmware produce byte equal Items
+  tested in `pixi run gate`.
+
+## Open questions for the owner
+
+1. Accept option C, with the #81 publish Action as the indexer for both phone
+   synced and standalone Things?
+2. Where does the indexer code live? Options are stac-opensensor scripts, a host
+   tool in this repo, or a new repository, which needs owner approval.
+3. Once the indexer runs, does the phone stop writing STAC, or must its output
+   match the indexer byte for byte?
+4. Fields the board cannot know (provider names, owner contact, license text,
+   titles) belong in the Collection. Do they come from the app over BLE, from the
+   template, or from indexer configuration only?
+5. Is a generic `s3` target with no STAC acceptable, or should the indexer also
+   ship as a command the bucket owner can run?
+6. Should the uploader record a SHA-256 of each file in its SD ledger, using the
+   ESP32-S3 hardware SHA while streaming, so the Action can cross check
+   `file:checksum`? That is an uploader feature, not a STAC writer.
+7. Bridge question 41 (a file with no located row) and question 37 item 4 (Item
+   links `../../../collection.json`) still apply to whoever writes Items.
