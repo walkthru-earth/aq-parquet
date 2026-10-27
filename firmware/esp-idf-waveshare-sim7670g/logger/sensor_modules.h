@@ -197,12 +197,15 @@ inline void write_health(oslogger::Row &row,
     out.integer<battery_minutes_to_empty>(health.assessment.minutes_to_empty);
 }
 
-// Module::collect entries. The context is the board Sources.
+// Module::collect entries. The context is the board Sources. The
+// signature is fixed by ossensor::Module, so context stays non-const.
+// cppcheck-suppress constParameterCallback
 inline void collect_pms(oslogger::Row &row, std::int64_t now, void *context) {
   const auto &sources = *static_cast<const Sources *>(context);
   write_pms(row, aged(*sources.latest, now), now);
 }
 inline void collect_identity(oslogger::Row &row, std::int64_t now,
+                             // cppcheck-suppress constParameterCallback
                              void *context) {
   const auto &sources = *static_cast<const Sources *>(context);
   const auto settings = sources.settings();
