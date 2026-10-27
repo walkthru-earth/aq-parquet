@@ -17,9 +17,11 @@
 //     magic words, chip id and project name must match the running app, so a
 //     CoreS3 image never lands on a Waveshare board. This is checked before
 //     the first byte reaches flash.
-//   - OTA_END needs every declared byte. The SHA-256 read back from flash must
-//     equal the declared one, then ESP-IDF verifies the image, then the boot
-//     partition moves to the new slot.
+//   - OTA_END needs every declared byte. ESP-IDF verifies the image first,
+//     then the SHA-256 read back from flash must equal the declared one, then
+//     the boot partition moves to the new slot.
+//   - An owner that sends nothing for kStallMs while Receiving, or whose
+//     session closed, loses the upload, so it cannot block other sessions.
 //   - Any rule broken by the owner aborts the upload and returns to Idle.
 //   - Nothing here touches NVS or the SD archive. Reboot is a separate REBOOT
 //     request.
@@ -64,6 +66,35 @@ inline constexpr std::size_t kProjectNameBytes = 32;
 inline constexpr std::size_t kHeaderBytes =
     kProjectNameOffset + kProjectNameBytes;
 static_assert(kHeaderBytes <= kMaxChunk, "first chunk must hold the header");
+
+// Where a control request goes. OTA ops run only on an authenticated LAN
+// session. BLE gets ERROR not-on-this-link, since 1.6 MB over BLE would hold
+// the storage worker for minutes.
+enum class Route : std::uint8_t { NotOta, LanOnly, Handle };
+[[nodiscard]] constexpr bool is_ota_op(std::uint8_t op) {
+  return op == kOpBegin || op == kOpWrite || op == kOpEnd || op == kOpCancel;
+}
+[[nodiscard]] constexpr Route route(std::uint8_t op, bool on_lan) {
+  if (!is_ota_op(op))
+    return Route::NotOta;
+  return on_lan ? Route::Handle : Route::LanOnly;
+}
+
+// An owner silent this long while Receiving loses the upload. The host sends
+// the next chunk as soon as the last STATE arrives, so this is far above any
+// real gap, and well below the 300 s LAN idle close.
+inline constexpr std::int64_t kStallMs = 30000;
+enum class Keep : std::uint8_t { Keep, SessionClosed, Stalled };
+// Whether the Receiving owner keeps its upload. `idle_ms` is the time since
+// its last OTA request.
+[[nodiscard]] constexpr Keep keep_owner(bool session_open,
+                                        std::int64_t idle_ms) {
+  if (!session_open)
+    return Keep::SessionClosed;
+  if (idle_ms >= kStallMs)
+    return Keep::Stalled;
+  return Keep::Keep;
+}
 
 using Digest = std::array<std::uint8_t, kDigestBytes>;
 

@@ -8,6 +8,7 @@
 #include <esp_app_desc.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_timer.h>
 #include <psa/crypto.h>
 #include <sdkconfig.h>
 
@@ -153,17 +154,24 @@ rules::Owner owner_of(const ble::ControlRequest &request) {
   return (rules::Owner{request.peer} << 32) | request.link_generation;
 }
 
-// A LAN session that went away mid upload frees the slot for the next one.
-void drop_stale(rules::Transfer &upload) {
-  if (!upload.active())
+// esp_timer time of the Receiving owner's last OTA request.
+std::int64_t owner_seen_us = 0;
+
+// A LAN session that went away or stalled mid upload frees the slot for the
+// next one.
+void drop_stale(rules::Transfer &upload, std::int64_t now_us) {
+  if (upload.progress().phase != rules::Phase::Receiving)
     return;
   const auto owner = upload.owner();
   const auto peer = static_cast<std::uint8_t>(owner >> 32);
-  if (peer < ble::kMaxLanClients &&
-      lan::connection_generation(peer) == static_cast<std::uint32_t>(owner))
+  const bool open =
+      peer < ble::kMaxLanClients &&
+      lan::connection_generation(peer) == static_cast<std::uint32_t>(owner);
+  const auto keep = rules::keep_owner(open, (now_us - owner_seen_us) / 1000);
+  if (keep == rules::Keep::Keep || !upload.drop_owner(owner))
     return;
-  if (upload.drop_owner(owner))
-    oslog.println("OTA ABORT reason=session-closed");
+  oslog.printf("OTA ABORT reason=%s\n",
+               keep == rules::Keep::Stalled ? "stalled" : "session-closed");
 }
 
 const char *slot_name() { return device.slot ? device.slot->label : "none"; }
@@ -173,19 +181,23 @@ bool handle(const ble::ControlRequest &request, const ControlReplies &replies) {
   if (!request.length)
     return false;
   const auto op = static_cast<ble::Op>(request.bytes[0]);
-  if (op != ble::kOpOtaBegin && op != ble::kOpOtaWrite &&
-      op != ble::kOpOtaEnd && op != ble::kOpOtaCancel)
+  const auto route = rules::route(op, request.link == ble::Link::Lan);
+  if (route == rules::Route::NotOta)
     return false;
-  if (request.link != ble::Link::Lan) {
+  if (route == rules::Route::LanOnly) {
     replies.error(replies.context, request.link, op, ble::kErrNotOnThisLink,
                   "lan-only");
     return true;
   }
   auto &upload = transfer();
-  drop_stale(upload);
+  const std::int64_t now_us = esp_timer_get_time();
+  drop_stale(upload, now_us);
   const auto before = upload.progress();
-  const auto result =
-      upload.handle({request.bytes, request.length}, owner_of(request));
+  const auto owner = owner_of(request);
+  const auto result = upload.handle({request.bytes, request.length}, owner);
+  if (upload.progress().phase == rules::Phase::Receiving &&
+      upload.owner() == owner)
+    owner_seen_us = now_us;
   if (!result) {
     const auto wire = rules::wire_error(result.error());
     replies.error(replies.context, request.link, op,

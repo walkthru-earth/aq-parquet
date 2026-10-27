@@ -510,6 +510,39 @@ void test_wire() {
   CHECK(ota::wire_error(ota::Error::Flash).code == 8);
   CHECK(ota::wire_error(ota::Error::UnknownOp).code == 11);
 }
+
+void test_routing() {
+  // Every OTA op is LAN only. BLE never reaches the transfer.
+  for (const std::uint8_t op :
+       {ota::kOpBegin, ota::kOpWrite, ota::kOpEnd, ota::kOpCancel}) {
+    CHECK(ota::route(op, true) == ota::Route::Handle);
+    CHECK(ota::route(op, false) == ota::Route::LanOnly);
+  }
+  // Neighbours stay with the common control handler on both links.
+  for (const std::uint8_t op : {0x11, 0x16, 0x0B, 0x50}) {
+    CHECK(ota::route(op, true) == ota::Route::NotOta);
+    CHECK(ota::route(op, false) == ota::Route::NotOta);
+  }
+}
+
+void test_stall() {
+  CHECK(ota::keep_owner(true, 0) == ota::Keep::Keep);
+  CHECK(ota::keep_owner(true, ota::kStallMs - 1) == ota::Keep::Keep);
+  CHECK(ota::keep_owner(true, ota::kStallMs) == ota::Keep::Stalled);
+  // A closed session loses the upload at once, however recent.
+  CHECK(ota::keep_owner(false, 0) == ota::Keep::SessionClosed);
+  CHECK(ota::keep_owner(false, ota::kStallMs) == ota::Keep::SessionClosed);
+  // The stall bound stays under the 300 s LAN idle close.
+  static_assert(ota::kStallMs < 300000);
+  // Dropping a stalled owner aborts and frees the slot for another session.
+  FakeFlash flash;
+  ota::Transfer transfer(target(), sink_for(flash));
+  CHECK(transfer.handle(begin_request(4096, digest_a()), kOwner).has_value());
+  CHECK(transfer.drop_owner(kOwner));
+  CHECK(!transfer.active() && flash.aborts == 1);
+  CHECK(
+      transfer.handle(begin_request(4096, digest_a()), kOwner + 1).has_value());
+}
 } // namespace
 
 int main() {
@@ -520,6 +553,8 @@ int main() {
   test_finish_rules();
   test_ownership();
   test_wire();
+  test_routing();
+  test_stall();
   if (failures) {
     std::fprintf(stderr, "%d OTA transfer check(s) failed\n", failures);
     return EXIT_FAILURE;
