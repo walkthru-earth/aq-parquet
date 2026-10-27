@@ -38,8 +38,11 @@ import subprocess
 import published_templates
 
 ROOT = published_templates.ROOT
-REPO = "walkthru-earth/opensensor-space-firmware"
+OWNER, NAME = "walkthru-earth", "opensensor-space-firmware"
+REPO = f"{OWNER}/{NAME}"
 RAW = f"https://raw.githubusercontent.com/{REPO}/"
+# RAW is longer than one clang-format line, so literal() writes it in two parts.
+RAW_PARTS = (f"https://raw.githubusercontent.com/{OWNER}/", f"{NAME}/")
 PINNED = re.compile(re.escape(RAW) + r"([0-9a-f]{40})/(.+)")
 RULE = "PRs that move dict or desc land with a merge commit, everything else squashes"
 FIX = f"Run pixi run pin-uris after the content commit and commit the result. {RULE}."
@@ -147,7 +150,8 @@ def check(root: Path = ROOT) -> list[tuple[Pin, str]]:
 def literal(pin: Pin, commit: str) -> str:
     """The clang-format stable declaration pin-uris writes."""
     head, tail = pin.path.rsplit("/", 1)
-    parts = [RAW, f"{commit}/", f"{head}/", tail] if pin.name == TEMPLATE else [RAW, f"{commit}/", pin.path]
+    path = [f"{head}/", tail] if pin.name == TEMPLATE else [pin.path]
+    parts = [*RAW_PARTS, f"{commit}/", *path]
     return f"constexpr const char *{pin.name} =\n" + "\n".join(f'    "{p}"' for p in parts) + ";"
 
 

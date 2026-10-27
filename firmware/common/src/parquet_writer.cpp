@@ -33,7 +33,8 @@ constexpr uint8_t kTrue = 1, kFalse = 2, kByte = 3, kI16 = 4, kI32 = 5,
 constexpr size_t kWkbPointBytes = 1 + 4 + 8 + 8;
 constexpr uint32_t kWkbPoint = 1;        // ISO WKB and Geospatial.md type code
 constexpr uint64_t kConvertedUint8 = 11; // ConvertedType UINT_8
-constexpr const char *kDefaultCreatedBy = "opensensor-space-firmware version 0.3";
+constexpr const char *kDefaultCreatedBy =
+    "opensensor-space-firmware version 0.3";
 
 class Output {
 public:

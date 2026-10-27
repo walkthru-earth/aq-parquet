@@ -44,7 +44,8 @@ constexpr const char *kBoard = "waveshare-esp32-s3-sim7670g";
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
+    "https://raw.githubusercontent.com/walkthru-earth/"
+    "opensensor-space-firmware/"
     "91c776a17ecadc91f0bd51523c30f691cb9ff5ba/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
 static_assert(opensensor::pinned::names(
@@ -384,7 +385,8 @@ inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
 // two equal. The legends are compile time checks only, the footer carries no
 // code meanings (#88).
 constexpr const char *kPmsStatusLegend =
-    "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch,6=sleeping";
+    "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch,"
+    "6=sleeping";
 constexpr const char *kGaugeStatusLegend =
     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
     "gauge_status stays 1 when only VCELL is valid, battery_mv is still "
@@ -459,8 +461,9 @@ static constexpr std::string_view kTemplateKeywords[] = {
 // A PR that moves dict or desc lands with a merge commit so that commit stays
 // on main. Every other PR squashes.
 constexpr const char *kTemplateHref =
-    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
-    "9915aeca82370d7c599682a4384fc7452502eb16/"
+    "https://raw.githubusercontent.com/walkthru-earth/"
+    "opensensor-space-firmware/"
+    "bb618f32a8a9bfe6a633a22ad5e99d319d55d46b/"
     "docs/shared/templates/waveshare-esp32-s3-sim7670g/"
     "a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809.json";
 static_assert(opensensor::pinned::names_template(kTemplateHref,
