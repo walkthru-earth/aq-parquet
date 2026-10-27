@@ -175,7 +175,7 @@ int main(int argc, char **argv) {
   const telemetry::KeyValue metadata[] = {
       {"schema_version", "fixture"}, {"purpose", "partial-rebuild-fixture"}};
   if (result.ok)
-    result = writer.finish(metadata, 2, "fixture", "aq-parquet fixture");
+    result = writer.finish(metadata, 2, "fixture", "opensensor-space-firmware fixture");
   const bool closed = std::fclose(file) == 0;
   if (!result.ok || !closed) {
     std::fprintf(stderr, "write failed: %s\n",

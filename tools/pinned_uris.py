@@ -38,7 +38,7 @@ import subprocess
 import published_templates
 
 ROOT = published_templates.ROOT
-REPO = "walkthru-earth/aq-parquet"
+REPO = "walkthru-earth/opensensor-space-firmware"
 RAW = f"https://raw.githubusercontent.com/{REPO}/"
 PINNED = re.compile(re.escape(RAW) + r"([0-9a-f]{40})/(.+)")
 RULE = "PRs that move dict or desc land with a merge commit, everything else squashes"

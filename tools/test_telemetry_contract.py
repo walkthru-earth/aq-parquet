@@ -62,7 +62,7 @@ def check_file(path: Path, dictionary: dict, anchored: bool, compressed: bool, l
     require(dictionary["schema"] == "cores3-telemetry-v6", "schema version")
     require(dictionary["dictionary"] == "cores3-telemetry-v7",
             "dictionary version tracks the field table bytes, now with location_source and geometry")
-    require(parquet.metadata.created_by == f"m5stack-aq-parquet version 0.2 (build {dictionary['firmware']})",
+    require(parquet.metadata.created_by == f"opensensor-space-firmware version 0.3 (build {dictionary['firmware']})",
             "firmware identity in created_by")
     group = parquet.metadata.row_group(0)
     require(parquet.metadata.num_row_groups == 1 and group.num_rows == 90, "one 90-row group")
@@ -182,7 +182,7 @@ def main() -> None:
         require(all(f["decimals"] == 0 if f["type"] != 4 else 0 <= f["decimals"] <= live_key_fixture.MAX_LIVE_DECIMALS
                     for f in fields),
                 f"decimals is 0 for integer fields and at most {live_key_fixture.MAX_LIVE_DECIMALS} for Float")
-        require(dictionary["firmware"] == "idf-cores3-parquet-v6.21", "firmware identity")
+        require(dictionary["firmware"] == "idf-cores3-parquet-v6.22", "firmware identity")
         footer_contract.check_board(executable, firmware, dictionary, "m5stack-cores3")
         live = subprocess.check_output([str(executable), "live"], text=True).strip()
         live_key_fixture.assert_rejects_drift("cores3", dictionary["sha256"], dictionary["firmware"], live)

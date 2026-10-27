@@ -35,12 +35,12 @@ namespace contract {
 constexpr std::int32_t kSchemaVersion = 6;
 constexpr const char *kSchemaName = "cores3-telemetry-v6";
 constexpr const char *kDictionaryVersion = "cores3-telemetry-v7";
-constexpr const char *kFirmware = "idf-cores3-parquet-v6.21";
+constexpr const char *kFirmware = "idf-cores3-parquet-v6.22";
 // Raw telemetry_fields.inc at a pinned commit on main (#89), so the bytes at
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
     "093f2b8e45cd2b9e24e1324ad9fa2e6e20ad1d47/"
     "firmware/esp-idf-cores3/bringup/telemetry_fields.inc";
 static_assert(opensensor::pinned::names(kDictionaryUri,
@@ -278,7 +278,7 @@ static constexpr std::string_view kTemplateKeywords[] = {
 // A PR that moves dict or desc lands with a merge commit so that commit stays
 // on main. Every other PR squashes.
 constexpr const char *kTemplateHref =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
     "9915aeca82370d7c599682a4384fc7452502eb16/"
     "docs/shared/templates/m5stack-cores3/"
     "3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9.json";

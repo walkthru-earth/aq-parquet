@@ -2,11 +2,11 @@
   "board": "waveshare",
   "convention": "Every field valid with integers 1 and floats 1.0, rendered by the shared emitter through tools/live_sample.h. utc is the stored microseconds times 1000 on the wire.",
   "digests": {
-    "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7": {
-      "note": "Dictionary waveshare-sim7670g-telemetry-v7 (#83). The two H3 centre columns become location_source and geometry, neither has a LIVE key, so the LIVE keys and decimals are those of waveshare-sim7670g-telemetry-v6. Older digests are retired and no longer listed.",
+    "a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809": {
+      "note": "Dictionary waveshare-sim7670g-telemetry-v8 (#28). Three MAX17048 validity tokens are renamed, battery_installed_vcell_read_ok, battery_installed_soc_read_ok_range_0_100 and battery_installed_soc_read_ok_uncapped. The LIVE keys and decimals are those of waveshare-sim7670g-telemetry-v7. Older digests are retired and no longer listed.",
       "builds": [
         {
-          "firmware": "idf-waveshare-parquet-v2.15",
+          "firmware": "idf-waveshare-parquet-v2.16",
           "emitter": "board field table through oslogger::format_live",
           "fields": {
             "seq": "sequence",

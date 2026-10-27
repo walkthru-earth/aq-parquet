@@ -13,7 +13,7 @@
 namespace opensensor::pinned {
 
 inline constexpr std::string_view kRawPrefix =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/";
+    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/";
 inline constexpr std::size_t kCommitHexDigits = 40;
 
 // The repository path after the commit, or an empty view when uri is not the

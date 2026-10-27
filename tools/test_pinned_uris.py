@@ -79,7 +79,7 @@ def check_static_asserts(scratch: Path) -> None:
         "tag URL": f"{raw}v6.19/{path}",
         "short sha": f"{raw}{sha[:7]}/{path}",
         "upper case sha": f"{raw}{sha.upper()}/{path}",
-        "blob URL": f"https://github.com/walkthru-earth/aq-parquet/blob/{sha}/{path}",
+        "blob URL": f"https://github.com/walkthru-earth/opensensor-space-firmware/blob/{sha}/{path}",
         "other repository": f"https://raw.githubusercontent.com/walkthru-earth/other/{sha}/{path}",
         "other path": f"{raw}{sha}/firmware/esp-idf-cores3/bringup/telemetry_semantics.inc",
     }

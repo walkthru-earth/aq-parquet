@@ -145,15 +145,15 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.21","schema":"cores3-telemetry-v6","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.22","schema":"cores3-telemetry-v6","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","desc":"<first 16 hex of desc>",
  "thing":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
 
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
-`waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v7`
-and firmware `idf-waveshare-parquet-v2.15`. Clients use that identity to interpret shortened LIVE keys. `thing`, `dev`
+`waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v8`
+and firmware `idf-waveshare-parquet-v2.16`. Clients use that identity to interpret shortened LIVE keys. `thing`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -219,7 +219,7 @@ Each field's `live_key` and `decimals` are part of the board's `telemetry_fields
 | Key | Dictionary field |
 | --- | --- |
 | `seq`, `mono`, `utc` | `sequence`, `monotonic_us`, `event_time_utc_us` (null when unsynchronized). `utc` stays in nanoseconds, the file column `event_time_utc_us` × 1000 |
-| `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid |
+| `pms` | `pms_status` code: 0 absent, 1 warming, 2 stale, 3 sensor error, 4 valid. Waveshare adds 5 model mismatch and 6 sleeping. Code 6 is reserved for the PMS duty cycle (#39) and no image writes it yet |
 | `pm1`,`pm25`,`pm10` | `pm*_atmospheric_ug_m3` — the values to display |
 | `c1`,`c25`,`c10` | `pm*_cf1_ug_m3` |
 | `n03`,`n05`,`n1`,`n25`,`n5`,`n10` | `particles_gt*_per_01l`; PMS5003T exposes only `n03`, `n05`, `n1`, `n25`. It has no `n5`/`n10` measurements |

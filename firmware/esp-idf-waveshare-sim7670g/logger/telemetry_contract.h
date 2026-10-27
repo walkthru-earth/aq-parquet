@@ -34,9 +34,9 @@ namespace contract {
 // answer to bridge question 36, 2026-10-26).
 constexpr std::int32_t kSchemaVersion = 6;
 constexpr const char *kSchemaName = "waveshare-sim7670g-telemetry-v6";
-constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v7";
-constexpr const char *kFirmware = "idf-waveshare-parquet-v2.15";
-constexpr const char *kCreatedBy = "aq-parquet version 0.1";
+constexpr const char *kDictionaryVersion = "waveshare-sim7670g-telemetry-v8";
+constexpr const char *kFirmware = "idf-waveshare-parquet-v2.16";
+constexpr const char *kCreatedBy = "opensensor-space-firmware version 0.3";
 // Footer thing.board, the board slug of the template path. The free text name
 // is the template title (stac-opensensor 4408c4e).
 constexpr const char *kBoard = "waveshare-esp32-s3-sim7670g";
@@ -44,7 +44,7 @@ constexpr const char *kBoard = "waveshare-esp32-s3-sim7670g";
 // the URI hash to kDictionarySha256. It is also the template describedby href.
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
     "093f2b8e45cd2b9e24e1324ad9fa2e6e20ad1d47/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
 static_assert(opensensor::pinned::names(
@@ -214,6 +214,9 @@ enum PmsStatus : std::int32_t {
   kPmsSensorError = 3,
   kPmsValid = 4,
   kPmsModelMismatch = 5,
+  // Reserved for the PMS duty cycle (#39). The sensor is asleep through its
+  // SET pin. No code path writes it yet.
+  kPmsSleeping = 6,
 };
 struct SensorProfile {
   const char *vendor = "";
@@ -381,7 +384,7 @@ inline void apply_battery_health(Sample &row, const BatteryHealth &health) {
 // two equal. The legends are compile time checks only, the footer carries no
 // code meanings (#88).
 constexpr const char *kPmsStatusLegend =
-    "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch";
+    "0=missing,1=warming,2=stale,3=sensor-error,4=valid,5=model-mismatch,6=sleeping";
 constexpr const char *kGaugeStatusLegend =
     "0=battery-not-installed-or-disabled,1=read-error-or-implausible,2=valid; "
     "gauge_status stays 1 when only VCELL is valid, battery_mv is still "
@@ -456,7 +459,7 @@ static constexpr std::string_view kTemplateKeywords[] = {
 // A PR that moves dict or desc lands with a merge commit so that commit stays
 // on main. Every other PR squashes.
 constexpr const char *kTemplateHref =
-    "https://raw.githubusercontent.com/walkthru-earth/aq-parquet/"
+    "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
     "9915aeca82370d7c599682a4384fc7452502eb16/"
     "docs/shared/templates/waveshare-esp32-s3-sim7670g/"
     "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7.json";
