@@ -12,9 +12,10 @@ owner wipes them and starts again.
 ## Moving Things write GNSS cells or nulls (yharby/gnss-moving-thing, issue #83)
 
 **Needs a matched reflash, app change is small.** Waveshare firmware moves to
-`idf-waveshare-parquet-v2.17`. Columns, field ids, LIVE keys, decimals,
-CONFIG keys and the schema and dictionary strings do not change. The `dict`
-and `desc` digests do not move. CoreS3 stays at `idf-cores3-parquet-v6.22`.
+`idf-waveshare-parquet-v2.17` and CoreS3 to `idf-cores3-parquet-v6.23`,
+because a moving CoreS3 now writes location nulls. Columns, field ids, LIVE
+keys, decimals, CONFIG keys and the schema and dictionary strings do not
+change. The `dict` and `desc` digests do not move.
 
 **What changed.**
 
