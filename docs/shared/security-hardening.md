@@ -62,8 +62,11 @@ what that does and does not protect.
   The diagnostic has no LAN, so that board needs USB to get back.
 - There is no LAN or BLE core dump endpoint. A core dump holds task stacks,
   which can hold the Wi-Fi PSK, the LAN token or the device PIN. `pixi run
-  coredump-read` reads it over USB serial only, prints the backtraces without
-  memory, never saves the raw dump and erases the coredump partition after a
-  good read.
+  coredump-read` reads it over USB serial only and prints the backtraces
+  without memory. esp_coredump writes the flash read to a temporary file and
+  leaves it behind when decoding fails, so the tool points TMPDIR at a private
+  0700 folder and removes it on every path. The partition stays on the board
+  unless the owner passes `--erase`, and the erase runs only after a good
+  read.
 
 Before production, define a manufacturing/provisioning ceremony, unique device ownership transfer and reset behavior, debug-port policy, TLS trust lifecycle, update signing/rollback, secret rotation/revocation, and destructive power-cut/full-card/removal tests on the exact board and card SKUs.

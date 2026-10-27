@@ -128,11 +128,13 @@ with the same build that crashed.
 ```sh
 pixi run coredump-read cores3 <checked-port>
 pixi run coredump-read waveshare <checked-port> [logger|diagnostic]
+pixi run coredump-read cores3 <checked-port> --erase
 ```
 
-It prints the crashed task and the backtraces, then erases that partition.
-`--keep` prints without erasing and `--dry-run` prints the commands only. There
-is no LAN core dump on purpose.
+It prints the crashed task and the backtraces and leaves the partition alone,
+so the same crash can be read again. `--erase` clears that partition after a
+good print. `--dry-run` prints the commands only. No raw dump stays on the
+host, even when decoding fails. There is no LAN core dump on purpose.
 
 ### C++ dialect
 

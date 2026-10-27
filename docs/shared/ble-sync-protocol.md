@@ -840,7 +840,9 @@ The rules, all checked on the device.
 - `OTA_END` needs every declared byte. ESP-IDF checks the image
   (`esp_ota_end`), then the device reads the slot back and compares its
   SHA-256 with the declared one, then it sets the boot partition. Only then
-  does it answer phase `ready`. Allow 120 s for this answer.
+  does it answer phase `ready`. Allow 120 s for this answer. A repeated
+  `OTA_END` in phase `ready` answers the same `OTA_STATE` again and does
+  nothing else, so a phone that lost the answer may simply resend it.
 - The device never reboots on its own. A staged image boots on the next
   `REBOOT` (`0x0B`) or power cycle. `OTA_CANCEL` in phase `ready` points the
   boot partition back at the running app.
@@ -850,8 +852,10 @@ The rules, all checked on the device.
 
 One upload at a time. The LAN session that sent `OTA_BEGIN` owns it. A
 request from any other session answers `ERROR` 7 `detail="ota-owner"` and
-leaves the upload running. When the owner session closes, the next OTA
-request from any session drops the partial upload first. The owner may send
+leaves the upload running. When the owner session closes, or sends no OTA
+request for 30 s while receiving, the next OTA request from any session drops
+the partial upload first and logs `OTA ABORT reason=session-closed` or
+`reason=stalled`. The owner may send
 `OTA_BEGIN` again to restart. Any session may cancel a staged image.
 
 `OTA_STATE` (`0x50`) answers every successful request.

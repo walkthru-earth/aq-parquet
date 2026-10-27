@@ -45,7 +45,7 @@ C++ contract tests and cannot prove behavior on a physical board.
 | CI image size table from `idf.py size --format json2`, absolute sizes with a warning when the baseline is malformed | `size_report.py`, `size-report-test` |
 | App image share of the smallest app slot in the board `partitions.csv`, fail closed over the budget in the tool | `ota-slot-check --label --partitions --build`, `ota-slot-check-test` |
 | Chunked LAN OTA rules (contiguous chunks, slot size cap, chip and project match, SHA-256 before the boot switch, abort on any owner error) and the boot self test verdict and mark plan, host built with sanitizers | `ota-transfer-test`, `boot-self-test-test` |
-| Serial core dump readback that prints without memory, never saves the raw dump and erases only the coredump partition after a good read. Hardware only, never in the gate | `coredump-read <board> <checked-port> [variant] [--keep] [--dry-run]`, `coredump-read-test` |
+| Serial core dump readback that prints without memory and keeps no raw dump on the host, even on a failed decode. The partition stays unless `--erase`, which clears only the coredump partition after a good read. Hardware only, never in the gate | `coredump-read <board> <checked-port> [variant] [--erase] [--dry-run]`, `coredump-read-test` |
 | Static task stack worst case, xTaskCreate name and stack size cross check in every `#if` branch, and linker section budgets per image (`stack_budget.json`) | `stack-budget [--check] [--path]`, `stack-budget-test` |
 
 - Never write eFuses or format SD; flash writes require the root `AGENTS.md`
