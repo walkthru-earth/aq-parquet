@@ -273,11 +273,16 @@ The gate enforces five rules.
 - A new release keeps every segment of the previous one at the same `first`,
   `rows` and `sha256`, and adds segments only after the last row. A reorder,
   a removal or an edit inside a shipped segment fails.
-- An owner approved break is the one exception. A release that carries
-  `"baseline": {"reason": "...", "migration": "<heading>"}` may edit shipped
-  segments. `migration` is the exact text of a `## ` heading in the
-  [mobile migration notes](../mobile-migration.md), and that entry must name
-  the release `dict`. A missing entry or a dict the entry never names fails.
+- An owner approved break is the one exception, and it is per segment. A
+  release that carries `"baseline": {"reason": "...", "migration":
+  "<heading>", "segments": [{"module": "...", "segment": "..."}]}` may edit
+  only the shipped segments it lists, and it must edit each one it lists.
+  Every other shipped segment keeps its `rows` and `sha256`. All shipped
+  segments stay in order ahead of any new one, and the release may not drop
+  rows. `migration` is the exact text of a `## ` heading that starts a line
+  in the [mobile migration notes](../mobile-migration.md), so a `### `
+  subheading never matches, and that entry must name the release `dict`. A
+  missing entry or a dict the entry never names fails.
   The first release cannot be a baseline. Earlier releases stay in the lock
   unchanged, so the file is still append only. A baseline is a contract
   break, so it needs a matched app build and a reflash (owner decision 14).

@@ -242,9 +242,20 @@ def main() -> None:
         # A baseline release may edit a shipped segment only with its migration entry.
         heading = "Test baseline (plugin contract test)"
 
+        def listed(lock: dict, index: int) -> dict:
+            segment = lock["releases"][0]["segments"][index]
+            return {"module": segment["module"], "segment": segment["segment"]}
+
         def baseline(lock: dict) -> None:
             lock["releases"][0]["segments"][2].update(sha256="2" * 64)
-            lock["releases"][1]["baseline"] = {"reason": "an owner approved edit", "migration": heading}
+            lock["releases"][1]["baseline"] = {"reason": "an owner approved edit", "migration": heading,
+                                               "segments": [listed(lock, 2)]}
+
+        def also(change):
+            def apply(lock: dict) -> None:
+                baseline(lock)
+                change(lock)
+            return apply
 
         def note(body: str):
             def apply(root: Path) -> None:
@@ -261,12 +272,59 @@ def main() -> None:
         mutate(scratch, both(with_history(baseline), note("No dict named here.")), "never names its dict",
                "a baseline whose migration entry never names its dict")
         mutate(scratch, with_history(lambda d: d["releases"][0].update(
-            baseline={"reason": "x", "migration": heading})), "cannot be a baseline", "a first release baseline")
+            baseline={"reason": "x", "migration": heading, "segments": [listed(d, 2)]})), "cannot be a baseline",
+               "a first release baseline")
+        named = note(f"New dict `{today['releases'][-1]['dict']}`.")
         root = scratch_copy(scratch)
-        both(with_history(baseline), note(f"New dict `{today['releases'][-1]['dict']}`."))(root)
+        both(with_history(baseline), named)(root)
         gate.check(root, no_base)
         shutil.rmtree(root)
-        print("PASS accepts a baseline release that edits a shipped segment", flush=True)
+        print("PASS accepts a baseline release that edits a listed shipped segment", flush=True)
+
+        # A baseline is per segment. Every shipped segment it does not list keeps the old rule.
+        mutate(scratch, both(with_history(also(lambda d: d["releases"][0]["segments"][1].update(sha256="4" * 64))),
+                             named), "which its baseline does not list",
+               "a baseline that also edits a shipped segment it does not list")
+        mutate(scratch, both(with_history(also(lambda d: d["releases"][1]["baseline"]["segments"].append(
+            listed(d, 0)))), named), "which is not a shipped segment it edits",
+               "a baseline that lists a shipped segment it leaves alone")
+        mutate(scratch, both(with_history(also(lambda d: d["releases"][1]["baseline"]["segments"].append(
+            {"module": "nope", "segment": "core"}))), named), "which is not a shipped segment it edits",
+               "a baseline that lists a segment never shipped")
+        mutate(scratch, both(with_history(also(lambda d: d["releases"][1]["baseline"].pop("segments"))), named),
+               "segments", "a baseline with no segment list")
+
+        def swap_shipped(lock: dict) -> None:
+            newer = lock["releases"][1]["segments"]
+            newer[0], newer[1] = newer[1], newer[0]
+            newer[0]["first"], newer[1]["first"] = 1, 1 + newer[0]["rows"]
+            lock["releases"][1]["baseline"]["segments"] = [listed(lock, 2), listed(lock, 0), listed(lock, 1)]
+
+        mutate(scratch, both(with_history(also(swap_shipped)), named), "reorders or removes a shipped segment",
+               "a baseline that reorders shipped segments")
+        # The probe from the #126 review. The real Waveshare baseline lists the
+        # two MAX17048 segments, so an edit to pms5003t core fails.
+        mutate(scratch, edit_json(WAVESHARE / gate.LOCK, lambda d: next(
+            s for s in d["releases"][0]["segments"] if (s["module"], s["segment"]) == ("pms5003t", "core")).update(
+                sha256="5" * 64)), "edits shipped segment pms5003t/core",
+               "a Waveshare baseline edit to pms5003t core, which it does not list")
+
+        # The heading must start a line. A ### subheading of the same text is not the entry.
+        def subheading(root: Path) -> None:
+            path = root / gate.MIGRATION
+            text = path.read_text()
+            first = text.index("\n## ") + 1
+            path.write_text(text[:first] + f"### {heading}\n\nNew dict `{today['releases'][-1]['dict']}`.\n\n"
+                            + text[first:])
+
+        mutate(scratch, both(with_history(baseline), subheading), "names no",
+               "a baseline whose heading is only a ### subheading")
+
+        # A baseline on release 2 does not cover an edit to release 1. The base
+        # lock comparison catches it.
+        mutate(scratch, both(with_history(baseline), named), "release 1 differs from the base branch",
+               "an edit to release 1 under a release 2 baseline",
+               base=cores3_base({"board": "m5stack-cores3", "releases": [older_release(today)]}))
         mutate(scratch, with_history(lambda d: d["releases"].append(copy.deepcopy(d["releases"][0]))),
                "a dict repeats", "a dict that repeats")
         mutate(scratch, lambda r: None, "lost a release present on the base branch", "a release dropped from the base",

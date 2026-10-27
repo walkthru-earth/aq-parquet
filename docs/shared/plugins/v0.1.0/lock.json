@@ -33,12 +33,27 @@
             }
           },
           "baseline": {
-            "description": "Present only on an owner approved break. Such a release may edit shipped segments. It names the reason and the exact heading of its docs/shared/mobile-migration.md entry, and that entry must name its dict.",
+            "description": "Present only on an owner approved break. Such a release may edit only the shipped segments it lists in segments, and it must edit each one it lists. It names the reason and the exact heading of its docs/shared/mobile-migration.md entry, and that entry must name its dict.",
             "type": "object",
-            "required": ["reason", "migration"],
+            "required": ["reason", "migration", "segments"],
             "properties": {
               "reason": {"type": "string", "minLength": 1},
-              "migration": {"type": "string", "minLength": 1}
+              "migration": {"type": "string", "minLength": 1},
+              "segments": {
+                "description": "The shipped segments this release may edit, by module and segment id.",
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "object",
+                  "required": ["module", "segment"],
+                  "properties": {
+                    "module": {"$ref": "module.json#/definitions/id"},
+                    "segment": {"$ref": "module.json#/definitions/id"}
+                  },
+                  "additionalProperties": false
+                }
+              }
             },
             "additionalProperties": false
           }

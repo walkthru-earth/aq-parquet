@@ -182,7 +182,17 @@
       ],
       "baseline": {
         "reason": "Owner approved rename of the three MAX17048 validity tokens (#28, 2026-10-27)",
-        "migration": "BREAKING. Gauge validity tokens, pms_status 6, created_by and repo URLs (yharby/contract-bump, issues #28 #39 #111)"
+        "migration": "BREAKING. Gauge validity tokens, pms_status 6, created_by and repo URLs (yharby/contract-bump, issues #28 #39 #111)",
+        "segments": [
+          {
+            "module": "max17048",
+            "segment": "core"
+          },
+          {
+            "module": "max17048",
+            "segment": "v5"
+          }
+        ]
       }
     }
   ]

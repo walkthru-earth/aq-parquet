@@ -4,10 +4,13 @@ Newest first. Versions follow section 7 of the [README](README.md).
 
 ## 0.1.1, 2026-10-27
 
-- Optional release `baseline` in the lock schema, with `reason` and
-  `migration`. Only such a release may edit shipped segments. Its
-  `migration` names a mobile migration notes heading whose entry names the
-  release dict. A patch per section 7, so the schema stays under `v0.1.0/`.
+- Optional release `baseline` in the lock schema, with `reason`,
+  `migration` and `segments`. A baseline is per segment. Such a release may
+  edit only the shipped segments it lists by module and segment id, it must
+  edit each one it lists, and every other shipped segment keeps the old
+  rule. Its `migration` names a mobile migration notes heading that starts a
+  line, and that entry names the release dict. A patch per section 7, so the
+  schema stays under `v0.1.0/`.
 - The Waveshare lock gains its first baseline release for the gauge
   validity token rename (#28).
 
