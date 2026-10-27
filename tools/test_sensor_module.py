@@ -15,10 +15,19 @@ A third unit resolves the real max17048 header against a table with only its
 core columns, selecting only the core segment. Core resolves and v5 maps to
 kNoSlot.
 
+A fourth unit runs the write helpers of section 10 on the same core only
+table. The runtime integer, counter and number skip kNoSlot and any slot past
+the row, ossensor::Writer writes the selected columns and compiles the v5
+ones to nothing, including an unselected Int64 counter, and init_module
+passes a Module::init result through.
+
 Negative compiles prove that resolve() stops the build. A CoreS3 only module
 resolved against the Waveshare table, an unknown column against the CoreS3
 table and a selected v5 segment the table lacks must all fail, naming the
-missing column guard.
+missing column guard. A Writer call of another type than the board field
+must fail naming the type guard, a Writer call with a Column of another
+module must fail naming the module guard, and a dropped init_module result
+must fail as nodiscard.
 """
 
 from __future__ import annotations
@@ -39,6 +48,8 @@ FIELDS = "telemetry::contract::kFields"
 CORES3 = "m5stack-cores3"
 WAVESHARE = "waveshare-esp32-s3-sim7670g"
 MISSING = "module_column_missing_from_board_fields"
+TYPE_DIFFERS = "module_column_type_differs_from_board_field"
+FOREIGN = "the Column belongs to another module than this Writer"
 
 
 def require(condition: bool, message: str) -> None:
@@ -190,15 +201,94 @@ static_assert(kSlots == ossensor::Slots<7>{{1, 2, 3, ossensor::kNoSlot, ossensor
 """
 
 
+# The section 10 write helpers on a max17048 core only table with types.
+# {write} is one extra statement for the negative compiles.
+WRITER = """#include <os_sensor_module.h>
+#include "{header}"
+#include <cstdio>
+#include <span>
+#include <utility>
+
+namespace {{
+using telemetry::PhysicalType;
+struct Field {{
+  const char *name;
+  PhysicalType type;
+}};
+constexpr Field kTable[] = {{{{"sequence", PhysicalType::Int64}},
+                            {{"gauge_status", PhysicalType::Int32}},
+                            {{"battery_mv", {mv_type}}},
+                            {{"battery_percent", PhysicalType::Int32}}}};
+namespace g = ossensor::max17048;
+constexpr auto kSlots =
+    ossensor::resolve(g::kColumns, g::kColumnSegments, std::array{{g::Segment::core}}, std::span{{kTable}});
+// No max17048 column is Int64, so a local module Column carries one the
+// board does not select.
+enum class Local : std::uint8_t {{ sequence, skipped }};
+constexpr ossensor::Slots<2> kLocalSlots{{{{0, ossensor::kNoSlot}}}};
+std::expected<void, ossensor::InitErrorCode> refuse(void *) {{
+  return std::unexpected(ossensor::InitErrorCode{{3}});
+}}
+bool empty(const oslogger::Row &row) {{
+  for (std::size_t i = 0; i < row.data.size(); ++i)
+    if (row.data[i] != 0 || row.valid[i] != 0)
+      return false;
+  return true;
+}}
+}} // namespace
+
+int main() {{
+  oslogger::Row row{{}};
+  // kNoSlot and every slot past the row leave the row untouched.
+  for (const unsigned slot : {{unsigned{{ossensor::kNoSlot}}, unsigned(row.data.size()), 200U}}) {{
+    ossensor::integer(row, static_cast<ossensor::Slot>(slot), 7);
+    ossensor::counter(row, static_cast<ossensor::Slot>(slot), 7);
+    ossensor::number(row, static_cast<ossensor::Slot>(slot), 7.0F);
+  }}
+  bool ok = empty(row);
+  ossensor::counter(row, kSlots[std::to_underlying(g::Column::gauge_status)] - 1, 9);
+  ok = ok && row.valid[0] == 1 && row.data[0] == 9;
+  row = {{}};
+  const ossensor::Writer<g::Column, kTable, kSlots> out{{row}};
+  out.integer<g::Column::gauge_status>(g::kStatusValid);
+  out.integer<g::Column::battery_mv>(4100);
+  // v5 is not selected, so these compile to no write.
+  out.number<g::Column::battery_soc_raw_percent>(50.0F);
+  out.integer<g::Column::gauge_status_flags>(1);
+  out.integer<g::Column::gauge_hibernating>(1);
+  {write}
+  ok = ok && row.valid[1] == 1 && row.data[1] == g::kStatusValid && row.valid[2] == 1 && row.data[2] == 4100;
+  row.valid[1] = row.valid[2] = 0;
+  row.data[1] = row.data[2] = 0;
+  ok = ok && empty(row);
+  // A counter of a column the board does not select compiles to no write.
+  const ossensor::Writer<Local, kTable, kLocalSlots> local{{row}};
+  local.counter<Local::skipped>(5);
+  ok = ok && empty(row);
+  local.counter<Local::sequence>(11);
+  ok = ok && row.valid[0] == 1 && row.data[0] == 11;
+  row = {{}};
+  const ossensor::Module none{{.procedure = g::kProcedure}};
+  const ossensor::Module refused{{.procedure = g::kProcedure, .init = refuse}};
+  ok = ok && ossensor::init_module(none).has_value();
+  const auto failed = ossensor::init_module(refused);
+  ok = ok && !failed.has_value() && std::to_underlying(failed.error()) == 3;
+  if (!ok)
+    std::fprintf(stderr, "the write helpers wrote the wrong row\\n");
+  return ok ? 0 : 1;
+}}
+"""
+
+
 def run(command: list[str], what: str) -> None:
     result = subprocess.run(command, capture_output=True, text=True)
     require(result.returncode == 0, f"{what} failed\n{result.stdout}{result.stderr}")
 
 
-def rejects(command: list[str], what: str) -> None:
+def rejects(command: list[str], what: str, needle: str = MISSING) -> None:
     result = subprocess.run(command, capture_output=True, text=True)
     require(result.returncode != 0, f"{what} compiled")
-    require(MISSING in result.stderr, f"{what} failed for another reason\n{result.stderr}")
+    require(needle in result.stderr, f"{what} failed for another reason\n{result.stderr}")
     print(f"PASS rejects {what}", flush=True)
 
 
@@ -270,6 +360,30 @@ def main() -> None:
         partial.write_text(CORE_ONLY.format(header=gauge, selected="g::Segment::core, g::Segment::v5"))
         rejects([*compiler(False, directory), "-fsyntax-only", str(partial)],
                 "a selected max17048 v5 segment the board table lacks")
+
+        # The write helpers of section 10 on the same core only table.
+        writer = directory / "writer.cpp"
+        int32 = "PhysicalType::Int32"
+        writer.write_text(WRITER.format(header=gauge, mv_type=int32, write=""))
+        run([*compiler(args.sanitize, directory), str(writer), "-o", str(directory / "writer")], "writer unit")
+        run([str(directory / "writer")], "writer run")
+        print("PASS the write helpers skip kNoSlot and past-the-row slots, Writer writes core only, "
+              "init_module passes results", flush=True)
+        writer.write_text(WRITER.format(header=gauge, mv_type="PhysicalType::Float", write=""))
+        rejects([*compiler(False, directory), "-fsyntax-only", str(writer)],
+                "an integer write to a Float board field", TYPE_DIFFERS)
+        writer.write_text(WRITER.format(header=gauge, mv_type=int32,
+                                        write="out.counter<g::Column::battery_percent>(1);"))
+        rejects([*compiler(False, directory), "-fsyntax-only", str(writer)],
+                "a counter write to an Int32 board field", TYPE_DIFFERS)
+        writer.write_text(WRITER.format(header=gauge, mv_type=int32,
+                                        write="out.integer<Local::sequence>(1);"))
+        rejects([*compiler(False, directory), "-fsyntax-only", str(writer)],
+                "a write of another module's Column", FOREIGN)
+        dropped = "ossensor::init_module({.procedure = g::kProcedure, .init = refuse});"
+        writer.write_text(WRITER.format(header=gauge, mv_type=int32, write=dropped))
+        rejects([*compiler(False, directory), "-fsyntax-only", str(writer)],
+                "a dropped init_module result", "nodiscard")
 
 
 if __name__ == "__main__":

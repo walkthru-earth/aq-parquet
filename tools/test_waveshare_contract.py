@@ -157,8 +157,8 @@ def main() -> None:
         directory = Path(temporary)
         executable = directory / "fixture"
         command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror"]
-        for include in ("src", "sensors/src", "logger/src", "connectivity/src", "runtime/src", "location/src",
-                        "power/src"):
+        for include in ("src", "sensors/src", "sensors/modules", "logger/src", "connectivity/src", "runtime/src",
+                        "location/src", "power/src"):
             command += ["-I", str(common / include)]
         if args.sanitize:
             command += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
