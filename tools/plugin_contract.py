@@ -17,6 +17,12 @@ schemas. It then expands each board's segments and requires (Option A) that
   releases that docs/shared/mobile-migration.md names.
 
 The board .inc files stay frozen and hand written. Nothing here writes them.
+
+Each shared and board local module manifest also has a checked-in C++ header
+beside it, <id>_module.h, with the module's Column enum, kColumns, status
+constants and InitError (README section 10). The gate requires every header
+to equal what module_header() renders, byte for byte, and no header without
+a manifest. --write-headers rewrites them from the manifests.
 """
 
 from __future__ import annotations
@@ -582,6 +588,128 @@ def check_examples(root: Path, checks: dict, common: dict[str, Module], cap: int
     return out
 
 
+# Module C++ headers (README section 10, section 11 step 4).
+
+HEADER_SUFFIX = "_module.h"
+HEADER_WRITE = "pixi run plugin-headers"
+CXX_TYPES = {"Int32": "std::int32_t", "Int64": "std::int64_t"}
+# Reserved words a column, class or error name could spell. Names are already
+# lower case [a-z][a-z0-9_]*, so only lower case keywords matter.
+CXX_KEYWORDS = frozenset("""
+alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class
+compl concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype
+default delete do double dynamic_cast else enum explicit export extern false float for friend goto if inline
+int long mutable namespace new noexcept not not_eq nullptr operator or or_eq private protected public register
+reinterpret_cast requires return short signed sizeof static static_assert static_cast struct switch template
+this thread_local throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t
+while xor xor_eq
+""".split())
+IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def header_path(module: Module) -> Path:
+    return module.path.parent / f"{module.id}{HEADER_SUFFIX}"
+
+
+def identifier(name: str, where: str) -> str:
+    require(IDENTIFIER.match(name) is not None and name not in CXX_KEYWORDS and "__" not in name,
+            f"{where}: {name!r} is not a C++ identifier")
+    return name
+
+
+def status_constant(name: str, where: str) -> str:
+    """kStatus plus the class name in CamelCase, so not-fresh is kStatusNotFresh."""
+    parts = [p for p in re.split(r"[-_ ]+", name) if p]
+    require(parts and all(re.fullmatch(r"[A-Za-z0-9]+", p) for p in parts),
+            f"{where}: class {name!r} has no C++ constant spelling")
+    text = "kStatus" + "".join(p[0].upper() + p[1:] for p in parts)
+    require(not text[len("kStatus"):][0].isdigit(), f"{where}: class {name!r} starts with a digit")
+    return text
+
+
+def module_header(root: Path, module: Module) -> str:
+    """The C++ header of one module, as section 10 shows it."""
+    manifest = module.manifest
+    ns = identifier(module.id, f"{module.id} id")
+    columns = [c for cols in manifest["segments"].values() for c in cols]
+    names = [identifier(c["name"], f"{module.id} column") for c in columns]
+    require(len(names) < 256, f"{module.id}: {len(names)} columns do not fit the uint8_t Column enum")
+    source = module.path.resolve().relative_to(root.resolve()).as_posix()
+    lines = [
+        "// clang-format off",
+        f"// GENERATED from {source} by tools/plugin_contract.py.",
+        f"// Do not edit. Change the manifest and run `{HEADER_WRITE}`.",
+        "#pragma once",
+        "",
+        "#include <array>",
+        "#include <cstdint>",
+        "#include <string_view>",
+        "",
+        f"namespace ossensor::{ns} {{",
+        f"inline constexpr std::string_view kProcedure = {literal(manifest['procedure'], module.id)};",
+    ]
+    errors = manifest.get("init_errors", [])
+    if errors:
+        values = ", ".join(identifier(e, f"{module.id} init_errors") for e in errors)
+        lines.append(f"enum class [[nodiscard]] InitError : std::uint8_t {{ {values} }};")
+    lines.append("enum class Column : std::uint8_t {")
+    lines += [f"  {name}," for name in names]
+    lines.append("};")
+    lines.append(f"inline constexpr std::array<std::string_view, {len(names)}> kColumns{{")
+    lines += [f'    "{name}",' for name in names]
+    lines.append("};")
+    status = manifest.get("status")
+    if status is not None:
+        column = next(c for c in columns if c["name"] == status["column"])
+        kind = CXX_TYPES.get(column["firmware"]["type"])
+        require(kind is not None, f"{module.id}: status column {column['name']} is not an integer column")
+        lines.append(f"inline constexpr Column kStatusColumn = Column::{column['name']};")
+        constants = [(status_constant(k["name"], column["name"]), number(k["value"], column["name"]))
+                     for k in column["classification:classes"]]
+        spelled = [name for name, _ in constants]
+        require(len(spelled) == len(set(spelled)), f"{column['name']}: two classes spell one C++ constant")
+        lines += [f"inline constexpr {kind} {name} = {value};" for name, value in constants]
+    lines += [f"}} // namespace ossensor::{ns}", "// clang-format on", ""]
+    return "\n".join(lines)
+
+
+def header_modules(common: dict[str, Module], boards: list[Board]) -> list[Module]:
+    """Shared sensor modules and board local modules. The logger fills the
+    system segments by name, so system gets no header."""
+    out = [m for m in common.values() if m.id != "system"]
+    for board in boards:
+        out += list(board.modules.values())
+    return sorted(out, key=lambda m: m.path)
+
+
+def check_headers(root: Path, modules: list[Module], write: bool = False) -> list[str]:
+    expected = {header_path(m): module_header(root, m) for m in modules}
+    roots = {m.path.parent.parent for m in modules}
+    found = {p for directory in roots for p in directory.glob(f"*/*{HEADER_SUFFIX}")}
+    orphans = sorted(found - set(expected))
+    for path in orphans:
+        relative = path.relative_to(root).as_posix()
+        if write:
+            path.unlink()
+            print(f"REMOVED {relative}, no module manifest beside it", flush=True)
+        else:
+            raise AssertionError(f"{relative}: generated module header without a module manifest, "
+                                 f"remove it or run `{HEADER_WRITE}`")
+    out = []
+    for path, text in sorted(expected.items()):
+        relative = path.relative_to(root).as_posix()
+        if write:
+            if not path.is_file() or path.read_bytes() != text.encode():
+                path.write_bytes(text.encode())
+                print(f"WROTE {relative}", flush=True)
+        else:
+            require(path.is_file(), f"{relative}: missing generated module header, run `{HEADER_WRITE}`")
+            require(path.read_bytes() == text.encode(),
+                    f"{relative}: stale generated module header, it differs from its manifest, run `{HEADER_WRITE}`")
+        out.append(relative)
+    return out
+
+
 @dataclass(frozen=True)
 class Result:
     board: str
@@ -590,7 +718,8 @@ class Result:
     dict: str
 
 
-def check(root: Path = ROOT, base_lock: BaseLock | None = None) -> tuple[list[Result], list[str]]:
+def check(root: Path = ROOT, base_lock: BaseLock | None = None,
+          write_headers: bool = False) -> tuple[list[Result], list[str], list[str]]:
     root = root.resolve()
     checks = validators(root)
     if base_lock is None:
@@ -611,23 +740,32 @@ def check(root: Path = ROOT, base_lock: BaseLock | None = None) -> tuple[list[Re
         cross_rules(board.manifest["board"], columns, board, cap)
         expanded[board.manifest["board"]] = columns
     live_keys_across(expanded)
+    modules = header_modules(common, boards)
+    if write_headers:
+        check_headers(root, modules, write=True)
     results = []
     for board in boards:
         columns = expanded[board.manifest["board"]]
         newest = check_board(root, board, columns, checks, base_lock)
         results.append(Result(board.manifest["board"], len(columns), len(newest["segments"]), newest["dict"]))
+    # After the board files, so a manifest edit that also moves a board row
+    # names that row first.
+    headers = check_headers(root, modules)
     examples = check_examples(root, checks, common, cap)
-    return results, examples
+    return results, examples, headers
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--write-headers", action="store_true",
+                        help="rewrite each module's generated C++ header from its manifest, then check")
     args = parser.parse_args()
-    results, examples = check(args.root)
+    results, examples, headers = check(args.root, write_headers=args.write_headers)
     for r in results:
         print(f"PASS {r.board} {r.columns} columns in {r.segments} segments reproduce FIELD, SEM, CLASS and the "
               f"template, dict {r.dict}", flush=True)
+    print(f"PASS {len(headers)} generated module headers equal their manifests", flush=True)
     for line in examples:
         print(f"PASS example {line}", flush=True)
 
