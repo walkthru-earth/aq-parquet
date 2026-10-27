@@ -2,7 +2,7 @@
 
 // Bench only. The `parquet bench-stall <s>` serial command blocks the storage
 // worker without stamping its heartbeat, so a bench can force the worker
-// watchdog (issue #49, #61 item 3). aq_logger.cpp compiles the command only
+// watchdog (issue #49, #61 item 3). os_logger.cpp compiles the command only
 // with CONFIG_OS_LOGGER_BENCH_STALL=y. Pure and allocation free, so the host
 // test runs the same parser and deadline the firmware uses.
 

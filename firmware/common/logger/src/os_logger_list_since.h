@@ -4,8 +4,8 @@
 // allocation free, so host tests run it on a real directory tree. The logger
 // supplies the clock, the boot ring and the IO.
 
-#include "aq_logger_directory.h"
 #include "archive_sync.h"
+#include "os_logger_directory.h"
 
 #include <algorithm>
 #include <array>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aq_logger_watchdog.h"
+#include "os_logger_watchdog.h"
 
 #include <cstdint>
 #include <freertos/FreeRTOS.h>

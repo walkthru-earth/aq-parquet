@@ -1,10 +1,10 @@
-#include <aq_logger_status.h>
 #include <array>
 #include <ble_sync.h>
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <os_logger_status.h>
 
 int main() {
   // Exercise the actual policy called by both snapshot publishers.

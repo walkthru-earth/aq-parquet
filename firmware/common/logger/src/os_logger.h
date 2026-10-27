@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aq_logger_cadence.h"
+#include "os_logger_cadence.h"
 #include <aq_battery_health.h>
 #include <ble_sync.h>
 #include <cstddef>

@@ -1,25 +1,25 @@
-#include "aq_logger.h"
-#include "aq_logger_archive_reset.h"
-#include "aq_logger_codec_store.h"
-#include "aq_logger_directory.h"
-#include "aq_logger_emergency_close.h"
-#include "aq_logger_footer.h"
-#include "aq_logger_list_job.h"
-#include "aq_logger_list_since.h"
-#include "aq_logger_live.h"
-#include "aq_logger_location.h"
-#include "aq_logger_power.h"
-#include "aq_logger_provision.h"
-#include "aq_logger_rotation.h"
-#include "aq_logger_status.h"
-#include "aq_logger_transfer_gate.h"
-#include "aq_logger_watchdog.h"
-#include "aq_logger_watchdog_apply.h"
-#include "aq_logger_work_queue.h"
+#include "os_logger.h"
 #include "crc_cache.h"
 #include "debug_log.h"
 #include "device_config.h"
 #include "lz4_codec.h"
+#include "os_logger_archive_reset.h"
+#include "os_logger_codec_store.h"
+#include "os_logger_directory.h"
+#include "os_logger_emergency_close.h"
+#include "os_logger_footer.h"
+#include "os_logger_list_job.h"
+#include "os_logger_list_since.h"
+#include "os_logger_live.h"
+#include "os_logger_location.h"
+#include "os_logger_power.h"
+#include "os_logger_provision.h"
+#include "os_logger_rotation.h"
+#include "os_logger_status.h"
+#include "os_logger_transfer_gate.h"
+#include "os_logger_watchdog.h"
+#include "os_logger_watchdog_apply.h"
+#include "os_logger_work_queue.h"
 #include "parquet_writer.h"
 #include "storage_governor.h"
 #include "telemetry_logical.h"
@@ -66,7 +66,7 @@
 #include <unistd.h>
 // After the ESP-IDF headers, which bring in sdkconfig.h.
 #if CONFIG_OS_LOGGER_BENCH_STALL
-#include "aq_logger_bench_stall.h"
+#include "os_logger_bench_stall.h"
 #endif
 
 namespace oslogger {
@@ -189,7 +189,7 @@ std::uint32_t quarantine_counter = 0; // unique per boot
 // periodic run).
 // docs/shared/ble-sync-protocol.md.
 std::atomic<bool> unlisted_files{false};
-// LIST_SINCE state (aq_logger_list_since.h). Storage worker only, except
+// LIST_SINCE state (os_logger_list_since.h). Storage worker only, except
 // mount_epoch, which STATUS reads. The FAT volume serial of this mount, 0
 // when unknown.
 namespace list_since = opensensor::logger::list_since;
@@ -1578,7 +1578,7 @@ void publish_status() {
 LiveOverflow live_overflow;
 
 // Publishes the `live` snapshot of the row that was just queued. The board's
-// field table decides which keys appear, see aq_logger_live.h. An object over
+// field table decides which keys appear, see os_logger_live.h. An object over
 // ble::kMaxJson publishes every key as null so the previous sample is not
 // served as current.
 void publish_live(const Sample &row, std::int64_t now) {
@@ -1619,7 +1619,7 @@ std::uint16_t link_payload_max() {
 void service_samples_while_waiting();
 // Between ring-space waits: the worker is alive and keeps taking samples. A
 // frame stops waiting once an ABORT arrived, and a data frame also once a
-// critical battery close is due (aq_logger_transfer_gate.h). A terminal
+// critical battery close is due (os_logger_transfer_gate.h). A terminal
 // ERROR does not, and the slow peer rule bounds that wait.
 bool error_wait_step(void *) {
   stamp_heartbeat();
@@ -1702,7 +1702,7 @@ ossync::ArchiveSession archive_session(
      [](void *) { archive_list.cancel(); },
      // A due critical battery close ends a LIST job before its next step or
      // FILE. CHUNK frames and ring waits stop through the transfer gate,
-     // which reads the same close (aq_logger_transfer_gate.h).
+     // which reads the same close (os_logger_transfer_gate.h).
      [](void *) { return emergency_close.preempt(uptime_ms()); },
      [](void *, bool start, const ossync::ListCursor &cursor,
         ossync::ListSinceResult &result, unsigned budget,
@@ -1959,7 +1959,7 @@ void probe_storage(std::size_t &count, bool &storage_ready,
 
 // Runs due probes and the 60 s free-space recheck while not Ready. A Full
 // card is remounted so space freed on a PC becomes visible. While a radio
-// LIST job runs a periodic remount waits for it (aq_logger_list_job.h).
+// LIST job runs a periodic remount waits for it (os_logger_list_job.h).
 // `owner` marks an owner action or the emergency close, which remounts at
 // once even if that ends the job.
 listjob::StoragePlanner storage_planner;
@@ -2044,7 +2044,7 @@ void flush_batch(std::size_t &count, bool &storage_ready) {
 // never waits behind queued commands. Rows already buffered survive a
 // brownout, rows still queued go to the next file. Busy or failed attempts
 // back off until the card recovers or the retry bound is spent. The pass
-// and its log line live in aq_logger_emergency_close.h. `files` counts every
+// and its log line live in os_logger_emergency_close.h. `files` counts every
 // file finalized during the attempt, including one the storage probe closed.
 void service_emergency_close(std::size_t &count, bool &storage_ready) {
   const auto now = uptime_ms();
@@ -2338,7 +2338,7 @@ void storage_worker(void *) {
     }
     // A request the job holds back moves to the parked slot, so requests
     // behind it from other links still run between steps
-    // (aq_logger_list_job.h).
+    // (os_logger_list_job.h).
     const bool listing = archive_session.listing();
     const bool has_head = xQueuePeek(commands, &command, 0) == pdTRUE;
     const auto take =
@@ -2814,7 +2814,7 @@ constexpr bool kTaskWdtPanic = false;
 #endif
 
 // The worker's task watchdog user, as watchdog::apply() and the start steps
-// in aq_logger_watchdog_apply.h use it.
+// in os_logger_watchdog_apply.h use it.
 struct IdfTaskWdt {
   bool add_user() {
     esp_task_wdt_user_handle_t user = nullptr;

@@ -1,7 +1,7 @@
 #include "abort_signal.h"
-#include "aq_logger_list_job.h"
-#include "aq_logger_transfer_gate.h"
 #include "archive_sync.h"
+#include "os_logger_list_job.h"
+#include "os_logger_transfer_gate.h"
 #include "storage_governor.h"
 #include "sync_codec.h"
 
@@ -1167,7 +1167,7 @@ void list_job_cases(Fixture &f, ossync::ArchiveSession &session) {
   f.clear();
 }
 
-// The storage worker glue around a LIST job (aq_logger_list_job.h), driven
+// The storage worker glue around a LIST job (os_logger_list_job.h), driven
 // with the real planner, governor and session as the worker runs them.
 void worker_glue_cases(Fixture &f, ossync::ArchiveSession &session) {
   namespace listjob = oslogger::listjob;

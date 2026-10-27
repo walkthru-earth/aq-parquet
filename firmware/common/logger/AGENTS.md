@@ -38,15 +38,15 @@ initialization and each board's schema/provenance remain in its own trial.
   Any new loop or walk on the worker calls `stamp_heartbeat()` per entry, and
   any new blocking board hook is stamped on both sides. Writer code stamps only
   after confirmed progress, never before a call that may hang. Keep the
-  supervisor decision and boot-loop guard pure in `aq_logger_watchdog.h`, and
-  the start and apply steps in `aq_logger_watchdog_apply.h` behind injected
+  supervisor decision and boot-loop guard pure in `os_logger_watchdog.h`, and
+  the start and apply steps in `os_logger_watchdog_apply.h` behind injected
   task watchdog and timer interfaces. The timer callback only wraps the IDF
   calls, and every arm or panic switch it applies has an unwind path. See the README section Worker watchdog.
   The bench only `parquet bench-stall` command stays inside
   `#if CONFIG_OS_LOGGER_BENCH_STALL` (default n), set only by
   `tools/idf-bench-stall-sdkconfig.defaults` through `OS_BENCH=stall`.
-- Battery power policy stays pure in `aq_logger_power.h`,
-  `aq_logger_emergency_close.h` and `firmware/common/power`.
+- Battery power policy stays pure in `os_logger_power.h`,
+  `os_logger_emergency_close.h` and `firmware/common/power`.
   `report_battery()` runs on the main loop and only logs, calls the optional
   `power_shed` hook and raises the emergency close intent. Only the worker
   runs the close, at the top of each pass or after a transfer stops at a
@@ -60,7 +60,7 @@ initialization and each board's schema/provenance remain in its own trial.
   so offline startup does not depend on a USB reader draining archive output.
   Explicit serial `parquet list` still emits entries and its END marker. It
   is refused while a radio `LIST` job runs, since the FATFS lock budget covers
-  one walk. Keep the job's worker decisions pure in `aq_logger_list_job.h`,
+  one walk. Keep the job's worker decisions pure in `os_logger_list_job.h`,
   and never start a periodic remount while a `LIST` job runs.
 - Board metadata must describe its hardware honestly. PMS5003T has four particle
   bins and ambient temperature/humidity; do not synthesize CoreS3-only bins.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aq_logger_emergency_close.h"
+#include "os_logger_emergency_close.h"
 
 #include <ble_sync.h>
 #include <cstddef>

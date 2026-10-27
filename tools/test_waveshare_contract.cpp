@@ -5,15 +5,15 @@
 #include "live_widest.h"
 #include <lz4_codec.h>
 
-#include <aq_logger_cadence.h>
-#include <aq_logger_footer.h>
-#include <aq_logger_live.h>
-#include <aq_logger_location.h>
 #include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <os_logger_cadence.h>
+#include <os_logger_footer.h>
+#include <os_logger_live.h>
+#include <os_logger_location.h>
 
 using namespace telemetry;
 using namespace telemetry::contract;

@@ -11,7 +11,7 @@ from test_logger_codec_store import strip_comments
 
 
 def check_wiring(source: str) -> None:
-    """aq_logger.cpp feeds the Tracker, the ring and the marker at the right points.
+    """os_logger.cpp feeds the Tracker, the ring and the marker at the right points.
 
     The helpers run in the C++ test below. Here the live code must call them,
     outside comments, where a missed file would otherwise slip through.
@@ -57,7 +57,7 @@ def check_wiring(source: str) -> None:
             r"view\.mount_epoch = mount_epoch\.load\(\);",
     }
     for what, pattern in rules.items():
-        assert len(re.findall(pattern, code)) == 1, f"aq_logger.cpp wiring: {what}"
+        assert len(re.findall(pattern, code)) == 1, f"os_logger.cpp wiring: {what}"
     calls = re.findall(r"since_state\.(\w+)\(", code)
     assert sorted(calls) == ["dated", "finalized", "inputs"], f"since_state calls {calls}"
 
@@ -68,7 +68,7 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     common = root / "firmware/common"
-    check_wiring((common / "logger/src/aq_logger.cpp").read_text())
+    check_wiring((common / "logger/src/os_logger.cpp").read_text())
     with tempfile.TemporaryDirectory(prefix="aq-logger-list-since-") as directory:
         executable = Path(directory) / "list-since-test"
         command = ["clang++", CXX_STD, "-Wall", "-Wextra", "-Werror"]

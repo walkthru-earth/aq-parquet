@@ -1,6 +1,6 @@
 // Bench stall command tests. The real parser and deadline from
-// aq_logger_bench_stall.h, the same code the bench image runs.
-#include "aq_logger_bench_stall.h"
+// os_logger_bench_stall.h, the same code the bench image runs.
+#include "os_logger_bench_stall.h"
 
 #include <cassert>
 #include <cstdint>

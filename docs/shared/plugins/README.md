@@ -56,7 +56,7 @@ Four details differ from the proposal text below, and the schemas win.
 | Already neutral | Where |
 | --- | --- |
 | FIELD X-macro dictionary, one row of name, type, procedure, unit, validity, LIVE key and decimals | Board `telemetry_fields.inc`, expanded in [CoreS3 `telemetry_contract.h`](../../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 |
-| `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`aq_logger.h`](../../../firmware/common/logger/src/aq_logger.h) (`os_logger.h` after Phase 2) lines 35 to 119 |
+| `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`os_logger.h`](../../../firmware/common/logger/src/os_logger.h) lines 35 to 119 |
 | `ossync::ServiceConfig`, board sdkconfig defaults, bus agnostic drivers | `Config::sync`, each board app, [`firmware/common/sensors/`](../../../firmware/common/sensors/) |
 | A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 530 |
 
@@ -67,7 +67,7 @@ Four details differ from the proposal text below, and the schemas win.
 | Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
 | Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
 | One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
-| `aq_` names | Board components and about 40 common files. Phase 2 of #111 renames them. The CMake helpers are `os_` since #115, and the build variables and manifests are `OS_` and `os_` since #118 |
+| `aq_` names | The location, power, console and sensor files in `firmware/common` and a few host test file stems. Phase 2e of #111 renames the common files. The CMake helpers are `os_` since #115, the build variables and manifests since #118, the board components since #122 and the logger sources since #123 |
 
 ## 2. One contract, laid out like stac-opensensor
 

@@ -8,7 +8,7 @@ Raw results sit next to this page in [`parquet-small-files/`](parquet-small-file
 
 - [`parquet_writer.cpp`](../../firmware/common/src/parquet_writer.cpp) writes one PLAIN DataPageV1 per column chunk, RLE definition levels, UNCOMPRESSED or LZ4_RAW, and per chunk statistics with exact min and max. It writes no dictionary, no column index, no offset index and no bloom filter.
 - The footer carries `field_id`, `TIMESTAMP(MICROS, UTC)`, `sorting_columns` on the sequence column, `TYPE_ORDER` column orders and the key value metadata.
-- [`aq_logger.cpp`](../../firmware/common/logger/src/aq_logger.cpp) caps a row group at `kMaxRows = 90`. When this survey ran it booted with `Codec::Uncompressed` and `parquet codec lz4` was lost on reboot. Since #25 the choice is saved in NVS and LZ4_RAW is the default when nothing is saved.
+- [`os_logger.cpp`](../../firmware/common/logger/src/os_logger.cpp) caps a row group at `kMaxRows = 90`. When this survey ran it booted with `Codec::Uncompressed` and `parquet codec lz4` was lost on reboot. Since #25 the choice is saved in NVS and LZ4_RAW is the default when nothing is saved.
 - Rotation is 600, 900, 1800 or 3600 s with a 10 s sample. Row groups are 60x1, 90x1, 90x2 and 90x4 rows.
 
 ## Survey of device files

@@ -58,7 +58,7 @@ FILE_WORK = ("fopen(", "::open(", "opendir(", "mkdir(", "create_file(",
 
 def begin_body(source: str) -> str:
     start = source.find("\nbool begin(const Config &configuration")
-    assert start >= 0, "logger::begin() not found in aq_logger.cpp"
+    assert start >= 0, "logger::begin() not found in os_logger.cpp"
     end = source.find("\n}\n", start)
     assert end > start, "end of logger::begin() not found"
     return source[start:end]
@@ -106,7 +106,7 @@ def check_footer_metadata(source: str) -> None:
     assert len(FOOTER_METADATA.findall(source)) == 1, \
         "finalize_file() must finish with footer::metadata(footer_json, geo_json, geometry) " \
         "and pass metadata.entries.data() and metadata.count unchanged"
-    assert source.count("writer.finish(") == 1, "one writer.finish() call in aq_logger.cpp"
+    assert source.count("writer.finish(") == 1, "one writer.finish() call in os_logger.cpp"
 
 
 def prove_footer_metadata(source: str) -> None:
@@ -136,7 +136,7 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     common = root / "firmware/common"
-    logger_source = (common / "logger/src/aq_logger.cpp").read_text()
+    logger_source = (common / "logger/src/os_logger.cpp").read_text()
     prove_footer_gate(logger_source)
     prove_footer_metadata(logger_source)
     with tempfile.TemporaryDirectory(prefix="aq-logger-footer-") as directory:

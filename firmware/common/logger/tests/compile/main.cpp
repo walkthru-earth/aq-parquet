@@ -1,6 +1,6 @@
-#include <aq_logger.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <os_logger.h>
 
 static constexpr oslogger::Field fields[] = {
     {"sequence", telemetry::PhysicalType::Int64, "runtime", "count", "always",

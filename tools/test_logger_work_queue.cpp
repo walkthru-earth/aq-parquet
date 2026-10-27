@@ -1,6 +1,6 @@
 // Deterministic interleavings for the actual worker queue/wakeup helper.
-#include "aq_logger_watchdog.h"
-#include "aq_logger_work_queue.h"
+#include "os_logger_watchdog.h"
+#include "os_logger_work_queue.h"
 #include <cassert>
 
 int main() {

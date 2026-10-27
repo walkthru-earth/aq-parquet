@@ -166,7 +166,7 @@ def main() -> None:
                     *compile_h3(root, directory, args.sanitize),
                     str(common / "location/src/aq_location.cpp"),
                     str(root / "tools/test_waveshare_contract.cpp"),
-                    str(common / "logger/src/aq_logger_live.cpp"),
+                    str(common / "logger/src/os_logger_live.cpp"),
                     str(common / "power/src/aq_battery_health.cpp"),
                     str(common / "src/parquet_writer.cpp"), str(common / "src/lz4_codec.cpp"),
                     str(common / "sensors/src/pms_frame.cpp"), "-o", str(executable)]

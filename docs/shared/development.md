@@ -155,6 +155,8 @@ and the #93 audit are history and stay exempt. No `sdkconfig.rename` shim maps
 the old Kconfig names, so a saved sdkconfig value under an old name is dropped.
 The old board component names are retired too (#111). The board components
 are `os_cores3`, `os_waveshare_logger` and `os_waveshare_diagnostic`.
+The old logger source file names are retired too (#111). The logger sources
+are `firmware/common/logger/src/os_logger*`.
 `retired-names-test` covers the rule.
 
 ### Source paths

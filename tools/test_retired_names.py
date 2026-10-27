@@ -64,6 +64,12 @@ FIRES = [
     "[manifest](components/" + "aq" + "_waveshare_logger/idf_component.yml)",
     "components/" + "aq" + "_waveshare_diagnostic/CMakeLists.txt",
     "set(COMPONENTS " + "aq" + "_waveshare_${OS_VARIANT})",
+    "#include \"" + "aq" + "_logger.h\"",
+    "#include <" + "aq" + "_logger_live.h>",
+    "    SRCS \"src/" + "aq" + "_logger_status.cpp\"",
+    "project(" + "aq" + "_logger_fixture)",
+    "project(" + "aq" + "_connectivity_fixture)",
+    "project(" + "aq" + "_psram_probe)",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -74,7 +80,7 @@ QUIET = [
     "\"AD AE AF AG AI AL AM AO " + OLD + " AR AS AT\"",
     "for (const char *code : {\"EG\", \"US\", \"" + OLD + "\"})",
     "PARQUET LIST ok",
-    "aq_logger.cpp stays, only wire and build names moved.",
+    "os_logger.cpp stays, only wire and build names moved.",
     "#ifndef OS_SHARED_H",
     "OS_BENCH=stall pixi run cores3-build",
     "cp build/os-build-sha256.json size/",
@@ -91,10 +97,11 @@ QUIET = [
     "include(../cmake/os_nimble_patches.cmake)",
     "-ffile-prefix-map=${OS_SOURCE_ROOT}=.",
     "set(stage \"${CMAKE_BINARY_DIR}/os_nimble_patch\")",
-    "aq_logger_live.cpp keeps its name for now.",
     "set(COMPONENTS os_cores3)",
     "set(COMPONENTS os_waveshare_${OS_VARIANT})",
     "artifacts/reflash-20261011/" + "aq" + "_waveshare.elf",
+    "#include \"os_logger_live.h\"",
+    "project(os_logger_fixture)",
 ]
 
 

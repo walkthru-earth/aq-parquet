@@ -5,10 +5,10 @@
 // JSON names every key the board can send, in emit order, and each float shows
 // its field's decimals. The Python side
 // compares it with tools/fixtures/live_keys/<board>.json keyed by digest.
-#include <aq_logger_live.h>
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <os_logger_live.h>
 
 namespace livesample {
 inline void print(const oslogger::Field *table, std::size_t count) {

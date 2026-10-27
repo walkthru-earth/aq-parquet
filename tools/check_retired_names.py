@@ -22,6 +22,7 @@ docs/shared/development.md for build and environment names.
   toolchain cache        the old SDK cache folder under ~/.cache
   pixi project name      the old workspace name in pixi.toml
   board component (#111) the old CoreS3 and Waveshare board component names
+  source file (#111)     the old logger source file names and fixture projects
 
 History is exempt. The dated bench records, the migration log and the #93
 audit name the old forms on purpose. There is no sdkconfig.rename shim, so an
@@ -96,6 +97,13 @@ RETIRED = (
         "board component",
         re.compile(r"\b" + "aq" + r"_(cores3|waveshare_logger|waveshare_diagnostic)\b|\b" + "aq" + r"_waveshare_\$\{"),
     ),
+    # Logger sources renamed in #111 Phase 2e, the files, their includes and
+    # the compile fixture project, plus the two host fixture projects #122
+    # renamed.
+    (
+        "source file",
+        re.compile(r"\b" + "aq" + r"_logger\w*|\b" + "aq" + r"_(connectivity_fixture|psram_probe)\b"),
+    ),
 )
 # Build and environment names. Their new form is in the development guide,
 # not the mobile migration log, which tracks what the phone can observe.
@@ -108,6 +116,7 @@ BUILD_KINDS = frozenset(
         "toolchain cache",
         "pixi project name",
         "board component",
+        "source file",
     }
 )
 # History that names the old forms on purpose.
