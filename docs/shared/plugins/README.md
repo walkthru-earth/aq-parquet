@@ -400,15 +400,16 @@ that future version.
   "buses": ["pcnt", "adc"],
   "requires": {"pcnt_units": 1, "adc_channels": 1},
   "init_errors": ["pcnt_unavailable", "adc_unavailable"],
-  "status": {"column": "anemometer_status", "codes": [
-    {"value": 0, "name": "ok"},
-    {"value": 1, "name": "vane_out_of_range"},
-    {"value": 2, "name": "missing", "nodata": true}
-  ]},
+  "status": {"column": "anemometer_status"},
   "segments": {"core": [
     {"name": "anemometer_status", "unit": "{code}", "roles": ["qualityInformation"],
      "opensensor:property": "urn:walkthru-earth:property:anemometer_status",
      "opensensor:aggregate": "mode",
+     "classification:classes": [
+       {"value": 0, "name": "ok"},
+       {"value": 1, "name": "vane_out_of_range"},
+       {"value": 2, "name": "missing", "nodata": true}
+     ],
      "firmware": {"type": "Int32", "unit": "code", "validity": "always", "live_key": "", "decimals": 0}},
     {"name": "wind_speed_m_s", "unit": "m/s", "roles": ["physicalMeasurement"],
      "cf:standard_name": "wind_speed",
