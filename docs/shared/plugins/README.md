@@ -1,12 +1,12 @@
-# Sensor plugins (proposal)
+# Sensor plugins
 
 | Item | Value |
 | --- | --- |
 | Title | OpenSensor plugin contract |
-| Proposed identifier | `https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json` |
-| Follows | [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) v0.1.0, vendored in [`tools/stac_opensensor/v0.1.0/`](../../tools/stac_opensensor/v0.1.0/) |
-| Maturity | Proposal, nothing implemented |
-| Tracking | [#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111) |
+| Identifier | `https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json` |
+| Follows | [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) v0.1.0, vendored in [`tools/stac_opensensor/v0.1.0/`](../../../tools/stac_opensensor/v0.1.0/) |
+| Maturity | Pilot. Steps 1 to 3 of section 11 landed and both boards pass the byte gate |
+| Tracking | [#17](https://github.com/walkthru-earth/opensensor-space-firmware/issues/17), [#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111) |
 
 The firmware can already log any numeric reading. The logger, writer, sync
 and location code know nothing about air quality. What ties a Thing to air
@@ -21,22 +21,52 @@ bytes, `dict`, `desc`, append-only `field_id` and the NVS rules stay exactly
 as they are. Names use the neutral `os_` spelling from Phase 2 of #111, with
 today's `aq_` name shown where code is cited.
 
+## What landed
+
+Steps 1 to 3 of section 11 are in. The firmware compiles exactly what it did
+before. Only host files are new.
+
+| Part | Path |
+| --- | --- |
+| Schemas, v0.1.0 | [`v0.1.0/module.json`](v0.1.0/module.json), [`v0.1.0/board.json`](v0.1.0/board.json), [`v0.1.0/lock.json`](v0.1.0/lock.json) |
+| Examples | [`examples/bme280.module.json`](examples/bme280.module.json), [`examples/weather.board.json`](examples/weather.board.json) |
+| Logger segments | [`firmware/common/logger/system.module.json`](../../../firmware/common/logger/system.module.json) |
+| Shared sensor modules | `firmware/common/sensors/modules/<id>/module.json` for `pmsa003`, `pms5003t`, `ltr553`, `sht20`, `max17048` and `battery_health` |
+| Board local modules | CoreS3 `bringup/modules/` (`m5_imu`, `axp2101`, `bm8563`, `ft6336`), Waveshare `logger/modules/waveshare` |
+| Board manifests and locks | `board.json` and `shipped.lock` beside each board `telemetry_fields.inc` |
+| Gate | [`tools/plugin_contract.py`](../../../tools/plugin_contract.py), `pixi run plugin-contract`, proved by mutation in `pixi run plugin-contract-test`, part of `pixi run gate` |
+| Changes | [CHANGELOG](CHANGELOG.md) |
+
+Four details differ from the proposal text below, and the schemas win.
+
+- `status` names the status column only. Its codes are that column's
+  `classification:classes`, so the CLASS rows and the template have one
+  source.
+- A board may set `class_subsets`, a map from column to the class names it
+  ships. Waveshare has no RTC, so its `clock_status` lists `none`, `host` and
+  `network` from the logger's four.
+- `battery_health` is a shared module under `firmware/common/sensors/modules/`,
+  because the derivation lives in common code.
+- Section 11 plans one PR per step. Steps 1 to 3 landed together in #121,
+  since step 1 alone would gate examples only and step 2 alone could not
+  prove its locks against manifests.
+
 ## 1. Where the firmware stands
 
 | Already neutral | Where |
 | --- | --- |
-| FIELD X-macro dictionary, one row of name, type, procedure, unit, validity, LIVE key and decimals | Board `telemetry_fields.inc`, expanded in [CoreS3 `telemetry_contract.h`](../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 |
-| `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`aq_logger.h`](../../firmware/common/logger/src/aq_logger.h) (`os_logger.h` after Phase 2) lines 35 to 119 |
-| `ossync::ServiceConfig`, board sdkconfig defaults, bus agnostic drivers | `Config::sync`, each board app, [`firmware/common/sensors/`](../../firmware/common/sensors/) |
-| A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 530 |
+| FIELD X-macro dictionary, one row of name, type, procedure, unit, validity, LIVE key and decimals | Board `telemetry_fields.inc`, expanded in [CoreS3 `telemetry_contract.h`](../../../firmware/esp-idf-cores3/bringup/telemetry_contract.h) lines 68 to 73 and 122 to 134 |
+| `oslogger::Config` and `Hooks`, with one `collect(Row&, now, scheduled, context)` callback | [`aq_logger.h`](../../../firmware/common/logger/src/aq_logger.h) (`os_logger.h` after Phase 2) lines 35 to 119 |
+| `ossync::ServiceConfig`, board sdkconfig defaults, bus agnostic drivers | `Config::sync`, each board app, [`firmware/common/sensors/`](../../../firmware/common/sensors/) |
+| A non air table already writes valid files | Soil fixture in [`test_footer.cpp`](../../../firmware/common/logger/tests/test_footer.cpp) lines 410 to 530 |
 
 | Still leaks | Where and effect |
 | --- | --- |
-| No circular mean, no counter delta | `enum class Aggregate` in [`column_semantics.h`](../../firmware/common/src/column_semantics.h) lines 34 to 41 mirrors the stac-opensensor enum. Both `telemetry_semantics.inc` files say at lines 78 to 80 that counters use `point` for this reason (#83, bridge open question 17) |
-| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 115, Waveshare [`main.cpp`](../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
+| No circular mean, no counter delta | `enum class Aggregate` in [`column_semantics.h`](../../../firmware/common/src/column_semantics.h) lines 34 to 41 mirrors the stac-opensensor enum. Both `telemetry_semantics.inc` files say at lines 78 to 80 that counters use `point` for this reason (#83, bridge open question 17) |
+| Hand written collect | CoreS3 [`telemetry_logger.cpp`](../../../firmware/esp-idf-cores3/bringup/telemetry_logger.cpp) lines 30 to 115, Waveshare [`main.cpp`](../../../firmware/esp-idf-waveshare-sim7670g/logger/main.cpp) lines 103 to 116. `apply_pms` sits in the Waveshare contract header at line 238 |
 | Rows copied by hand | The FIELD system head (10 rows), runtime (12), clock close (2), clock anchor (2) and location (4) segments are byte identical on both boards. Of 52 shared SEM names, 30 rows are identical and the other 22 differ only in what the sensor owns (vendor, model, range, `valid_when`) |
 | Same name, different sensor | `ambient_temperature_c` is `sht20_unresolved` with 2 decimals on CoreS3 and `pms5003t` with 1 decimal on Waveshare, so a module must own its whole row |
-| One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
+| One sensor identity slot | `sensor_vendor`, `sensor_model`, `sensor_serial` in [`device_config.h`](../../../firmware/common/runtime/src/device_config.h) lines 53 to 56. NVS keys must not change, so per module identity means new keys beside them |
 | `aq_` names | Board components and about 40 common files. Phase 2 of #111 renames them. The CMake helpers are `os_` since #115, and the build variables and manifests are `OS_` and `os_` since #118 |
 
 ## 2. One contract, laid out like stac-opensensor
@@ -70,7 +100,7 @@ the vendored stac-opensensor schemas into a `referencing` registry, so a
 | requires | object | Capabilities the board must grant, such as `i2c_address`, `pcnt_units`, `adc_channels`, `uart_baud` |
 | settle_s | number | `$ref` to `opensensor:settle_s`. Warm-up for the whole sensor |
 | init_errors | \[string] | Ordered names of the module's `InitError` values |
-| status | object | Status column name and its codes, each with a value, name and `nodata` flag |
+| status | object | `{"column": <name>}`. The status column of the module. Its codes are that column's `classification:classes` |
 | segments | Map\<string, \[Column]> | **REQUIRED**. Named, ordered column lists, such as `core` and `received` |
 
 A Column object is a stac-opensensor column plus a `firmware` member.
@@ -161,7 +191,8 @@ The excerpt leaves out `id`, `buses`, `requires`, `status` and the
 | sample_interval_s | number | **REQUIRED**. Written to the template `opensensor:sample_interval_s`, must equal the `oslogger::Config` value |
 | title, keywords | string, \[string] | Template title and keywords. CoreS3 and Waveshare keep "air quality" |
 | local_modules | \[path] | Manifests that live in the board app, such as the CoreS3 M5 IMU, AXP2101, BM8563 and FT6336 and the Waveshare `pms_identity` segment |
-| segments | \[\{module, segment\}] | **REQUIRED**. Ordered segment list. `module` is a module id or `system` |
+| segments | \[\{module, segment\}] | **REQUIRED**. Ordered segment list. `module` is a module id or `system`. Each segment appears at most once |
+| class_subsets | Map\<string, \[string]> | Class names a board ships for a column, in the module's value order. Absent means all |
 
 Segments, not one block per module, because field ids are append only. A
 module that grows later adds a new segment at the end. Both boards already
@@ -193,19 +224,20 @@ in the Waveshare app with per column procedures.
 1. Validate every module and board manifest against its schema.
 2. Check cross rules a schema cannot express. Column names are unique on a
    board, LIVE keys keep one key to one column across boards
-   (`tools/live_key_fixture.py`), the board stays within `kMaxColumns` 96 and
-   the 480 byte LIVE cap, and the board file matches its `shipped.lock`
-   (below).
-3. Expand each board's segment list into FIELD, SEM and CLASS rows and the
-   per module C++ column tables and status codes.
-4. Generate or byte-check, as below.
+   (`tools/live_key_fixture.py`), the board stays within `kMaxColumns` 96,
+   and the board file matches its `shipped.lock` (below). The 480 byte LIVE
+   cap stays with the LIVE fixture tests.
+3. Expand each board's segment list into FIELD, SEM and CLASS rows, the
+   template columns, instruments, LIVE keys and unit labels. Step 4 of
+   section 11 adds the per module C++ column tables and status codes.
+4. Byte-check, as below.
 
 | Option | What the firmware compiles | Gate |
 | --- | --- | --- |
 | A. Gate | The checked-in board `telemetry_fields.inc`, `telemetry_semantics.inc` and `telemetry_classes.inc`, unchanged | The generated rows equal the board file rows in order, and the whole `telemetry_fields.inc` is hashed against the lock. A new board gets its files written once, then they are frozen like any other |
 | B. Generate | Rows generated from manifests at build time | The generated table equals a frozen `.inc` copy byte for byte |
 
-**Recommendation, Option A.** The pinned `kDictionaryUri` exists so that the
+**Decided 2026-10-27, Option A.** The pinned `kDictionaryUri` exists so that the
 bytes behind the link are the bytes the image compiled and hashed. Option A
 keeps that, needs no build change and lets every migration step land as a
 host only PR. Option B makes the hashed file a copy of what the image really
@@ -242,11 +274,14 @@ The gate enforces four rules.
   `rows` and `sha256`, and adds segments only after the last row. A reorder,
   a removal or an edit inside a shipped segment fails.
 - A new release lands with a newest first entry in
-  [mobile migration notes](mobile-migration.md) that names the new `dict`.
+  [mobile migration notes](../mobile-migration.md) that names the new `dict`.
 - Releases are append only. The gate also reads the base branch lock
   (`git show origin/main:<path>/shipped.lock`, or the PR base in CI) and
   requires every earlier entry to be byte identical, so only new entries may
-  be appended.
+  be appended. A lock path absent at the base is treated as new, and the gate
+  prints a notice naming it, so a moved board directory shows in the log. On
+  a push to main the base is main itself, so this check is vacuous there by
+  design. It bites on pull requests.
 
 Two existing checks already catch an inconsistent `dict` move today.
 `tools/build-idf-board.sh` lines 20 to 23 fails when the digest header and the
@@ -295,8 +330,8 @@ the enumerators. Mobile already reads an unknown aggregate as `point`.
 
 The plugin schemas use semver. Before 1.0.0 a breaking change bumps the minor
 and anything else the patch. Maturity follows the STAC extension labels.
-Proposal now, Pilot once both boards pass the byte gate, Candidate once a
-third board ships with a dated bench record, Stable by owner decision.
+Pilot now that both boards pass the byte gate, Candidate once a third board
+ships with a dated bench record, Stable by owner decision.
 
 | Change | `dict` | `desc` | Plugin schema |
 | --- | --- | --- | --- |
@@ -309,17 +344,16 @@ third board ships with a dated bench record, Stable by owner decision.
 | A manifest field renamed, removed or made required | Same if output bytes match | Same | Minor before 1.0.0, major after |
 
 Any `dict` change also follows the two pin procedure in the
-[templates README](templates/README.md), a new LIVE fixture digest, the LIVE
-table in [the sync protocol](ble-sync-protocol.md) and a newest first entry in
-[mobile migration notes](mobile-migration.md). A new board is always a new
+[templates README](../templates/README.md), a new LIVE fixture digest, the LIVE
+table in [the sync protocol](../ble-sync-protocol.md) and a newest first entry in
+[mobile migration notes](../mobile-migration.md). A new board is always a new
 dictionary.
 
 ## 8. Where the contract lives
 
-In this repo first, under `docs/shared/plugins/`, next to the board templates
-it feeds and gated by the same `pixi run gate`. A separate public repo, as
-stac-opensensor is, stays an open question for the owner, since AGENTS.md says
-to ask before creating one.
+In this repo, under `docs/shared/plugins/`, next to the board templates it
+feeds and gated by the same `pixi run gate`. The owner decided on 2026-10-27
+that it stays here.
 
 ## 9. Worked example, a weather board
 
@@ -366,15 +400,16 @@ that future version.
   "buses": ["pcnt", "adc"],
   "requires": {"pcnt_units": 1, "adc_channels": 1},
   "init_errors": ["pcnt_unavailable", "adc_unavailable"],
-  "status": {"column": "anemometer_status", "codes": [
-    {"value": 0, "name": "ok"},
-    {"value": 1, "name": "vane_out_of_range"},
-    {"value": 2, "name": "missing", "nodata": true}
-  ]},
+  "status": {"column": "anemometer_status"},
   "segments": {"core": [
     {"name": "anemometer_status", "unit": "{code}", "roles": ["qualityInformation"],
      "opensensor:property": "urn:walkthru-earth:property:anemometer_status",
      "opensensor:aggregate": "mode",
+     "classification:classes": [
+       {"value": 0, "name": "ok"},
+       {"value": 1, "name": "vane_out_of_range"},
+       {"value": 2, "name": "missing", "nodata": true}
+     ],
      "firmware": {"type": "Int32", "unit": "code", "validity": "always", "live_key": "", "decimals": 0}},
     {"name": "wind_speed_m_s", "unit": "m/s", "roles": ["physicalMeasurement"],
      "cf:standard_name": "wind_speed",
@@ -420,6 +455,8 @@ SEM(wind_pulses_total, "{count}", qualityInformation, "", delta, , , 0, "", "urn
 ```
 
 The BME280 and rain gauge manifests follow the same shape and are not shown.
+The checked-in [`examples/`](examples/) keep to schema `0.1.0`, so they carry
+the BME280 and MAX17048 only and the gate validates and expands them.
 The board gets its own `dict`, `desc`, `shipped.lock`, template, pinned URIs,
 LIVE fixture, sync protocol LIVE rows (`ws`, `wg`, `wd` and whatever keys
 the other modules declare), mobile migration entry and bench record. The gate
@@ -430,7 +467,7 @@ files and digests do not change.
 
 This part is secondary. It is what step 3 of the gate generates next to each
 manifest, or checks when the header already exists. It follows the root
-[AGENTS.md](../../AGENTS.md) rules. Columns resolve at build time, tables are
+[AGENTS.md](../../../AGENTS.md) rules. Columns resolve at build time, tables are
 `static constexpr`, errors are an error only enum and nothing allocates.
 
 ```cpp
@@ -524,22 +561,24 @@ flowchart LR
   W --> PQ["Immutable Parquet, footer names dict and template"]
 ```
 
-## Open questions for the owner
+## Decisions and defaults, 2026-10-27
 
-1. Do you accept Option A, board files frozen and gated, over generating them
-   at build time?
-2. Should we raise `circular_mean` and `delta` in stac-opensensor now, under
-   bridge question 17, and with those exact names?
-3. Once `delta` exists, should the running counters on both boards move from
-   `point`? That moves `desc` on both.
-4. Should the plugin contract stay in this repo, or become a separate public
-   repo like stac-opensensor?
-5. Who hosts the schema `$id`? The proposal assumes GitHub Pages for this repo,
-   and the gate never fetches it.
-6. How are two identical sensors on one Thing named, given the unique property
-   per column rule?
-7. Do you want per module identity keys added in NVS beside the current single
-   sensor slot?
-8. Should a board list every module it may carry, with absent ones null, or
-   should each sensor mix get its own dictionary? This proposal assumes the
-   first.
+Items 1, 4, 7 and 8 are owner decisions dated 2026-10-27. Items 2, 3, 5 and 6
+are the proposal defaults, adopted pending owner review.
+
+1. Owner decision. Option A. Board files stay frozen and gated, never
+   generated at build time.
+2. (proposal default) Raise `circular_mean` and `delta` in stac-opensensor
+   upstream, under bridge question 17, with those names.
+3. (proposal default) Running counters stay on `point` for now. Moving them
+   is a later, separate decision, since it moves `desc` on both boards.
+4. Owner decision. The plugin contract stays in this repo.
+5. (proposal default) The schema `$id` uses GitHub Pages for this repo. The
+   gate never fetches it.
+6. (default pending owner review) Two identical sensors on one Thing are
+   deferred. Until the owner decides, each segment appears at most once per
+   board, and the gate enforces it.
+7. Owner decision. No NVS identity changes. The single sensor slot stays as
+   it is.
+8. Owner decision. A board lists every module it may carry, with absent ones
+   null.

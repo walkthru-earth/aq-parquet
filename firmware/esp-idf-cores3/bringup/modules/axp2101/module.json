@@ -1,0 +1,179 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "axp2101",
+  "procedure": "m5_power",
+  "vendor": "X-Powers",
+  "model": "AXP2101",
+  "buses": [
+    "i2c"
+  ],
+  "segments": {
+    "core": [
+      {
+        "name": "vbus_mv",
+        "unit": "mV",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:usb_bus_voltage",
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          0,
+          5500
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "mV",
+          "validity": "api_report_unqualified",
+          "live_key": "vbus",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_mv",
+        "unit": "mV",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_voltage",
+        "opensensor:aggregate": "mean",
+        "opensensor:plausible_range": [
+          2500,
+          4500
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "mV",
+          "validity": "api_report_unqualified",
+          "live_key": "bat",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_percent",
+        "unit": "%",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_state_of_charge",
+        "opensensor:aggregate": "point",
+        "opensensor:plausible_range": [
+          0,
+          100
+        ],
+        "firmware": {
+          "type": "Int32",
+          "unit": "%",
+          "validity": "battery_range_0_100",
+          "live_key": "pct",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "charging_status",
+        "unit": "{code}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "discharging"
+          },
+          {
+            "value": 1,
+            "name": "charging"
+          },
+          {
+            "value": 2,
+            "name": "unknown",
+            "nodata": true
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_charging_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "code",
+          "validity": "api_report_unqualified",
+          "live_key": "chg",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "battery_current_ma",
+        "unit": "mA",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:battery_current",
+        "opensensor:valid_when": {
+          "column": "battery_current_ma",
+          "finite": true
+        },
+        "opensensor:aggregate": "mean",
+        "firmware": {
+          "type": "Int32",
+          "unit": "mA",
+          "validity": "unavailable",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "external_5v_enabled",
+        "unit": "{boolean}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "disabled"
+          },
+          {
+            "value": 1,
+            "name": "enabled"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:external_5v_output_enabled",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "boolean",
+          "validity": "api_report_unqualified",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "usb_output_enabled",
+        "unit": "{boolean}",
+        "roles": [
+          "auxiliaryInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "disabled"
+          },
+          {
+            "value": 1,
+            "name": "enabled"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:usb_output_enabled",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "boolean",
+          "validity": "api_report_unqualified",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

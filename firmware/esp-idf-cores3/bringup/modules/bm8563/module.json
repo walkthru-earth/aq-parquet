@@ -1,0 +1,85 @@
+{
+  "type": "OpenSensorModule",
+  "module_version": "0.1.0",
+  "stac_opensensor": "0.1.0",
+  "id": "bm8563",
+  "procedure": "m5_rtc",
+  "vendor": "Belling",
+  "model": "BM8563",
+  "buses": [
+    "i2c"
+  ],
+  "status": {
+    "column": "rtc_read_ok"
+  },
+  "segments": {
+    "core": [
+      {
+        "name": "rtc_date_yyyymmdd",
+        "unit": "{YYYYMMDD}",
+        "roles": [
+          "referenceInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:real_time_clock_date",
+        "opensensor:valid_when": {
+          "column": "rtc_read_ok",
+          "equals": 1
+        },
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int32",
+          "unit": "YYYYMMDD",
+          "validity": "rtc_read_ok",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "rtc_time_hhmmss",
+        "unit": "{hhmmss}",
+        "roles": [
+          "referenceInformation"
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:real_time_clock_time",
+        "opensensor:valid_when": {
+          "column": "rtc_read_ok",
+          "equals": 1
+        },
+        "opensensor:aggregate": "point",
+        "firmware": {
+          "type": "Int32",
+          "unit": "hhmmss",
+          "validity": "rtc_read_ok",
+          "live_key": "",
+          "decimals": 0
+        }
+      },
+      {
+        "name": "rtc_read_ok",
+        "unit": "{boolean}",
+        "roles": [
+          "qualityInformation"
+        ],
+        "classification:classes": [
+          {
+            "value": 0,
+            "name": "failed"
+          },
+          {
+            "value": 1,
+            "name": "ok"
+          }
+        ],
+        "opensensor:property": "urn:walkthru-earth:property:real_time_clock_read_status",
+        "opensensor:aggregate": "mode",
+        "firmware": {
+          "type": "Int32",
+          "unit": "boolean",
+          "validity": "always",
+          "live_key": "",
+          "decimals": 0
+        }
+      }
+    ]
+  }
+}

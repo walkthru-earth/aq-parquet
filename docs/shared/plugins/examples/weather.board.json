@@ -1,0 +1,18 @@
+{
+  "type": "OpenSensorBoard",
+  "board_version": "0.1.0",
+  "board": "example-weather-s3",
+  "schema": "example-weather-s3-telemetry-v1",
+  "sample_interval_s": 10,
+  "title": "Example weather Thing with Bosch Sensortec BME280 and Analog Devices MAX17048",
+  "keywords": ["weather", "air temperature", "air pressure"],
+  "segments": [
+    {"module": "system", "segment": "head"},
+    {"module": "bme280", "segment": "core"},
+    {"module": "max17048", "segment": "core"},
+    {"module": "system", "segment": "runtime"},
+    {"module": "system", "segment": "clock_close"},
+    {"module": "system", "segment": "clock_anchor"},
+    {"module": "system", "segment": "location"}
+  ]
+}
