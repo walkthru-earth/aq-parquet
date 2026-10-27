@@ -27,7 +27,7 @@ def check_wiring(root: Path) -> None:
     body = body[:body.index("\n}\n")]
     assert body.count("hooks.gnss_fix(") == 1, "collect calls the GNSS hook once"
     assert "select_location(row.location, fix, now)" in body, "collect applies the source rule"
-    assigned = re.findall(r"\brow\.location\s*=(?!=)\s*([^;]*);", body)
+    assigned = re.findall(r"\brow\.location(?:\.\w+)*\s*=(?!=)\s*([^;]*);", body)
     assert assigned == ["::config::get().location"], \
         "nothing but the settings snapshot is assigned to row.location"
     for component in ("gnss", "gnss_reader"):
