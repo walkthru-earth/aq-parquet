@@ -222,7 +222,8 @@ int main(int argc, char **argv) {
       footerfixture::build(json, 900, 1, compressed),
       footerfixture::geo(geo, writer, geometry), true);
   if (result.ok)
-    result = writer.finish(metadata.entries.data(), metadata.count, kFirmware);
+    result = writer.finish(metadata.entries.data(), metadata.count, kFirmware,
+                           kCreatedBy);
   const bool closed = std::fclose(file) == 0;
   return result.ok && closed ? 0 : 4;
 }
