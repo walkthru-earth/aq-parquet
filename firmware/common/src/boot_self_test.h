@@ -10,8 +10,8 @@
 //
 // Today the bootloader is built without CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE,
 // so the mark only rewrites the otadata state of the running slot to VALID.
-// A board flashed by USB has blank otadata, and should_mark_valid() then skips the call.
-// See docs/shared/security-hardening.md, section "OTA".
+// A board flashed by USB has blank otadata, and should_mark_valid() then skips
+// the call. See docs/shared/security-hardening.md, section "OTA".
 
 #include <cstddef>
 #include <cstdint>
