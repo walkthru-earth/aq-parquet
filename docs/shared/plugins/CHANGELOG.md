@@ -9,15 +9,18 @@ Newest first. Versions follow section 7 of the [README](README.md).
   modules and the five board local modules. `system` has none, because the
   logger fills its columns by name.
 - Each header has `kProcedure`, a `Column` enum with the column names
-  verbatim, `kColumns` in manifest order, `kStatusColumn` and the
+  verbatim, `kColumns` in manifest order, a `Segment` enum and
+  `kColumnSegments` with the segment of each column, `kStatusColumn` and the
   `kStatus` constants when the module names a status column, and an error
   only `InitError` when the manifest lists `init_errors`.
 - The headers are checked in. `pixi run plugin-contract` fails on a
   missing, stale or orphan header, and `pixi run plugin-headers` rewrites
   them.
 - `firmware/common/logger/src/os_sensor_module.h` adds `ossensor::Module`,
-  `ossensor::init_error` and the `consteval` `ossensor::resolve`. No board
-  includes it yet.
+  `ossensor::init_error` and the `consteval` `ossensor::resolve`. A second
+  `resolve` form takes the selected segments and maps columns of other
+  segments to `ossensor::kNoSlot`, so a board can ship only `max17048.core`.
+  No board includes it yet.
 - `pixi run sensor-module-test` compiles the headers against both boards'
   field tables and proves a missing name stops the build.
 - No schema change, so the schemas stay under `v0.1.0/`. No board file,

@@ -35,5 +35,21 @@ inline constexpr std::array<std::string_view, 11> kColumns{
     "mag_z_raw",
     "imu_temperature_c",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 11> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+};
 } // namespace ossensor::m5_imu
 // clang-format on

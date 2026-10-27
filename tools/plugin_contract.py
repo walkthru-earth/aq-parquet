@@ -658,6 +658,14 @@ def module_header(root: Path, module: Module) -> str:
     lines.append(f"inline constexpr std::array<std::string_view, {len(names)}> kColumns{{")
     lines += [f'    "{name}",' for name in names]
     lines.append("};")
+    # A board selects segments, so resolve() can map only the ones it ships.
+    segments = [identifier(s, f"{module.id} segment") for s in manifest["segments"]]
+    lines.append("enum class Segment : std::uint8_t {")
+    lines += [f"  {s}," for s in segments]
+    lines.append("};")
+    lines.append(f"inline constexpr std::array<Segment, {len(names)}> kColumnSegments{{")
+    lines += [f"    Segment::{s}," for s, cols in manifest["segments"].items() for _ in cols]
+    lines.append("};")
     status = manifest.get("status")
     if status is not None:
         column = next(c for c in columns if c["name"] == status["column"])

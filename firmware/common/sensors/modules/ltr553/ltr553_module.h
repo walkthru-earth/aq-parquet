@@ -23,6 +23,16 @@ inline constexpr std::array<std::string_view, 5> kColumns{
     "light_status",
     "proximity_status",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 5> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+};
 inline constexpr Column kStatusColumn = Column::light_status;
 inline constexpr std::int32_t kStatusUnavailable = 0;
 inline constexpr std::int32_t kStatusNotFresh = 1;

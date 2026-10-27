@@ -17,6 +17,13 @@ inline constexpr std::array<std::string_view, 2> kColumns{
     "battery_health_state",
     "battery_minutes_to_empty",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 2> kColumnSegments{
+    Segment::core,
+    Segment::core,
+};
 inline constexpr Column kStatusColumn = Column::battery_health_state;
 inline constexpr std::int32_t kStatusUnknown = 0;
 inline constexpr std::int32_t kStatusExternalPowerLikely = 1;

@@ -19,5 +19,13 @@ inline constexpr std::array<std::string_view, 3> kColumns{
     "touch_x_px",
     "touch_y_px",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 3> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+};
 } // namespace ossensor::ft6336
 // clang-format on

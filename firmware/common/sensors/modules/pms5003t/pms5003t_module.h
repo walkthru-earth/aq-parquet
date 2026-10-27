@@ -53,6 +53,33 @@ inline constexpr std::array<std::string_view, 20> kColumns{
     "pms_length_errors",
     "pms_received_mono_us",
 };
+enum class Segment : std::uint8_t {
+  core,
+  tail,
+  received,
+};
+inline constexpr std::array<Segment, 20> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::tail,
+    Segment::tail,
+    Segment::tail,
+    Segment::tail,
+    Segment::tail,
+    Segment::tail,
+    Segment::tail,
+    Segment::received,
+};
 inline constexpr Column kStatusColumn = Column::pms_status;
 inline constexpr std::int32_t kStatusMissing = 0;
 inline constexpr std::int32_t kStatusWarming = 1;

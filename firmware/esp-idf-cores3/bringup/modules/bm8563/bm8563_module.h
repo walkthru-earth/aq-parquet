@@ -19,6 +19,14 @@ inline constexpr std::array<std::string_view, 3> kColumns{
     "rtc_time_hhmmss",
     "rtc_read_ok",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 3> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+};
 inline constexpr Column kStatusColumn = Column::rtc_read_ok;
 inline constexpr std::int32_t kStatusFailed = 0;
 inline constexpr std::int32_t kStatusOk = 1;

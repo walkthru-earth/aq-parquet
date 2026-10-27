@@ -19,5 +19,13 @@ inline constexpr std::array<std::string_view, 3> kColumns{
     "pm25_batch_candidate_ug_m3",
     "pm25_batch_candidate_status",
 };
+enum class Segment : std::uint8_t {
+  pms_identity,
+};
+inline constexpr std::array<Segment, 3> kColumnSegments{
+    Segment::pms_identity,
+    Segment::pms_identity,
+    Segment::pms_identity,
+};
 } // namespace ossensor::waveshare
 // clang-format on

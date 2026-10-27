@@ -504,6 +504,9 @@ enum class Column : std::uint8_t {
 };
 inline constexpr std::array<std::string_view, 5> kColumns{
     "anemometer_status", "wind_speed_m_s", "wind_gust_m_s", "wind_direction_deg", "wind_pulses_total"};
+enum class Segment : std::uint8_t { core };
+inline constexpr std::array<Segment, 5> kColumnSegments{
+    Segment::core, Segment::core, Segment::core, Segment::core, Segment::core};
 inline constexpr Column kStatusColumn = Column::anemometer_status;
 inline constexpr std::int32_t kStatusOk = 0;
 inline constexpr std::int32_t kStatusVaneOutOfRange = 1;
@@ -511,13 +514,16 @@ inline constexpr std::int32_t kStatusMissing = 2;
 } // namespace ossensor::cup_anemometer
 ```
 
-Three details came out of step 4.
+Four details came out of step 4.
 
 - `Column` uses the column names verbatim. A short name such as `status`
   would need a new manifest field, and the long name cannot collide inside
   a module.
 - `kProcedure` and `kStatusColumn` are added, so `Module.procedure` and the
   status write need no hand typed string or index.
+- `Segment` and `kColumnSegments` are added. A board can select only some
+  segments of a module, as the weather example does with `max17048.core`, so
+  `resolve` needs to know which segment each column belongs to.
 - `os_sensor_module.h` lives in `firmware/common/logger/src/`, not in the
   sensors component, because `Module::collect` takes `oslogger::Row`. The
   sensor drivers stay free of the logger, and no component gains a
@@ -526,7 +532,10 @@ Three details came out of step 4.
 The hand written module code uses that header. `ossensor::resolve` is a
 `consteval` lookup that maps `kColumns` to board column indices and stops the
 build when a name is missing. It returns `ossensor::Slots<N>`, one byte per
-column. `ossensor::init_error` turns a module's `InitError` into the shared
+column. The two argument form needs every column on the board. The form that
+also takes `kColumnSegments` and the selected segments needs every column of a
+selected segment, and maps the rest to `ossensor::kNoSlot`, which collect
+skips. `ossensor::init_error` turns a module's `InitError` into the shared
 `InitErrorCode`. The board hook loops over a `static constexpr` module
 table, so the logger and `Hooks::collect` keep their signatures.
 

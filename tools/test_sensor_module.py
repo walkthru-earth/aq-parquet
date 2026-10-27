@@ -11,9 +11,14 @@ each Column enumerator is its kColumns position.
 A second unit compiles the example BME280 header, which has an InitError,
 into a Module table with a fake init and collect.
 
+A third unit resolves the real max17048 header against a table with only its
+core columns, selecting only the core segment. Core resolves and v5 maps to
+kNoSlot.
+
 Negative compiles prove that resolve() stops the build. A CoreS3 only module
-resolved against the Waveshare table and an unknown column against the CoreS3
-table must both fail, naming the missing column guard.
+resolved against the Waveshare table, an unknown column against the CoreS3
+table and a selected v5 segment the table lacks must all fail, naming the
+missing column guard.
 """
 
 from __future__ import annotations
@@ -59,7 +64,8 @@ def board_unit(columns: list[gate.Column], modules: dict[str, gate.Module]) -> t
     lines += ["", "namespace {", f"constexpr std::span kBoard{{{FIELDS}}};"]
     checks = []
     for module_id in used:
-        names = [c["name"] for cols in modules[module_id].manifest["segments"].values() for c in cols]
+        segments = modules[module_id].manifest["segments"]
+        names = [c["name"] for cols in segments.values() for c in cols]
         slots = ", ".join(str(position[n]) for n in names)
         ns = f"ossensor::{module_id}"
         lines += [f"constexpr auto k_{module_id} = ossensor::resolve({ns}::kColumns, kBoard);",
@@ -67,6 +73,14 @@ def board_unit(columns: list[gate.Column], modules: dict[str, gate.Module]) -> t
                   f'              "{module_id} resolves to the positions the plugin gate expands");']
         for index, name in enumerate(names):
             lines.append(f"static_assert(std::to_underlying({ns}::Column::{name}) == {index});")
+        # kColumnSegments follows the manifest, and selecting every segment
+        # the board ships resolves the same slots.
+        tags = ", ".join(f"{ns}::Segment::{s}" for s, cols in segments.items() for _ in cols)
+        lines.append(f"static_assert({ns}::kColumnSegments == std::array{{{tags}}});")
+        shipped = [s for s, cols in segments.items() if all(c["name"] in position for c in cols)]
+        selected = ", ".join(f"{ns}::Segment::{s}" for s in shipped)
+        lines += [f"static_assert(ossensor::resolve({ns}::kColumns, {ns}::kColumnSegments,",
+                  f"                                std::array{{{selected}}}, kBoard) == k_{module_id});"]
         checks.append(f"  failures += check(k_{module_id}, {ns}::kColumns);")
     lines += [
         "template <std::size_t N>",
@@ -154,6 +168,25 @@ int main() {
 """
 
 
+# A table with only the max17048 core columns. {selected} picks segments.
+CORE_ONLY = """#include <os_sensor_module.h>
+#include "{header}"
+#include <span>
+
+namespace {{
+struct Name {{
+  const char *name;
+}};
+constexpr Name kTable[] = {{{{"sequence"}}, {{"gauge_status"}}, {{"battery_mv"}}, {{"battery_percent"}}}};
+namespace g = ossensor::max17048;
+[[maybe_unused]] constexpr auto kSlots =
+    ossensor::resolve(g::kColumns, g::kColumnSegments, std::array{{{selected}}}, std::span{{kTable}});
+static_assert(kSlots == ossensor::Slots<7>{{1, 2, 3, ossensor::kNoSlot, ossensor::kNoSlot, ossensor::kNoSlot,
+                                            ossensor::kNoSlot}});
+}} // namespace
+"""
+
+
 def run(command: list[str], what: str) -> None:
     result = subprocess.run(command, capture_output=True, text=True)
     require(result.returncode == 0, f"{what} failed\n{result.stdout}{result.stderr}")
@@ -223,6 +256,17 @@ def main() -> None:
         unknown.write_text(unknown.read_text().replace("no_such_column", "monotonic_us"))
         run([*compiler(False, cores3.directory), "-fsyntax-only", str(unknown)], "a known column unit")
         print("PASS the same unit with a known column compiles", flush=True)
+
+        # A board that selects only the max17048 core segment, as the weather
+        # example does, resolves core and leaves v5 at kNoSlot.
+        gauge = gate.header_path(common["max17048"]).as_posix()
+        partial = directory / "core-only.cpp"
+        partial.write_text(CORE_ONLY.format(header=gauge, selected="g::Segment::core"))
+        run([*compiler(False, directory), "-fsyntax-only", str(partial)], "a core only max17048 unit")
+        print("PASS a board selecting only max17048 core resolves core and leaves v5 at kNoSlot", flush=True)
+        partial.write_text(CORE_ONLY.format(header=gauge, selected="g::Segment::core, g::Segment::v5"))
+        rejects([*compiler(False, directory), "-fsyntax-only", str(partial)],
+                "a selected max17048 v5 segment the board table lacks")
 
 
 if __name__ == "__main__":

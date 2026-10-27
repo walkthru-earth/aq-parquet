@@ -27,6 +27,19 @@ inline constexpr std::array<std::string_view, 7> kColumns{
     "gauge_status_flags",
     "gauge_hibernating",
 };
+enum class Segment : std::uint8_t {
+  core,
+  v5,
+};
+inline constexpr std::array<Segment, 7> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::v5,
+    Segment::v5,
+    Segment::v5,
+    Segment::v5,
+};
 inline constexpr Column kStatusColumn = Column::gauge_status;
 inline constexpr std::int32_t kStatusBatteryNotInstalledOrDisabled = 0;
 inline constexpr std::int32_t kStatusReadErrorOrImplausible = 1;

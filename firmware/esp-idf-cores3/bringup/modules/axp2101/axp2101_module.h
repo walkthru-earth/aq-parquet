@@ -27,5 +27,17 @@ inline constexpr std::array<std::string_view, 7> kColumns{
     "external_5v_enabled",
     "usb_output_enabled",
 };
+enum class Segment : std::uint8_t {
+  core,
+};
+inline constexpr std::array<Segment, 7> kColumnSegments{
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+    Segment::core,
+};
 } // namespace ossensor::axp2101
 // clang-format on
