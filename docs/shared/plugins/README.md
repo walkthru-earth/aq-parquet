@@ -5,7 +5,7 @@
 | Title | OpenSensor plugin contract |
 | Identifier | `https://walkthru-earth.github.io/opensensor-space-firmware/plugins/v0.1.0/module.json` |
 | Follows | [stac-opensensor](https://github.com/walkthru-earth/stac-opensensor) v0.1.0, vendored in [`tools/stac_opensensor/v0.1.0/`](../../../tools/stac_opensensor/v0.1.0/) |
-| Maturity | Pilot. Steps 1 to 3 of section 11 landed and both boards pass the byte gate |
+| Maturity | Pilot. Steps 1 to 4 of section 11 landed and both boards pass the byte gate |
 | Tracking | [#17](https://github.com/walkthru-earth/opensensor-space-firmware/issues/17), [#111](https://github.com/walkthru-earth/opensensor-space-firmware/issues/111) |
 
 The firmware can already log any numeric reading. The logger, writer, sync
@@ -23,8 +23,9 @@ today's `aq_` name shown where code is cited.
 
 ## What landed
 
-Steps 1 to 3 of section 11 are in. The firmware compiles exactly what it did
-before. Only host files are new.
+Steps 1 to 4 of section 11 are in. The firmware compiles exactly what it did
+before. Step 4 adds C++ headers that no board includes yet, so both app
+images stay byte identical.
 
 | Part | Path |
 | --- | --- |
@@ -35,6 +36,9 @@ before. Only host files are new.
 | Board local modules | CoreS3 `bringup/modules/` (`m5_imu`, `axp2101`, `bm8563`, `ft6336`), Waveshare `logger/modules/waveshare` |
 | Board manifests and locks | `board.json` and `shipped.lock` beside each board `telemetry_fields.inc` |
 | Gate | [`tools/plugin_contract.py`](../../../tools/plugin_contract.py), `pixi run plugin-contract`, proved by mutation in `pixi run plugin-contract-test`, part of `pixi run gate` |
+| Generated module headers, step 4 | `<id>_module.h` beside each module manifest but `system`, checked in, gated byte for byte, rewritten by `pixi run plugin-headers` |
+| Module glue, step 4 | [`firmware/common/logger/src/os_sensor_module.h`](../../../firmware/common/logger/src/os_sensor_module.h), `ossensor::Module`, `init_error` and `consteval` `resolve` |
+| Host test, step 4 | [`tools/test_sensor_module.py`](../../../tools/test_sensor_module.py), `pixi run sensor-module-test`, part of `pixi run gate` |
 | Changes | [CHANGELOG](CHANGELOG.md) |
 
 Four details differ from the proposal text below, and the schemas win.
@@ -228,8 +232,8 @@ in the Waveshare app with per column procedures.
    and the board file matches its `shipped.lock` (below). The 480 byte LIVE
    cap stays with the LIVE fixture tests.
 3. Expand each board's segment list into FIELD, SEM and CLASS rows, the
-   template columns, instruments, LIVE keys and unit labels. Step 4 of
-   section 11 adds the per module C++ column tables and status codes.
+   template columns, instruments, LIVE keys and unit labels. It also
+   expands each module manifest into its C++ header (section 10).
 4. Byte-check, as below.
 
 | Option | What the firmware compiles | Gate |
@@ -478,28 +482,53 @@ files and digests do not change.
 
 ## 10. What the generator emits in C++
 
-This part is secondary. It is what step 3 of the gate generates next to each
-manifest, or checks when the header already exists. It follows the root
+This part is secondary. Step 3 of the gate generates it as
+`<id>_module.h` next to each module manifest. The headers are checked in, and
+the gate fails when one is missing, stale or has no manifest.
+`pixi run plugin-headers` rewrites them. `system` has no header, because the
+logger fills its columns by name. It follows the root
 [AGENTS.md](../../../AGENTS.md) rules. Columns resolve at build time, tables are
 `static constexpr`, errors are an error only enum and nothing allocates.
 
 ```cpp
-// GENERATED from firmware/common/sensors/modules/cup_anemometer/module.json
+// GENERATED from firmware/common/sensors/modules/cup_anemometer/module.json by tools/plugin_contract.py.
 namespace ossensor::cup_anemometer {
+inline constexpr std::string_view kProcedure = "cup_anemometer";
 enum class [[nodiscard]] InitError : std::uint8_t { pcnt_unavailable, adc_unavailable };
-enum class Column : std::uint8_t { status, wind_speed, wind_gust, wind_direction, pulses_total };
+enum class Column : std::uint8_t {
+  anemometer_status,
+  wind_speed_m_s,
+  wind_gust_m_s,
+  wind_direction_deg,
+  wind_pulses_total,
+};
 inline constexpr std::array<std::string_view, 5> kColumns{
     "anemometer_status", "wind_speed_m_s", "wind_gust_m_s", "wind_direction_deg", "wind_pulses_total"};
+inline constexpr Column kStatusColumn = Column::anemometer_status;
 inline constexpr std::int32_t kStatusOk = 0;
 inline constexpr std::int32_t kStatusVaneOutOfRange = 1;
 inline constexpr std::int32_t kStatusMissing = 2;
 } // namespace ossensor::cup_anemometer
 ```
 
+Three details came out of step 4.
+
+- `Column` uses the column names verbatim. A short name such as `status`
+  would need a new manifest field, and the long name cannot collide inside
+  a module.
+- `kProcedure` and `kStatusColumn` are added, so `Module.procedure` and the
+  status write need no hand typed string or index.
+- `os_sensor_module.h` lives in `firmware/common/logger/src/`, not in the
+  sensors component, because `Module::collect` takes `oslogger::Row`. The
+  sensor drivers stay free of the logger, and no component gains a
+  dependency.
+
 The hand written module code uses that header. `ossensor::resolve` is a
 `consteval` lookup that maps `kColumns` to board column indices and stops the
-build when a name is missing. The board hook loops over a `static constexpr`
-module table, so the logger and `Hooks::collect` keep their signatures.
+build when a name is missing. It returns `ossensor::Slots<N>`, one byte per
+column. `ossensor::init_error` turns a module's `InitError` into the shared
+`InitErrorCode`. The board hook loops over a `static constexpr` module
+table, so the logger and `Hooks::collect` keep their signatures.
 
 ```cpp
 struct Module {
@@ -511,11 +540,11 @@ struct Module {
 
 constinit cup_anemometer::Context wind{
     .io = &kWindIo,
-    .slots = ossensor::resolve(cup_anemometer::kColumns, std::span{telemetry::kFields}),
+    .slots = ossensor::resolve(cup_anemometer::kColumns, std::span{telemetry::contract::kFields}),
 };
 
 static constexpr std::array kModules{
-    Module{.procedure = "cup_anemometer", .init = cup_anemometer::init,
+    Module{.procedure = cup_anemometer::kProcedure, .init = cup_anemometer::init,
            .collect = cup_anemometer::collect, .context = &wind},
 };
 

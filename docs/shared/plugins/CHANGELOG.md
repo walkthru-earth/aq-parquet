@@ -2,6 +2,27 @@
 
 Newest first. Versions follow section 7 of the [README](README.md).
 
+## 0.1.2, 2026-10-27
+
+- Step 4 of section 11. The gate generates one C++ header per module
+  manifest, `<id>_module.h` beside its `module.json`, for the six shared
+  modules and the five board local modules. `system` has none, because the
+  logger fills its columns by name.
+- Each header has `kProcedure`, a `Column` enum with the column names
+  verbatim, `kColumns` in manifest order, `kStatusColumn` and the
+  `kStatus` constants when the module names a status column, and an error
+  only `InitError` when the manifest lists `init_errors`.
+- The headers are checked in. `pixi run plugin-contract` fails on a
+  missing, stale or orphan header, and `pixi run plugin-headers` rewrites
+  them.
+- `firmware/common/logger/src/os_sensor_module.h` adds `ossensor::Module`,
+  `ossensor::init_error` and the `consteval` `ossensor::resolve`. No board
+  includes it yet.
+- `pixi run sensor-module-test` compiles the headers against both boards'
+  field tables and proves a missing name stops the build.
+- No schema change, so the schemas stay under `v0.1.0/`. No board file,
+  `dict` or `desc` moves.
+
 ## 0.1.1, 2026-10-27
 
 - Optional release `baseline` in the lock schema, with `reason`,
