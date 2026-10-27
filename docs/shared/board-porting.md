@@ -49,7 +49,11 @@ radios, the LAN task writes sockets, and the NimBLE host sends BLE responses.
    model explicitly and preserve each board's schema and provenance.
 3. Add Pixi tasks, target checks and board contract fixtures. Build both existing
    boards plus the new target using the [development gates](development.md#verification).
-   A generic compile fixture never gets flashed.
+   A generic compile fixture never gets flashed. Write the board's
+   `board.json` against the [plugin contract](plugins/README.md#writing-a-new-board-once),
+   then run `pixi run plugin-new-board <path to board.json>` once. It writes
+   the three `telemetry_*.inc` files and a first `shipped.lock`, and they are
+   frozen from then on.
 4. Audit strapping pins, peripheral ownership, flash capacity, PSRAM, console
    and recovery. Before any physical write follow the full checked-port
    [identification and backup sequence](../../AGENTS.md#before-any-physical-flash-write).
