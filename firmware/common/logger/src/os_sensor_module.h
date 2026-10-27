@@ -109,11 +109,13 @@ consteval Slot find(std::string_view column, std::span<Field, Extent> fields) {
 // the board field, so the build stops with this name in the diagnostic.
 void module_column_type_differs_from_board_field();
 
-template <const auto &Fields, const auto &Slots, auto Column>
+template <class ModuleColumn, const auto &Fields, const auto &Slots,
+          auto Column>
 consteval Slot typed_slot(telemetry::PhysicalType type) {
-  static_assert(std::is_enum_v<decltype(Column)>);
+  static_assert(std::is_same_v<decltype(Column), ModuleColumn>,
+                "the Column belongs to another module than this Writer");
   static_assert(std::to_underlying(Column) < std::size(Slots),
-                "the Column belongs to this module's slots");
+                "the Column is past the slots of this Writer");
   const Slot slot = Slots[std::to_underlying(Column)];
   if (slot != kNoSlot &&
       (slot >= std::size(Fields) || Fields[slot].type != type))
@@ -156,35 +158,46 @@ resolve(const std::array<std::string_view, N> &columns,
   return out;
 }
 
-// Typed writes of one module. Fields is the board table (kFields) and Slots
-// that module's resolve() result, both static constexpr. A write names its
-// generated Column. integer writes Int32, counter Int64 and number Float, as
-// the manifest firmware.type says, and the build stops when the board field
-// has another type. A kNoSlot column compiles to no write.
+// Typed writes of one module. ModuleColumn is that module's generated
+// Column enum, Fields the board table (kFields) and Slots that module's
+// resolve() result, both static constexpr. A write names a Column. The build
+// stops when the Column is of another module, and when the board field has
+// another type than the call. integer writes Int32, counter Int64 and number
+// Float, as the manifest firmware.type says. A kNoSlot column compiles to no
+// write.
 //
 //   static constexpr auto kSlots = ossensor::resolve(pms5003t::kColumns,
 //                                                    std::span{kFields});
-//   const ossensor::Writer<kFields, kSlots> out{row};
+//   const ossensor::Writer<pms5003t::Column, kFields, kSlots> out{row};
 //   out.integer<pms5003t::Column::pms_status>(status);
-template <const auto &Fields, const auto &Slots> class Writer {
+template <class ModuleColumn, const auto &Fields, const auto &Slots>
+  requires std::is_enum_v<ModuleColumn>
+class Writer {
+  static_assert(std::size(Fields) <=
+                    std::tuple_size_v<decltype(oslogger::Row::data)>,
+                "the board table fits in a row");
+
 public:
   constexpr explicit Writer(oslogger::Row &row) : row_(row) {}
 
   template <auto Column> void integer(std::int32_t value) const {
-    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
-        telemetry::PhysicalType::Int32);
+    constexpr Slot slot =
+        detail::typed_slot<ModuleColumn, Fields, Slots, Column>(
+            telemetry::PhysicalType::Int32);
     if constexpr (slot != kNoSlot)
       row_.integer(slot, value);
   }
   template <auto Column> void counter(std::int64_t value) const {
-    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
-        telemetry::PhysicalType::Int64);
+    constexpr Slot slot =
+        detail::typed_slot<ModuleColumn, Fields, Slots, Column>(
+            telemetry::PhysicalType::Int64);
     if constexpr (slot != kNoSlot)
       row_.counter(slot, value);
   }
   template <auto Column> void number(float value) const {
-    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
-        telemetry::PhysicalType::Float);
+    constexpr Slot slot =
+        detail::typed_slot<ModuleColumn, Fields, Slots, Column>(
+            telemetry::PhysicalType::Float);
     if constexpr (slot != kNoSlot)
       row_.number(slot, value);
   }

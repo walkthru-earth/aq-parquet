@@ -9,8 +9,9 @@ Newest first. Versions follow section 7 of the [README](README.md).
   `max17048` and `battery_health`, in
   `firmware/esp-idf-waveshare-sim7670g/logger/sensor_modules.h`. The logger
   and `Hooks::collect` keep their signatures.
-- `os_sensor_module.h` adds `ossensor::Writer` with typed writes checked
-  against the board field type at build time, runtime writes that skip
+- `os_sensor_module.h` adds `ossensor::Writer`, tied to one module's
+  `Column` enum, with typed writes checked against the board field type at
+  build time, runtime writes that skip
   `kNoSlot`, and a `[[nodiscard]]` `init_module`. Section 10 documents them.
 - The old `apply_pms`, `apply_gauge` and `apply_battery_health` leave the
   Waveshare contract header. They live on as the test reference in

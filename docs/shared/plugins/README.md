@@ -578,7 +578,7 @@ raw index. `NumericSample::set` has no bounds check, and slot 255 is
 
 | Helper | Does |
 | --- | --- |
-| `ossensor::Writer<kFields, kSlots>` | Typed writes by generated `Column`. `integer<C>` writes Int32, `counter<C>` Int64 and `number<C>` Float. The build stops with `module_column_type_differs_from_board_field` when the board field has another type. A `kNoSlot` column compiles to no write |
+| `ossensor::Writer<Column, kFields, kSlots>` | Typed writes of one module by its generated `Column`. `integer<C>` writes Int32, `counter<C>` Int64 and `number<C>` Float. The build stops with `module_column_type_differs_from_board_field` when the board field has another type, and with "the Column belongs to another module than this Writer" when `C` is of another module. A `kNoSlot` column compiles to no write |
 | `ossensor::integer`, `counter`, `number` | Runtime writes by `Slot`. They skip `kNoSlot` and any slot past the row |
 | `ossensor::init_module` | Runs `Module::init` and returns its result as `[[nodiscard]]`, so a dropped init result warns. A module with no init succeeds |
 
@@ -592,7 +592,8 @@ static constexpr auto kSlots =
 
 void write_gauge(oslogger::Row &row, const BatteryHealth &health) {
   using enum max17048::Column;
-  const ossensor::Writer<telemetry::contract::kFields, kSlots> out{row};
+  const ossensor::Writer<max17048::Column, telemetry::contract::kFields, kSlots>
+      out{row};
   out.integer<gauge_status>(max17048::kStatusValid);
   out.integer<battery_mv>(health.reading.millivolts);
 }
@@ -622,7 +623,7 @@ or file format, `dict` or `desc`.
 | 9 | The weather board, if wanted | New dictionary, existing boards unchanged |
 
 Steps 5 and 6 touch firmware, so both boards build and get proportional
-readback before any hardware claim. Step 5 proves row equality on 720 input
+readback before any hardware claim. Step 5 proves row equality on 792 input
 sets, every PMS status including warming and model mismatch, the gauge read
 failures and six sensor identities, against the old collect in
 `tools/waveshare_collect_reference.h`.

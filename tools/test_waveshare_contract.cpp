@@ -388,6 +388,8 @@ std::vector<GaugeCase> gauge_cases() {
   opensensor::battery::Assessment ok{};
   ok.state = opensensor::battery::State::Ok;
   ok.minutes_to_empty = 2177;
+  auto empty = ok;
+  empty.minutes_to_empty = 0;
   return {
       {"not installed", {}},
       {"not installed with stale read", {false, good, extended_ok(), ok}},
@@ -401,6 +403,7 @@ std::vector<GaugeCase> gauge_cases() {
       {"extended reads failed", {true, good, {}, ok}},
       {"partial extended", {true, good, partial, ok}},
       {"valid", {true, good, extended_ok(), ok}},
+      {"zero minutes to empty", {true, good, extended_ok(), empty}},
   };
 }
 void assert_row_equality() {

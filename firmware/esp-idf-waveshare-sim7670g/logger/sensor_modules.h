@@ -4,8 +4,9 @@
 // docs/shared/plugins/README.md section 10). The board Hooks::collect loops
 // over the static constexpr table that table() builds, one entry per module
 // the board.json lists. Each module writes only its own generated columns
-// through ossensor::Writer, so a column resolves by name at build time and a
-// type slip stops the build.
+// through ossensor::Writer. A column resolves by name at build time. The
+// build stops when a write names a Column of another module, or uses another
+// physical type than the board field.
 //
 // Pure and host tested. The board passes its hardware reads in as Sources
 // callbacks, so tools/test_waveshare_contract.cpp runs the same table with
@@ -31,7 +32,9 @@ namespace waveshare = ossensor::waveshare;
 namespace max17048 = ossensor::max17048;
 namespace battery_health = ossensor::battery_health;
 
-// The board reads behind the modules. Main loop only.
+// The board reads behind the modules. Main loop only. The module table
+// holds a non-const pointer to one instance, and collect_gauge writes its
+// gauge member on every row, so no other task may touch it.
 struct Sources {
   // The latest checksum-valid PMS5003T frame, from the UART poll.
   const contract::PmsSnapshot *latest = nullptr;
@@ -96,7 +99,8 @@ aged(const contract::PmsSnapshot &latest, std::int64_t now) {
 inline void write_pms(oslogger::Row &row, const contract::PmsSnapshot &pms,
                       std::int64_t now) {
   using enum pms5003t::Column;
-  const ossensor::Writer<contract::kFields, kPmsSlots> out{row};
+  const ossensor::Writer<pms5003t::Column, contract::kFields, kPmsSlots> out{
+      row};
   const auto &frame = pms.frame;
   const auto status = status_of(pms, now);
   out.integer<pms_status>(status);
@@ -132,7 +136,8 @@ inline void write_identity(oslogger::Row &row, const contract::PmsSnapshot &pms,
                            std::int64_t now,
                            const contract::SensorProfile &sensor) {
   using enum waveshare::Column;
-  const ossensor::Writer<contract::kFields, kIdentitySlots> out{row};
+  const ossensor::Writer<waveshare::Column, contract::kFields, kIdentitySlots>
+      out{row};
   const auto status = status_of(pms, now);
   const auto code = contract::serial_code(sensor);
   if (code)
@@ -155,7 +160,8 @@ inline void write_identity(oslogger::Row &row, const contract::PmsSnapshot &pms,
 inline void write_gauge(oslogger::Row &row,
                         const contract::BatteryHealth &health) {
   using enum max17048::Column;
-  const ossensor::Writer<contract::kFields, kGaugeSlots> out{row};
+  const ossensor::Writer<max17048::Column, contract::kFields, kGaugeSlots> out{
+      row};
   const auto &reading = health.reading;
   const bool vcell_ok = reading.vcell_valid();
   const bool soc_ok = reading.soc_valid();
@@ -188,7 +194,9 @@ inline void write_gauge(oslogger::Row &row,
 inline void write_health(oslogger::Row &row,
                          const contract::BatteryHealth &health) {
   using enum battery_health::Column;
-  const ossensor::Writer<contract::kFields, kHealthSlots> out{row};
+  const ossensor::Writer<battery_health::Column, contract::kFields,
+                         kHealthSlots>
+      out{row};
   if (!health.battery_installed)
     return;
   out.integer<battery_health_state>(
