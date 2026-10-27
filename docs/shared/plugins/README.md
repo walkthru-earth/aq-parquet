@@ -265,7 +265,7 @@ one entry per released `dict`.
 }
 ```
 
-The gate enforces four rules.
+The gate enforces five rules.
 
 - The SHA-256 of the current `telemetry_fields.inc` equals the newest
   release `dict`. Any byte change fails, a comment only edit included,
@@ -273,6 +273,14 @@ The gate enforces four rules.
 - A new release keeps every segment of the previous one at the same `first`,
   `rows` and `sha256`, and adds segments only after the last row. A reorder,
   a removal or an edit inside a shipped segment fails.
+- An owner approved break is the one exception. A release that carries
+  `"baseline": {"reason": "...", "migration": "<heading>"}` may edit shipped
+  segments. `migration` is the exact text of a `## ` heading in the
+  [mobile migration notes](../mobile-migration.md), and that entry must name
+  the release `dict`. A missing entry or a dict the entry never names fails.
+  The first release cannot be a baseline. Earlier releases stay in the lock
+  unchanged, so the file is still append only. A baseline is a contract
+  break, so it needs a matched app build and a reflash (owner decision 14).
 - A new release lands with a newest first entry in
   [mobile migration notes](../mobile-migration.md) that names the new `dict`.
 - Releases are append only. The gate also reads the base branch lock
@@ -335,7 +343,7 @@ ships with a dated bench record, Stable by owner decision.
 
 | Change | `dict` | `desc` | Plugin schema |
 | --- | --- | --- | --- |
-| A FIELD value in a shipped segment (name, type, unit label, validity, LIVE key, decimals) | Forbidden by the lock. Add a new segment instead | | |
+| A FIELD value in a shipped segment (name, type, unit label, validity, LIVE key, decimals) | Forbidden by the lock. Add a new segment instead, or an owner approved `baseline` release | | |
 | A new segment appended to a board | New on that board, plus a lock release | New, the template carries `dict` | No change |
 | Board `.inc` comment prose | New, comments are hashed, plus a lock release | New | No change |
 | SEM or class values (property, aggregate, range, `valid_when`, settle, roles, vendor) | Same | New on every board using that segment, the gate lists them | No change |

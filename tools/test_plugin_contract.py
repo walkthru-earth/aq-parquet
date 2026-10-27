@@ -239,6 +239,34 @@ def main() -> None:
                "a newer release that reorders a shipped segment")
         mutate(scratch, with_history(lambda d: d["releases"][0]["segments"][2].update(sha256="2" * 64)),
                "reorders, removes or edits", "a newer release that edits a shipped segment")
+        # A baseline release may edit a shipped segment only with its migration entry.
+        heading = "Test baseline (plugin contract test)"
+
+        def baseline(lock: dict) -> None:
+            lock["releases"][0]["segments"][2].update(sha256="2" * 64)
+            lock["releases"][1]["baseline"] = {"reason": "an owner approved edit", "migration": heading}
+
+        def note(body: str):
+            def apply(root: Path) -> None:
+                path = root / gate.MIGRATION
+                text = path.read_text()
+                first = text.index("\n## ") + 1
+                path.write_text(text[:first] + f"## {heading}\n\n{body}\n\n" + text[first:])
+            return apply
+
+        def both(*edits):
+            return lambda root: [edit(root) for edit in edits]
+
+        mutate(scratch, with_history(baseline), "names no", "a baseline release with no migration entry")
+        mutate(scratch, both(with_history(baseline), note("No dict named here.")), "never names its dict",
+               "a baseline whose migration entry never names its dict")
+        mutate(scratch, with_history(lambda d: d["releases"][0].update(
+            baseline={"reason": "x", "migration": heading})), "cannot be a baseline", "a first release baseline")
+        root = scratch_copy(scratch)
+        both(with_history(baseline), note(f"New dict `{today['releases'][-1]['dict']}`."))(root)
+        gate.check(root, no_base)
+        shutil.rmtree(root)
+        print("PASS accepts a baseline release that edits a shipped segment", flush=True)
         mutate(scratch, with_history(lambda d: d["releases"].append(copy.deepcopy(d["releases"][0]))),
                "a dict repeats", "a dict that repeats")
         mutate(scratch, lambda r: None, "lost a release present on the base branch", "a release dropped from the base",

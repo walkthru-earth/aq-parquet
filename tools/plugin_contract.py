@@ -427,7 +427,20 @@ def check_lock(root: Path, board: Board, raw: bytes, columns: list[Column], rows
             require(entry["first"] == first, f"{label} {LOCK}: segments of {release['dict'][:12]} are not contiguous")
             first += entry["rows"]
         require(first - 1 == release["rows"], f"{label} {LOCK}: rows of {release['dict'][:12]} do not add up")
+    notes = (root / MIGRATION).read_text()
+    require("baseline" not in releases[0], f"{label} {LOCK}: the first release cannot be a baseline")
     for older, newer in zip(releases, releases[1:]):
+        if "baseline" in newer:
+            # An owner approved break (no backward compatibility, owner decision 14).
+            # It may edit shipped segments only when its migration entry exists and
+            # names its dict. Earlier releases stay in the lock unchanged.
+            heading = f"## {newer['baseline']['migration']}\n"
+            require(heading in notes, f"{label} {LOCK}: baseline {newer['dict'][:12]} names no {MIGRATION} "
+                                      f"entry {heading.strip()!r}")
+            entry = notes.split(heading, 1)[1].split("\n## ", 1)[0]
+            require(newer["dict"] in entry, f"{label} {LOCK}: the {MIGRATION} entry of baseline "
+                                            f"{newer['dict'][:12]} never names its dict")
+            continue
         require(newer["segments"][:len(older["segments"])] == older["segments"],
                 f"{label} {LOCK}: release {newer['dict'][:12]} reorders, removes or edits a shipped segment")
         require(newer["rows"] >= older["rows"], f"{label} {LOCK}: release {newer['dict'][:12]} drops rows")
@@ -438,7 +451,6 @@ def check_lock(root: Path, board: Board, raw: bytes, columns: list[Column], rows
     require(newest["rows"] == len(columns), f"{label}: newest {LOCK} rows differ from the manifests")
     require(newest["segments"] == lock_segments(columns, rows),
             f"{label}: newest {LOCK} segments differ from the board manifest")
-    notes = (root / MIGRATION).read_text()
     for release in releases:
         require(release["dict"] in notes, f"{label}: {MIGRATION} never names dict {release['dict']}")
     base = base_lock(path)

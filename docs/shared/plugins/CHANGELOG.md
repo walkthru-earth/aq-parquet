@@ -2,6 +2,15 @@
 
 Newest first. Versions follow section 7 of the [README](README.md).
 
+## 0.1.1, 2026-10-27
+
+- Optional release `baseline` in the lock schema, with `reason` and
+  `migration`. Only such a release may edit shipped segments. Its
+  `migration` names a mobile migration notes heading whose entry names the
+  release dict. A patch per section 7, so the schema stays under `v0.1.0/`.
+- The Waveshare lock gains its first baseline release for the gauge
+  validity token rename (#28).
+
 ## 0.1.0, 2026-10-27
 
 - Module, board and lock schemas under `v0.1.0/`, with refs into the vendored
