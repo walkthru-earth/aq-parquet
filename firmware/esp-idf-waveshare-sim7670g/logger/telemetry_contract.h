@@ -45,7 +45,7 @@ constexpr const char *kBoard = "waveshare-esp32-s3-sim7670g";
 // Written by `pixi run pin-uris`, checked by pinned-uris-test.
 constexpr const char *kDictionaryUri =
     "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
-    "093f2b8e45cd2b9e24e1324ad9fa2e6e20ad1d47/"
+    "91c776a17ecadc91f0bd51523c30f691cb9ff5ba/"
     "firmware/esp-idf-waveshare-sim7670g/logger/telemetry_fields.inc";
 static_assert(opensensor::pinned::names(
                   kDictionaryUri, "firmware/esp-idf-waveshare-sim7670g/logger/"
@@ -462,7 +462,7 @@ constexpr const char *kTemplateHref =
     "https://raw.githubusercontent.com/walkthru-earth/opensensor-space-firmware/"
     "9915aeca82370d7c599682a4384fc7452502eb16/"
     "docs/shared/templates/waveshare-esp32-s3-sim7670g/"
-    "50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7.json";
+    "a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809.json";
 static_assert(opensensor::pinned::names_template(kTemplateHref,
                                                  "waveshare-esp32-s3-sim7670g",
                                                  kDictionarySha256),

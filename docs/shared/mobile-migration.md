@@ -39,8 +39,8 @@ and decimals do not change. Old archives are not read (owner decision 14).
 
 | Board | New `dict` | Old `dict` | New `desc` | Old `desc` |
 | --- | --- | --- | --- | --- |
-| CoreS3 | `3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9` (unchanged) | same | `@CORES3_DESC@` | `1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a` |
-| Waveshare | `a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809` | `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` | `@WAVESHARE_DESC@` | `1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472` |
+| CoreS3 | `3b4d8500a19f42c6743b0f7d725276c96ca14a0c249f613048603afbc3cfaff9` (unchanged) | same | `4dd6c4b1ef19187ed2c011ab86018e43be0f28edc3af63a0f6a27b70ff203ef3` | `1c9511bd6836876bf90bbdbe3224b00bd5d176e0fdd5293d5ee6dd73ef6ea45a` |
+| Waveshare | `a8605aafb6f76b794e9e7fb32927be6d203afeeb14527206c0e49c1eb0436809` | `50a53393e940be182ded0b1119de6ac6d9521e7d28dfd244a24666ccf2a616c7` | `d4e4fa499e20c414b3b1fd61343982e5735687d67cfb8b4591efaa5ed5f96bd4` | `1180e7273bf1dd4cce94ba02b84af61bdddeeb11dc7ddcef61967aca7031c472` |
 
 Published files, byte exact, SHA-256 equal to the new `desc`.
 
