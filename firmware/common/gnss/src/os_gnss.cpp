@@ -1,7 +1,9 @@
 #include "os_gnss.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
+#include <numeric>
 
 namespace opensensor::gnss {
 namespace {
@@ -24,12 +26,14 @@ constexpr std::string_view trim(std::string_view text) {
 }
 
 constexpr bool all_digits(std::string_view text) {
-  if (text.empty())
-    return false;
-  for (char c : text)
-    if (!is_digit(c))
-      return false;
-  return true;
+  return !text.empty() && std::all_of(text.begin(), text.end(), is_digit);
+}
+
+// The value of a digit run already checked by all_digits().
+constexpr std::int64_t digits_value(std::string_view digits) {
+  return std::accumulate(
+      digits.begin(), digits.end(), std::int64_t{0},
+      [](std::int64_t value, char c) { return value * 10 + (c - '0'); });
 }
 
 // The shape of ddmm.mmmm or dddmm.mmmm, before any range check.
@@ -53,14 +57,11 @@ std::expected<double, ParseError> degrees_minutes(std::string_view text,
   if (!all_digits(whole) || whole.size() > integer_digits ||
       !all_digits(fraction) || fraction.size() > kMaxFractionDigits)
     return std::unexpected(ParseError::Malformed);
-  std::int64_t integer = 0;
-  for (char c : whole)
-    integer = integer * 10 + (c - '0');
-  std::int64_t numerator = 0, denominator = 1;
-  for (char c : fraction) {
-    numerator = numerator * 10 + (c - '0');
+  const auto integer = digits_value(whole);
+  const auto numerator = digits_value(fraction);
+  std::int64_t denominator = 1;
+  for (std::size_t i = 0; i < fraction.size(); ++i)
     denominator *= 10;
-  }
   const auto degrees = integer / 100;
   const double minutes =
       static_cast<double>(integer % 100) +
@@ -90,10 +91,7 @@ std::int16_t satellites(const std::array<std::string_view, kMaxFields> &fields,
     if (!all_digits(fields[i]) || fields[i].size() > 3)
       return -1;
     any = true;
-    int count = 0;
-    for (char c : fields[i])
-      count = count * 10 + (c - '0');
-    total += count;
+    total += static_cast<int>(digits_value(fields[i]));
   }
   return any ? static_cast<std::int16_t>(total) : std::int16_t{-1};
 }

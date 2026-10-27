@@ -1,4 +1,5 @@
-"""Host tests for the board-neutral GNSS component, firmware/common/gnss.
+"""Host tests for the board-neutral GNSS components, firmware/common/gnss
+and firmware/common/gnss_reader.
 
 Covers the SIMCom CGNSSINFO dialect, fix to H3 cell, freshness, the per row
 location source rule and that a GNSS cell never splits files. Compiles the
@@ -29,15 +30,19 @@ def check_wiring(root: Path) -> None:
     assigned = re.findall(r"\brow\.location\s*=(?!=)\s*([^;]*);", body)
     assert assigned == ["::config::get().location"], \
         "nothing but the settings snapshot is assigned to row.location"
-    gnss = root / "firmware/common/gnss"
-    for path in sorted((gnss / "src").glob("*")):
-        text = path.read_text()
-        assert not re.search(r"GPIO_NUM_\d|UART_NUM_\d|waveshare|cores3|m5stack", text, re.I), \
-            f"{path.name} names a board, pin or UART"
-    cmake = (gnss / "CMakeLists.txt").read_text()
-    assert "os_pin_cxx_standard(${COMPONENT_LIB})" in cmake
-    assert "os_map_source_paths(${COMPONENT_LIB})" in cmake
-
+    for component in ("gnss", "gnss_reader"):
+        directory = root / "firmware/common" / component
+        for path in sorted((directory / "src").glob("*")):
+            text = path.read_text()
+            assert not re.search(r"GPIO_NUM_\d|UART_NUM_\d|waveshare|cores3|m5stack", text, re.I), \
+                f"{path.name} names a board, pin or UART"
+        cmake = (directory / "CMakeLists.txt").read_text()
+        assert "os_pin_cxx_standard(${COMPONENT_LIB})" in cmake, f"{component} pins the C++ standard"
+        assert "os_map_source_paths(${COMPONENT_LIB})" in cmake, f"{component} maps source paths"
+    # The logger links the pure rules only, so a board without a receiver
+    # never compiles the reader task.
+    logger_cmake = (root / "firmware/common/logger/CMakeLists.txt").read_text()
+    assert "gnss_reader" not in logger_cmake, "the logger does not require the reader task"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)

@@ -222,6 +222,32 @@
         }
       ]
     },
+    "os-gnss": {
+      "about": "GNSS reader task. Polls the receiver on the board UART and keeps the newest cell.",
+      "entry": [
+        "*opensensor::gnss::{anonymous}::reader_task(*"
+      ],
+      "indirect": [
+        {
+          "about": "Receiver dialect methods the reader calls through the Dialect interface.",
+          "from": [
+            "firmware/common/gnss_reader/*::*"
+          ],
+          "to": [
+            "*opensensor::gnss::SimcomDialect::*"
+          ]
+        },
+        {
+          "about": "The board power on callback from ReaderConfig.",
+          "from": [
+            "*opensensor::gnss::{anonymous}::reader_task(*"
+          ],
+          "to": [
+            "firmware/esp-idf-*/logger/*modem_power_on(*"
+          ]
+        }
+      ]
+    },
     "board": {
       "about": "Board task. Acquisition, logger poll, console input and the runtime DIAG lines.",
       "entry": [
@@ -358,10 +384,15 @@
           "measured": 4832,
           "budget": 5376
         },
+        "os-gnss": {
+          "stack_bytes": 4096,
+          "measured": 2672,
+          "budget": 2944
+        },
         "board": {
           "task_name": "os-board",
           "stack_bytes": 12288,
-          "measured": 4848,
+          "measured": 4880,
           "budget": 5376
         },
         "esp_timer": {
@@ -376,17 +407,17 @@
       "sections": {
         ".iram0.text": 122624,
         ".dram0.data": 34816,
-        ".dram0.bss": 57600,
-        ".flash.text": 1110528,
-        ".flash.rodata": 257792,
+        ".dram0.bss": 57856,
+        ".flash.text": 1129984,
+        ".flash.rodata": 265472,
         ".noinit": 0
       },
       "sections_measured": {
         ".iram0.text": 120035,
-        ".dram0.data": 33892,
-        ".dram0.bss": 56408,
-        ".flash.text": 1088630,
-        ".flash.rodata": 252508,
+        ".dram0.data": 34084,
+        ".dram0.bss": 56472,
+        ".flash.text": 1107766,
+        ".flash.rodata": 260264,
         ".noinit": 0
       }
     },

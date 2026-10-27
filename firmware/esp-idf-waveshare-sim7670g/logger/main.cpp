@@ -151,7 +151,10 @@ bool modem_power_on(void *) {
   // drives low, not even for one instruction.
   gpio_set_level(kModemPower, 1);
   const gpio_config_t pin{.pin_bit_mask = 1ULL << kModemPower,
-                          .mode = GPIO_MODE_OUTPUT};
+                          .mode = GPIO_MODE_OUTPUT,
+                          .pull_up_en = GPIO_PULLUP_DISABLE,
+                          .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                          .intr_type = GPIO_INTR_DISABLE};
   return gpio_config(&pin) == ESP_OK &&
          gpio_set_level(kModemPower, 1) == ESP_OK;
 }
