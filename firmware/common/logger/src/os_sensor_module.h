@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <iterator>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -26,7 +27,8 @@ namespace ossensor {
 // holds every index and leaves kNoSlot free.
 using Slot = std::uint8_t;
 template <std::size_t N> using Slots = std::array<Slot, N>;
-// A column of a segment the board does not select. Collect skips it.
+// A column of a segment the board does not select. The write helpers below
+// skip it.
 inline constexpr Slot kNoSlot = 0xFF;
 static_assert(telemetry::kMaxColumns < kNoSlot,
               "a Slot holds every column index and kNoSlot");
@@ -51,6 +53,33 @@ struct Module {
   void *context = nullptr;
 };
 
+// Runs one Module::init. A call through the function pointer drops the
+// [[nodiscard]] of the result, so board code calls this instead and a
+// dropped result warns again. A module with no init succeeds.
+[[nodiscard]] inline std::expected<void, InitErrorCode>
+init_module(const Module &module) {
+  if (module.init == nullptr)
+    return {};
+  return module.init(module.context);
+}
+
+// Runtime slot writes for module code. Each skips kNoSlot and any slot past
+// the row, so a column of a segment the board does not select stays null and
+// nothing outside the row is touched. Prefer Writer, which also checks the
+// column type at build time.
+inline void integer(oslogger::Row &row, Slot slot, std::int32_t value) {
+  if (slot < row.data.size())
+    row.integer(slot, value);
+}
+inline void counter(oslogger::Row &row, Slot slot, std::int64_t value) {
+  if (slot < row.data.size())
+    row.counter(slot, value);
+}
+inline void number(oslogger::Row &row, Slot slot, float value) {
+  if (slot < row.data.size())
+    row.number(slot, value);
+}
+
 namespace detail {
 // Never defined and never constexpr. resolve() calls it only for a module
 // column the board table does not carry, which ends constant evaluation, so
@@ -73,6 +102,23 @@ consteval Slot find(std::string_view column, std::span<Field, Extent> fields) {
   if (found >= kNoSlot)
     module_column_index_over_slot();
   return static_cast<Slot>(found);
+}
+
+// Never defined and never constexpr, like the guards above. Writer calls it
+// when a module writes a column with a call of another physical type than
+// the board field, so the build stops with this name in the diagnostic.
+void module_column_type_differs_from_board_field();
+
+template <const auto &Fields, const auto &Slots, auto Column>
+consteval Slot typed_slot(telemetry::PhysicalType type) {
+  static_assert(std::is_enum_v<decltype(Column)>);
+  static_assert(std::to_underlying(Column) < std::size(Slots),
+                "the Column belongs to this module's slots");
+  const Slot slot = Slots[std::to_underlying(Column)];
+  if (slot != kNoSlot &&
+      (slot >= std::size(Fields) || Fields[slot].type != type))
+    module_column_type_differs_from_board_field();
+  return slot;
 }
 } // namespace detail
 
@@ -109,5 +155,42 @@ resolve(const std::array<std::string_view, N> &columns,
   }
   return out;
 }
+
+// Typed writes of one module. Fields is the board table (kFields) and Slots
+// that module's resolve() result, both static constexpr. A write names its
+// generated Column. integer writes Int32, counter Int64 and number Float, as
+// the manifest firmware.type says, and the build stops when the board field
+// has another type. A kNoSlot column compiles to no write.
+//
+//   static constexpr auto kSlots = ossensor::resolve(pms5003t::kColumns,
+//                                                    std::span{kFields});
+//   const ossensor::Writer<kFields, kSlots> out{row};
+//   out.integer<pms5003t::Column::pms_status>(status);
+template <const auto &Fields, const auto &Slots> class Writer {
+public:
+  constexpr explicit Writer(oslogger::Row &row) : row_(row) {}
+
+  template <auto Column> void integer(std::int32_t value) const {
+    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
+        telemetry::PhysicalType::Int32);
+    if constexpr (slot != kNoSlot)
+      row_.integer(slot, value);
+  }
+  template <auto Column> void counter(std::int64_t value) const {
+    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
+        telemetry::PhysicalType::Int64);
+    if constexpr (slot != kNoSlot)
+      row_.counter(slot, value);
+  }
+  template <auto Column> void number(float value) const {
+    constexpr Slot slot = detail::typed_slot<Fields, Slots, Column>(
+        telemetry::PhysicalType::Float);
+    if constexpr (slot != kNoSlot)
+      row_.number(slot, value);
+  }
+
+private:
+  oslogger::Row &row_;
+};
 
 } // namespace ossensor

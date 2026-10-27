@@ -1,19 +1,23 @@
+#include "../firmware/esp-idf-waveshare-sim7670g/logger/sensor_modules.h"
 #include "../firmware/esp-idf-waveshare-sim7670g/logger/telemetry_contract.h"
 #include "board_template.h"
 #include "footer_fixture.h"
 #include "live_sample.h"
 #include "live_widest.h"
+#include "waveshare_collect_reference.h"
 #include <lz4_codec.h>
 
 #include <array>
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <os_logger_cadence.h>
 #include <os_logger_footer.h>
 #include <os_logger_live.h>
 #include <os_logger_location.h>
+#include <vector>
 
 using namespace telemetry;
 using namespace telemetry::contract;
@@ -54,6 +58,17 @@ PmsSnapshot parsed_snapshot() {
   pms.checksum_errors = 2;
   pms.length_errors = 3;
   return pms;
+}
+// The module writes under test, in table order. pms5003t and the waveshare
+// identity module share one snapshot, max17048 and battery_health one read.
+void pms_modules(Sample &row, const PmsSnapshot &pms, std::int64_t now,
+                 const SensorProfile &sensor = {}) {
+  board_modules::write_pms(row, pms, now);
+  board_modules::write_identity(row, pms, now, sensor);
+}
+void gauge_modules(Sample &row, const BatteryHealth &health) {
+  board_modules::write_gauge(row, health);
+  board_modules::write_health(row, health);
 }
 // Board-owned identity rules installed into the shared runtime policy hook.
 // Every board LIVE key must be accepted by begin(), and a row with every LIVE
@@ -164,8 +179,7 @@ void assert_voltage_only_critical() {
       assert(!last.soc_trusted && last.minutes_to_empty == -1);
     }
     Sample row{};
-    apply_gauge(row, gauge_snapshot(health.reading));
-    apply_battery_health(row, health);
+    gauge_modules(row, health);
     assert(row.data[gauge_status] == 1 && row.valid[battery_mv] &&
            row.data[battery_mv] == 3300 && !row.valid[battery_percent] &&
            !row.valid[battery_soc_raw_percent] &&
@@ -180,7 +194,8 @@ void assert_voltage_only_critical() {
   GaugeBus bus{0xa500, 0x4b80, true, false};
   const opensensor::Max17048 gauge{{&bus, GaugeBus::read}};
   Sample row{};
-  apply_gauge(row, gauge_snapshot(gauge.read()));
+  board_modules::write_gauge(
+      row, {.battery_installed = true, .reading = gauge.read()});
   assert(row.data[gauge_status] == 1 && !row.valid[battery_mv] &&
          row.valid[battery_percent] && row.data[battery_percent] == 75);
 }
@@ -205,7 +220,7 @@ void assert_battery_gates() {
   assert(!battery_sample(0, opensensor::Max17048Reading{}, ext).vcell_ok);
   // Not installed leaves every new column null.
   Sample absent{};
-  apply_battery_health(absent, {});
+  gauge_modules(absent, {});
   for (const auto field :
        {battery_soc_raw_percent, battery_charge_rate_percent_per_h,
         gauge_status_flags, gauge_hibernating, battery_health_state,
@@ -216,7 +231,7 @@ void assert_battery_gates() {
   partial.extended.crate.ok = false;
   partial.extended.mode.ok = false;
   Sample row{};
-  apply_battery_health(row, partial);
+  gauge_modules(row, partial);
   assert(row.valid[battery_soc_raw_percent] &&
          !row.valid[battery_charge_rate_percent_per_h] &&
          row.valid[gauge_status_flags] &&
@@ -226,8 +241,8 @@ void assert_battery_gates() {
          !row.valid[battery_minutes_to_empty]);
   // An uncapped raw SOC above 100% is still written as measured.
   Sample over{};
-  apply_battery_health(
-      over, {true, opensensor::Max17048::decode(0xd5c0, 0x6bc9), {}, {}});
+  gauge_modules(over,
+                {true, opensensor::Max17048::decode(0xd5c0, 0x6bc9), {}, {}});
   float over_percent = 0;
   std::memcpy(&over_percent, &over.data[battery_soc_raw_percent],
               sizeof(over_percent));
@@ -264,93 +279,258 @@ void assert_warmup_from_wake() {
 
   auto pms = parsed_snapshot();
   Sample boot{}, woke{}, warming{}, ready{}, early{};
-  apply_pms(boot, pms, wake);
+  pms_modules(boot, pms, wake);
   assert(boot.data[pms_status] == kPmsValid && boot.valid[pm1_cf1_ug_m3]);
   pms.last_wake_mono_us = wake;
-  apply_pms(woke, pms, wake);
+  pms_modules(woke, pms, wake);
   assert(woke.data[pms_status] == kPmsWarming && !woke.valid[pm1_cf1_ug_m3]);
-  apply_pms(warming, pms, wake + kPmsWarmupUs - 1);
+  pms_modules(warming, pms, wake + kPmsWarmupUs - 1);
   assert(warming.data[pms_status] == kPmsWarming &&
          !warming.valid[ambient_temperature_c]);
-  apply_pms(ready, pms, wake + kPmsWarmupUs);
+  pms_modules(ready, pms, wake + kPmsWarmupUs);
   // After the window the row matches the boot case value for value.
   assert(ready.data == boot.data && ready.valid == boot.valid);
-  apply_pms(early, pms, wake - 1);
+  pms_modules(early, pms, wake - 1);
   assert(early.data[pms_status] == kPmsWarming);
+}
+// Row equality fixture (#17 step 5). The module table and the pre-module
+// collect in waveshare_collect_reference.h see the same board reads and
+// must give byte identical rows. The fakes stand in for the UART snapshot,
+// config::get and read_gauge.
+PmsSnapshot fake_latest{};
+config::Settings fake_settings{};
+BatteryHealth fake_gauge{};
+int gauge_reads = 0;
+config::Settings read_fake_settings() { return fake_settings; }
+BatteryHealth read_fake_gauge(std::int64_t) {
+  ++gauge_reads;
+  return fake_gauge;
+}
+constinit board_modules::Sources fake_sources{.latest = &fake_latest,
+                                              .settings = read_fake_settings,
+                                              .read_gauge = read_fake_gauge};
+constexpr auto kFakeModules = board_modules::table(fake_sources);
+static_assert(kFakeModules[0].procedure == "pms5003t" &&
+              kFakeModules[1].procedure == "owner_provisioned_identity" &&
+              kFakeModules[2].procedure == "max17048" &&
+              kFakeModules[3].procedure == "battery_health");
+
+template <std::size_t N> void copy_text(char (&out)[N], const char *text) {
+  std::snprintf(out, N, "%s", text);
+}
+config::Settings settings_for(const SensorProfile &sensor) {
+  config::Settings settings{};
+  copy_text(settings.sensor_vendor, sensor.vendor);
+  copy_text(settings.sensor_model, sensor.model);
+  copy_text(settings.sensor_serial, sensor.serial);
+  settings.sensor_batch_candidate = sensor.batch_candidate;
+  return settings;
+}
+struct PmsCase {
+  const char *name;
+  PmsSnapshot latest;
+  std::int64_t now;
+};
+std::vector<PmsCase> pms_cases() {
+  constexpr std::int64_t now = 3 * kPmsWarmupUs;
+  auto valid = parsed_snapshot();
+  valid.received_mono_us = now - 250000;
+  std::vector<PmsCase> cases{{"missing", PmsSnapshot{}, now},
+                             {"valid", valid, now},
+                             {"warming", valid, kPmsWarmupUs - 1}};
+  cases[2].latest.received_mono_us = kPmsWarmupUs - 1 - 250000;
+  auto edge = valid;
+  edge.received_mono_us = now - 5000999; // age 5000 ms, still fresh
+  cases.push_back({"stale edge", edge, now});
+  auto stale = valid;
+  stale.received_mono_us = now - 5001000;
+  cases.push_back({"stale", stale, now});
+  auto woke = valid;
+  woke.last_wake_mono_us = now - 1000;
+  cases.push_back({"warming after wake", woke, now});
+  auto early = valid;
+  early.last_wake_mono_us = now + 1;
+  cases.push_back({"wake after row time", early, now});
+  auto error = valid;
+  error.frame.sensor_error = 9;
+  cases.push_back({"sensor error", error, now});
+  auto counts = valid;
+  counts.frame.particle_count_fields = 6;
+  cases.push_back({"model mismatch counts", counts, now});
+  auto no_climate = valid;
+  no_climate.frame.has_temperature_humidity = false;
+  cases.push_back({"model mismatch climate", no_climate, now});
+  auto wet = valid;
+  wet.frame.humidity_deci_percent = 1001;
+  cases.push_back({"rh over 1000", wet, now});
+  auto full = valid;
+  full.frame.humidity_deci_percent = 1000;
+  full.frame.temperature_deci_c = 32767;
+  full.frame.particle_counts = {65535, 0, 1, 2, 0, 0};
+  cases.push_back({"rh 1000 and widest words", full, now});
+  return cases;
+}
+struct GaugeCase {
+  const char *name;
+  BatteryHealth health;
+};
+std::vector<GaugeCase> gauge_cases() {
+  const auto good = opensensor::Max17048::decode(0xc800, 0x4b80);
+  auto soc_nack = good;
+  soc_nack.soc_ok = false;
+  auto vcell_nack = good;
+  vcell_nack.vcell_ok = false;
+  auto partial = extended_ok();
+  partial.crate.ok = false;
+  partial.mode.ok = false;
+  opensensor::battery::Assessment critical{};
+  critical.state = opensensor::battery::State::Critical;
+  opensensor::battery::Assessment ok{};
+  ok.state = opensensor::battery::State::Ok;
+  ok.minutes_to_empty = 2177;
+  return {
+      {"not installed", {}},
+      {"not installed with stale read", {false, good, extended_ok(), ok}},
+      {"both reads failed", {.battery_installed = true}},
+      {"volts only", {true, soc_nack, extended_ok(), critical}},
+      {"soc only", {true, vcell_nack, extended_ok(), {}}},
+      {"wild soc",
+       {true, opensensor::Max17048::decode(0xd200, 0xffff), {}, {}}},
+      {"soc over 100",
+       {true, opensensor::Max17048::decode(0xd5c0, 0x6bc9), extended_ok(), ok}},
+      {"extended reads failed", {true, good, {}, ok}},
+      {"partial extended", {true, good, partial, ok}},
+      {"valid", {true, good, extended_ok(), ok}},
+  };
+}
+void assert_row_equality() {
+  const SensorProfile profiles[] = {
+      {},
+      {"Plantower", "PMS5003T", "PMS5003T-202604081332", true},
+      {"Plantower", "PMS5003T", "PMS5003T-202604081332", false},
+      {"Plantower", "PMS5003T", "PMS5003T-2026040813327", true},
+      {"Plantower", "PMS5003T", "PMS5003T-202605011332", true},
+      {"Other", "PMS5003T", "PMS5003T-202604081332", true},
+  };
+  std::size_t compared = 0;
+  for (const auto &pms : pms_cases())
+    for (const auto &gauge : gauge_cases())
+      for (const auto &sensor : profiles) {
+        fake_latest = pms.latest;
+        fake_settings = settings_for(sensor);
+        fake_gauge = gauge.health;
+        Sample expected{}, actual{};
+        reference::collect(expected, pms.now, fake_latest, fake_settings,
+                           gauge.health);
+        const int reads = gauge_reads;
+        board_modules::collect(kFakeModules, actual, pms.now);
+        const bool same =
+            std::memcmp(expected.data.data(), actual.data.data(),
+                        sizeof(expected.data)) == 0 &&
+            std::memcmp(expected.valid.data(), actual.valid.data(),
+                        sizeof(expected.valid)) == 0;
+        if (!same || gauge_reads != reads + 1) {
+          std::fprintf(stderr, "row equality: %s, %s, serial \"%s\"\n",
+                       pms.name, gauge.name, sensor.serial);
+          std::abort();
+        }
+        ++compared;
+      }
+  assert(compared ==
+         pms_cases().size() * gauge_cases().size() * std::size(profiles));
+  // The fixture covers each status the brief names.
+  Sample warming{}, missing{}, mismatch{}, failed{};
+  fake_latest = pms_cases()[2].latest;
+  fake_gauge = gauge_cases()[2].health;
+  board_modules::collect(kFakeModules, warming, pms_cases()[2].now);
+  assert(warming.data[pms_status] == kPmsWarming &&
+         warming.data[gauge_status] == kGaugeReadError);
+  fake_latest = pms_cases()[0].latest;
+  board_modules::collect(kFakeModules, missing, pms_cases()[0].now);
+  assert(missing.data[pms_status] == kPmsMissing && !missing.valid[pms_age_ms]);
+  fake_latest = pms_cases()[8].latest;
+  board_modules::collect(kFakeModules, mismatch, pms_cases()[8].now);
+  assert(mismatch.data[pms_status] == kPmsModelMismatch);
+  fake_gauge = gauge_cases()[0].health;
+  board_modules::collect(kFakeModules, failed, pms_cases()[8].now);
+  assert(failed.data[gauge_status] == kGaugeNotInstalled &&
+         !failed.valid[battery_health_state]);
 }
 void assert_gates() {
   assert_identity_rules();
   assert_warmup_from_wake();
   auto pms = parsed_snapshot();
   Sample warm{}, ready{}, stale{}, bad_model{}, bad_gauge{}, installed{};
-  apply_pms(warm, pms, kPmsWarmupUs - 1);
+  pms_modules(warm, pms, kPmsWarmupUs - 1);
   assert(warm.data[pms_status] == kPmsWarming &&
          !warm.valid[ambient_temperature_c]);
   pms.age_ms = kPmsStaleAfterMs;
-  apply_pms(ready, pms, kPmsWarmupUs);
+  pms_modules(ready, pms, kPmsWarmupUs);
   assert(ready.data[pms_status] == kPmsValid && ready.valid[pm1_cf1_ug_m3]);
   const SensorProfile exact{"Plantower", "PMS5003T", "PMS5003T-202604081332",
                             true};
   Sample candidate{};
-  apply_pms(candidate, pms, kPmsWarmupUs, exact);
+  pms_modules(candidate, pms, kPmsWarmupUs, exact);
   assert(candidate.data[pm25_batch_candidate_status] == kBatchCandidate &&
          candidate.valid[pm25_batch_candidate_ug_m3] &&
          candidate.data[sensor_serial_code] == 202604081332LL &&
          candidate.data[pm25_atmospheric_ug_m3] ==
              ready.data[pm25_atmospheric_ug_m3]);
   Sample longer_serial{};
-  apply_pms(longer_serial, pms, kPmsWarmupUs,
-            {"Plantower", "PMS5003T", "PMS5003T-2026040813327", true});
+  pms_modules(longer_serial, pms, kPmsWarmupUs,
+              {"Plantower", "PMS5003T", "PMS5003T-2026040813327", true});
   assert(longer_serial.data[pm25_batch_candidate_status] == kBatchCandidate &&
          longer_serial.data[sensor_serial_code] == 2026040813327LL);
   Sample other_batch{};
-  apply_pms(other_batch, pms, kPmsWarmupUs,
-            {"Plantower", "PMS5003T", "PMS5003T-202605011332", true});
+  pms_modules(other_batch, pms, kPmsWarmupUs,
+              {"Plantower", "PMS5003T", "PMS5003T-202605011332", true});
   assert(other_batch.data[pm25_batch_candidate_status] ==
              kBatchIdentityMismatch &&
          !other_batch.valid[pm25_batch_candidate_ug_m3]);
   Sample wrong_vendor{};
-  apply_pms(wrong_vendor, pms, kPmsWarmupUs,
-            {"Other", "PMS5003T", "PMS5003T-202604081332", true});
+  pms_modules(wrong_vendor, pms, kPmsWarmupUs,
+              {"Other", "PMS5003T", "PMS5003T-202604081332", true});
   assert(wrong_vendor.data[pm25_batch_candidate_status] ==
              kBatchIdentityMismatch &&
          !wrong_vendor.valid[sensor_serial_code]);
   Sample unavailable{};
-  apply_pms(unavailable, pms, kPmsWarmupUs - 1, exact);
+  pms_modules(unavailable, pms, kPmsWarmupUs - 1, exact);
   assert(unavailable.data[pm25_batch_candidate_status] ==
              kBatchSourceUnavailable &&
          !unavailable.valid[pm25_batch_candidate_ug_m3]);
   ++pms.age_ms;
-  apply_pms(stale, pms, kPmsWarmupUs);
+  pms_modules(stale, pms, kPmsWarmupUs);
   assert(stale.data[pms_status] == kPmsStale && !stale.valid[pm1_cf1_ug_m3]);
   pms.age_ms = 250;
   plantower::Parser wrong{plantower::Model::Pmsa003};
   for (const auto byte : sensor_bytes())
     wrong.push(byte, pms.frame);
-  apply_pms(bad_model, pms, kPmsWarmupUs);
+  pms_modules(bad_model, pms, kPmsWarmupUs);
   assert(bad_model.data[pms_status] == kPmsModelMismatch);
   assert(!bad_model.valid[ambient_temperature_c]);
-  apply_gauge(bad_gauge, {true, false, false, 4200, 100});
+  // Neither word read. The values stay out of the row.
+  board_modules::write_gauge(bad_gauge,
+                             {.battery_installed = true,
+                              .reading = {.millivolts = 4200, .percent = 100}});
   assert(bad_gauge.data[gauge_status] == 1 && !bad_gauge.valid[battery_mv] &&
          !bad_gauge.valid[battery_percent]);
-  const auto decoded =
-      gauge_snapshot(opensensor::Max17048::decode(0xd200, 0x6400));
-  assert(decoded.vcell_ok && decoded.soc_ok && decoded.millivolts == 4200 &&
-         decoded.percent == 100);
-  apply_gauge(installed, decoded);
+  const auto decoded = opensensor::Max17048::decode(0xd200, 0x6400);
+  assert(decoded.vcell_valid() && decoded.soc_valid() &&
+         decoded.millivolts == 4200 && decoded.percent == 100);
+  board_modules::write_gauge(installed,
+                             {.battery_installed = true, .reading = decoded});
   assert(installed.data[gauge_status] == 2 && installed.valid[battery_mv] &&
          installed.valid[battery_percent]);
-  const auto no_volts = gauge_snapshot(opensensor::Max17048::decode(0, 0x5000));
-  assert(!no_volts.vcell_ok && no_volts.soc_ok);
-  const auto over_full =
-      gauge_snapshot(opensensor::Max17048::decode(0xd5c0, 0x6bc9));
-  assert(over_full.vcell_ok && over_full.soc_ok &&
+  const auto no_volts = opensensor::Max17048::decode(0, 0x5000);
+  assert(!no_volts.vcell_valid() && no_volts.soc_valid());
+  const auto over_full = opensensor::Max17048::decode(0xd5c0, 0x6bc9);
+  assert(over_full.vcell_valid() && over_full.soc_valid() &&
          over_full.millivolts == 4275 && over_full.percent == 100);
-  const auto wild =
-      gauge_snapshot(opensensor::Max17048::decode(0xd200, 0xffff));
-  assert(wild.vcell_ok && !wild.soc_ok);
+  const auto wild = opensensor::Max17048::decode(0xd200, 0xffff);
+  assert(wild.vcell_valid() && !wild.soc_valid());
   Sample volts_only{};
-  apply_gauge(volts_only, wild);
+  board_modules::write_gauge(volts_only,
+                             {.battery_installed = true, .reading = wild});
   assert(volts_only.data[gauge_status] == 1 && volts_only.valid[battery_mv] &&
          volts_only.data[battery_mv] == 4200 &&
          !volts_only.valid[battery_percent]);
@@ -374,6 +554,7 @@ void assert_gates() {
   assert(unsynced.data[clock_status] == kClockNone);
   assert(!unsynced.valid[event_time_utc_us]);
   assert_battery_gates();
+  assert_row_equality();
 }
 } // namespace
 
@@ -481,12 +662,10 @@ int main(int argc, char **argv) {
       pms.frame.particle_count_fields = 6;
     if (i == 6)
       pms.frame.humidity_deci_percent = 1001;
-    apply_pms(row, pms, now,
-              {"Plantower", "PMS5003T", "PMS5003T-202604081332", i != 5});
-    BatteryHealth health{};
-    if (i == 0) {
-      apply_gauge(row, {}); // explicit no-battery configuration
-    } else {
+    pms_modules(row, pms, now,
+                {"Plantower", "PMS5003T", "PMS5003T-202604081332", i != 5});
+    BatteryHealth health{}; // i == 0, explicit no-battery configuration
+    if (i != 0) {
       health.battery_installed = true;
       if (i == 1) {
         // Both basic reads failed, a default reading has no ok flag.
@@ -501,9 +680,8 @@ int main(int argc, char **argv) {
       }
       health.assessment = monitor.update(
           battery_sample(now / 1000, health.reading, health.extended));
-      apply_gauge(row, gauge_snapshot(health.reading));
     }
-    apply_battery_health(row, health);
+    gauge_modules(row, health);
   }
   prepare_columns(columns, rows);
   FILE *file = std::fopen(argv[1], "wb");

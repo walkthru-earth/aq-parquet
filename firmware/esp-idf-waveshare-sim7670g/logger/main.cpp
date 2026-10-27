@@ -1,4 +1,5 @@
 #include "../board_io.h"
+#include "sensor_modules.h"
 #include "telemetry_contract.h"
 #include <debug_log.h>
 #include <device_config.h>
@@ -100,19 +101,14 @@ void check_gauge_reset() {
                board::gauge_last_error());
 }
 
+// The sensor modules of board.json (#17 step 5). config::get and read_gauge
+// run once per row, in table order, as before the split.
+constinit board_modules::Sources sources{
+    .latest = &latest, .settings = config::get, .read_gauge = read_gauge};
+static constexpr auto kModules = board_modules::table(sources);
+
 void collect(oslogger::Row &row, std::int64_t now, std::int64_t, void *) {
-  PmsSnapshot snapshot = latest;
-  if (snapshot.present)
-    snapshot.age_ms =
-        static_cast<std::uint32_t>((now - snapshot.received_mono_us) / 1000);
-  const auto settings = config::get();
-  apply_pms(row, snapshot, now,
-            {settings.sensor_vendor, settings.sensor_model,
-             settings.sensor_serial, settings.sensor_batch_candidate});
-  const auto health = read_gauge(now);
-  apply_gauge(row, !health.battery_installed ? GaugeSnapshot{}
-                                             : gauge_snapshot(health.reading));
-  apply_battery_health(row, health);
+  board_modules::collect(kModules, row, now);
 }
 
 // OpenSensor BLE name prefix, so the board advertises OS-xxxx.
