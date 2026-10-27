@@ -11,14 +11,16 @@
 ## Context
 
 Boards write one small Parquet file per UTC window. At the default 900 s
-rotation that is 96 files per Thing per day. The October 2026 survey of 144 real
-device files found partial files where the footer is 68 to 80 percent of the
+rotation that is 96 files per Thing per day. The October 2026 survey read 144
+entries from the local bench artifacts, 90 of them unique device files by name
+and size and one a directory recorded as an error. It found partial files where the footer is 68 to 80 percent of the
 bytes, and a full 90 row CoreS3 window of 49,839 B with a 19.2 percent footer.
 The numbers, method and rerun commands are in
 [Small Parquet files](../parquet-small-files.md). Issue #25 asked how far the
 device writer should go, and what moves to a host or cloud compactor.
 
-The owner decided on 2026-10-27 that #25 closes as a decision record, not code.
+The owner decided on 2026-10-27 that #25 becomes a decision record instead of
+code. What follows is a proposal until the owner signs it off on #25.
 
 ## What the firmware does now
 

@@ -83,17 +83,23 @@ pending owner sign off on #109.
    Collection, and the root Catalog link for a new Thing. The Item mirror is
    written only if it can be kept exactly in sync.
 3. Writes run Parquet first and Item second, so an Item never points at a missing
-   file. The Item id is the file name, so a retry or a new `<attempt>` overwrites
-   the same Item and never adds one.
+   file. The Item id is the file name, so a retry of the same file overwrites the
+   same Item and never adds one. A re-upload with a new `<attempt>` is a new file
+   name and gets its own Item over the same rows, so consumers dedupe by Thing
+   plus time (decision 16).
 4. The Action is the only writer of Collections and the Catalog. That removes the
    multi writer race from option B without needing conditional writes on
    source.coop.
 5. The phone keeps writing STAC for the files it uploads until the indexer runs,
    as decision 12 says. After that the indexer's output is the reference for
    every Thing, phone synced or standalone.
-6. The indexer builds everything from the Parquet footer, the rows and the
-   template. It must be able to rebuild the whole catalog from the files alone,
-   so any STAC a board or phone wrote is at most a cache.
+6. The indexer builds every file derived value from the Parquet footer, the rows
+   and the template. It must be able to rebuild every Item and the file derived
+   parts of each Collection from the files alone, so any STAC a board or phone
+   wrote is at most a cache. Collection fields the files do not carry (provider
+   names, owner contact, license text, titles) need a recorded source, which is
+   open question 4. Until that is decided the rebuild covers file derived
+   metadata only.
 
 Why not A or D now. They add an unmeasured image and RAM cost, pull H3 polygon
 code and a profile version into every image, need a reflash for every spec
