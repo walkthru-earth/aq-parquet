@@ -77,8 +77,8 @@ void test_mark_plan() {
   CHECK(!st::should_mark_valid(st::Verdict::Healthy, Invalid));
   CHECK(!st::should_mark_valid(st::Verdict::Healthy, Aborted));
   // Never on a pending or unhealthy verdict.
-  for (const auto state : {Unknown, New, PendingVerify, Valid, Invalid,
-                           Aborted, Undefined}) {
+  for (const auto state :
+       {Unknown, New, PendingVerify, Valid, Invalid, Aborted, Undefined}) {
     CHECK(!st::should_mark_valid(st::Verdict::Pending, state));
     CHECK(!st::should_mark_valid(st::Verdict::Unhealthy, state));
   }
@@ -87,9 +87,8 @@ void test_mark_plan() {
 void test_line() {
   std::array<char, st::kLineBytes> line{};
   const auto in = inputs(Pass, Pass, Pass, 42000);
-  const auto length =
-      st::format_line(in, st::decide(in), st::OtaState::Undefined,
-                      st::Mark::Marked, line);
+  const auto length = st::format_line(
+      in, st::decide(in), st::OtaState::Undefined, st::Mark::Marked, line);
   const std::string_view text(line.data(), length);
   CHECK(text == "SELFTEST result=healthy reason=ok sd=pass sensor=pass "
                 "radio=pass elapsed_ms=42000 ota_state=undefined "

@@ -51,23 +51,26 @@ std::expected<void, rules::SinkError> check(esp_err_t err) {
 
 const rules::Sink kSink{
     .context = &device,
-    .begin = [](void *context, std::uint32_t) {
-      auto &d = of(context);
-      d.slot = esp_ota_get_next_update_partition(nullptr);
-      if (!d.slot)
-        return check(ESP_ERR_NOT_FOUND);
-      // Sequential writes erase one sector at a time inside esp_ota_write,
-      // so OTA_BEGIN never blocks the worker on a 6 MiB erase.
-      const esp_err_t err =
-          esp_ota_begin(d.slot, OTA_WITH_SEQUENTIAL_WRITES, &d.handle);
-      d.open = err == ESP_OK;
-      return check(err);
-    },
-    .write = [](void *context, std::span<const std::uint8_t> data) {
-      auto &d = of(context);
-      return check(d.open ? esp_ota_write(d.handle, data.data(), data.size())
-                          : ESP_ERR_INVALID_STATE);
-    },
+    .begin =
+        [](void *context, std::uint32_t) {
+          auto &d = of(context);
+          d.slot = esp_ota_get_next_update_partition(nullptr);
+          if (!d.slot)
+            return check(ESP_ERR_NOT_FOUND);
+          // Sequential writes erase one sector at a time inside esp_ota_write,
+          // so OTA_BEGIN never blocks the worker on a 6 MiB erase.
+          const esp_err_t err =
+              esp_ota_begin(d.slot, OTA_WITH_SEQUENTIAL_WRITES, &d.handle);
+          d.open = err == ESP_OK;
+          return check(err);
+        },
+    .write =
+        [](void *context, std::span<const std::uint8_t> data) {
+          auto &d = of(context);
+          return check(d.open
+                           ? esp_ota_write(d.handle, data.data(), data.size())
+                           : ESP_ERR_INVALID_STATE);
+        },
     .digest = [](void *context, std::uint32_t size)
         -> std::expected<rules::Digest, rules::SinkError> {
       auto &d = of(context);
@@ -96,30 +99,34 @@ const rules::Sink kSink{
       }
       return digest;
     },
-    .finish = [](void *context) {
-      auto &d = of(context);
-      if (!d.open)
-        return check(ESP_ERR_INVALID_STATE);
-      // esp_ota_end frees the handle whatever it returns.
-      d.open = false;
-      return check(esp_ota_end(d.handle));
-    },
-    .activate = [](void *context) {
-      auto &d = of(context);
-      return check(d.slot ? esp_ota_set_boot_partition(d.slot)
-                          : ESP_ERR_NOT_FOUND);
-    },
-    .revert = [](void *) {
-      const esp_partition_t *running = esp_ota_get_running_partition();
-      return check(running ? esp_ota_set_boot_partition(running)
-                           : ESP_ERR_NOT_FOUND);
-    },
-    .abort = [](void *context) {
-      auto &d = of(context);
-      if (d.open)
-        static_cast<void>(esp_ota_abort(d.handle));
-      d.open = false;
-    },
+    .finish =
+        [](void *context) {
+          auto &d = of(context);
+          if (!d.open)
+            return check(ESP_ERR_INVALID_STATE);
+          // esp_ota_end frees the handle whatever it returns.
+          d.open = false;
+          return check(esp_ota_end(d.handle));
+        },
+    .activate =
+        [](void *context) {
+          auto &d = of(context);
+          return check(d.slot ? esp_ota_set_boot_partition(d.slot)
+                              : ESP_ERR_NOT_FOUND);
+        },
+    .revert =
+        [](void *) {
+          const esp_partition_t *running = esp_ota_get_running_partition();
+          return check(running ? esp_ota_set_boot_partition(running)
+                               : ESP_ERR_NOT_FOUND);
+        },
+    .abort =
+        [](void *context) {
+          auto &d = of(context);
+          if (d.open)
+            static_cast<void>(esp_ota_abort(d.handle));
+          d.open = false;
+        },
 };
 
 rules::Transfer &transfer() {
@@ -159,9 +166,7 @@ void drop_stale(rules::Transfer &upload) {
     oslog.println("OTA ABORT reason=session-closed");
 }
 
-const char *slot_name() {
-  return device.slot ? device.slot->label : "none";
-}
+const char *slot_name() { return device.slot ? device.slot->label : "none"; }
 } // namespace
 
 bool handle(const ble::ControlRequest &request, const ControlReplies &replies) {
@@ -205,9 +210,8 @@ bool handle(const ble::ControlRequest &request, const ControlReplies &replies) {
     oslog.printf("OTA READY size=%lu slot=%s sha256=match reboot=required\n",
                  static_cast<unsigned long>(result->size), slot_name());
   else if (op == ble::kOpOtaCancel && before.phase != rules::Phase::Idle)
-    oslog.printf("OTA CANCEL from=%s\n", before.phase == rules::Phase::Ready
-                                             ? "ready"
-                                             : "receiving");
+    oslog.printf("OTA CANCEL from=%s\n",
+                 before.phase == rules::Phase::Ready ? "ready" : "receiving");
   return true;
 }
 

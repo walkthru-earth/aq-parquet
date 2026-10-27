@@ -101,12 +101,12 @@ enum Frame : std::uint8_t {
 };
 // Every frame type the device sends, for the uniqueness check below.
 inline constexpr Frame kFrames[] = {
-    kFrameFile,    kFrameListEnd, kFrameOpened,       kFrameChunk,
-    kFrameReadEnd, kFrameClosed,  kFrameTimeSet,      kFrameFlushed,
-    kFrameConfig,  kFrameWifiAp,  kFrameWifiScanEnd,  kFrameRebooting,
-    kFrameLog,     kFrameLogEnd,  kFrameToken,        kFrameHello,
-    kFrameStatus,  kFrameLive,    kFrameConfigChunk,  kFrameBye,
-    kFrameDiag,    kFrameAborted, kFrameListSinceEnd, kFrameDescriptorChunk,
+    kFrameFile,     kFrameListEnd, kFrameOpened,       kFrameChunk,
+    kFrameReadEnd,  kFrameClosed,  kFrameTimeSet,      kFrameFlushed,
+    kFrameConfig,   kFrameWifiAp,  kFrameWifiScanEnd,  kFrameRebooting,
+    kFrameLog,      kFrameLogEnd,  kFrameToken,        kFrameHello,
+    kFrameStatus,   kFrameLive,    kFrameConfigChunk,  kFrameBye,
+    kFrameDiag,     kFrameAborted, kFrameListSinceEnd, kFrameDescriptorChunk,
     kFrameOtaState, kFrameError,
 };
 consteval bool frames_unique() {

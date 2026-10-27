@@ -45,7 +45,9 @@ struct FakeFlash {
   std::uint32_t begun_size = 0;
 };
 
-FakeFlash &flash_of(void *context) { return *static_cast<FakeFlash *>(context); }
+FakeFlash &flash_of(void *context) {
+  return *static_cast<FakeFlash *>(context);
+}
 
 std::expected<void, ota::SinkError> fail_if(bool fail) {
   if (fail)
@@ -56,21 +58,23 @@ std::expected<void, ota::SinkError> fail_if(bool fail) {
 ota::Sink sink_for(FakeFlash &flash) {
   return {
       .context = &flash,
-      .begin = [](void *context, std::uint32_t size) {
-        auto &f = flash_of(context);
-        ++f.begins;
-        f.begun_size = size;
-        f.written.clear();
-        return fail_if(f.fail_begin);
-      },
-      .write = [](void *context, std::span<const std::uint8_t> data) {
-        auto &f = flash_of(context);
-        ++f.writes;
-        if (f.fail_write)
-          return fail_if(true);
-        f.written.insert(f.written.end(), data.begin(), data.end());
-        return fail_if(false);
-      },
+      .begin =
+          [](void *context, std::uint32_t size) {
+            auto &f = flash_of(context);
+            ++f.begins;
+            f.begun_size = size;
+            f.written.clear();
+            return fail_if(f.fail_begin);
+          },
+      .write =
+          [](void *context, std::span<const std::uint8_t> data) {
+            auto &f = flash_of(context);
+            ++f.writes;
+            if (f.fail_write)
+              return fail_if(true);
+            f.written.insert(f.written.end(), data.begin(), data.end());
+            return fail_if(false);
+          },
       .digest = [](void *context, std::uint32_t size)
           -> std::expected<ota::Digest, ota::SinkError> {
         auto &f = flash_of(context);
@@ -79,21 +83,24 @@ ota::Sink sink_for(FakeFlash &flash) {
           return std::unexpected(ota::SinkError::Failed);
         return f.digest;
       },
-      .finish = [](void *context) {
-        auto &f = flash_of(context);
-        ++f.finishes;
-        return fail_if(f.fail_finish);
-      },
-      .activate = [](void *context) {
-        auto &f = flash_of(context);
-        ++f.activates;
-        return fail_if(f.fail_activate);
-      },
-      .revert = [](void *context) {
-        auto &f = flash_of(context);
-        ++f.reverts;
-        return fail_if(f.fail_revert);
-      },
+      .finish =
+          [](void *context) {
+            auto &f = flash_of(context);
+            ++f.finishes;
+            return fail_if(f.fail_finish);
+          },
+      .activate =
+          [](void *context) {
+            auto &f = flash_of(context);
+            ++f.activates;
+            return fail_if(f.fail_activate);
+          },
+      .revert =
+          [](void *context) {
+            auto &f = flash_of(context);
+            ++f.reverts;
+            return fail_if(f.fail_revert);
+          },
       .abort = [](void *context) { ++flash_of(context).aborts; },
   };
 }
@@ -169,10 +176,9 @@ send_all(ota::Transfer &transfer, const std::vector<std::uint8_t> &bytes,
   for (std::size_t offset = 0; offset < bytes.size();
        offset += ota::kMaxChunk) {
     const auto count = std::min(ota::kMaxChunk, bytes.size() - offset);
-    last = transfer.handle(
-        write_request(static_cast<std::uint32_t>(offset),
-                      {bytes.data() + offset, count}),
-        owner);
+    last = transfer.handle(write_request(static_cast<std::uint32_t>(offset),
+                                         {bytes.data() + offset, count}),
+                           owner);
     if (!last)
       return last;
   }
@@ -265,10 +271,10 @@ void test_order_rules() {
     CHECK(transfer
               .handle(write_request(0, {bytes.data(), ota::kMaxChunk}), kOwner)
               .has_value());
-    CHECK(is_error(transfer.handle(write_request(ota::kMaxChunk + 1,
-                                                 {bytes.data() + 1, 10}),
-                                   kOwner),
-                   ota::Error::Offset));
+    CHECK(is_error(
+        transfer.handle(
+            write_request(ota::kMaxChunk + 1, {bytes.data() + 1, 10}), kOwner),
+        ota::Error::Offset));
     CHECK(!transfer.active() && flash.aborts == 1);
     CHECK(is_error(transfer.handle(kEnd, kOwner), ota::Error::NotActive));
   }
@@ -322,9 +328,8 @@ void expect_header_rejected(const std::vector<std::uint8_t> &bytes,
   ota::Transfer transfer(target(), sink_for(flash));
   start(transfer, bytes);
   const auto count = std::min(ota::kMaxChunk, bytes.size());
-  CHECK(is_error(transfer.handle(write_request(0, {bytes.data(), count}),
-                                 kOwner),
-                 error));
+  CHECK(is_error(
+      transfer.handle(write_request(0, {bytes.data(), count}), kOwner), error));
   CHECK(!transfer.active() && flash.writes == 0 && flash.aborts == 1);
 }
 
@@ -350,10 +355,10 @@ void test_header_rules() {
     const auto bytes = image(size);
     ota::Transfer transfer(target(), sink_for(flash));
     start(transfer, bytes);
-    CHECK(is_error(transfer.handle(
-                       write_request(0, {bytes.data(), ota::kHeaderBytes - 1}),
-                       kOwner),
-                   ota::Error::Header));
+    CHECK(is_error(
+        transfer.handle(write_request(0, {bytes.data(), ota::kHeaderBytes - 1}),
+                        kOwner),
+        ota::Error::Header));
     CHECK(!transfer.active() && flash.writes == 0);
   }
   {
@@ -425,9 +430,9 @@ void test_finish_rules() {
     ota::Transfer transfer(target(), sink_for(flash));
     start(transfer, bytes);
     CHECK(send_all(transfer, bytes).has_value());
-    CHECK(is_error(transfer.handle(std::vector<std::uint8_t>{ota::kOpEnd, 0},
-                                   kOwner),
-                   ota::Error::Malformed));
+    CHECK(is_error(
+        transfer.handle(std::vector<std::uint8_t>{ota::kOpEnd, 0}, kOwner),
+        ota::Error::Malformed));
     CHECK(!transfer.active() && flash.activates == 0);
   }
 }
@@ -492,7 +497,7 @@ void test_wire() {
                                .slot_bytes = kSlot};
   CHECK(ota::encode_state(progress, frame) == 16);
   const std::array<std::uint8_t, 16> expected{
-      0x50, 1, 0x04, 0x03, 0x02, 0x01, 0x0d, 0x0c,
+      0x50, 1,    0x04, 0x03, 0x02, 0x01, 0x0d, 0x0c,
       0x0b, 0x0a, 0x00, 0x00, 0x60, 0x00, 0xfb, 0x01};
   CHECK(frame == expected);
   CHECK(ota::kMaxChunk == 507 && ota::kHeaderBytes == 112);

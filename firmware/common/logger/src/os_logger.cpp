@@ -28,8 +28,8 @@
 #include <abort_signal.h>
 #include <archive_files.h>
 #include <archive_sync.h>
-#include <boot_self_test.h>
 #include <ble_advert.h>
+#include <boot_self_test.h>
 #include <control_sync.h>
 #include <sync_codec.h>
 #include <sync_service.h>
@@ -2744,12 +2744,13 @@ void report_runtime(std::int64_t now, bool force = false) {
 void service_self_test(std::int64_t now) {
   if (self_test_done)
     return;
-  const selftest::Inputs inputs{
-      .sd = storage_ok.load() ? selftest::Check::Pass : selftest::Check::Pending,
-      .sensor = sensor_check,
-      .radio = radio_check,
-      .elapsed_ms = (now - self_test_start_us) / 1000,
-      .deadline_ms = config.self_test_deadline_ms};
+  const selftest::Inputs inputs{.sd = storage_ok.load()
+                                          ? selftest::Check::Pass
+                                          : selftest::Check::Pending,
+                                .sensor = sensor_check,
+                                .radio = radio_check,
+                                .elapsed_ms = (now - self_test_start_us) / 1000,
+                                .deadline_ms = config.self_test_deadline_ms};
   const auto outcome = selftest::decide(inputs);
   if (outcome.verdict == selftest::Verdict::Pending)
     return;
