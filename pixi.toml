@@ -167,6 +167,7 @@ pinned-uris-test = "python tools/test_pinned_uris.py"
 pin-uris = "python tools/pinned_uris.py --write"
 max17048-test = "python tools/test_max17048.py --sanitize"
 battery-health-test = "python tools/test_battery_health.py --sanitize"
+upload-test = "python tools/test_upload.py --sanitize"
 coredump-report-test = "python tools/test_coredump_report.py --sanitize"
 connectivity-build-test = "tools/build_connectivity_fixture.sh"
 # Fixture dialect check on crafted compiler databases, and every SDK fixture calls it (#45).

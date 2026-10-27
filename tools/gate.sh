@@ -64,6 +64,8 @@ tasks=(
   "max17048-test"
   # Battery health states and thresholds
   "battery-health-test"
+  # Uploader signer, STS, policy, ledger and session on fakes (#81)
+  "upload-test"
   # Archive, transport and radio policy fixtures
   "archive-sync-test"
   "control-sync-test"

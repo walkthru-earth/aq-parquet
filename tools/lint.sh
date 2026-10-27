@@ -66,6 +66,11 @@ cppcheck "${options[@]}" \
   firmware/common/src/lz4_codec.cpp \
   firmware/common/sensors/src/pms_frame.cpp \
   firmware/common/power/src/os_battery_health.cpp \
+  firmware/common/upload/src/os_upload_sigv4.cpp \
+  firmware/common/upload/src/os_upload_sts.cpp \
+  firmware/common/upload/src/os_upload_policy.cpp \
+  firmware/common/upload/src/os_upload_ledger.cpp \
+  firmware/common/upload/src/os_upload_session.cpp \
   firmware/common/logger/src/os_logger.cpp \
   firmware/common/logger/src/os_logger_status.cpp \
   firmware/common/logger/src/os_logger_provision.cpp \
