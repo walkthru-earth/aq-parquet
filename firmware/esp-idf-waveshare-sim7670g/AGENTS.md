@@ -23,11 +23,20 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   and retain it while mounted. Shared connectivity prefers PSRAM for packet/TCP
   memory and bounds static Wi-Fi DMA buffers; the diagnostic excludes radios
   and PSRAM. Source/host validation does not qualify this board's native IO.
-- GPIO38 RGB is a board-local startup/card/sensor indicator. Camera, modem,
-  GNSS and charger control are disabled. The board adapter alone owns MAX17048
+- GPIO38 RGB is a board-local startup/card/sensor indicator. Camera, modem
+  data and charger control are disabled. The board adapter alone owns MAX17048
   I²C on SDA15/SCL16; never initialize that controller from another driver.
-  Do not guess modem
-  power pins or change USB routing/DIP switches for the logger.
+  Never change USB routing or DIP switches for the logger.
+- Modem GNSS is on since v2.17 (owner, 2026-10-27), the example moving Thing.
+  `logger/main.cpp` only fills `opensensor::gnss::ReaderConfig` (UART2, ESP
+  TX GPIO18 to modem RXD, ESP RX GPIO17 from modem TXD, 115200, SIMCom
+  dialect) and the GPIO21 modem power callback, then passes
+  `opensensor::gnss::latest` as `Hooks::gnss_fix`. GPIO21 is wired OR with the
+  4G DIP switch, so it is latched high and never driven low. Leave GPIO45 (DTR,
+  a strapping pin) and GPIO40 (RI) unconfigured. Pins come from the V2.0
+  schematic, see `docs/boards/waveshare-esp32-s3-sim7670g/hardware.md`. Never
+  send modem NVM, band, network, SIM, CFUN or reset commands, and never log
+  the IMEI. Parser, freshness and the source rule live in `firmware/common/gnss`.
 - The owner subsequently installed an 18650 and verified battery-only boot.
   `kBatteryInstalled` is the explicit board configuration; a MAX17048 response
   still cannot prove battery presence. A failed register nulls only its own
@@ -35,7 +44,7 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   `battery_health_state`, which is always written and reads 0 when unknown.
   Charger state has no verified ESP32 signal. No external RTC: UTC remains null until a real host or network anchor,
   and a reboot starts a new unanchored clock epoch.
-- Current firmware is `idf-waveshare-parquet-v2.16`, schema v6/dictionary v8
+- Current firmware is `idf-waveshare-parquet-v2.17`, schema v6/dictionary v8
   with 62 fields. Fields 57 to 62 hold MAX17048 diagnostics and the shared
   `power/` battery health state. Battery thresholds live in
   `telemetry_contract.h` (`kBatteryThresholds`) and are uncalibrated until a
@@ -44,8 +53,9 @@ pinned ESP-IDF toolchain, component manifests and partition files. Never borrow 
   1-based `telemetry_fields.inc` position, so only append fields. Each `FIELD`
   row ends with its LIVE key ("" stays off LIVE) and its LIVE float decimals, so
   the dictionary digest covers both and any change needs a matching mobile app release. Shared H3 helpers
-  publish only the owner-configured coarsened Thing cell and its centre point;
-  country is optional and owner-declared. Do not turn on modem GNSS for this.
+  publish only a coarsened cell and its centre point, the configured cell for a
+  fixed Thing and a fresh GNSS cell for a moving one. Raw GNSS coordinates are
+  never logged or stored. Country is optional and owner-declared.
 - Fixed pairing PIN is random per device. Retrieve it only through the
   explicit physical-serial owner command; never put PIN/PSK/token values in
   logs, artifacts or docs. Preserve network-side encryption/authentication.

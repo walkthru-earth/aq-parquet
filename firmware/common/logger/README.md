@@ -133,6 +133,25 @@ or precision. The `geo` footer key gives the bbox of the located rows, and is
 left without one when no row has a location.
 See [time and location](../../../docs/shared/time-and-location.md) for owner policy.
 
+### GNSS hook contract
+
+`Hooks::gnss_fix` is optional and board-neutral. Its type is
+`bool (*)(opensensor::gnss::Fix &fix, void *context)`, with the `Fix` type
+from the [gnss component](../gnss/README.md). OSLogger calls it on the main
+loop once per row when the board dictionary has the four location fields. It must
+copy the newest fix and return true, or return false when there is none. It
+must not block, allocate or touch the card. `opensensor::gnss::latest` from
+`gnss_reader` already has this shape.
+
+`collect` applies `opensensor::gnss::select_location`. A fixed Thing keeps the
+configured cell with `location_source` 1 and ignores the fix. A moving
+Thing gets the fix cell coarsened to the row's resolution cap with
+`location_source` 2 when the fix is at most `kFixMaxAgeUs` (15 s) old, and four
+location nulls otherwise. A moving Thing with no hook writes nulls on every
+row. The fix cell is written only to the row, never to the location snapshot,
+so a GNSS cell change never splits a batch or file. A change of mobility, cell,
+cap or country still does.
+
 Serial commands remain `parquet status`, `schema`, `list`, `get`, `time`, `flush`,
 `interval` (600/900/1800/3600), `codec none`, `codec lz4`, `codec-test` and `mem`.
 `parquet mem` prints the `DIAG tasks` stack high water marks and the `DIAG heap`

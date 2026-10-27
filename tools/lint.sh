@@ -53,6 +53,8 @@ cppcheck "${options[@]}" \
   firmware/common/connectivity/src/wifi_link.cpp \
   firmware/common/connectivity/src/network_time.cpp \
   firmware/common/location/src/os_location.cpp \
+  firmware/common/gnss/src/os_gnss.cpp \
+  firmware/common/gnss_reader/src/os_gnss_reader.cpp \
   firmware/common/connectivity/src/sync_service.cpp \
   firmware/common/connectivity/src/archive_sync.cpp \
   firmware/common/connectivity/src/control_sync.cpp \

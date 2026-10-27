@@ -572,6 +572,14 @@ Settings get() {
   return copy;
 }
 
+LocationSettings location_settings() {
+  LocationSettings copy;
+  portENTER_CRITICAL(&settings_mutex);
+  copy = current.location;
+  portEXIT_CRITICAL(&settings_mutex);
+  return copy;
+}
+
 bool reboot_required() {
   const Settings now = get();
   return now.pair != booted.pair || now.pin != booted.pin;

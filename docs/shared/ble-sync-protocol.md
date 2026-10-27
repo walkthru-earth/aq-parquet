@@ -145,7 +145,7 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 ### `info` (read)
 
 ```json
-{"proto":3,"fw":"idf-cores3-parquet-v6.22","schema":"cores3-telemetry-v6","cols":81,
+{"proto":3,"fw":"idf-cores3-parquet-v6.23","schema":"cores3-telemetry-v6","cols":81,
  "dict":"<64 hex, SHA-256 of telemetry_fields.inc>","desc":"<first 16 hex of desc>",
  "thing":"<uuid>","dev":"<12 hex device_id>","boot":"<32 hex boot id>","max_read":16384}
 ```
@@ -153,7 +153,7 @@ Base UUID `255f595e-XXXX-47ed-8e0d-59994199b680`; the 16-bit field selects the a
 `schema`, `cols`, `dict` and `fw` describe the consuming board image. The example
 is CoreS3, while Waveshare advertises its own 62-column schema
 `waveshare-sim7670g-telemetry-v6`, dictionary `waveshare-sim7670g-telemetry-v8`
-and firmware `idf-waveshare-parquet-v2.16`. Clients use that identity to interpret shortened LIVE keys. `thing`, `dev`
+and firmware `idf-waveshare-parquet-v2.17`. Clients use that identity to interpret shortened LIVE keys. `thing`, `dev`
 and `boot` match the archive identities. `max_read` is the largest `length` the
 device honours per `READ`. Firmware reports `proto=3` and older framing is incompatible.
 
@@ -344,7 +344,7 @@ Rules:
 | `location.cell` | canonical 15-digit H3 cell hex; empty clears | next sample | persist only the cell coarsened to the configured privacy cap |
 | `location.resolution` | `0..15`, default 8 | next sample | maximum disclosure precision; increasing alone never restores finer coordinates |
 | `location.country` | assigned uppercase ISO 3166-1 alpha-2; empty clears | next sample | optional owner-declared country, not inferred from the cell |
-| `thing.mobility` | `fixed` \| `moving`, default `fixed` | next sample | how the Thing moves, written to the footer `thing.mobility`. A change splits the file like a location change |
+| `thing.mobility` | `fixed` \| `moving`, default `fixed` | next sample | how the Thing moves, written to the footer `thing.mobility`. A change splits the file like a location change. `fixed` rows carry `location.cell` with `location_source` 1. `moving` rows carry a fresh GNSS cell (at most 15 s old) coarsened to `location.resolution` with `location_source` 2, or four location nulls when the board has no GNSS hook or no fresh fix, never `location.cell`. A GNSS cell change does not split the file. See [moving Things](time-and-location.md#moving-things-and-gnss) |
 | `location.phone_cell` | canonical 15-digit H3 cell hex from the phone's own fix; empty clears | next sample | reserved, firmware does not accept it yet (tracked on #83). The board coarsens the cell to `location.resolution`, keeps it in RAM only, and writes it with `location_source` 3 while it is set. It never persists it, and it falls back to `location.cell` (source 1) when it is cleared or on reboot. A change splits the file like any location change |
 | `sensor.vendor` | `Plantower` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified vendor; must match the board's declared physical sensor |
 | `sensor.model` | `PMS5003T` on Waveshare V2; empty only when clearing the profile | immediately | owner-identified model; does not change the hardcoded UART parser |

@@ -79,6 +79,7 @@ tasks=(
   "config-test"
   "network-time-test"
   "location-test"
+  "gnss-test"
   # Logger lifecycle, storage and persistence
   "debug-log-test"
   "coredump-report-test"

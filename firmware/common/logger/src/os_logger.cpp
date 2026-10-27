@@ -31,6 +31,7 @@
 #include <ble_advert.h>
 #include <boot_self_test.h>
 #include <control_sync.h>
+#include <os_gnss.h>
 #include <sync_codec.h>
 #include <sync_service.h>
 #include <time_sync.h>
@@ -63,6 +64,7 @@
 #include <fcntl.h>
 #include <new>
 #include <numeric>
+#include <optional>
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -2636,8 +2638,17 @@ void collect(std::int64_t now, std::int64_t scheduled) {
       field_index("h3_cell_id"), field_index("h3_resolution"),
       field_index("location_source"), geometry_field};
   if (std::all_of(location_fields.begin(), location_fields.end(),
-                  [](std::size_t index) { return index < field_count; }))
-    apply_location(row, row.location, location_fields);
+                  [](std::size_t index) { return index < field_count; })) {
+    // The GNSS cell labels this row only. It never enters row.location, so a
+    // moving Thing does not split files when its cell changes.
+    std::optional<opensensor::gnss::Fix> fix;
+    if (opensensor::gnss::Fix latest{};
+        hooks.gnss_fix && hooks.gnss_fix(latest, hooks.context))
+      fix = latest;
+    const auto chosen =
+        opensensor::gnss::select_location(row.location, fix, now);
+    apply_cell(row, chosen.cell, chosen.source, location_fields);
+  }
   integer(row, "schema_version", config.schema_version);
   counter(row, "device_id", device);
   counter(row, "boot_id_hi", boot_hi);

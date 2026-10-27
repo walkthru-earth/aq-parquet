@@ -1,7 +1,7 @@
 # Waveshare V2 native ESP-IDF / PMS5003T logger
 
 The current source is pure **ESP-IDF 6.1**, firmware identity
-**`idf-waveshare-parquet-v2.16`**, with **62-column** schema
+**`idf-waveshare-parquet-v2.17`**, with **62-column** schema
 `waveshare-sim7670g-telemetry-v6` and dictionary `waveshare-sim7670g-telemetry-v8`.
 The original 52 columns retain their order and types, with four nullable
 location fields (`h3_cell_id`, `h3_resolution`, `location_source` and the WKB
@@ -85,7 +85,13 @@ The V2 adapter owns PMS5003T UART1 at **9600 8N1, RX GPIO1 / TX GPIO2**,
 one-bit SDMMC **CLK5 / CMD4 / D0=6** mounted at `/sd`, MAX17048 I²C
 **SDA15 / SCL16**, and RGB **GPIO38**. It keeps the explicit
 `kBatteryInstalled` setting and read-failure/null behavior. Charger state has
-no verified ESP32 signal. Modem, GNSS and camera remain outside this logger.
+no verified ESP32 signal. Modem data and camera remain outside this logger.
+From v2.17 the logger reads GNSS from the SIM7670G on `UART_NUM_2`, ESP TX
+GPIO18 and RX GPIO17 at 115200, after latching the modem enable GPIO21 high.
+A moving Thing labels each row with the fresh GNSS cell (`location_source`
+2) or nulls, a fixed Thing keeps its configured cell. See
+[hardware](../../docs/boards/waveshare-esp32-s3-sim7670g/hardware.md) and
+[moving Things](../../docs/shared/time-and-location.md#moving-things-and-gnss).
 OSLogger owns the 10-second monotonic sampling and sole archive worker;
 there is no external RTC anchor. Raw PM/temperature/RH and optional sensor
 identity/batch candidate semantics retain the existing dictionary contract.

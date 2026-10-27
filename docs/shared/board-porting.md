@@ -24,6 +24,7 @@ Descriptors, identity strings and callback contexts must outlive the services.
 | `Hooks::rtc_read`, `rtc_write` | Optional UTC-second read/write with validation and verified write readback | Main loop only. Reject unset, invalid or voltage-low RTC data. Without RTC, UTC stays null until a real host/network anchor |
 | `report_battery(state, mv)` | Optional battery state from `opensensor::battery::Monitor` in `firmware/common/power` | Main loop only, normally from `collect`. Prints one `POWER STATE` line per change and raises one emergency close of the open file per discharge, run only by the storage worker with bounded retries. Only ok or external power re-arms it. Never resets or sleeps |
 | `Hooks::power_shed` | Optional load shedding on a battery state change | Main loop only, after the `POWER STATE` line. Default is no action. Must not block, reset or sleep |
+| `Hooks::gnss_fix` | Optional newest GNSS `Fix` for moving Things, normally `opensensor::gnss::latest` | Main loop only, once per row. A fixed Thing ignores the fix. Must not block. Without it a moving Thing writes location nulls. See [adding GNSS](#adding-gnss) |
 | `start_links(display_detected)` | Actual display capability | Selects the first-boot pairing default. No display requires physical owner access to the per-device PIN |
 | `Config::sync` | Optional `ossync::ServiceConfig` containing BLE/LAN options and command/sample queue depths | Shared defaults own ring/credit sizes, timeouts, link parameters and advertising policy. No board-name conditionals |
 | Board sdkconfig defaults | Flash size, PSRAM mode, console, DFS and hardware-specific deltas | Use the shared SDK/connectivity defaults and pinned target checker. CoreS3 Quad PSRAM and Waveshare OPI PSRAM are different capabilities |
@@ -36,6 +37,42 @@ transfer buffer before radios and keep it alive while mounted. Then call
 `start_links(display_detected)` once and `poll()` on every main-loop pass.
 OSLogger alone accesses files after startup. OSConnectivity alone initializes
 radios, the LAN task writes sockets, and the NimBLE host sends BLE responses.
+
+## Adding GNSS
+
+GNSS is core location, not a plugin module. It adds no column, LIVE key,
+manifest or dictionary change. The shared code lives in
+[`firmware/common/gnss`](../../firmware/common/gnss/README.md) (pure parser,
+fix-to-H3 and source rule) and `firmware/common/gnss_reader` (the UART task).
+Only the pins, the UART number and receiver power stay in the board.
+
+1. Add `../common/gnss` and `../common/gnss_reader` to the board
+   `EXTRA_COMPONENT_DIRS` and `gnss_reader` to the board component
+   `REQUIRES`. A board without a receiver lists `../common/gnss` only, because
+   the logger needs it.
+2. Fill one `opensensor::gnss::ReaderConfig` with designated initializers. Set
+   a free `uart_port` (never the console or a sensor UART), the ESP `tx_pin`
+   and `rx_pin` as wired on the exact PCB revision, the receiver `baud`, the
+   `dialect` (`&opensensor::gnss::simcom_dialect()` for SIMCom modems) and an
+   optional `power_on` callback with its `context`. Keep the default
+   `reader_stack_bytes`, `priority` and `poll_period_ms` unless measured.
+3. The power callback runs once on the reader task. It drives the receiver or
+   modem supply on and returns true. It must never drive it off, and it must
+   not touch strapping pins it does not own.
+4. Call `opensensor::gnss::start(config)` before `oslogger::begin` and print
+   `OS ERROR operation=gnss-start reason=<n>` when it fails. Logging continues
+   without GNSS.
+5. Set `.gnss_fix` in `oslogger::Hooks` to a function that calls
+   `opensensor::gnss::latest(fix)`.
+6. Add the `os-gnss` task to that image in `tools/stack_budget.json`, run
+   `pixi run stack-budget --write-budgets --image <board>/<variant>`, then
+   `--check`. Bump the board firmware identity and add a dated bench line
+   once a real fix is seen.
+
+A new receiver family, for example plain NMEA, is a new `Dialect` in
+`firmware/common/gnss`, tested in `tools/test_gnss.cpp`. Board code and the
+logger stay as they are. The Waveshare SIM7670G logger is the reference
+example.
 
 ## Porting sequence
 
