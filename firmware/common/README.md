@@ -1,7 +1,7 @@
 # Reusable firmware modules
 
-The common tree contains seven opt-in native ESP-IDF components, **OSCommon**,
-**OSSensors**, **OSRuntime**, **OSConnectivity**, **OSLogger**, **OSLocation** and `power`. The target is ESP32-S3 with
+The common tree contains eight opt-in native ESP-IDF components, **OSCommon**,
+**OSSensors**, **OSRuntime**, **OSConnectivity**, **OSLogger**, **OSLocation**, `power` and `upload`. The target is ESP32-S3 with
 ESP-IDF 6.1; application source uses no Arduino APIs. Pure framing, encoding and
 math plus the actual status/provisioning helpers remain host-testable. Boards
 own peripheral initialization and consume only the required components.
@@ -12,6 +12,7 @@ own peripheral initialization and consume only the required components.
 | `sensors/src/os_ltr553.h` | LTR553 register setup and raw validity | Existing bus read/write and timing callbacks |
 | `sensors/src/os_max17048.h` | MAX17048 VCELL/SOC and diagnostic register reads, decoding, range checks and a verified reset-indicator clear | Existing bus read callback, optional write callback, battery-installed policy |
 | `power/src/os_battery_health.*` | Pure battery state classifier with debounce, hysteresis and post-reset settling | Validated thresholds, monotonic time, gauge samples and any load shedding |
+| `upload/src/os_upload_*` | Off by default source.coop uploader. SigV4, STS, policy, append only ledger, session and an HTTPS transport | Provisioned API key, trusted UTC, the archive and ledger IO and when a step runs |
 | `src/numeric_sample.h` | Fixed-size numeric rows with explicit validity/nulls | Board field dictionary and collection |
 | `src/utc_clock.h` | UTC anchor arithmetic, source codes, calendar conversion and supported bounds | Coherent anchor locking, host sync and optional RTC adapter |
 | `src/parquet_writer.*`, `lz4_codec.*` | Bounded Parquet encoding and pinned LZ4 | Columns, provenance, memory, file sink and rotation policy |

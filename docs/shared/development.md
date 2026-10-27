@@ -3,8 +3,8 @@
 This repository targets ESP32-S3 with native **ESP-IDF 6.1**. Application source
 uses no Arduino APIs or Arduino component. Board pins, PSRAM mode, power
 sequencing, storage mounting and hardware evidence belong to the board adapter;
-the seven opt-in components (OSCommon, OSSensors, OSRuntime, OSConnectivity,
-OSLogger, OSLocation and `power`) belong to [`firmware/common`](../../firmware/common/README.md).
+the eight opt-in components (OSCommon, OSSensors, OSRuntime, OSConnectivity,
+OSLogger, OSLocation, `power` and `upload`) belong to [`firmware/common`](../../firmware/common/README.md).
 
 ## Host and toolchain
 

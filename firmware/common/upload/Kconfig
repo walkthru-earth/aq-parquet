@@ -1,0 +1,12 @@
+menu "OpenSensor uploader"
+
+config OS_UPLOAD_ENABLE
+    bool "Upload finalized archive files to source.coop"
+    default n
+    help
+        Builds the uploader as enabled. Off by default. Nothing uploads
+        until a board is provisioned with an API key and the integration
+        work wires a session into the storage worker. Dev uploads only ever
+        write below dev/opensensor-space-firmware/<board>/ (#81).
+
+endmenu
