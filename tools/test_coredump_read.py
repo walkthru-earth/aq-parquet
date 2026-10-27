@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
 
@@ -45,7 +47,10 @@ def test_plan() -> None:
     with tempfile.TemporaryDirectory(prefix="os-coredump-") as name:
         root = Path(name)
         layout(root)
-        read, erase = cd.plan("cores3", None, "/dev/cu.x", "py", root=root)
+        # Read only by default. The partition stays on the board.
+        assert len(cd.plan("cores3", None, "/dev/cu.x", "py", root=root)) == 1
+        read, erase = cd.plan("cores3", None, "/dev/cu.x", "py", root=root,
+                              erase=True)
         assert read[:3] == ["py", "-m", "esp_coredump"]
         assert read[read.index("--off") + 1] == str(0xC10000)
         assert read[-1].endswith("app.elf")
@@ -56,8 +61,7 @@ def test_plan() -> None:
         assert erase[:3] == ["py", "-m", "esptool"]
         assert erase[-3:] == ["erase-region", "0xc10000", "0x10000"]
         assert "erase-flash" not in erase and "write-flash" not in erase
-        assert cd.plan("cores3", None, "/dev/cu.x", "py", root=root,
-                       keep=True) == [read]
+        assert cd.plan("cores3", None, "/dev/cu.x", "py", root=root) == [read]
 
 
 def test_plan_refusals() -> None:
@@ -75,7 +79,8 @@ def test_plan_refusals() -> None:
     with tempfile.TemporaryDirectory(prefix="os-coredump-") as name:
         root = Path(name)
         layout(root, board="waveshare", variant="diagnostic")
-        steps = cd.plan("waveshare", "diagnostic", "/dev/x", "py", root=root)
+        steps = cd.plan("waveshare", "diagnostic", "/dev/x", "py", root=root,
+                        erase=True)
         assert steps[1][-2:] == ["0xc10000", "0x10000"]
 
 
@@ -123,8 +128,43 @@ def test_run_order() -> None:
     assert cd.run([["read"]], runner({})) == 0 and calls == ["read"]
 
 
+def test_private_tmp() -> None:
+    """esp_coredump leaves its temp file behind on a failed decode."""
+    for status in (0, 1):
+        seen: list[str] = []
+
+        def runner(step, env):
+            folder = env["TMPDIR"]
+            assert env["TMP"] == folder and env["TEMP"] == folder
+            assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700
+            assert env["KEEP"] == "1"
+            Path(folder, "tmpdump").write_bytes(b"raw stacks")
+            seen.append(folder)
+            return status
+
+        assert cd.run_private([["read"], ["erase"]], runner,
+                              {"KEEP": "1", "TMPDIR": "/tmp"}) == status
+        assert seen and all(not os.path.exists(folder) for folder in seen), seen
+        assert len(seen) == (2 if status == 0 else 1)
+
+    seen.clear()
+
+    def boom(step, env):
+        seen.append(env["TMPDIR"])
+        raise OSError("gdb died")
+
+    try:
+        cd.run_private([["read"]], boom, {})
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError")
+    assert seen and not os.path.exists(seen[0])
+
+
 def main() -> int:
-    for test in (test_plan, test_plan_refusals, test_partition_rules, test_run_order):
+    for test in (test_plan, test_plan_refusals, test_partition_rules, test_run_order,
+                 test_private_tmp):
         test()
     print("coredump-read tests passed")
     return 0

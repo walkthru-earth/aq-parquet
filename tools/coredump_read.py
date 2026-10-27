@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Read the core dump over USB serial, print it, then erase it (#40).
+"""Read the core dump over USB serial and print it, erase only on request (#40).
 
 The firmware saves a crash to the `coredump` flash partition
 (CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH). A raw dump is a copy of task stacks and
 can hold the Wi-Fi PSK, the LAN bearer token or the device PIN. So this tool
-never saves the raw dump to disk. It runs `esp_coredump info_corefile`, which
-reads the partition into a temporary file and deletes it, and prints the
-crashed task, its registers and the backtraces of all tasks, without
-`--print-mem`. After a successful print it erases that one partition with
-`esptool erase-region`, and nothing else. There is no LAN or BLE core dump
-endpoint on purpose.
+never keeps the raw dump on the host. It runs `esp_coredump info_corefile`
+with TMPDIR set to a private 0700 folder, because esp_coredump writes the
+flash read to a temporary file and leaves it behind when decoding fails. That
+folder is removed on every path. The tool prints the crashed task, its
+registers and the backtraces of all tasks, without `--print-mem`. The
+partition is left alone unless `--erase` is given. Then it erases that one
+partition with `esptool erase-region`, only after a good print, and nothing
+else. There is no LAN or BLE core dump endpoint on purpose.
 
 Run it through the pixi task, which loads the pinned ESP-IDF Python and GDB
 
@@ -18,8 +20,8 @@ Run it through the pixi task, which loads the pinned ESP-IDF Python and GDB
 
 Build the same image first (`pixi run cores3-build` or `pixi run
 waveshare-build <variant>`), since the dump is decoded with that ELF.
-`--dry-run` prints the two commands and opens no port. `--keep` prints
-without erasing, for a second look before you erase.
+`--dry-run` prints the commands and opens no port. `--erase` clears the
+partition after a good print, once you are done with the crash.
 """
 
 from __future__ import annotations
@@ -29,8 +31,10 @@ import csv
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Callable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,7 +84,7 @@ def coredump_partition(partitions: Path) -> tuple[int, int]:
 
 
 def plan(board: str, variant: str | None, port: str, python: str,
-         root: Path = ROOT, keep: bool = False) -> list[list[str]]:
+         root: Path = ROOT, erase: bool = False) -> list[list[str]]:
     if board not in BOARDS:
         raise PlanError(f"unknown board {board}")
     folder, variants = BOARDS[board]
@@ -102,7 +106,7 @@ def plan(board: str, variant: str | None, port: str, python: str,
     common = ["--chip", "esp32s3", "--port", port]
     steps = [[python, "-m", "esp_coredump", *common, "info_corefile",
               "--off", str(offset), str(elf)]]
-    if not keep:
+    if erase:
         steps.append([python, "-m", "esptool", *common, "--before",
                       "default-reset", "--after", "hard-reset", "erase-region",
                       hex(offset), hex(size)])
@@ -120,7 +124,7 @@ def run(steps: list[list[str]], runner: Runner) -> int:
               file=sys.stderr)
         return status
     if len(steps) == 1:
-        print("COREDUMP kept, erase it before the board leaves the bench",
+        print("COREDUMP kept on the board, rerun with --erase to clear it",
               file=sys.stderr)
         return 0
     status = runner(steps[1])
@@ -129,17 +133,33 @@ def run(steps: list[list[str]], runner: Runner) -> int:
     return status
 
 
+EnvRunner = Callable[[Sequence[str], dict], int]
+
+
+def run_private(steps: list[list[str]], runner: EnvRunner,
+                environ: dict | None = None) -> int:
+    """run() with every temporary file in a private folder removed after."""
+    private = tempfile.mkdtemp(prefix="os-coredump-")
+    try:
+        env = {**(os.environ if environ is None else environ),
+               "TMPDIR": private, "TMP": private, "TEMP": private}
+        return run(steps, lambda step: runner(step, env))
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("board", choices=sorted(BOARDS))
     parser.add_argument("port")
     parser.add_argument("variant", nargs="?")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--erase", action="store_true",
+                        help="erase the coredump partition after a good print")
     args = parser.parse_args(argv)
     try:
         steps = plan(args.board, args.variant, args.port, sys.executable,
-                     keep=args.keep)
+                     erase=args.erase)
     except (PlanError, OSError, KeyError, ValueError) as error:
         print(f"COREDUMP ERROR {error}", file=sys.stderr)
         return 2
@@ -150,7 +170,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not os.path.exists(args.port):
         print("COREDUMP ERROR checked serial port required", file=sys.stderr)
         return 2
-    return run(steps, lambda step: subprocess.run(list(step), check=False).returncode)
+    return run_private(steps, lambda step, env: subprocess.run(
+        list(step), env=env, check=False).returncode)
 
 
 if __name__ == "__main__":
