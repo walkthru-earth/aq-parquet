@@ -56,6 +56,7 @@ tasks=(
   "board-template-check-test"
   "published-templates-test"
   "plugin-contract-test"
+  "sensor-module-test"
   "pinned-uris-test"
   # Sensor drivers on fake buses
   "pms-frame-test"
