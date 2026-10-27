@@ -64,6 +64,12 @@ enum Op : std::uint8_t {
   // Read-only board template download, one chunk per request
   // (descriptor_chunk.h). The reply is DESCRIPTOR_CHUNK, never unsolicited.
   kOpGetDescriptor = 0x11,
+  // LAN only app update into the inactive OTA slot (ota_lan.h, rules in
+  // ota_transfer.h). Every success answers OTA_STATE. Reboot stays REBOOT.
+  kOpOtaBegin = 0x12,
+  kOpOtaWrite = 0x13,
+  kOpOtaEnd = 0x14,
+  kOpOtaCancel = 0x15,
 };
 enum Frame : std::uint8_t {
   kFrameFile = 0x10,
@@ -90,6 +96,7 @@ enum Frame : std::uint8_t {
   kFrameAborted = 0x4d,
   kFrameListSinceEnd = 0x4e,
   kFrameDescriptorChunk = 0x4f,
+  kFrameOtaState = 0x50,
   kFrameError = 0x7f,
 };
 // Every frame type the device sends, for the uniqueness check below.
@@ -100,7 +107,7 @@ inline constexpr Frame kFrames[] = {
     kFrameLog,     kFrameLogEnd,  kFrameToken,        kFrameHello,
     kFrameStatus,  kFrameLive,    kFrameConfigChunk,  kFrameBye,
     kFrameDiag,    kFrameAborted, kFrameListSinceEnd, kFrameDescriptorChunk,
-    kFrameError,
+    kFrameOtaState, kFrameError,
 };
 consteval bool frames_unique() {
   for (std::size_t i = 0; i < std::size(kFrames); ++i)
@@ -130,6 +137,9 @@ enum Error : std::uint8_t {
   kErrAborted = 16,
   // GET_DESCRIPTOR on a board built without a descriptor.
   kErrNoDescriptor = 17,
+  // An OTA image whose header, chip, project, SHA-256 or ESP-IDF
+  // verification does not match. The upload is aborted.
+  kErrImageRejected = 18,
 };
 
 // Advertising service data (protocol v2.1, docs/shared/ble-sync-protocol.md

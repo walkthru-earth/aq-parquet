@@ -137,6 +137,7 @@ const oslogger::Config kLoggerConfig{
     .descriptor_bytes = sizeof(kTemplateJson) - 1,
     .descriptor_sha256 = kDescriptorSha256,
     .template_href = kTemplateHref,
+    .self_test_field = "pm25_atmospheric_ug_m3",
 };
 const oslogger::Hooks kHooks{
     .collect = collect,

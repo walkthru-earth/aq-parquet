@@ -20,6 +20,7 @@
 #include "os_logger_watchdog.h"
 #include "os_logger_watchdog_apply.h"
 #include "os_logger_work_queue.h"
+#include "ota_lan.h"
 #include "parquet_writer.h"
 #include "storage_governor.h"
 #include "telemetry_logical.h"
@@ -27,6 +28,7 @@
 #include <abort_signal.h>
 #include <archive_files.h>
 #include <archive_sync.h>
+#include <boot_self_test.h>
 #include <ble_advert.h>
 #include <control_sync.h>
 #include <sync_codec.h>
@@ -178,6 +180,14 @@ std::atomic<std::uint64_t> quarantine_bytes{0};
 // Rows/row groups already on the card in the open .partial (footer pending).
 std::atomic<std::uint32_t> open_rows{0}, open_groups{0};
 std::atomic<bool> worker_failed{false}, storage_ok{false};
+// Boot self test (#40). Main loop only. sensor_field is field_count when the
+// board names no field, and an unknown name fails the sensor check.
+namespace selftest = opensensor::selftest;
+selftest::Check radio_check = selftest::Check::Pending;
+selftest::Check sensor_check = selftest::Check::Pending;
+std::size_t sensor_field = 0;
+std::int64_t self_test_start_us = 0;
+bool self_test_done = false;
 // Storage worker only. Mirrored to sd_state for STATUS.
 storage::Governor governor;
 std::atomic<std::uint8_t> sd_state{
@@ -2115,6 +2125,7 @@ void handle_control_request(const ble::ControlRequest &request,
       request.link_generation != link_generation(request.link, request.peer))
     return;
   if (archive_session.handle(request, state.storage_ready) ||
+      ossync::ota::handle(request, control_replies) ||
       ossync::handle_common_control(request, control_replies))
     return;
   const std::size_t body_length = request.length - 1;
@@ -2618,6 +2629,9 @@ void collect(std::int64_t now, std::int64_t scheduled) {
   row.location = ::config::get().location;
   if (hooks.collect)
     hooks.collect(row, now, scheduled, hooks.context);
+  if (sensor_check == selftest::Check::Pending && sensor_field < field_count &&
+      row.valid[sensor_field])
+    sensor_check = selftest::Check::Pass;
   const std::array<std::size_t, 4> location_fields = {
       field_index("h3_cell_id"), field_index("h3_resolution"),
       field_index("location_source"), geometry_field};
@@ -2724,6 +2738,27 @@ void report_runtime(std::int64_t now, bool force = false) {
           heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)),
       static_cast<unsigned long>(
           heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)));
+}
+
+// Once per boot. Marks the running app valid only on a healthy verdict.
+void service_self_test(std::int64_t now) {
+  if (self_test_done)
+    return;
+  const selftest::Inputs inputs{
+      .sd = storage_ok.load() ? selftest::Check::Pass : selftest::Check::Pending,
+      .sensor = sensor_check,
+      .radio = radio_check,
+      .elapsed_ms = (now - self_test_start_us) / 1000,
+      .deadline_ms = config.self_test_deadline_ms};
+  const auto outcome = selftest::decide(inputs);
+  if (outcome.verdict == selftest::Verdict::Pending)
+    return;
+  self_test_done = true;
+  const auto state = ossync::ota::running_state();
+  const auto mark = ossync::ota::confirm_running_app(outcome.verdict, state);
+  char line[selftest::kLineBytes];
+  if (selftest::format_line(inputs, outcome, state, mark, line))
+    oslog.print(line);
 }
 } // namespace
 
@@ -2975,6 +3010,15 @@ bool begin(const Config &configuration, const Hooks &board_hooks,
       config.fields[clock_epoch].type != telemetry::PhysicalType::Int32)
     return false;
   monotonic_field = monotonic;
+  if (config.self_test_field) {
+    sensor_field = field_index(config.self_test_field);
+    sensor_check = sensor_field < field_count ? selftest::Check::Pending
+                                              : selftest::Check::Fail;
+  } else {
+    sensor_field = field_count;
+    sensor_check = selftest::Check::Pass;
+  }
+  self_test_start_us = esp_timer_get_time();
   // Location columns are optional, but present ones must have the shape
   // apply_location writes, and a GEOMETRY column needs the location fields.
   geometry_field = field_index("geometry");
@@ -3166,6 +3210,7 @@ void poll() {
     collect(now, step.deadline_us);
     next_sample_us = step.next_us;
   }
+  service_self_test(now);
   service_rtc_write(esp_timer_get_time());
   static Command input{};
   static std::size_t length = 0;
@@ -3209,8 +3254,11 @@ bool start_links(bool display_detected) {
       .firmware = config.firmware,
       .descriptor_sha256 = config.descriptor_sha256,
       .name_prefix = config.ble_name_prefix};
-  return ossync::begin(identity, enqueue_request, display_detected, sync_config)
-      .ble_started;
+  const bool started =
+      ossync::begin(identity, enqueue_request, display_detected, sync_config)
+          .ble_started;
+  radio_check = started ? selftest::Check::Pass : selftest::Check::Fail;
+  return started;
 }
 
 bool enqueue_request(const ble::ControlRequest &request) {
