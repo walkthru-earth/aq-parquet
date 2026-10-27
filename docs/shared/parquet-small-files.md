@@ -1,6 +1,8 @@
 # Small Parquet files, compaction and range reads
 
-This page records the October 2026 investigation behind the roadmap in [issue #25](https://github.com/walkthru-earth/aq-parquet/issues/25). It keeps the measured numbers, the proposals and the open decisions in the repo so they can be rerun when new firmware ships. Nothing here changes the firmware or the wire contract. Each proposal needs its own PR, bench and, where marked, phone reader work first.
+This page records the October 2026 investigation behind the roadmap in [issue #25](https://github.com/walkthru-earth/opensensor-space-firmware/issues/25). It keeps the measured numbers, the proposals and the open decisions in the repo so they can be rerun when new firmware ships. Nothing here changes the firmware or the wire contract. Each proposal needs its own PR, bench and, where marked, phone reader work first.
+
+The outcome is recorded in [decision 0002](decisions/0002-small-parquet-files.md), which says what the firmware does now, what it will not do, what moves to a cloud compactor and what would reopen it.
 
 Raw results sit next to this page in [`parquet-small-files/`](parquet-small-files/). Rerun them with `pixi run size-survey` as shown at the end.
 

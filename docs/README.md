@@ -38,6 +38,7 @@ To add a board or a new sensor set, start with
 | Plugin contract (Pilot), versioned module and board manifests gate the board dictionary | [Sensor plugins](shared/plugins/README.md) |
 | Dictionary, observation semantics, and proposed Iceberg workflow | [Table and observation model](shared/table-and-observation-model.md) |
 | Small file sizes, encodings, compaction and range reads | [Small Parquet files](shared/parquet-small-files.md) |
+| Decision records, who writes STAC for a standalone Thing and the small file roadmap | [Decisions](shared/decisions/README.md) |
 | Proposed STAC metadata contract, firmware audit and review (research, not implemented) | [STAC contract research](shared/stac-contract/README.md) |
 | Proto 3 BLE/LAN frames, disconnect evidence, pairing and UART owner provisioning | [Sync protocol](shared/ble-sync-protocol.md) |
 | LAN transfer scheduling, socket policy and qualification | [LAN performance](shared/lan-performance.md) |
