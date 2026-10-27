@@ -36,40 +36,57 @@ constexpr std::int64_t digits_value(std::string_view digits) {
       [](std::int64_t value, char c) { return value * 10 + (c - '0'); });
 }
 
-// The shape of ddmm.mmmm or dddmm.mmmm, before any range check.
+// The shape of a coordinate, digits, a dot and digits, before any check.
 constexpr bool coordinate_shaped(std::string_view text) {
   const auto dot = text.find('.');
   return dot != std::string_view::npos && all_digits(text.substr(0, dot)) &&
          all_digits(text.substr(dot + 1));
 }
 
-// Degrees and minutes as SIMCom prints them, degrees * 100 + minutes. The
-// integer part has at most `integer_digits` digits (4 for latitude, 5 for
-// longitude). Parsed by hand, no locale and no strtod.
-std::expected<double, ParseError> degrees_minutes(std::string_view text,
-                                                  std::size_t integer_digits,
-                                                  int max_degrees) {
+// One axis of a coordinate. Latitude has at most 2 degree digits, longitude 3.
+struct Axis {
+  std::size_t degree_digits;
+  int max_degrees;
+};
+constexpr Axis kLatitude{.degree_digits = 2, .max_degrees = 90};
+constexpr Axis kLongitude{.degree_digits = 3, .max_degrees = 180};
+
+// The manual V1.01 is self contradictory. Its Defined Values give plain
+// decimal degrees (dd.ddddd, ddd.ddddd) and its example line, copied from
+// SIM7600, gives degrees and minutes (ddmm.mmmm, dddmm.mmmm). Neither is
+// confirmed on a V1.9.05 bench, so the integer digit count decides and
+// anything else fails closed. Latitude with 1 or 2 integer digits and
+// longitude with 1 to 3 are decimal degrees. Latitude with exactly 4 and
+// longitude with exactly 5 are degrees * 100 + minutes, minutes below 60.
+// Any other count is Malformed. Parsed by hand, no locale and no strtod.
+std::expected<double, ParseError> coordinate(std::string_view text,
+                                             const Axis &axis) {
   const auto dot = text.find('.');
   if (dot == std::string_view::npos)
     return std::unexpected(ParseError::Malformed);
   const auto whole = text.substr(0, dot);
   const auto fraction = text.substr(dot + 1);
-  if (!all_digits(whole) || whole.size() > integer_digits ||
-      !all_digits(fraction) || fraction.size() > kMaxFractionDigits)
+  if (!all_digits(whole) || !all_digits(fraction) ||
+      fraction.size() > kMaxFractionDigits)
+    return std::unexpected(ParseError::Malformed);
+  const bool decimal = whole.size() <= axis.degree_digits;
+  if (!decimal && whole.size() != axis.degree_digits + 2)
     return std::unexpected(ParseError::Malformed);
   const auto integer = digits_value(whole);
-  const auto numerator = digits_value(fraction);
   std::int64_t denominator = 1;
   for (std::size_t i = 0; i < fraction.size(); ++i)
     denominator *= 10;
-  const auto degrees = integer / 100;
+  const double part = static_cast<double>(digits_value(fraction)) /
+                      static_cast<double>(denominator);
+  const auto degrees = decimal ? integer : integer / 100;
   const double minutes =
-      static_cast<double>(integer % 100) +
-      static_cast<double>(numerator) / static_cast<double>(denominator);
-  if (minutes >= 60 || degrees > max_degrees ||
-      (degrees == max_degrees && minutes > 0))
+      decimal ? 0.0 : static_cast<double>(integer % 100) + part;
+  const double rest = decimal ? part : minutes;
+  if (minutes >= 60 || degrees > axis.max_degrees ||
+      (degrees == axis.max_degrees && rest > 0))
     return std::unexpected(ParseError::OutOfRange);
-  return static_cast<double>(degrees) + minutes / 60;
+  return decimal ? static_cast<double>(degrees) + part
+                 : static_cast<double>(degrees) + minutes / 60;
 }
 
 constexpr int hemisphere(std::string_view text, char positive, char negative) {
@@ -78,7 +95,8 @@ constexpr int hemisphere(std::string_view text, char positive, char negative) {
   return text[0] == positive ? 1 : text[0] == negative ? -1 : 0;
 }
 
-// Satellites in use, the per system counts before the latitude. -1 unknown.
+// Satellites in view, the sum of the per system visible counts before the
+// latitude (the manual's used count, NoSV, is the last field). -1 unknown.
 std::int16_t satellites(const std::array<std::string_view, kMaxFields> &fields,
                         std::size_t latitude_index) {
   if (latitude_index != 5)
@@ -151,10 +169,10 @@ SimcomDialect::parse_fix(std::string_view line) const {
       return std::unexpected(ParseError::Malformed);
     reading.mode = static_cast<std::uint8_t>(fields[0][0] - '0');
   }
-  const auto latitude = degrees_minutes(fields[at], 4, 90);
+  const auto latitude = coordinate(fields[at], kLatitude);
   if (!latitude)
     return std::unexpected(latitude.error());
-  const auto longitude = degrees_minutes(fields[at + 2], 5, 180);
+  const auto longitude = coordinate(fields[at + 2], kLongitude);
   if (!longitude)
     return std::unexpected(longitude.error());
   // Some receivers print zeros before the first fix. Null Island is no fix.

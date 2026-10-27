@@ -46,7 +46,7 @@ Arduino register/API reference, not a component candidate for this native
 application. Preserve VCELL/SOC register scaling and explicit battery presence;
 do not reset or quick-start the gauge as part of routine reads.
 
-The [V2 schematic](https://files.waveshare.com/wiki/ESP32-S3-A-SIM7670X-4G-HAT/ESP32-S3-A-SIM7670X-4G-V2.pdf) identifies an ETA6098 charger and MAX17048 gauge. ETA6098 `STAT` and solar-charger `CHRG` appear to drive indicators, with no verified route to an ESP32 input; no charger-management API was found in the examples. The MAX17048 measures cell voltage and estimates SOC, but does not establish charging state or USB input. Hardware switch/rail behavior is in [hardware.md](hardware.md). FAQ software modem power mentions GPIO33 or GPIO22 without a V2-specific mapping; do not treat that as a verified V2 output or substitute the Arduino GNSS sketch's GPIO21 write without a circuit audit.
+The [V2 schematic](https://files.waveshare.com/wiki/ESP32-S3-A-SIM7670X-4G-HAT/ESP32-S3-A-SIM7670X-4G-V2.pdf) identifies an ETA6098 charger and MAX17048 gauge. ETA6098 `STAT` and solar-charger `CHRG` appear to drive indicators, with no verified route to an ESP32 input; no charger-management API was found in the examples. The MAX17048 measures cell voltage and estimates SOC, but does not establish charging state or USB input. Hardware switch/rail behavior is in [hardware.md](hardware.md). FAQ software modem power mentions GPIO33 or GPIO22 without a V2-specific mapping; do not treat that as a verified V2 output. The GPIO21 modem power enable the logger drives high from v2.17 rests on the circuit audit recorded in [hardware.md](hardware.md#gnss-logger-v217-owner-approved-2026-10-27).
 
 ## Module plan and unknowns
 

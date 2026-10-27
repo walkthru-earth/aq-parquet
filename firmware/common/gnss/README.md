@@ -27,17 +27,26 @@ Board-neutral GNSS support in two ESP-IDF components.
 | `moving` | no | Four nulls |
 
 A reply without a fix clears the stored fix at once. A silent receiver keeps
-it until it is no longer fresh. Anything that does not parse counts as no fix.
+it until it is no longer fresh. Polls are about 12 s apart, so one silent poll
+already ages the fix past 15 s and rows about 15 to 22 s after the last fix
+are null. Anything that does not parse counts as no fix.
 
 ## SIMCom parser
 
 The no-fix reply seen on SIM7670G firmware V1.9.05 is `+CGNSSINFO: ,,,,,,,,`
 and the manual shows 18 empty fields. Both mean no fix. A fixed line is
-matched by its latitude, N or S, longitude, E or W run (`ddmm.mmmmmm` and
-`dddmm.mmmmmm`), so a firmware that adds or drops leading fields still parses.
-The fix mode must be 2 or 3 when the line carries one. Null island, latitude
-over 90 and longitude over 180 are rejected. The fixed layout is taken from the
-manual and is unverified on V1.9.05 until a dated bench record shows one.
+matched by its latitude, N or S, longitude, E or W run, so a firmware that
+adds or drops leading fields still parses. The SIM767XX manual V1.01
+contradicts itself. Its Defined Values give decimal degrees (`dd.ddddd`,
+`ddd.ddddd`) and its example line, copied from SIM7600, gives degrees and
+minutes (`ddmm.mmmmmm`, `dddmm.mmmmmm`). The parser takes both and tells them
+apart by the integer digit count. Latitude with 1 or 2 digits and longitude
+with 1 to 3 are decimal degrees. Latitude with exactly 4 and longitude with
+exactly 5 are degrees and minutes, minutes below 60. Any other count is
+malformed, so an unexpected shape never becomes a wrong cell. The fix mode
+must be 2 or 3 when the line carries one. Null island, latitude over 90 and
+longitude over 180 are rejected. Both fixed forms are unverified on V1.9.05
+until a dated bench record shows one.
 
 ## Reader task
 

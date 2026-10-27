@@ -137,9 +137,10 @@ Existing archives are immutable.
 | `moving` | yes | The GNSS cell coarsened to the row's `location.resolution`, source 2 |
 | `moving` | no | Four nulls, `location_source` null too. Never the configured cell and never an older fix |
 
-A fix is fresh for 15 seconds after the reply was read. A receiver that stops
-answering keeps the cell through one missed 10 second poll, and a reply with
-no fix clears it at once. A moving Thing without a GNSS hook, CoreS3 today,
+A fix is fresh for 15 seconds after the reply was read. Polls are about 12
+seconds apart (a 10 second delay plus up to 2 seconds for the reply), so one
+silent poll already ages the fix past 15 seconds and rows about 15 to 22
+seconds after the last fix are null. A reply with no fix clears it at once. A moving Thing without a GNSS hook, CoreS3 today,
 writes nulls on every row.
 
 Boards that carry a receiver opt in through `oslogger::Hooks::gnss_fix` and

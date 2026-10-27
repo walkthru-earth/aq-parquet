@@ -58,11 +58,28 @@ void parser() {
                    "44.1,0.0,0");
   assert(fix.mode == 0 && fix.satellites == -1);
   assert(std::abs(fix.latitude - (31 + 13.343286 / 60)) < 1e-9);
-  fix = reading_of("+CGNSSINFO: 3,3002.0,N,3114.0,E");
+  fix = reading_of("+CGNSSINFO: 3,3002.0,N,03114.0,E");
   assert(fix.mode == 3 && std::abs(fix.longitude - (31 + 14.0 / 60)) < 1e-9);
   // Exactly on the limits.
   fix = reading_of("+CGNSSINFO: 2,,,,,9000.0,N,18000.0,W");
   assert(fix.latitude == 90 && fix.longitude == -180);
+
+  // Manual V1.01 Defined Values form, plain decimal degrees (dd.ddddd and
+  // ddd.ddddd). Cairo must stay Cairo, never be read as ddmm.
+  fix = reading_of("+CGNSSINFO: 3,13,14,,,30.0444190,N,31.2357120,E,271026,"
+                   "101500.0,10.0,0.0,0.0,1.0,1.0,1.0,9");
+  assert(fix.mode == 3 && fix.satellites == 27);
+  assert(std::abs(fix.latitude - 30.044419) < 1e-9);
+  assert(std::abs(fix.longitude - 31.235712) < 1e-9);
+  // Southern and western decimal, one degree digit each.
+  fix = reading_of("+CGNSSINFO: 3,13,14,,,5.123456,S,7.654321,W");
+  assert(std::abs(fix.latitude + 5.123456) < 1e-9);
+  assert(std::abs(fix.longitude + 7.654321) < 1e-9);
+  // Three degree digit decimal longitude and the decimal limits.
+  fix = reading_of("+CGNSSINFO: 2,,,,,31.5,N,121.25,E");
+  assert(fix.latitude == 31.5 && fix.longitude == 121.25);
+  fix = reading_of("+CGNSSINFO: 2,,,,,90.0,S,180.0,E");
+  assert(fix.latitude == -90 && fix.longitude == 180);
 
   // Not a CGNSSINFO reply.
   for (std::string_view line :
@@ -87,6 +104,11 @@ void parser() {
            // Too many integer digits, a ddmm with 5 or dddmm with 6.
            "+CGNSSINFO: 2,,,,,31130.0,N,12121.0,E",
            "+CGNSSINFO: 2,,,,,3113.0,N,121210.0,E",
+           // Neither decimal degrees nor ddmm, fail closed. A 3 digit
+           // latitude and a 4 digit longitude.
+           "+CGNSSINFO: 2,,,,,311.5,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,3114.0,E",
+           "+CGNSSINFO: 3,3002.0,N,3114.0,E",
            // Fraction longer than ten digits.
            "+CGNSSINFO: 2,,,,,3113.12345678901,N,12121.0,E",
            // More than 24 fields.
@@ -101,6 +123,14 @@ void parser() {
            "+CGNSSINFO: 2,,,,,3113.0,N,18100.0,E",
            "+CGNSSINFO: 2,,,,,3113.0,N,18000.5,E",
            "+CGNSSINFO: 2,,,,,3113.0,N,12199.0,E",
+           // Minutes of 60 or more in ddmm, latitude and longitude.
+           "+CGNSSINFO: 2,,,,,3060.000001,N,12121.0,E",
+           "+CGNSSINFO: 2,,,,,3113.0,N,03175.5,E",
+           // Decimal degrees past the limits.
+           "+CGNSSINFO: 2,,,,,91.0,N,31.0,E",
+           "+CGNSSINFO: 2,,,,,90.000001,N,31.0,E",
+           "+CGNSSINFO: 2,,,,,30.0,N,181.0,E",
+           "+CGNSSINFO: 2,,,,,30.0,N,180.5,W",
        })
     assert(error_of(line) == ParseError::OutOfRange);
   // Zeros before a first fix are no fix, not Null Island.

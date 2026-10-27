@@ -212,6 +212,8 @@ std::expected<void, StartError> start(const ReaderConfig &config) {
       config.uart_port >= SOC_UART_NUM || config.tx_pin < 0 ||
       config.rx_pin < 0 || config.baud <= 0 || config.poll_period_ms == 0)
     return std::unexpected(StartError::InvalidConfig);
+  // Claim the reader first so two concurrent calls cannot both install the
+  // driver, and release the claim on any failure so a later call can retry.
   if (started.exchange(true))
     return std::unexpected(StartError::AlreadyStarted);
   settings = config;
@@ -229,12 +231,17 @@ std::expected<void, StartError> start(const ReaderConfig &config) {
   if (uart_param_config(port(), &uart) != ESP_OK ||
       uart_set_pin(port(), config.tx_pin, config.rx_pin, UART_PIN_NO_CHANGE,
                    UART_PIN_NO_CHANGE) != ESP_OK ||
-      uart_driver_install(port(), 512, 0, 0, nullptr, 0) != ESP_OK)
+      uart_driver_install(port(), 512, 0, 0, nullptr, 0) != ESP_OK) {
+    started = false;
     return std::unexpected(StartError::Uart);
+  }
   if (xTaskCreatePinnedToCore(reader_task, "os-gnss", config.reader_stack_bytes,
                               nullptr, config.priority, nullptr,
-                              config.core) != pdPASS)
+                              config.core) != pdPASS) {
+    uart_driver_delete(port());
+    started = false;
     return std::unexpected(StartError::Task);
+  }
   return {};
 }
 

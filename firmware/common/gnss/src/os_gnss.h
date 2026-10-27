@@ -29,7 +29,7 @@ struct Reading {
   double latitude = 0;          // degrees, north positive
   double longitude = 0;         // degrees, east positive
   std::uint8_t mode = 0;        // 2 for 2D, 3 for 3D, 0 when the line has none
-  std::int16_t satellites = -1; // sum of the per system counts, -1 unknown
+  std::int16_t satellites = -1; // per system visible counts summed, -1 unknown
 };
 
 // What the logger may keep. cell is already at most the owner resolution.
@@ -57,10 +57,13 @@ public:
   parse_fix(std::string_view line) const = 0;
 };
 
-// SIMCom A7670 and SIM7670 AT dialect, AT+CGNSSPWR and AT+CGNSSINFO, per the
-// SIM767XX AT Command Manual V1.01. The fix layout is matched by its
-// latitude, N or S, longitude, E or W run, so a firmware that adds or drops
-// leading fields still parses. Only a no-fix reply is confirmed on the bench.
+// SIMCom A7670 and SIM7670 AT dialect, AT+CGNSSPWR and AT+CGNSSINFO. The
+// SIM767XX AT Command Manual V1.01 gives decimal degrees in its Defined
+// Values and degrees and minutes in its example, so both are accepted and
+// told apart by the integer digit count, failing closed otherwise. The fix
+// layout is matched by its latitude, N or S, longitude, E or W run, so a
+// firmware that adds or drops leading fields still parses. Only a no-fix
+// reply is confirmed on the bench, both fixed forms are unverified.
 class SimcomDialect final : public Dialect {
 public:
   std::string_view power_query() const override { return "AT+CGNSSPWR?"; }
@@ -75,8 +78,10 @@ public:
 // Shared instance, safe to use from any task.
 const Dialect &simcom_dialect();
 
-// A fix older than this never labels a row. Two missed 10 s polls make a
-// moving Thing write location nulls instead of a stale cell.
+// A fix older than this never labels a row. The reader polls about every
+// 12 s (10 s delay plus up to 2 s for the reply), so one silent poll already
+// takes the fix past this age and rows about 15 to 22 s after the last fix
+// get location nulls instead of a stale cell.
 constexpr std::int64_t kFixMaxAgeUs = 15'000'000;
 // A row timestamped just before the reply was stored still counts.
 constexpr std::int64_t kFixClockSkewUs = 1'000'000;
