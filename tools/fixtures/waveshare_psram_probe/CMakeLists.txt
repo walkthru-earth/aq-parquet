@@ -7,4 +7,4 @@ set(SDKCONFIG_DEFAULTS "../../../tools/idf-sdkconfig.defaults;sdkconfig.defaults
 include("${CMAKE_CURRENT_LIST_DIR}/../../../firmware/cmake/os_cxx_standard.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/../../../firmware/cmake/os_source_paths.cmake")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(aq_psram_probe)
+project(os_psram_probe)

@@ -153,6 +153,8 @@ mDNS service, LAN handshake, GATT base UUID, NVS namespaces, `AQ_` Kconfig
 symbols or `AQ <WORD>` serial tags. The dated bench records, the migration log
 and the #93 audit are history and stay exempt. No `sdkconfig.rename` shim maps
 the old Kconfig names, so a saved sdkconfig value under an old name is dropped.
+The old board component names are retired too (#111). The board components
+are `os_cores3`, `os_waveshare_logger` and `os_waveshare_diagnostic`.
 `retired-names-test` covers the rule.
 
 ### Source paths

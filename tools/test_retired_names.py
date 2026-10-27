@@ -60,6 +60,10 @@ FIRES = [
     "rm -f build/" + "aq" + "-build-target.txt",
     "~/.cache/m5stack-" + "aq" + "-parquet/toolchains/esp-idf-v6.1",
     "name = \"" + "aq" + "-parquet\"",
+    "set(COMPONENTS " + "aq" + "_cores3)",
+    "[manifest](components/" + "aq" + "_waveshare_logger/idf_component.yml)",
+    "components/" + "aq" + "_waveshare_diagnostic/CMakeLists.txt",
+    "set(COMPONENTS " + "aq" + "_waveshare_${OS_VARIANT})",
 ]
 QUIET = [
     "mdns_service_add(nullptr, \"_ossync\", \"_tcp\", 47390);",
@@ -87,7 +91,10 @@ QUIET = [
     "include(../cmake/os_nimble_patches.cmake)",
     "-ffile-prefix-map=${OS_SOURCE_ROOT}=.",
     "set(stage \"${CMAKE_BINARY_DIR}/os_nimble_patch\")",
-    "components/aq_cores3 and aq_logger_live.cpp keep their names for now.",
+    "aq_logger_live.cpp keeps its name for now.",
+    "set(COMPONENTS os_cores3)",
+    "set(COMPONENTS os_waveshare_${OS_VARIANT})",
+    "artifacts/reflash-20261011/" + "aq" + "_waveshare.elf",
 ]
 
 

@@ -42,8 +42,8 @@ pixi run waveshare-contract-test --sanitize
 ```
 
 The shared SDK pin is in `../../tools/idf-dependencies.lock`. Variant manifests
-[`components/aq_waveshare_logger/idf_component.yml`](components/aq_waveshare_logger/idf_component.yml)
-and [`components/aq_waveshare_diagnostic/idf_component.yml`](components/aq_waveshare_diagnostic/idf_component.yml)
+[`components/os_waveshare_logger/idf_component.yml`](components/os_waveshare_logger/idf_component.yml)
+and [`components/os_waveshare_diagnostic/idf_component.yml`](components/os_waveshare_diagnostic/idf_component.yml)
 with their CMake files select the required native components. Defaults select
 **16 MB QIO flash**, **8 MB OPI PSRAM** for the logger, **no PSRAM** for the
 diagnostic, and the **UART0 console at 115200 through CH343**. USB CDC is not

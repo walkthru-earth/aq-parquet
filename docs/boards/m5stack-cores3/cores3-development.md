@@ -12,7 +12,7 @@ and [shared development guide](../../shared/development.md).
 | Layer | Pin observed 2026-10-09 | Integration |
 | --- | --- | --- |
 | ESP-IDF | [6.1](https://docs.espressif.com/projects/esp-idf/en/v6.1/esp32s3/get-started/index.html) | Native ESP32-S3 C/C++, Kconfig, FreeRTOS, drivers, NimBLE, Wi-Fi/netif/SNTP |
-| M5Unified | [0.2.26](https://github.com/m5stack/M5Unified/releases/tag/0.2.26) | Native component owns board services and power; [manifest](../../../firmware/esp-idf-cores3/components/aq_cores3/idf_component.yml) |
+| M5Unified | [0.2.26](https://github.com/m5stack/M5Unified/releases/tag/0.2.26) | Native component owns board services and power; [manifest](../../../firmware/esp-idf-cores3/components/os_cores3/idf_component.yml) |
 | M5GFX | [0.2.33](https://github.com/m5stack/M5GFX/releases/tag/0.2.33) | Native display and SPI2 bus owner; SD borrows that controller |
 | mDNS | [1.14.0](https://components.espressif.com/components/espressif/mdns/versions/1.14.0) | Managed component used by shared LAN transport |
 | LZ4 | [1.10.0](https://github.com/lz4/lz4/releases/tag/v1.10.0) | Vendored bytes and license remain hash-checked |

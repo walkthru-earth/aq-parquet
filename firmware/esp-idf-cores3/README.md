@@ -42,7 +42,7 @@ pixi run telemetry-contract-test --sanitize
 
 The shared SDK source/tools pin is in `../../tools/idf-dependencies.lock`;
 managed board dependencies are in
-[`components/aq_cores3/idf_component.yml`](components/aq_cores3/idf_component.yml). Board defaults
+[`components/os_cores3/idf_component.yml`](components/os_cores3/idf_component.yml). Board defaults
 select **16 MB QIO flash**, **8 MB Quad PSRAM**, the **USB Serial/JTAG console**
 and the existing custom partition offsets. Build wrappers verify the dictionary,
 vendor hashes and generated target configuration. Ephemeral output is in
