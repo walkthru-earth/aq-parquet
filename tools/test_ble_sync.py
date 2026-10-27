@@ -1034,13 +1034,13 @@ async def run_ota():
         raise AssertionError("skewed state must fail")
     assert fake.requests[-1] == ble.OP_OTA_CANCEL and fake.phase == 0
 
-    fake = OtaFake(end_error=b"sha256")
+    fake = OtaFake(end_error=b"digest")
     session = ble.Session(fake)
     await session.start()
     try:
         await session.ota_push(image)
     except ble.ProtocolError as error:
-        assert "detail='sha256'" in str(error), error
+        assert "detail='digest'" in str(error), error
     else:
         raise AssertionError("digest mismatch must fail")
     assert fake.requests[-1] == ble.OP_OTA_END
