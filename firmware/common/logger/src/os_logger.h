@@ -79,6 +79,12 @@ struct Config {
   // Required footer template.href (#88), where the template whose SHA-256 is
   // descriptor_sha256 is published. One board constant, kTemplateHref.
   const char *template_href = nullptr;
+  // Boot self test (#40). A row field that must hold a valid value at least
+  // once before the deadline. nullptr skips the sensor check. The SD card
+  // must be ready and the BLE stack started by the same deadline, then the
+  // logger prints one SELFTEST line and marks the running app valid.
+  const char *self_test_field = nullptr;
+  std::uint32_t self_test_deadline_ms = 180000;
 };
 // Shared default for each board's sampling and UI task: above the idle
 // housekeeping, below the storage worker (3), the LAN task (4) and the BLE

@@ -3,7 +3,7 @@
 Bench tool: exercises the same contract the phone app implements, from a
 laptop, so the firmware can be verified without a handset. Read-only towards
 the device except for the explicitly named write operations (`time`, `flush`,
-`set`, `reboot`).
+`set`, `reboot`, `ota`, `ota-cancel`).
 
   pixi run ble-sync scan [--seconds 8]
   pixi run ble-sync info  [--name OS-6b40]
@@ -23,6 +23,8 @@ the device except for the explicitly named write operations (`time`, `flush`,
   pixi run ble-sync descriptor --out artifacts/template.json   # GET_DESCRIPTOR, hash checked
   pixi run ble-sync abort                      # ABORT whatever the device is running
   pixi run ble-sync reboot                     # explicit
+  pixi run ble-sync --lan HOST --token-file F ota build/app.bin [--reboot]   # LAN OTA, explicit
+  pixi run ble-sync --lan HOST --token-file F ota-cancel        # drop a staged or partial image
 
 Every command also runs over the LAN transport once a token is held:
 
@@ -61,6 +63,8 @@ OP_GET_DIAG, OP_ABORT = 0x0E, 0x0F
 # F_FILE share the value 0x10.
 OP_LIST_SINCE = 0x10
 OP_GET_DESCRIPTOR = 0x11
+# LAN OTA (#40). LAN only, BLE answers ERROR 13.
+OP_OTA_BEGIN, OP_OTA_WRITE, OP_OTA_END, OP_OTA_CANCEL = 0x12, 0x13, 0x14, 0x15
 F_FILE, F_LIST_END = 0x10, 0x11
 F_OPENED, F_CHUNK, F_READ_END, F_CLOSED = 0x20, 0x21, 0x22, 0x23
 F_TIME_SET, F_FLUSHED, F_ERROR = 0x30, 0x31, 0x7F
@@ -68,11 +72,17 @@ F_CONFIG, F_WIFI_AP, F_WIFI_SCAN_END, F_REBOOTING = 0x40, 0x41, 0x42, 0x43
 F_LOG, F_LOG_END, F_TOKEN, F_HELLO, F_STATUS, F_LIVE = 0x44, 0x45, 0x46, 0x47, 0x48, 0x49
 F_BYE, F_DIAG, F_ABORTED, F_LIST_SINCE_END = 0x4B, 0x4C, 0x4D, 0x4E
 F_DESCRIPTOR_CHUNK = 0x4F
+F_OTA_STATE = 0x50
+OTA_PHASES = {0: "idle", 1: "receiving", 2: "ready"}
+# esp_image_header_t, segment header and esp_app_desc_t offsets, as in
+# firmware/common/src/ota_transfer.h.
+OTA_IMAGE_MAGIC, OTA_DESC_MAGIC = 0xE9, 0xABCD5432
+OTA_HEADER_BYTES = 112
 ERRORS = {1: "malformed", 2: "invalid-name", 3: "not-finalized", 4: "open-failed",
           5: "bad-handle", 6: "range", 7: "busy", 8: "storage-unavailable",
           9: "invalid-epoch", 10: "nothing-to-flush", 11: "unknown-op",
           12: "invalid-config", 13: "not-on-this-link", 14: "auth-failed", 15: "wifi-unavailable",
-          16: "aborted", 17: "no-descriptor"}
+          16: "aborted", 17: "no-descriptor", 18: "image-rejected"}
 DESCRIPTOR_HEADER = 9  # type, total u32, offset u32
 DESCRIPTOR_TRIES = 3   # attempts per offset before giving up
 # What a person should do about an ERROR. Code 14 is never a busy device, so
@@ -603,6 +613,59 @@ class Session:
             else:
                 raise ProtocolError(f"unexpected frame 0x{data[0]:02x} during ABORT")
 
+    async def _ota_state(self, timeout=None) -> dict:
+        data = await self.frame(timeout)
+        if data[0] != F_OTA_STATE:
+            raise ProtocolError(f"expected OTA_STATE, got 0x{data[0]:02x}")
+        return decode_ota_state(data)
+
+    async def ota_push(self, image: bytes, progress=None) -> dict:
+        """OTA_BEGIN, OTA_WRITE in order, OTA_END. The device never reboots here.
+
+        Every request waits for its STATE frame, so at most one chunk is in
+        flight. A device ERROR has already aborted the upload on the device.
+        """
+        project = check_ota_image(image)
+        digest = hashlib.sha256(image).digest()
+        await self.request(bytes([OP_OTA_BEGIN]) + struct.pack("<I", len(image)) + digest)
+        state = await self._ota_state()
+        if state["phase"] != "receiving" or state["next"] != 0 or state["size"] != len(image):
+            raise ProtocolError(f"unexpected OTA_BEGIN state {state}")
+        chunk = state["max_chunk"]
+        if chunk <= 0:
+            raise ProtocolError("device offered no chunk size")
+        offset = 0
+        try:
+            while offset < len(image):
+                part = image[offset:offset + chunk]
+                await self.request(bytes([OP_OTA_WRITE]) + struct.pack("<I", offset) + part)
+                state = await self._ota_state()
+                if state["next"] != offset + len(part):
+                    raise ProtocolError(f"device at {state['next']}, expected {offset + len(part)}")
+                offset = state["next"]
+                if progress:
+                    progress(offset, len(image))
+            await self.request(bytes([OP_OTA_END]))
+            # The device reads the whole image back for the SHA-256 and lets
+            # ESP-IDF verify it, several seconds for a 1.6 MB image.
+            state = await self._ota_state(timeout=120)
+        except ProtocolError as error:
+            if not str(error).startswith("device ERROR") and not isinstance(error, LinkClosedByDevice):
+                try:
+                    await self.ota_cancel()
+                except ProtocolError:
+                    pass
+            raise
+        if state["phase"] != "ready":
+            raise ProtocolError(f"unexpected OTA_END state {state}")
+        state["project"] = project
+        state["sha256"] = digest.hex()
+        return state
+
+    async def ota_cancel(self) -> dict:
+        await self.request(bytes([OP_OTA_CANCEL]))
+        return await self._ota_state()
+
     async def reboot(self) -> dict:
         await self.request(bytes([OP_REBOOT]))
         data = await self.frame(timeout=60)
@@ -803,6 +866,23 @@ def decode_diag(frame: bytes) -> dict:
     counts = list(struct.unpack_from("<17H", frame, 3))
     return {"boot_seq": boot_seq, "counts": counts,
             "events": [decode_event(frame[38 + 16 * i:54 + 16 * i]) for i in range(frame[37])]}
+
+
+def decode_ota_state(frame: bytes) -> dict:
+    if len(frame) != 16 or frame[0] != F_OTA_STATE:
+        raise ProtocolError(f"bad OTA_STATE frame of {len(frame)} bytes")
+    phase, nxt, size, slot, chunk = struct.unpack_from("<BIIIH", frame, 1)
+    return {"phase": OTA_PHASES.get(phase, f"unknown-{phase}"), "next": nxt, "size": size,
+            "slot_bytes": slot, "max_chunk": chunk}
+
+
+def check_ota_image(image: bytes) -> str:
+    """Local sanity check before any byte is sent. The device checks again."""
+    if len(image) < OTA_HEADER_BYTES or image[0] != OTA_IMAGE_MAGIC:
+        raise ProtocolError("not an ESP-IDF app image (.bin from the build directory)")
+    if struct.unpack_from("<I", image, 32)[0] != OTA_DESC_MAGIC:
+        raise ProtocolError("app description missing, use the app .bin, not the merged flash image")
+    return image[80:112].split(b"\0", 1)[0].decode("ascii", "replace")
 
 
 def decode_aborted(frame: bytes) -> dict:
@@ -1063,6 +1143,46 @@ async def cmd_abort(args):
         await client.disconnect()
 
 
+def lan_only(args, command: str) -> None:
+    if not getattr(args, "lan", None):
+        raise SystemExit(f"{command} runs over LAN only, pass --lan HOST and a token")
+
+
+async def cmd_ota(args):
+    lan_only(args, "ota")
+    image = args.image.read_bytes()
+    check_ota_image(image)
+    client, session = await connect(args)
+    try:
+        started = time.monotonic()
+        last = [0.0]
+
+        def progress(done, total):
+            now = time.monotonic()
+            if now - last[0] >= 5 or done == total:
+                last[0] = now
+                print(f"OTA PROGRESS bytes={done}/{total}", flush=True)
+
+        result = await session.ota_push(image, progress)
+        result["seconds"] = round(time.monotonic() - started, 1)
+        print(json.dumps({"ota": result}), flush=True)
+        if args.reboot:
+            print(json.dumps({"rebooting": await session.reboot()}))
+        else:
+            print("OTA staged. Run `reboot` to boot it, or `ota-cancel` to keep the running app.")
+    finally:
+        await client.disconnect()
+
+
+async def cmd_ota_cancel(args):
+    lan_only(args, "ota-cancel")
+    client, session = await connect(args)
+    try:
+        print(json.dumps({"ota": await session.ota_cancel()}))
+    finally:
+        await client.disconnect()
+
+
 async def cmd_reboot(args):
     client, session = await connect(args)
     try:
@@ -1127,6 +1247,11 @@ def main():
     descriptor.set_defaults(run=cmd_descriptor)
     sub.add_parser("abort", help="ABORT the op the device is running, if any").set_defaults(run=cmd_abort)
     sub.add_parser("reboot", help="reboot the device after it finalizes its RAM batch (explicit)").set_defaults(run=cmd_reboot)
+    ota = sub.add_parser("ota", help="LAN OTA: stage an app .bin in the inactive slot (explicit write)")
+    ota.add_argument("image", type=Path, help="the app .bin of a matching board build")
+    ota.add_argument("--reboot", action="store_true", help="send REBOOT once the image is staged")
+    ota.set_defaults(run=cmd_ota)
+    sub.add_parser("ota-cancel", help="LAN OTA: drop a partial or staged image").set_defaults(run=cmd_ota_cancel)
     args = parser.parse_args()
     if getattr(args, "out", None) is not None and "build" in args.out.parts:
         parser.error("use artifacts/, not a build directory that firmware tools may clean")

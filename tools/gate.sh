@@ -37,6 +37,10 @@ tasks=(
   "size-survey-test"
   "size-report-test"
   "ota-slot-check-test"
+  # LAN OTA rules, boot self test and core dump readback (#40)
+  "ota-transfer-test"
+  "boot-self-test-test"
+  "coredump-read-test"
   "compile-dialect-test"
   "repro-paths-test"
   "stack-budget-test"

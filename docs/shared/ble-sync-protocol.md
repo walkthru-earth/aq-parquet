@@ -269,6 +269,10 @@ by direction.
 | `0x0F` | `ABORT` | empty (any body is `ERROR` 1) | `ABORTED` with the op it stopped, `op=0` when idle |
 | `0x10` | `LIST_SINCE` | cursor, 32 bytes. See [LIST_SINCE](#list_since) | `FILE` × n, then `LIST_SINCE_END`, or `ERROR`. Older firmware answers `ERROR` 11 |
 | `0x11` | `GET_DESCRIPTOR` | `offset` u32, `length` u16. See [GET_DESCRIPTOR](#get_descriptor) | one `DESCRIPTOR_CHUNK`, or `ERROR` 1, 6, 7 or 17 |
+| `0x12` | `OTA_BEGIN` | `size` u32, `sha256` 32 bytes. **LAN only**. See [LAN OTA](#lan-ota) | `OTA_STATE` or `ERROR` |
+| `0x13` | `OTA_WRITE` | `offset` u32, then 1 to 507 image bytes. **LAN only** | `OTA_STATE` or `ERROR` |
+| `0x14` | `OTA_END` | empty. **LAN only** | `OTA_STATE` with phase `ready`, or `ERROR` |
+| `0x15` | `OTA_CANCEL` | empty. **LAN only** | `OTA_STATE` with phase `idle`, or `ERROR` |
 
 | Frame | Type | Body |
 | --- | --- | --- |
@@ -295,6 +299,7 @@ by direction.
 | `ABORTED` | `0x4D` | `op` u8, the opcode that was stopped, 0 when nothing was running |
 | `LIST_SINCE_END` | `0x4E` | the 14 `LIST_END` body bytes, `flags` u8, then the next cursor (32 bytes). 48 bytes with the type. See [LIST_SINCE](#list_since) |
 | `DESCRIPTOR_CHUNK` | `0x4F` | `total` u32, `offset` u32, then template bytes. Only ever a reply to `GET_DESCRIPTOR`, never sent unsolicited. See [GET_DESCRIPTOR](#get_descriptor) |
+| `OTA_STATE` | `0x50` | `phase` u8 (0 idle, 1 receiving, 2 ready), `next` u32, `size` u32, `slot_bytes` u32, `max_chunk` u16. 16 bytes with the type. See [LAN OTA](#lan-ota) |
 | `CONFIG_CHUNK` | `0x4A` | BLE only: `flags` u8 (same as CONFIG), `total_json_bytes` u16 LE, `offset` u16 LE, then a raw UTF-8 JSON slice. The header is 6 bytes; slices are at most 128 bytes and frames never exceed negotiated `payload_max`. A UTF-8 character may cross frames, so assemble bytes before decoding JSON. Require contiguous offsets from zero until `offset + slice_bytes = total_json_bytes`, with identical flags and total length on each chunk. There is no terminal frame; abandon an incomplete answer and make a fresh GET_CONFIG request |
 | `ERROR` | `0x7F` | `op` u8, `code` u8, `detail` utf8 |
 
@@ -302,7 +307,7 @@ The status JSON remains bounded to 480 bytes. The actual formatter retains every
 
 `ERROR.op` echoes the **first byte of the request** as received, even when that byte is not a known opcode (code 11); an empty write is reported as `op=0x01 code=1 detail="empty"`. `OPENED.name` is the requested name in full; the device does not shorten it (names are ≤ 399 bytes, so on an MTU-517 link every `OPENED` fits one PDU, another reason the phone must negotiate 517). A `FILE` entry whose name would not fit `payload_max − 5` aborts LIST with error 7 (`detail="mtu"`) and is logged on serial as `BLE LIST SKIP`. An archive exceeding the u32 count capacity aborts LIST with error 7 (`detail="count"`). Filesystem enumeration failures (including an SD read failure after earlier entries) abort LIST with error 8. Neither case produces `LIST_END`. Clients commit a replacement listing only after a valid `LIST_END`; preceding `FILE` entries alone are an incomplete snapshot. The device clears its `new_files` hint only after a complete scan and accepted `LIST_END` delivery. `READ_END.next_offset` always equals `offset + bytes actually delivered in CHUNK frames`; a phone that received fewer bytes has lost a notification and must treat the **window** as failed, never trust `next_offset` over its own count, and a failed window is retried with a new `READ` from the phone's own offset, not an aborted sync. Measured 2026-09-17: an Android phone's Bluetooth stack dropped runs of 16 to 18 consecutive notifications at the start of a window while the board's Wi-Fi was active (the same windows reached a Mac intact), so clients should keep reading until that request's `READ_END` before re-issuing, and are advised to use ≤ 4 KiB windows over BLE (16 KiB over LAN).
 
-Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full on a secure link, transfer in progress, another LIST running, a LIST ended by a storage remount, or a LIST or READ stopped early so the device can close its open file on a critical battery, retry later) · 8 storage unavailable · 9 invalid epoch (outside 2020 to 2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (over LAN, a bad handshake token. Over BLE it is defense in depth and an unpaired client normally never sees it. NimBLE refuses an unencrypted Control write with ATT error 0x05, 0x0C or 0x0F before the firmware runs, and that error is what makes the phone pair. Its CCCD writes have no security flag, so it can subscribe to `response`, but nothing is sent there on an unpaired link except a possible ERROR 14. In this firmware the ATT check applies the same rule as the firmware check (encryption in every mode, plus authentication and a 16 byte Secure Connections key in the passkey modes), so ERROR 14 with `detail="auth"` is only a guarded fallback if the two ever disagree. Then the Control write is acknowledged, not run, and answered with that ERROR. Neither answer is busy, never retry it, pair again) · 15 Wi-Fi unavailable · 16 aborted (proto 3) · 17 no descriptor (`GET_DESCRIPTOR` on an image built without a template).
+Error codes: 1 malformed request · 2 invalid name · 3 not a finalized Parquet file · 4 open failed · 5 bad handle · 6 range outside file · 7 busy (command queue full on a secure link, transfer in progress, another LIST running, a LIST ended by a storage remount, or a LIST or READ stopped early so the device can close its open file on a critical battery, retry later) · 8 storage unavailable · 9 invalid epoch (outside 2020 to 2100, or invalid microsecond fraction) · 10 nothing to flush · 11 unknown opcode · 12 invalid config (`detail` = key) · 13 not allowed on this link · 14 authentication failed (over LAN, a bad handshake token. Over BLE it is defense in depth and an unpaired client normally never sees it. NimBLE refuses an unencrypted Control write with ATT error 0x05, 0x0C or 0x0F before the firmware runs, and that error is what makes the phone pair. Its CCCD writes have no security flag, so it can subscribe to `response`, but nothing is sent there on an unpaired link except a possible ERROR 14. In this firmware the ATT check applies the same rule as the firmware check (encryption in every mode, plus authentication and a 16 byte Secure Connections key in the passkey modes), so ERROR 14 with `detail="auth"` is only a guarded fallback if the two ever disagree. Then the Control write is acknowledged, not run, and answered with that ERROR. Neither answer is busy, never retry it, pair again) · 15 Wi-Fi unavailable · 16 aborted (proto 3) · 17 no descriptor (`GET_DESCRIPTOR` on an image built without a template) · 18 image rejected (an `OTA_WRITE` or `OTA_END` whose image is for another chip or project, has a broken header, fails its SHA-256 or fails the ESP-IDF image check. See [LAN OTA](#lan-ota)).
 
 Rules:
 
@@ -806,6 +811,98 @@ sequenceDiagram
 The phone should prefer LAN when the device is discovered on the current network and a token is held, fall back to BLE otherwise, and treat both as the same device: archive identity is still `(thing, name)`. Three LAN sessions and one BLE session may exist at the same time. Each has **one independent logical open file**: `OPEN` replaces only that session's handle, and `READ`/`CLOSE` cannot use a handle from another peer or connection generation (`ERROR` 5). The sole storage worker processes bounded requests serially, while phones can maintain concurrent syncs. Logical handles retain an immutable path, size and CRC. Each open handle also keeps one read-only descriptor from `OPEN` until `CLOSE`, a replacing `OPEN`, an archive erase, a storage remount or the first request on any link after that peer's connection generation changes. A disconnect alone does not release it, so on an idle device a departed peer's descriptor stays open until the next request. `READ` windows seek within it instead of reopening the file. Four handles at most (one BLE, three LAN), and the card mount reserves a descriptor for each (`firmware/common/src/archive_files.h`). After a remount the next `READ` reopens the path and checks that it still holds the same size and CRC. A proven change answers `ERROR` 5, and an unmounted card or an I/O error answers `READ_END` status 4 and keeps the handle. Queued requests and replies from a disconnected generation are discarded before a slot is reused.
 
 Ownership rules are unchanged: the LAN task never touches the SD card or the display. It parses the envelope, checks the token, and pushes the request body onto the same command queue the BLE and serial paths use; the storage worker answers through the link that asked.
+
+### LAN OTA
+
+`OTA_BEGIN`, `OTA_WRITE`, `OTA_END` and `OTA_CANCEL` (`0x12` to `0x15`) write
+a new app image into the inactive OTA slot (#40). They run over an
+authenticated LAN session only. Over BLE each answers `ERROR` 13
+`detail="lan-only"`, because 1.6 MB over BLE would hold the storage worker
+for many minutes. The LAN token is the only authentication. Images are not
+signed yet, see [security hardening](security-hardening.md#ota).
+
+The rules, all checked on the device.
+
+- `OTA_BEGIN` declares the image size and its SHA-256. The size must be at
+  least 112 bytes and at most the inactive slot, `slot_bytes` in the answer
+  (6 MiB on both boards today).
+- `OTA_WRITE` chunks arrive in order, with no gap and no overlap, and never
+  past the declared size. `offset` must equal `next` from the last
+  `OTA_STATE`. A chunk is at most `max_chunk` bytes (507), so a request is at
+  most 512 bytes.
+- The first chunk must hold the first 112 bytes of the image. The device
+  checks the image magic `0xE9`, the app description magic `0xABCD5432`, the
+  chip id (`0x0009`, ESP32-S3) and the exact project name against the running
+  app before any byte reaches flash. The project names are
+  `opensensor_cores3` and `opensensor_waveshare`. The Waveshare logger and
+  diagnostic images share a name, so a diagnostic image can be pushed to a
+  logger. The diagnostic has no LAN, so the board then needs USB to get back.
+- `OTA_END` needs every declared byte. ESP-IDF checks the image
+  (`esp_ota_end`), then the device reads the slot back and compares its
+  SHA-256 with the declared one, then it sets the boot partition. Only then
+  does it answer phase `ready`. Allow 120 s for this answer. A repeated
+  `OTA_END` in phase `ready` answers the same `OTA_STATE` again and does
+  nothing else, so a phone that lost the answer may simply resend it.
+- The device never reboots on its own. A staged image boots on the next
+  `REBOOT` (`0x0B`) or power cycle. `OTA_CANCEL` in phase `ready` points the
+  boot partition back at the running app.
+- Any rule the owner breaks aborts the upload, frees the slot and returns to
+  `idle`. The phone starts again with `OTA_BEGIN`.
+- Nothing here touches NVS, the device settings or the SD archive.
+
+One upload at a time. The LAN session that sent `OTA_BEGIN` owns it. A
+request from any other session answers `ERROR` 7 `detail="ota-owner"` and
+leaves the upload running. When the owner session closes, or sends no OTA
+request for 30 s while receiving, the next OTA request from any session drops
+the partial upload first and logs `OTA ABORT reason=session-closed` or
+`reason=stalled`. The owner may send
+`OTA_BEGIN` again to restart. Any session may cancel a staged image.
+
+`OTA_STATE` (`0x50`) answers every successful request.
+
+| Offset | Field | Type |
+| --- | --- | --- |
+| 0 | type `0x50` | u8 |
+| 1 | `phase` | u8, 0 idle, 1 receiving, 2 ready |
+| 2 | `next` | u32, the next offset the device expects |
+| 6 | `size` | u32, the declared image size |
+| 10 | `slot_bytes` | u32, the size of the inactive slot |
+| 14 | `max_chunk` | u16, the largest `OTA_WRITE` data, 507 |
+
+Golden frame `50 01 04030201 0d0c0b0a 00006000 fb01` is phase receiving, next
+`0x01020304`, size `0x0A0B0C0D`, a 6 MiB slot and 507 byte chunks.
+
+| Case | Answer |
+| --- | --- |
+| Over BLE | `ERROR` 13 `detail="lan-only"` |
+| Body of the wrong length | `ERROR` 1 `detail="ota"`, aborts |
+| `OTA_WRITE`, `OTA_END` while idle | `ERROR` 5 `detail="ota-idle"` |
+| Another session while receiving | `ERROR` 7 `detail="ota-owner"` |
+| `OTA_BEGIN` or `OTA_WRITE` while ready | `ERROR` 7 `detail="reboot-pending"` |
+| Size below 112 or above the slot | `ERROR` 6 `detail="size"` |
+| Offset other than `next` | `ERROR` 6 `detail="offset"`, aborts |
+| Chunk past the declared size | `ERROR` 6 `detail="overrun"`, aborts |
+| `OTA_END` before every byte | `ERROR` 6 `detail="incomplete"`, aborts |
+| Bad image or description magic | `ERROR` 18 `detail="header"`, aborts |
+| Wrong chip | `ERROR` 18 `detail="chip"`, aborts |
+| Wrong project name | `ERROR` 18 `detail="project"`, aborts |
+| ESP-IDF image check failed | `ERROR` 18 `detail="verify"`, aborts |
+| SHA-256 mismatch | `ERROR` 18 `detail="digest"`, aborts |
+| No inactive slot | `ERROR` 8 `detail="no-slot"` |
+| Flash write or read back failed | `ERROR` 8 `detail="flash"`, aborts |
+| Setting the boot partition failed | `ERROR` 8 `detail="boot"`, aborts |
+
+Each phase change logs one line, `OTA BEGIN size= slot= slot_bytes=`,
+`OTA READY size= slot= sha256=match reboot=required`, `OTA CANCEL from=` or
+`OTA ERROR op= reason= next= size= active=`. Chunks are not logged.
+
+After the reboot the logger runs its boot self test. Once the SD card is
+ready, the PM2.5 column has held a valid value and BLE has started, it prints
+`SELFTEST result=healthy ...` and marks the running app valid in otadata. A
+check that has not passed within 180 s prints `result=unhealthy` and the app is
+not marked. Rollback is off in the bootloader today, so an unhealthy app still
+boots again. `pixi run ble-sync --lan <host> --token-file <file> ota <app.bin>
+[--reboot]` does the whole push from a host.
 
 ## Ownership on the device
 

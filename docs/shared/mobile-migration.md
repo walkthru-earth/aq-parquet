@@ -9,6 +9,31 @@ lives in [ble-sync-protocol.md](ble-sync-protocol.md). Files already on a phone
 or SD card are never rewritten by the firmware. After a matched reflash the
 owner wipes them and starts again.
 
+## LAN OTA requests and a boot self test (yharby/ota-software, issue #40)
+
+**No app update needed.** Sync, CONFIG, LIVE and the file list do not change.
+The `dict` and `desc` digests do not move. The app may add an update screen.
+
+**What changed.**
+
+- Four new LAN only requests, `OTA_BEGIN` `0x12`, `OTA_WRITE` `0x13`,
+  `OTA_END` `0x14` and `OTA_CANCEL` `0x15`, and a new frame `OTA_STATE`
+  `0x50`. See [LAN OTA](ble-sync-protocol.md#lan-ota). Over BLE they answer
+  `ERROR` 13 `detail="lan-only"`.
+- A new error code 18 `image rejected`, with the details `header`, `chip`,
+  `project`, `verify` and `digest`.
+- The device never reboots after `OTA_END`. The app sends `REBOOT` when the
+  owner agrees.
+- After boot the logger prints one `SELFTEST` line on serial and marks a
+  healthy app valid. Nothing new reaches BLE or LAN.
+
+**What the app must do.** Nothing, unless it adds OTA. An app that adds OTA
+sends `OTA_BEGIN` with the size and SHA-256 of the `.bin`, then chunks of at
+most `max_chunk` bytes at offset `next`, then `OTA_END` with a 120 s timeout,
+then `REBOOT`. On any error it starts again with `OTA_BEGIN`. It never pauses more than 30 s
+between chunks, or the device drops the upload. It shows the
+error detail to the owner and never retries a rejected image.
+
 ## BREAKING. Gauge validity tokens, pms_status 6, created_by and repo URLs (yharby/contract-bump, issues #28 #39 #111)
 
 **Needs app update.** Every board needs a matched reflash with the app build

@@ -326,6 +326,7 @@ async def run():
     await run_lan_snapshot_deadlines()
     await run_lan_bye()
     await run_descriptor()
+    await run_ota()
 
 
 def descriptor_offsets(client):
@@ -907,6 +908,155 @@ async def run_lan_bye():
         server.close()
         await server.wait_closed()
     print("PASS ble_sync LAN BYE: typed close with reason, no hang after BYE, reboot waits for BYE, EOF without BYE is unknown")
+
+
+# OTA_STATE golden from docs/shared/ble-sync-protocol.md, section LAN OTA.
+GOLDEN_OTA_STATE = bytes.fromhex("50" "01" "04030201" "0d0c0b0a" "00006000" "fb01")
+
+
+def ota_image(size=1300, project=b"opensensor_cores3"):
+    image = bytearray(size)
+    image[0] = 0xE9
+    struct.pack_into("<I", image, 32, 0xABCD5432)
+    image[80:80 + len(project)] = project
+    for i in range(112, size):
+        image[i] = i % 251
+    return bytes(image)
+
+
+class OtaFake:
+    """Scripted OTA device. Keeps next and size like opensensor::ota::Transfer."""
+
+    def __init__(self, max_chunk=507, reject_at=None, skew=False, end_error=None):
+        self.callback = None
+        self.max_chunk, self.reject_at, self.skew, self.end_error = max_chunk, reject_at, skew, end_error
+        self.phase, self.next, self.size, self.digest = 0, 0, 0, b""
+        self.received = bytearray()
+        self.requests = []
+
+    async def start_notify(self, _uuid, callback):
+        self.callback = callback
+
+    def state(self, nxt=None):
+        return struct.pack("<BBIIIH", ble.F_OTA_STATE, self.phase,
+                           self.next if nxt is None else nxt, self.size, 0x600000, self.max_chunk)
+
+    def error(self, op, code, detail):
+        self.phase, self.next, self.size = 0, 0, 0
+        return bytes([ble.F_ERROR, op, code]) + detail
+
+    async def write_gatt_char(self, _uuid, data, response=True):
+        data = bytes(data)
+        op = data[0]
+        self.requests.append(op)
+        if op == ble.OP_OTA_BEGIN:
+            (self.size,) = struct.unpack_from("<I", data, 1)
+            self.digest, self.phase, self.next = data[5:37], 1, 0
+            self.received.clear()
+            reply = self.state()
+        elif op == ble.OP_OTA_WRITE:
+            (offset,) = struct.unpack_from("<I", data, 1)
+            chunk = data[5:]
+            assert len(data) <= 512 and len(chunk) <= self.max_chunk
+            if offset != self.next:
+                reply = self.error(op, 6, b"offset")
+            elif self.reject_at is not None and offset >= self.reject_at:
+                reply = self.error(op, 18, b"project")
+            else:
+                self.received += chunk
+                self.next += len(chunk)
+                reply = self.state(self.next + 1 if self.skew else None)
+        elif op == ble.OP_OTA_END:
+            if self.end_error:
+                reply = self.error(op, 18, self.end_error)
+            elif self.next == self.size and hashlib.sha256(self.received).digest() == self.digest:
+                self.phase = 2
+                reply = self.state()
+            else:
+                reply = self.error(op, 18, b"sha256")
+        elif op == ble.OP_OTA_CANCEL:
+            self.phase, self.next, self.size = 0, 0, 0
+            reply = self.state()
+        else:
+            raise AssertionError(f"unexpected op 0x{op:02x}")
+        self.callback(None, bytearray(reply))
+
+
+async def run_ota():
+    assert ble.decode_ota_state(GOLDEN_OTA_STATE) == {
+        "phase": "receiving", "next": 0x01020304, "size": 0x0A0B0C0D,
+        "slot_bytes": 0x600000, "max_chunk": 507}
+    expect_protocol_error(lambda: ble.decode_ota_state(GOLDEN_OTA_STATE[:-1]), "bad OTA_STATE")
+    assert ble.ERRORS[18] == "image-rejected"
+    image = ota_image()
+    assert ble.check_ota_image(image) == "opensensor_cores3"
+    expect_protocol_error(lambda: ble.check_ota_image(image[:111]), "not an ESP-IDF app image")
+    expect_protocol_error(lambda: ble.check_ota_image(b"\x00" + image[1:]), "not an ESP-IDF app image")
+    broken = bytearray(image)
+    broken[32] ^= 1
+    expect_protocol_error(lambda: ble.check_ota_image(bytes(broken)), "app description missing")
+
+    # Happy path. BEGIN carries size and SHA-256, chunks are contiguous and
+    # at most max_chunk, END is the last request and nothing reboots.
+    fake = OtaFake(max_chunk=300)
+    session = ble.Session(fake)
+    await session.start()
+    seen = []
+    result = await session.ota_push(image, lambda done, total: seen.append(done))
+    assert result["phase"] == "ready" and result["size"] == len(image)
+    assert result["sha256"] == hashlib.sha256(image).hexdigest()
+    assert bytes(fake.received) == image
+    assert fake.requests == [ble.OP_OTA_BEGIN] + [ble.OP_OTA_WRITE] * 5 + [ble.OP_OTA_END]
+    assert seen == [300, 600, 900, 1200, 1300]
+    assert ble.OP_REBOOT not in fake.requests
+
+    # A device ERROR has already aborted the upload, so no CANCEL follows.
+    fake = OtaFake(reject_at=0)
+    session = ble.Session(fake)
+    await session.start()
+    try:
+        await session.ota_push(image)
+    except ble.ProtocolError as error:
+        assert "code=18 (image-rejected)" in str(error), error
+    else:
+        raise AssertionError("rejected image must fail")
+    assert fake.requests == [ble.OP_OTA_BEGIN, ble.OP_OTA_WRITE]
+
+    # A device that reports the wrong offset is cancelled, never trusted.
+    fake = OtaFake(skew=True)
+    session = ble.Session(fake)
+    await session.start()
+    try:
+        await session.ota_push(image)
+    except ble.ProtocolError as error:
+        assert "expected 507" in str(error), error
+    else:
+        raise AssertionError("skewed state must fail")
+    assert fake.requests[-1] == ble.OP_OTA_CANCEL and fake.phase == 0
+
+    fake = OtaFake(end_error=b"digest")
+    session = ble.Session(fake)
+    await session.start()
+    try:
+        await session.ota_push(image)
+    except ble.ProtocolError as error:
+        assert "detail='digest'" in str(error), error
+    else:
+        raise AssertionError("digest mismatch must fail")
+    assert fake.requests[-1] == ble.OP_OTA_END
+
+    fake = OtaFake()
+    session = ble.Session(fake)
+    await session.start()
+    assert (await session.ota_cancel())["phase"] == "idle"
+    try:
+        ble.lan_only(SimpleNamespace(lan=None), "ota")
+    except SystemExit as error:
+        assert "LAN only" in str(error)
+    else:
+        raise AssertionError("ota must refuse BLE")
+    print("PASS ble_sync OTA: STATE golden, local image checks, contiguous chunks, no auto reboot, "
+          "device errors end the push, skew is cancelled")
 
 
 if __name__ == "__main__":

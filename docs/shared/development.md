@@ -106,6 +106,36 @@ If the checkout or managed environment moved and a tool reports an old
 interpreter path, run `pixi install` to reconcile it. Use `python -m esptool` /
 `python -m espefuse` through project tasks rather than stale entry-point shebangs.
 
+### LAN OTA and core dump readback
+
+A logger on the LAN takes a new app image without USB (#40). Build the image,
+then push it with the LAN token file.
+
+```sh
+pixi run ble-sync --lan <host> --token-file <token file> ota firmware/<board>/build/<variant>/<app>.bin --reboot
+pixi run ble-sync --lan <host> --token-file <token file> ota-cancel
+```
+
+`ota` checks the chip and project name in the file first, then sends it in
+order and waits for the SHA-256 check. Without `--reboot` the image waits for
+the next `REBOOT` or power cycle. `ota-cancel` drops an upload or a staged
+image. After the reboot look for the `SELFTEST` line on serial. Rollback is
+off, see [OTA](security-hardening.md#ota).
+
+A crash saves a core dump to the `coredump` partition. Read it over USB only,
+with the same build that crashed.
+
+```sh
+pixi run coredump-read cores3 <checked-port>
+pixi run coredump-read waveshare <checked-port> [logger|diagnostic]
+pixi run coredump-read cores3 <checked-port> --erase
+```
+
+It prints the crashed task and the backtraces and leaves the partition alone,
+so the same crash can be read again. `--erase` clears that partition after a
+good print. `--dry-run` prints the commands only. No raw dump stays on the
+host, even when decoding fails. There is no LAN core dump on purpose.
+
 ### C++ dialect
 
 Firmware and host tests are pinned to C++23. ESP-IDF 6.1 adds `-std=gnu++26`
