@@ -252,8 +252,11 @@ Each row is the row step 3 compares, and the lock has one release whose
 `dict` is the SHA-256 of the new `telemetry_fields.inc`. It refuses before
 writing anything when any of the four files exists, when the board slug is
 taken, or when a cross rule fails, a LIVE key clash with another board
-included. Each file opens for exclusive create, so a file that appears
-during the run is never overwritten. From then on the files are frozen like
+included. It takes only a board manifest at
+`firmware/esp-idf-*/*/board.json`. Each file opens for exclusive create, so
+a file that appears during the run is never overwritten, and on any failure
+the run removes the files it created, so no partial board is left. Boolean
+columns print their classes as `false` and `true`, as the shipped files do. From then on the files are frozen like
 any other board file under Option A, and no command rewrites them. The
 command prints the new `dict` and the steps left, which are the board
 `telemetry_contract.h`, the digest headers, the published template, a mobile

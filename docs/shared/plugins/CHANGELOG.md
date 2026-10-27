@@ -8,7 +8,9 @@ Newest first. Versions follow section 7 of the [README](README.md).
   (`plugin_contract.py --write-board`) writes `telemetry_fields.inc`,
   `telemetry_semantics.inc`, `telemetry_classes.inc` and a first
   `shipped.lock` for a new board. It refuses when any of them exists, when
-  the slug is taken or when a cross rule fails, and it writes nothing then.
+  the slug is taken, when a cross rule fails or when the path is not a
+  `firmware/esp-idf-*/*/board.json`, and it writes nothing then. A failure
+  mid write removes the files that run created.
   The files are frozen afterwards under Option A.
 - `plugin-contract-test` writes the section 9 weather board into a temp
   copy and proves its rows and lock pass the gate. No real board is added.

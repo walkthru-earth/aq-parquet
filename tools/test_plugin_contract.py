@@ -541,9 +541,41 @@ def main() -> None:
         finally:
             gate.board_texts = render
         gate.require((root / new_board / gate.LOCK).read_bytes() == b"raced\n", "a racing lock is kept")
-        print("PASS write mode never overwrites a lock that appears during the write", flush=True)
-        for name in gate.NEW_BOARD_FILES:
-            (root / new_board / name).unlink(missing_ok=True)
+        gate.require([n for n in gate.NEW_BOARD_FILES if (root / new_board / n).exists()] == [gate.LOCK],
+                     "a failed write removed the files it created and left no partial board")
+        print("PASS write mode never overwrites a lock that appears during the write and leaves no partial board",
+              flush=True)
+        (root / new_board / gate.LOCK).unlink()
+
+        # Write mode takes a board manifest at firmware/esp-idf-*/*/board.json
+        # only. Any other board.json in the repo is refused, nothing written.
+        for elsewhere in (Path("docs/not-a-board"), Path(".")):
+            (root / elsewhere).mkdir(parents=True, exist_ok=True)
+            stray = read(board_json)
+            stray["board"] = "example-stray"
+            (root / elsewhere / "board.json").write_text(json.dumps(stray, indent=2) + "\n")
+            shutil.copytree(root / new_board / "modules", root / elsewhere / "modules")
+            rejects(lambda: gate.write_board(root, root / elsewhere / "board.json"), "not a board manifest",
+                    f"a board.json at {elsewhere.as_posix()}")
+            gate.require(not any((root / elsewhere / n).exists() for n in gate.NEW_BOARD_FILES),
+                         f"a refused write at {elsewhere.as_posix()} wrote nothing")
+            (root / elsewhere / "board.json").unlink()
+            shutil.rmtree(root / elsewhere / "modules")
+        print("PASS write mode refuses a board.json outside firmware/esp-idf-*/*/", flush=True)
+
+        # Boolean columns print false and true, as the shipped files do. Each
+        # boolean CLASS row rendered for CoreS3 is a row of its shipped file.
+        resolved = root.resolve()
+        checks = gate.validators(resolved)
+        common = gate.common_modules(resolved, checks)
+        cores3 = gate.load_board(resolved, resolved / CORES3 / "board.json", checks, common)
+        rendered = gate.board_texts(resolved, cores3, gate.expand(cores3, common), checks)
+        flags = [line for line in rendered["telemetry_classes.inc"].decode().splitlines()
+                 if line.startswith("CLASS(") and line.split(", ")[1] in ("false", "true")]
+        shipped = (resolved / CORES3 / "telemetry_classes.inc").read_text().splitlines()
+        gate.require(len(flags) >= 4 and all(line in shipped for line in flags),
+                     f"boolean CLASS rows match the shipped CoreS3 rows, {flags}")
+        print("PASS write mode prints boolean classes as false and true like the shipped boards", flush=True)
 
         # Refusals that need the manifests.
         for path in (CORES3, WAVESHARE):

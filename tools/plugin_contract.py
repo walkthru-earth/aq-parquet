@@ -631,7 +631,15 @@ def header_path(module: Module) -> Path:
 def reserved_ids(root: Path) -> frozenset[str]:
     """Lower case names declared directly in namespace ossensor by
     os_sensor_module.h, such as detail, resolve and init_error, plus SHADOWED.
-    A module id equal to one would collide with ossensor::<id>."""
+    A module id equal to one would collide with ossensor::<id>.
+
+    It is a token scan, not a C++ parser. At the ossensor block's own brace
+    depth and outside parentheses it takes a name followed by "(" (a
+    function) or preceded by namespace, struct, class, union or using. Upper
+    case k and CamelCase names cannot match a module id. It fails closed when
+    the braces do not balance or detail and resolve are not found. A lower
+    case variable, plain enum or concept added there needs this scan
+    extended."""
     code = re.sub(r"//[^\n]*|/\*.*?\*/", " ", (root / SENSOR_GLUE).read_text(), flags=re.DOTALL)
     tokens = TOKEN.findall(code)
     names: set[str] = set()
@@ -835,10 +843,13 @@ NEW_BOARD_FILES = ("telemetry_fields.inc", "telemetry_semantics.inc", "telemetry
 WRITE_BOARD = "pixi run plugin-new-board"
 
 
-def class_value(value: int | float | bool, where: str) -> str:
-    if isinstance(value, bool):
+def class_value(column: Column, value: int) -> str:
+    """A boolean column ({boolean} unit) prints its 0 and 1 classes as false
+    and true, as the shipped telemetry_classes.inc files do."""
+    if column.spec.get("unit") == "{boolean}":
+        require(value in (0, 1), f"{column.name}: boolean class value {value!r} is not 0 or 1")
         return "true" if value else "false"
-    return number(value, where)
+    return number(value, column.name)
 
 
 def board_texts(root: Path, board: Board, columns: list[Column], checks: dict) -> dict[str, bytes]:
@@ -874,7 +885,7 @@ def board_texts(root: Path, board: Board, columns: list[Column], checks: dict) -
         "// One row per value of each code and boolean column, grouped by column",
         "// in value order. value is the manifest value. The board code may name",
         "// it by its enum later, the gate compares names and nodata only.",
-        *(f"CLASS({c.name}, {class_value(k['value'], c.name)}, {literal(k['name'], c.name)}, "
+        *(f"CLASS({c.name}, {class_value(c, k['value'])}, {literal(k['name'], c.name)}, "
           f"{'true' if k.get('nodata', False) else 'false'})" for c in columns for k in classes(c, subsets)),
     ]
     texts = {name: ("\n".join(lines) + "\n").encode() for name, lines in
@@ -904,7 +915,8 @@ def write_board(root: Path, path: Path) -> list[str]:
     file or lock is never touched."""
     root = root.resolve()
     path = path.resolve()
-    require(path.is_relative_to(root) and path.is_file(), f"{path}: not a board.json inside {root}")
+    boards = {p.resolve() for p in root.glob(BOARD_GLOB)}
+    require(path in boards, f"{path}: not a board manifest, write mode takes {BOARD_GLOB} under {root}")
     targets = [path.parent / name for name in NEW_BOARD_FILES]
     present = [t.relative_to(root).as_posix() for t in targets if t.exists() or t.is_symlink()]
     require(not present, f"refusing to write a board file that exists, {', '.join(present)}. Board files are "
@@ -920,11 +932,19 @@ def write_board(root: Path, path: Path) -> list[str]:
     cross_rules(label, columns, board, cap)
     live_keys_across({**{b.manifest["board"]: expand(b, common) for b in others}, label: columns})
     texts = board_texts(root, board, columns, checks)
-    for name, data in texts.items():
-        # Exclusive create, so a file that appeared since the check above is
-        # still never overwritten.
-        with (path.parent / name).open("xb") as handle:
-            handle.write(data)
+    created: list[Path] = []
+    try:
+        for name, data in texts.items():
+            # Exclusive create, so a file that appeared since the check above
+            # is still never overwritten.
+            with (path.parent / name).open("xb") as handle:
+                created.append(path.parent / name)
+                handle.write(data)
+    except BaseException:
+        # Leave no partial board. Remove only what this run created.
+        for made in created:
+            made.unlink(missing_ok=True)
+        raise
     return [(path.parent / name).relative_to(root).as_posix() for name in texts]
 
 
@@ -944,7 +964,8 @@ def main() -> None:
         digest = hashlib.sha256((args.root.resolve() / written[0]).read_bytes()).hexdigest()
         print(f"dict {digest}. These files are now frozen. Next add telemetry_contract.h, the digest headers, "
               f"the published template, a mobile migration entry naming the dict, the LIVE fixture and the "
-              f"pinned URIs, as docs/shared/board-porting.md lists, then run `pixi run plugin-contract`", flush=True)
+              f"pinned URIs, as docs/shared/board-porting.md lists. Run `pixi run plugin-headers` when the board "
+              f"has local modules, then `pixi run plugin-contract`", flush=True)
         return
     results, examples, headers = check(args.root, write_headers=args.write_headers)
     for r in results:
