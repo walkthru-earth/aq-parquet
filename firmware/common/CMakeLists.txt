@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "src/parquet_writer.cpp" "src/parquet_reader.cpp" "src/lz4_codec.cpp"
+         "src/ota_transfer.cpp" "src/boot_self_test.cpp"
     INCLUDE_DIRS "src"
     PRIV_REQUIRES esp_timer)
 os_pin_cxx_standard(${COMPONENT_LIB})
